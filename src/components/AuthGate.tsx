@@ -3,6 +3,7 @@ import { Calendar, Eye, Globe, Lock, Moon, ShieldCheck, Sun, UserPlus } from 'lu
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError, isStaticFallbackMode } from '../lib/api.ts';
 import type { UserAccount } from '../shared/types.ts';
+import { SamaanLogo } from './SamaanLogo.tsx';
 
 export const AuthGate: React.FC = () => {
   const {
@@ -64,14 +65,7 @@ export const AuthGate: React.FC = () => {
     <div className="min-h-screen flex flex-col justify-between bg-[var(--bg-canvas)] text-[var(--text-primary)] p-6">
       {/* Top Preference Controls */}
       <div className="max-w-5xl w-full mx-auto flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] flex items-center justify-center font-bold text-sm tracking-tight">
-            {prefs.language === 'fa' ? 'س' : 'S'}
-          </div>
-          <span className="text-lg font-bold tracking-tight whitespace-nowrap">
-            {t.brandShort}
-          </span>
-        </div>
+        <SamaanLogo size="md" showWordmark />
 
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -120,14 +114,19 @@ export const AuthGate: React.FC = () => {
       {/* Login / Setup Card */}
       <div className="max-w-md w-full mx-auto my-8 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-7">
         <div className="mb-6">
-          <div className="inline-flex items-center gap-2 text-xs font-medium text-[var(--accent-primary)] mb-2">
-            {needsSetup ? <UserPlus className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
-            <span>{t.brandFull}</span>
+          <div className="flex items-center gap-3 mb-4">
+            <SamaanLogo size="lg" showWordmark={false} />
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--accent-primary)]">
+                {needsSetup ? <UserPlus className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                <span className="truncate">{t.brandFull}</span>
+              </div>
+              <h1 className="text-xl font-bold text-[var(--text-primary)] mt-0.5">
+                {needsSetup ? t.auth.setupTitle : t.auth.loginTitle}
+              </h1>
+            </div>
           </div>
-          <h1 className="text-xl font-bold text-[var(--text-primary)]">
-            {needsSetup ? t.auth.setupTitle : t.auth.loginTitle}
-          </h1>
-          <p className="text-sm text-[var(--text-secondary)] mt-1">
+          <p className="text-sm text-[var(--text-secondary)]">
             {needsSetup ? t.auth.setupSubtitle : t.auth.loginSubtitle}
           </p>
           {isStaticFallbackMode() && (

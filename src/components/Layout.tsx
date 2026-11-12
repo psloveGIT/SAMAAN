@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { getTodayIso } from '../shared/jalali.ts';
+import { SamaanLogo } from './SamaanLogo.tsx';
 
 export type NavTabKey =
   | 'dashboard'
@@ -98,15 +99,7 @@ export const Layout: React.FC<LayoutProps> = ({
       >
         <div className="p-4 overflow-y-auto">
           <div className="flex items-center justify-between gap-2 pb-4 mb-4 border-b border-[var(--border-subtle)]">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] flex items-center justify-center font-bold text-sm shrink-0">
-                {prefs.language === 'fa' ? 'س' : 'S'}
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-bold truncate">{t.brandShort}</div>
-                <div className="text-[11px] text-[var(--text-muted)] truncate">{t.brandCode}</div>
-              </div>
-            </div>
+            <SamaanLogo size="md" showWordmark showSubtitle />
             <button
               type="button"
               onClick={() => setMobileMenuOpen(false)}

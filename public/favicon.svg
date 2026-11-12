@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <rect x="2" y="2" width="44" height="44" rx="11" fill="#0f766e" />
+  <rect
+    x="2.75"
+    y="2.75"
+    width="42.5"
+    height="42.5"
+    rx="10.25"
+    stroke="#ffffff"
+    stroke-opacity="0.18"
+    stroke-width="1.5"
+  />
+  <!-- Isometric warehouse vault faces -->
+  <path d="M24 8.5L37.5 16.25L24 24L10.5 16.25L24 8.5Z" fill="#ffffff" fill-opacity="0.2" />
+  <path d="M10.5 16.25L24 24V39.5L10.5 31.75V16.25Z" fill="#ffffff" fill-opacity="0.11" />
+  <path d="M37.5 16.25L24 24V39.5L37.5 31.75V16.25Z" fill="#ffffff" fill-opacity="0.05" />
+  <!-- Isometric outer contour & structural ribs -->
+  <path
+    d="M24 8.5L37.5 16.25V31.75L24 39.5L10.5 31.75V16.25L24 8.5Z"
+    stroke="#ffffff"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M10.5 16.25L24 24M37.5 16.25L24 24M24 24V39.5"
+    stroke="#ffffff"
+    stroke-opacity="0.45"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- Power plant turbine energy core -->
+  <path
+    d="M26 13.5L17 25H23L22 34.5L31 23H25L26 13.5Z"
+    fill="#ffffff"
+    stroke="#0f766e"
+    stroke-width="2.2"
+    stroke-linejoin="round"
+    paint-order="stroke"
+  />
+</svg>
