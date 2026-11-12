@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Calendar, Eye, Globe, Lock, Moon, ShieldCheck, Sun, UserPlus } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
-import { apiRequest, ApiError } from '../lib/api.ts';
+import { apiRequest, ApiError, isStaticFallbackMode } from '../lib/api.ts';
 import type { UserAccount } from '../shared/types.ts';
 
 export const AuthGate: React.FC = () => {
@@ -130,6 +130,13 @@ export const AuthGate: React.FC = () => {
           <p className="text-sm text-[var(--text-secondary)] mt-1">
             {needsSetup ? t.auth.setupSubtitle : t.auth.loginSubtitle}
           </p>
+          {isStaticFallbackMode() && (
+            <div className="mt-3 p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-[11px] text-[var(--text-secondary)]">
+              {prefs.language === 'fa'
+                ? 'حالت آزمایشی استاتیک (GitHub Pages): داده‌ها و حساب‌ها در حافظه IndexedDB همین مرورگر ذخیره می‌شوند.'
+                : 'Static Browser Mode (GitHub Pages): Data & accounts persist locally in this browser’s IndexedDB.'}
+            </div>
+          )}
         </div>
 
         {errorMsg && (

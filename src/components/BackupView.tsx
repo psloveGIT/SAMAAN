@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Download, HardDrive, RotateCcw, Save, Trash2, Upload } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
-import { apiRequest, ApiError } from '../lib/api.ts';
+import { apiRequest, ApiError, isStaticFallbackMode } from '../lib/api.ts';
 import {
   deleteIndexedDbSnapshot,
   downloadJsonBackup,
@@ -117,6 +117,13 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                 ? 'اسنپ‌شات‌ها به‌صورت خودکار پس از عملیات‌های مهم و هر ۱۰ دقیقه در حافظه آفلاین مرورگر ذخیره می‌شوند.'
                 : 'Snapshots are saved automatically to local browser IndexedDB after major actions and every 10 minutes.'}
             </p>
+            {isStaticFallbackMode() && (
+              <p className="text-[11px] font-medium text-[var(--accent-primary)] mt-1.5">
+                {isFa
+                  ? 'در حال اجرا در حالت استاتیک مرورگر (GitHub Pages): برای انتقال یا ارسال داده‌های تست به سرور اصلی، فایل پشتیبان JSON را دانلود کنید.'
+                  : 'Running in Static Browser Mode (GitHub Pages): Download a JSON backup to share or transfer test data to your local server.'}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button

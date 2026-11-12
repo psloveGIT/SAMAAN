@@ -175,7 +175,7 @@ export const JalaliDateInput: React.FC<JalaliDateInputProps> = ({
           {label}
         </label>
       )}
-      <div className="relative flex items-center">
+      <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] focus-within:border-[var(--accent-primary)] transition-colors overflow-hidden">
         <input
           type="text"
           dir="ltr"
@@ -184,34 +184,38 @@ export const JalaliDateInput: React.FC<JalaliDateInputProps> = ({
           onChange={(e) => setTextInput(e.target.value)}
           onBlur={handleManualBlur}
           placeholder={placeholder || (prefs.calendar === 'jalali' ? '1404/01/15' : '2025-04-04')}
-          className="w-full h-9 px-3 pe-14 text-sm tabular-nums rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
+          className={`flex-1 min-w-0 h-full px-2.5 bg-transparent text-xs sm:text-sm tabular-nums text-[var(--text-primary)] focus:outline-none ${
+            prefs.language === 'fa' ? 'text-right' : 'text-left'
+          }`}
         />
-        {textInput && !disabled && (
+        <div className="flex items-center gap-0.5 pe-1 shrink-0">
+          {textInput && !disabled && (
+            <button
+              type="button"
+              onClick={() => {
+                setTextInput('');
+                onChange('');
+              }}
+              aria-label="Clear date"
+              className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => {
-              setTextInput('');
-              onChange('');
-            }}
-            aria-label="Clear date"
-            className="absolute end-8 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            disabled={disabled}
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Toggle calendar"
+            className="p-1.5 rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)] transition-colors"
           >
-            <X className="w-3.5 h-3.5" />
+            <CalendarIcon className="w-4 h-4" />
           </button>
-        )}
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => setOpen((v) => !v)}
-          aria-label="Toggle calendar"
-          className="absolute end-1.5 p-1.5 rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)] transition-colors"
-        >
-          <CalendarIcon className="w-4 h-4" />
-        </button>
+        </div>
       </div>
 
       {open && (
-        <div className="absolute z-50 mt-1.5 w-72 p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] shadow-lg">
+        <div className="absolute end-0 z-50 mt-1.5 w-72 p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <button
               type="button"
