@@ -1,0 +1,6 @@
+{
+  "name": "SAMAAN",
+  "description": "سمان - سامانه مدیریت انبارهای نیروگاهی (Power Plant Warehouse Management System)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

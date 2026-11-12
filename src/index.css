@@ -1,0 +1,139 @@
+@import "@fontsource/vazirmatn/400.css";
+@import "@fontsource/vazirmatn/500.css";
+@import "@fontsource/vazirmatn/600.css";
+@import "@fontsource/vazirmatn/700.css";
+@import "@fontsource/plus-jakarta-sans/400.css";
+@import "@fontsource/plus-jakarta-sans/500.css";
+@import "@fontsource/plus-jakarta-sans/600.css";
+@import "@fontsource/plus-jakarta-sans/700.css";
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg-canvas: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f1f5f9;
+  --bg-elevated: #ffffff;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --accent-primary: #0f766e;
+  --accent-hover: #0d9488;
+  --accent-soft: #f0fdfa;
+  --accent-contrast: #ffffff;
+  --status-success: #15803d;
+  --status-success-bg: #f0fdf4;
+  --status-warning: #b45309;
+  --status-warning-bg: #fffbeb;
+  --status-danger: #b91c1c;
+  --status-danger-bg: #fef2f2;
+  color-scheme: light;
+}
+
+.dark {
+  --bg-canvas: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-subtle: #283548;
+  --bg-elevated: #1e293b;
+  --border-subtle: #334155;
+  --border-strong: #475569;
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --accent-primary: #14b8a6;
+  --accent-hover: #2dd4bf;
+  --accent-soft: rgba(20, 184, 166, 0.14);
+  --accent-contrast: #042f2e;
+  --status-success: #4ade80;
+  --status-success-bg: rgba(34, 197, 94, 0.14);
+  --status-warning: #fbbf24;
+  --status-warning-bg: rgba(245, 158, 11, 0.14);
+  --status-danger: #f87171;
+  --status-danger-bg: rgba(239, 68, 68, 0.14);
+  color-scheme: dark;
+}
+
+/* Optional Eye-Comfort / Blue-Light Filtered Mode (Light) */
+.eye-comfort {
+  --bg-canvas: #f4eee1;
+  --bg-surface: #fbf7ee;
+  --bg-subtle: #ede5d4;
+  --bg-elevated: #fcf9f2;
+  --border-subtle: #ded4c0;
+  --border-strong: #c8bba3;
+  --text-primary: #2b251e;
+  --text-secondary: #544b40;
+  --text-muted: #756a5c;
+  --accent-primary: #466d57;
+  --accent-hover: #385947;
+  --accent-soft: #e6ede7;
+  --accent-contrast: #fbf7ee;
+  --status-success: #3e6b48;
+  --status-success-bg: #e7efe8;
+  --status-warning: #9c6318;
+  --status-warning-bg: #f6ead4;
+  --status-danger: #a64438;
+  --status-danger-bg: #f6e3df;
+  color-scheme: light;
+}
+
+/* Optional Eye-Comfort / Blue-Light Filtered Mode (Dark) */
+.dark.eye-comfort {
+  --bg-canvas: #191612;
+  --bg-surface: #231f1a;
+  --bg-subtle: #2e2821;
+  --bg-elevated: #28231d;
+  --border-subtle: #3d352c;
+  --border-strong: #52473b;
+  --text-primary: #ebe2d3;
+  --text-secondary: #c7bba8;
+  --text-muted: #9b8e7b;
+  --accent-primary: #7ca38b;
+  --accent-hover: #90b59e;
+  --accent-soft: rgba(124, 163, 139, 0.16);
+  --accent-contrast: #161411;
+  --status-success: #82b38c;
+  --status-success-bg: rgba(130, 179, 140, 0.15);
+  --status-warning: #d4a054;
+  --status-warning-bg: rgba(212, 160, 84, 0.15);
+  --status-danger: #d47a6a;
+  --status-danger-bg: rgba(212, 122, 106, 0.15);
+  color-scheme: dark;
+}
+
+html {
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: "Vazirmatn", "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+html[lang="en"] {
+  font-family: "Plus Jakarta Sans", "Vazirmatn", system-ui, -apple-system, sans-serif;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom warm/neutral scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-subtle);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
