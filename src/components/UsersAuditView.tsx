@@ -215,7 +215,7 @@ export const UsersAuditView: React.FC = () => {
         <div className="p-4 border-b border-[var(--border-subtle)] space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold">
-              {isFa ? 'دفترچه ثبت دقیق فعالیت کاربران (Audit Log)' : 'User Activity Audit Log'}
+              {isFa ? 'دفترچه ثبت دقیق فعالیت کاربران' : 'User Activity Audit Log'}
             </h3>
             <span className="text-xs text-[var(--text-muted)]">
               {prefs.calendar === 'jalali'
@@ -229,10 +229,11 @@ export const UsersAuditView: React.FC = () => {
               <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
               <input
                 type="text"
+                dir="auto"
                 value={auditQuery}
                 onChange={(e) => { setAuditQuery(e.target.value); setPage(1); }}
                 placeholder={isFa ? 'جستجو کاربر، عملیات، شناسه...' : 'Search user, action, target...'}
-                className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
               />
             </div>
 
@@ -245,6 +246,12 @@ export const UsersAuditView: React.FC = () => {
               <option value="general">{t.nav.general}</option>
               <option value="detailed">{t.nav.detailed}</option>
               <option value="transit">{t.nav.transit}</option>
+              <option value="opi">{t.nav.opi}</option>
+              <option value="gcv">{t.nav.gcv}</option>
+              <option value="miv">{t.nav.miv}</option>
+              <option value="balance">{t.nav.balance}</option>
+              <option value="stocktake">{t.nav.stocktake}</option>
+              <option value="trash">{t.nav.trash}</option>
               <option value="packing">{isFa ? 'وضعیت پکینگ' : 'Packing Closure'}</option>
               <option value="category">{t.nav.categories}</option>
               <option value="import">{t.nav.importCsv}</option>
@@ -299,8 +306,8 @@ export const UsersAuditView: React.FC = () => {
                   <td className="py-2.5 px-4 whitespace-nowrap text-[var(--accent-primary)] font-semibold">
                     {log.action}
                   </td>
-                  <td className="py-2.5 px-4 whitespace-nowrap tabular-nums">{log.targetId}</td>
-                  <td className="py-2.5 px-4">{log.summary}</td>
+                  <td className="py-2.5 px-4 whitespace-nowrap tabular-nums bidi-plaintext">{log.targetId}</td>
+                  <td className="py-2.5 px-4 bidi-plaintext">{log.summary}</td>
                 </tr>
               ))}
             </tbody>

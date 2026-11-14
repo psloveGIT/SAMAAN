@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Edit3,
   EyeOff,
+  Link2,
   PackagePlus,
   Plus,
   Search,
@@ -22,6 +24,7 @@ import type {
   DetailedEntry,
   SelectionFormulaSummary,
 } from '../shared/types.ts';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 
@@ -34,23 +37,62 @@ interface DetailedListResponse {
   filteredSummary: SelectionFormulaSummary;
 }
 
+interface GeneralSharedInfo {
+  arrivalDate: string;
+  supplier: string;
+  dispatchLocation: string;
+  island: string;
+  system: string;
+  subSystem: string;
+  unit: string;
+  itemDescription: string;
+  packageNo: string;
+  packagesForPacking?: string[];
+}
+
+interface GeneralLookupResponse {
+  packings: string[];
+  packagesForPacking: string[];
+  shared: GeneralSharedInfo | null;
+  lastDetailedDefaults: {
+    shipmentNo: string;
+    packageNo: string;
+    countingUnit: string;
+  };
+}
+
+interface PackingDetailedCheckResponse {
+  packingNo: string;
+  existsInGeneral: boolean;
+  isClosed: boolean;
+  itemNoTaken: boolean;
+  nextSuggestedItemNo: string;
+  linkedGeneral: GeneralSharedInfo | null;
+  lastDetailedDefaults: {
+    shipmentNo: string;
+    packageNo: string;
+    countingUnit: string;
+  };
+}
+
 interface DetailedViewProps {
   categories: CategoryStore;
   refreshSignal: number;
   initialShipmentFilter?: string;
   initialPackageFilter?: string;
+  autoOpenToken?: number;
   onDataChanged: () => void;
 }
 
-function emptyDetailedDraft(rowNo = ''): Partial<DetailedEntry> {
+function emptyDetailedDraft(): Partial<DetailedEntry> {
   return {
-    rowNo,
+    rowNo: '',
     arrivalDate: getTodayIso(),
     supplier: '',
     origin: '',
     shipmentNo: '',
     packageNo: '',
-    itemNo: '',
+    itemNo: '1',
     generalDescription: '',
     description: '',
     size: '',
@@ -93,14 +135,19 @@ function emptyDetailedDraft(rowNo = ''): Partial<DetailedEntry> {
     mivMapnaDate: '',
     mivMapnaQty: null,
     stocktakeInfo: '',
+    stocktakeStatus: '',
+    stocktakeDate: '',
   };
 }
+
+const COUNTING_UNIT_SUGGESTIONS = ['PC', 'PCs', 'SET', 'M', 'KG', 'BOX', 'ROLL', 'PAIR'];
 
 export const DetailedView: React.FC<DetailedViewProps> = ({
   categories,
   refreshSignal,
   initialShipmentFilter = '',
   initialPackageFilter = '',
+  autoOpenToken = 0,
   onDataChanged,
 }) => {
   const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
@@ -132,6 +179,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [closedWarningVisible, setClosedWarningVisible] = useState(false);
   const [ackClosed, setAckClosed] = useState(false);
   const [rowError, setRowError] = useState('');
+  const [itemNoTaken, setItemNoTaken] = useState(false);
+  const [itemNoManual, setItemNoManual] = useState(false);
+  const [knownPackings, setKnownPackings] = useState<string[]>([]);
+  const [knownPackages, setKnownPackages] = useState<string[]>([]);
+  const [linkedGeneral, setLinkedGeneral] = useState<GeneralSharedInfo | null>(null);
+
+  // Safe Delete Confirmation
+  const [deleteTarget, setDeleteTarget] = useState<DetailedComputed | null>(null);
 
   // Shortage Backfill Modal
   const [backfillTarget, setBackfillTarget] = useState<DetailedComputed | null>(null);
@@ -140,6 +195,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [backfillShipmentNo, setBackfillShipmentNo] = useState('');
   const [backfillPackageNo, setBackfillPackageNo] = useState('');
   const [backfillNote, setBackfillNote] = useState('');
+
+  const lastAutoOpenTokenRef = useRef(0);
 
   useEffect(() => {
     setShipmentFilter(initialShipmentFilter);
@@ -190,6 +247,141 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     loadData();
   }, [loadData, refreshSignal]);
 
+  const openCreateModal = useCallback(
+    async (overrideShipment?: string, overridePackage?: string) => {
+      setEditingId(null);
+      setClosedWarningVisible(false);
+      setAckClosed(false);
+      setRowError('');
+      setItemNoTaken(false);
+      setItemNoManual(false);
+
+      const base = emptyDetailedDraft();
+      const targetShipment = (overrideShipment ?? shipmentFilter).trim();
+      const targetPackage = (overridePackage ?? packageFilter).trim();
+
+      try {
+        const lookup = await apiRequest<GeneralLookupResponse>(
+          `/api/general/lookup?packingNo=${encodeURIComponent(targetShipment)}&packageNo=${encodeURIComponent(targetPackage)}`,
+        );
+        setKnownPackings(lookup.packings || []);
+        setKnownPackages(lookup.packagesForPacking || []);
+
+        const finalShipment = targetShipment || lookup.lastDetailedDefaults.shipmentNo || '';
+        const finalPackage =
+          targetPackage ||
+          (finalShipment === lookup.lastDetailedDefaults.shipmentNo
+            ? lookup.lastDetailedDefaults.packageNo
+            : '') ||
+          '';
+
+        const check = await apiRequest<PackingDetailedCheckResponse>(
+          `/api/packing/check?scope=detailed&packingNo=${encodeURIComponent(finalShipment)}&packageNo=${encodeURIComponent(finalPackage)}`,
+        );
+
+        const shared = check.linkedGeneral;
+        setLinkedGeneral(shared);
+        setClosedWarningVisible(check.isClosed);
+
+        setDraft({
+          ...base,
+          shipmentNo: finalShipment,
+          packageNo: finalPackage,
+          itemNo: check.nextSuggestedItemNo || '1',
+          countingUnit: lookup.lastDetailedDefaults.countingUnit || 'PC',
+          arrivalDate: shared?.arrivalDate || base.arrivalDate,
+          supplier: shared?.supplier || '',
+          origin: shared?.dispatchLocation || '',
+          island: shared?.island || '',
+          system: shared?.system || '',
+          subSystem: shared?.subSystem || '',
+          unit: shared?.unit || '',
+          generalDescription: shared?.itemDescription || '',
+        });
+      } catch {
+        setLinkedGeneral(null);
+        setDraft({
+          ...base,
+          shipmentNo: targetShipment,
+          packageNo: targetPackage,
+          itemNo: '1',
+          countingUnit: 'PC',
+        });
+      }
+      setFormModalOpen(true);
+    },
+    [shipmentFilter, packageFilter],
+  );
+
+  // Trigger modal when user arrives from General post-save prompt
+  useEffect(() => {
+    if (autoOpenToken > 0 && autoOpenToken !== lastAutoOpenTokenRef.current) {
+      lastAutoOpenTokenRef.current = autoOpenToken;
+      if (canEdit) {
+        openCreateModal(initialShipmentFilter, initialPackageFilter);
+      }
+    }
+  }, [autoOpenToken, initialShipmentFilter, initialPackageFilter, canEdit, openCreateModal]);
+
+  // Live check when Shipment No, Package No, or Item No changes inside the modal
+  useEffect(() => {
+    if (!formModalOpen) return;
+    const pk = (draft.shipmentNo || '').trim();
+    const pkg = (draft.packageNo || '').trim();
+    const itm = (draft.itemNo || '').trim();
+    if (!pk) {
+      setLinkedGeneral(null);
+      setKnownPackages([]);
+      setItemNoTaken(false);
+      setClosedWarningVisible(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const [check, lookup] = await Promise.all([
+          apiRequest<PackingDetailedCheckResponse>(
+            `/api/packing/check?scope=detailed&packingNo=${encodeURIComponent(pk)}&packageNo=${encodeURIComponent(pkg)}&itemNo=${encodeURIComponent(itm)}${
+              editingId ? `&excludeId=${encodeURIComponent(editingId)}` : ''
+            }`,
+          ),
+          apiRequest<GeneralLookupResponse>(
+            `/api/general/lookup?packingNo=${encodeURIComponent(pk)}&packageNo=${encodeURIComponent(pkg)}`,
+          ),
+        ]);
+        setKnownPackings(lookup.packings || []);
+        setKnownPackages(lookup.packagesForPacking || []);
+        setClosedWarningVisible(check.isClosed);
+        setItemNoTaken(Boolean(check.itemNoTaken));
+        setLinkedGeneral(check.linkedGeneral);
+
+        if (!editingId) {
+          setDraft((prev) => {
+            const shared = check.linkedGeneral;
+            const next = { ...prev };
+            if (!itemNoManual && check.nextSuggestedItemNo) {
+              next.itemNo = check.nextSuggestedItemNo;
+            }
+            if (shared) {
+              if (shared.arrivalDate) next.arrivalDate = shared.arrivalDate;
+              if (shared.supplier) next.supplier = shared.supplier;
+              if (shared.dispatchLocation) next.origin = shared.dispatchLocation;
+              if (shared.island) next.island = shared.island;
+              if (shared.system) next.system = shared.system;
+              if (shared.subSystem) next.subSystem = shared.subSystem;
+              if (shared.unit) next.unit = shared.unit;
+              if (shared.itemDescription) next.generalDescription = shared.itemDescription;
+            }
+            return next;
+          });
+        }
+      } catch {
+        // Ignore transient lookup issues
+      }
+    }, 240);
+    return () => clearTimeout(timer);
+  }, [formModalOpen, draft.shipmentNo, draft.packageNo, draft.itemNo, editingId, itemNoManual]);
+
   const items = data?.items || [];
   const selectedRows = Object.values(selectedMap);
   const activeSummary = useMemo(() => {
@@ -221,26 +413,26 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     );
   }, [selectedRows, data]);
 
-  // Note: کد راهکاران removed; آسیب دیده & MTO added; وضعیت بالانس placed right next to شماره بالانس متریال!
+  // Note: Alerts column removed cleanly; empty columns auto-hidden when hideEmptyCols=true
   const columns = useMemo(
     () => [
-      { key: 'rowNo', header: t.headers.rowNo, isNum: true, get: (r: DetailedComputed) => r.rowNo },
-      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, get: (r: DetailedComputed) => r.arrivalDate },
-      { key: 'shipmentNo', header: t.headers.shipmentNo, get: (r: DetailedComputed) => r.shipmentNo },
-      { key: 'packageNo', header: t.headers.packageNo, get: (r: DetailedComputed) => r.packageNo },
-      { key: 'itemNo', header: t.headers.itemNo, get: (r: DetailedComputed) => r.itemNo },
+      { key: 'rowNo', header: t.headers.rowNo, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.rowNo },
+      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.arrivalDate },
+      { key: 'shipmentNo', header: t.headers.shipmentNo, isLtr: true, get: (r: DetailedComputed) => r.shipmentNo },
+      { key: 'packageNo', header: t.headers.packageNo, isLtr: true, get: (r: DetailedComputed) => r.packageNo },
+      { key: 'itemNo', header: t.headers.itemNo, isLtr: true, get: (r: DetailedComputed) => r.itemNo },
       { key: 'generalDescription', header: t.headers.generalDescription, get: (r: DetailedComputed) => r.generalDescription },
       { key: 'description', header: t.headers.description, get: (r: DetailedComputed) => r.description },
-      { key: 'size', header: t.headers.size, get: (r: DetailedComputed) => r.size },
-      { key: 'itemCode', header: t.headers.itemCode, get: (r: DetailedComputed) => r.itemCode },
-      { key: 'mtoRef', header: t.headers.mtoRef, get: (r: DetailedComputed) => r.mtoRef },
-      { key: 'packingQty', header: t.headers.packingQty, isNum: true, get: (r: DetailedComputed) => r.packingQty },
-      { key: 'actualQty', header: t.headers.actualQty, isNum: true, get: (r: DetailedComputed) => r.actualQty },
-      { key: 'shortage', header: t.headers.shortage, isNum: true, get: (r: DetailedComputed) => (r.shortage > 0 ? r.shortage : null) },
-      { key: 'surplus', header: t.headers.surplus, isNum: true, get: (r: DetailedComputed) => (r.surplus > 0 ? r.surplus : null) },
-      { key: 'damagedQty', header: t.headers.damagedQty, isNum: true, get: (r: DetailedComputed) => r.damagedQty },
-      { key: 'countingUnit', header: t.headers.countingUnit, get: (r: DetailedComputed) => r.countingUnit },
-      { key: 'repNo', header: t.headers.repNo, get: (r: DetailedComputed) => r.repNo },
+      { key: 'size', header: t.headers.size, isLtr: true, get: (r: DetailedComputed) => r.size },
+      { key: 'itemCode', header: t.headers.itemCode, isLtr: true, get: (r: DetailedComputed) => r.itemCode },
+      { key: 'mtoRef', header: t.headers.mtoRef, isLtr: true, get: (r: DetailedComputed) => r.mtoRef },
+      { key: 'packingQty', header: t.headers.packingQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.packingQty },
+      { key: 'actualQty', header: t.headers.actualQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.actualQty },
+      { key: 'shortage', header: t.headers.shortage, isNum: true, isLtr: true, get: (r: DetailedComputed) => (r.shortage > 0 ? r.shortage : null) },
+      { key: 'surplus', header: t.headers.surplus, isNum: true, isLtr: true, get: (r: DetailedComputed) => (r.surplus > 0 ? r.surplus : null) },
+      { key: 'damagedQty', header: t.headers.damagedQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.damagedQty },
+      { key: 'countingUnit', header: t.headers.countingUnit, isLtr: true, get: (r: DetailedComputed) => r.countingUnit },
+      { key: 'repNo', header: t.headers.repNo, isLtr: true, get: (r: DetailedComputed) => r.repNo },
       { key: 'repStatus', header: t.headers.repStatus, get: (r: DetailedComputed) => r.repStatus },
       { key: 'repDescription', header: t.headers.repDescription, get: (r: DetailedComputed) => r.repDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: DetailedComputed) => r.supplier },
@@ -249,31 +441,44 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'system', header: t.headers.system, get: (r: DetailedComputed) => r.system },
       { key: 'subSystem', header: t.headers.subSystem, get: (r: DetailedComputed) => r.subSystem },
       { key: 'unit', header: t.headers.unit, get: (r: DetailedComputed) => r.unit },
-      { key: 'opiNo', header: t.headers.opiNo, get: (r: DetailedComputed) => r.opiNo },
-      { key: 'opiDate', header: t.headers.opiDate, isDate: true, get: (r: DetailedComputed) => r.opiDate },
-      { key: 'merNo', header: t.headers.merNo, get: (r: DetailedComputed) => r.merNo },
+      { key: 'opiNo', header: t.headers.opiNo, isLtr: true, get: (r: DetailedComputed) => r.opiNo },
+      { key: 'opiDate', header: t.headers.opiDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.opiDate },
+      { key: 'merNo', header: t.headers.merNo, isLtr: true, get: (r: DetailedComputed) => r.merNo },
       { key: 'merStatus', header: t.headers.merStatus, get: (r: DetailedComputed) => r.merStatus },
       { key: 'storageLocation', header: t.headers.storageLocation, get: (r: DetailedComputed) => r.storageLocation },
-      { key: 'gcvReceiptNo', header: t.headers.gcvReceiptNo, get: (r: DetailedComputed) => r.gcvReceiptNo },
+      { key: 'gcvReceiptNo', header: t.headers.gcvReceiptNo, isLtr: true, get: (r: DetailedComputed) => r.gcvReceiptNo },
       { key: 'receiver', header: t.headers.receiver, get: (r: DetailedComputed) => r.receiver },
-      { key: 'gcvDeliveredQty', header: t.headers.gcvDeliveredQty, isNum: true, get: (r: DetailedComputed) => r.gcvDeliveredQty },
-      { key: 'mapnaInventory', header: t.headers.mapnaInventory, isNum: true, get: (r: DetailedComputed) => r.mapnaInventory },
-      { key: 'mivContractorNo', header: t.headers.mivContractorNo, get: (r: DetailedComputed) => r.mivContractorNo },
-      { key: 'mivContractorDate', header: t.headers.mivContractorDate, isDate: true, get: (r: DetailedComputed) => r.mivContractorDate },
-      { key: 'mivContractorQty', header: t.headers.mivContractorQty, isNum: true, get: (r: DetailedComputed) => r.mivContractorQty },
-      { key: 'contractorInventory', header: t.headers.contractorInventory, isNum: true, get: (r: DetailedComputed) => r.contractorInventory },
-      { key: 'smrContractorNo', header: t.headers.smrContractorNo, get: (r: DetailedComputed) => r.smrContractorNo },
-      { key: 'smrContractorDate', header: t.headers.smrContractorDate, isDate: true, get: (r: DetailedComputed) => r.smrContractorDate },
-      { key: 'smrContractorQty', header: t.headers.smrContractorQty, isNum: true, get: (r: DetailedComputed) => r.smrContractorQty },
-      // وضعیت بالانس right next to شماره بالانس متریال!
-      { key: 'materialBalanceNo', header: t.headers.materialBalanceNo, get: (r: DetailedComputed) => r.materialBalanceNo },
+      { key: 'gcvDeliveredQty', header: t.headers.gcvDeliveredQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.gcvDeliveredQty },
+      {
+        key: 'mapnaInventory',
+        header: t.headers.mapnaInventory,
+        isNum: true,
+        isLtr: true,
+        get: (r: DetailedComputed) => (r.opiPending ? null : r.mapnaInventory),
+      },
+      { key: 'mivContractorNo', header: t.headers.mivContractorNo, isLtr: true, get: (r: DetailedComputed) => r.mivContractorNo },
+      { key: 'mivContractorDate', header: t.headers.mivContractorDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.mivContractorDate },
+      { key: 'mivContractorQty', header: t.headers.mivContractorQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.mivContractorQty },
+      {
+        key: 'contractorInventory',
+        header: t.headers.contractorInventory,
+        isNum: true,
+        isLtr: true,
+        get: (r: DetailedComputed) => (r.contractorInventory > 0 ? r.contractorInventory : null),
+      },
+      { key: 'smrContractorNo', header: t.headers.smrContractorNo, isLtr: true, get: (r: DetailedComputed) => r.smrContractorNo },
+      { key: 'smrContractorDate', header: t.headers.smrContractorDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.smrContractorDate },
+      { key: 'smrContractorQty', header: t.headers.smrContractorQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.smrContractorQty },
+      { key: 'materialBalanceNo', header: t.headers.materialBalanceNo, isLtr: true, get: (r: DetailedComputed) => r.materialBalanceNo },
       { key: 'balanceStatus', header: t.headers.balanceStatus, get: (r: DetailedComputed) => r.balanceStatus },
-      { key: 'smrMapnaNo', header: t.headers.smrMapnaNo, get: (r: DetailedComputed) => r.smrMapnaNo },
-      { key: 'smrMapnaDate', header: t.headers.smrMapnaDate, isDate: true, get: (r: DetailedComputed) => r.smrMapnaDate },
-      { key: 'smrMapnaQty', header: t.headers.smrMapnaQty, isNum: true, get: (r: DetailedComputed) => r.smrMapnaQty },
-      { key: 'mivMapnaNo', header: t.headers.mivMapnaNo, get: (r: DetailedComputed) => r.mivMapnaNo },
-      { key: 'mivMapnaDate', header: t.headers.mivMapnaDate, isDate: true, get: (r: DetailedComputed) => r.mivMapnaDate },
-      { key: 'mivMapnaQty', header: t.headers.mivMapnaQty, isNum: true, get: (r: DetailedComputed) => r.mivMapnaQty },
+      { key: 'smrMapnaNo', header: t.headers.smrMapnaNo, isLtr: true, get: (r: DetailedComputed) => r.smrMapnaNo },
+      { key: 'smrMapnaDate', header: t.headers.smrMapnaDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.smrMapnaDate },
+      { key: 'smrMapnaQty', header: t.headers.smrMapnaQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.smrMapnaQty },
+      { key: 'mivMapnaNo', header: t.headers.mivMapnaNo, isLtr: true, get: (r: DetailedComputed) => r.mivMapnaNo },
+      { key: 'mivMapnaDate', header: t.headers.mivMapnaDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.mivMapnaDate },
+      { key: 'mivMapnaQty', header: t.headers.mivMapnaQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.mivMapnaQty },
+      { key: 'stocktakeStatus', header: t.headers.stocktakeStatus, get: (r: DetailedComputed) => r.stocktakeStatus || '' },
+      { key: 'stocktakeDate', header: t.headers.stocktakeDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.stocktakeDate || '' },
       { key: 'stocktakeInfo', header: t.headers.stocktakeInfo, get: (r: DetailedComputed) => r.stocktakeInfo },
       { key: 'notes', header: t.headers.notes, get: (r: DetailedComputed) => r.notes },
     ],
@@ -291,59 +496,94 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     );
   }, [columns, items, hideEmptyCols]);
 
-  const openCreateModal = async () => {
-    setEditingId(null);
-    setClosedWarningVisible(false);
-    setAckClosed(false);
-    setRowError('');
-    try {
-      const check = await apiRequest<{ nextSuggestedRowNo: string; isClosed: boolean }>(
-        `/api/packing/check?scope=detailed&packingNo=${encodeURIComponent(shipmentFilter)}`,
-      );
-      setDraft({
-        ...emptyDetailedDraft(check.nextSuggestedRowNo),
-        shipmentNo: shipmentFilter,
-        packageNo: packageFilter,
-      });
-      setClosedWarningVisible(check.isClosed);
-    } catch {
-      setDraft({
-        ...emptyDetailedDraft(''),
-        shipmentNo: shipmentFilter,
-        packageNo: packageFilter,
-      });
-    }
-    setFormModalOpen(true);
-  };
-
   const openEditModal = async (row: DetailedComputed) => {
     setEditingId(row.id);
     setDraft({ ...row });
     setRowError('');
     setAckClosed(false);
+    setItemNoTaken(false);
+    setItemNoManual(true);
     try {
-      const check = await apiRequest<{ isClosed: boolean }>(
-        `/api/packing/check?scope=detailed&packingNo=${encodeURIComponent(row.shipmentNo)}`,
-      );
+      const [check, lookup] = await Promise.all([
+        apiRequest<PackingDetailedCheckResponse>(
+          `/api/packing/check?scope=detailed&packingNo=${encodeURIComponent(row.shipmentNo)}&packageNo=${encodeURIComponent(row.packageNo)}&itemNo=${encodeURIComponent(row.itemNo)}&excludeId=${encodeURIComponent(row.id)}`,
+        ),
+        apiRequest<GeneralLookupResponse>(
+          `/api/general/lookup?packingNo=${encodeURIComponent(row.shipmentNo)}&packageNo=${encodeURIComponent(row.packageNo)}`,
+        ),
+      ]);
       setClosedWarningVisible(check.isClosed);
+      setLinkedGeneral(check.linkedGeneral);
+      setKnownPackings(lookup.packings || []);
+      setKnownPackages(lookup.packagesForPacking || []);
     } catch {
       setClosedWarningVisible(false);
+      setLinkedGeneral(null);
     }
     setFormModalOpen(true);
+  };
+
+  const handlePackingQtyChange = (valStr: string) => {
+    const qty = valStr.trim() === '' ? null : Number(valStr);
+    setDraft((prev) => {
+      const currentUnit = (prev.countingUnit || '').trim();
+      const upper = currentUnit.toUpperCase();
+      let nextUnit = currentUnit;
+      if (!currentUnit || upper === 'PC' || upper === 'PCS') {
+        if (qty !== null && Number.isFinite(qty)) {
+          nextUnit = qty === 1 ? 'PC' : 'PCs';
+        }
+      }
+      return { ...prev, packingQty: qty, countingUnit: nextUnit };
+    });
   };
 
   const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
     setRowError('');
+    if (itemNoTaken) {
+      setRowError(
+        isFa
+          ? `شماره آیتم ${draft.itemNo} برای پکینگ «${draft.shipmentNo}» و نگله «${draft.packageNo || '-'}» تکراری است.`
+          : `Item No. ${draft.itemNo} already exists for Packing "${draft.shipmentNo}" and Package "${draft.packageNo || '-'}".`,
+      );
+      return;
+    }
+
     try {
-      const payload = { ...draft, acknowledgeClosed: ackClosed };
       if (editingId) {
+        const payload = { ...draft, acknowledgeClosed: ackClosed };
+        delete payload.rowNo;
         await apiRequest(`/api/detailed/${editingId}`, {
           method: 'PATCH',
           body: JSON.stringify(payload),
         });
         notify('success', isFa ? 'آیتم جزئیات ویرایش شد.' : 'Detailed item updated.');
       } else {
+        // Initial Detailed entry excludes OPI / GCV / MIV / MTO / Balance / Stocktake
+        const payload: Partial<DetailedEntry> & { acknowledgeClosed: boolean } = {
+          arrivalDate: draft.arrivalDate,
+          supplier: draft.supplier,
+          origin: draft.origin,
+          shipmentNo: draft.shipmentNo,
+          packageNo: draft.packageNo,
+          itemNo: draft.itemNo,
+          generalDescription: draft.generalDescription,
+          description: draft.description,
+          size: draft.size,
+          itemCode: draft.itemCode,
+          packingQty: draft.packingQty ?? null,
+          actualQty: null,
+          damagedQty: null,
+          countingUnit: draft.countingUnit,
+          island: draft.island,
+          system: draft.system,
+          subSystem: draft.subSystem,
+          unit: draft.unit,
+          storageLocation: draft.storageLocation,
+          notes: draft.notes,
+          acknowledgeClosed: ackClosed,
+        };
         await apiRequest('/api/detailed', {
           method: 'POST',
           body: JSON.stringify(payload),
@@ -396,10 +636,17 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     }
   };
 
-  const handleDelete = async (row: DetailedComputed) => {
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
     try {
-      await apiRequest(`/api/detailed/${row.id}`, { method: 'DELETE' });
-      notify('success', isFa ? `ردیف ${row.rowNo} حذف شد.` : `Row ${row.rowNo} deleted.`);
+      await apiRequest(`/api/detailed/${deleteTarget.id}`, { method: 'DELETE' });
+      notify(
+        'success',
+        isFa
+          ? `ردیف ${deleteTarget.rowNo} به سطل بازیافت منتقل شد.`
+          : `Row ${deleteTarget.rowNo} moved to Recycle Bin.`,
+      );
+      setDeleteTarget(null);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -446,7 +693,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   };
 
   const numInput = (val: number | null | undefined) => (val === null || val === undefined ? '' : String(val));
-  const parseOptNum = (s: string): number | null => (s.trim() === '' ? null : Number(s));
 
   return (
     <div className="space-y-4">
@@ -457,10 +703,11 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
             <input
               type="text"
+              dir="auto"
               value={q}
               onChange={(e) => { setQ(e.target.value); setPage(1); }}
               placeholder={t.controls.searchPlaceholder}
-              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
             />
           </div>
 
@@ -507,7 +754,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             {canEdit && (
               <button
                 type="button"
-                onClick={openCreateModal}
+                onClick={() => openCreateModal()}
                 className="h-9 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -524,7 +771,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             value={shipmentFilter}
             onChange={(e) => { setShipmentFilter(e.target.value); setPage(1); }}
             placeholder={t.headers.shipmentNo}
-            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
           />
           <input
             type="text"
@@ -532,7 +779,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             value={packageFilter}
             onChange={(e) => { setPackageFilter(e.target.value); setPage(1); }}
             placeholder={t.headers.packageNo}
-            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
           />
           <select
             value={island}
@@ -596,9 +843,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     onChange={toggleAllOnPage}
                   />
                 </th>
-                <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
-                  {isFa ? 'وضعیت کسری / آسیب' : 'Alerts'}
-                </th>
                 {visibleColumns.map((col) => (
                   <th
                     key={col.key}
@@ -617,13 +861,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 3} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={visibleColumns.length + 2} className="py-12 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 3} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={visibleColumns.length + 2} className="py-12 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
@@ -643,26 +887,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         onChange={() => toggleRow(row)}
                       />
                     </td>
-                    <td className="py-2 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-1.5">
-                        {row.hasShortage && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[11px] font-bold tabular-nums">
-                            <AlertTriangle className="w-3 h-3" />
-                            <span>
-                              {t.headers.shortage}: {row.shortage.toLocaleString(isFa ? 'fa-IR' : 'en-US')}
-                            </span>
-                          </span>
-                        )}
-                        {row.hasDamaged && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-bold tabular-nums">
-                            <AlertTriangle className="w-3 h-3" />
-                            <span>
-                              {t.headers.damagedQty}: {(row.damagedQty || 0).toLocaleString(isFa ? 'fa-IR' : 'en-US')}
-                            </span>
-                          </span>
-                        )}
-                      </div>
-                    </td>
 
                     {visibleColumns.map((col) => {
                       const raw = col.get(row);
@@ -674,18 +898,26 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       return (
                         <td
                           key={col.key}
-                          className={`py-2 px-3 whitespace-nowrap max-w-[260px] truncate tabular-nums ${
+                          className={`py-2 px-3 whitespace-nowrap max-w-[260px] truncate tabular-nums bidi-plaintext ${
                             col.isNum ? 'text-end' : 'text-start'
                           } ${
                             col.key === 'shortage' && row.hasShortage
                               ? 'font-bold text-[var(--status-danger)]'
-                              : col.key === 'mapnaInventory'
-                                ? 'font-semibold text-[var(--accent-primary)]'
-                                : ''
+                              : col.key === 'damagedQty' && row.hasDamaged
+                                ? 'font-bold text-[var(--status-warning)]'
+                                : col.key === 'mapnaInventory'
+                                  ? 'font-semibold text-[var(--accent-primary)]'
+                                  : ''
                           }`}
                           title={String(display)}
                         >
-                          {display}
+                          {col.isLtr && display ? (
+                            <span dir="ltr" className="inline-block">
+                              {display}
+                            </span>
+                          ) : (
+                            display
+                          )}
                         </td>
                       );
                     })}
@@ -712,13 +944,15 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                           <button
                             type="button"
                             onClick={() => openEditModal(row)}
+                            title={t.controls.edit}
                             className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(row)}
+                            onClick={() => setDeleteTarget(row)}
+                            title={t.controls.delete}
                             className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -771,18 +1005,37 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           >
             <div className="flex items-start justify-between gap-4 pb-3 border-b border-[var(--border-subtle)]">
               <div>
-                <h3 className="text-base font-bold">
+                <h3 className="text-base font-bold bidi-plaintext">
                   {inspected.description || inspected.generalDescription}
                 </h3>
-                <div className="text-xs text-[var(--text-muted)] mt-1 tabular-nums">
-                  {t.headers.shipmentNo}: {inspected.shipmentNo}
-                  {inspected.packageNo ? ` · ${t.headers.packageNo}: ${inspected.packageNo}` : ''}
+                <div className="text-xs text-[var(--text-muted)] mt-1 tabular-nums bidi-plaintext">
+                  {t.headers.shipmentNo}: <span dir="ltr">{inspected.shipmentNo}</span>
+                  {inspected.packageNo ? (
+                    <>
+                      {' · '}
+                      {t.headers.packageNo}: <span dir="ltr">{inspected.packageNo}</span>
+                    </>
+                  ) : null}
+                  {inspected.itemNo ? (
+                    <>
+                      {' · '}
+                      {t.headers.itemNo}: <span dir="ltr">{inspected.itemNo}</span>
+                    </>
+                  ) : null}
                 </div>
               </div>
               <button type="button" onClick={() => setInspected(null)} className="p-1.5 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {inspected.opiPending && (
+              <div className="p-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-subtle)] text-xs text-[var(--text-secondary)]">
+                {isFa
+                  ? 'نتیجه بازرسی OPI (مقدار واقعی) برای این قلم هنوز ثبت نشده است. برای ثبت مقدار واقعی به بخش «مدیریت OPI» مراجعه کنید.'
+                  : 'OPI inspection (Actual Qty) has not been recorded yet. Use OPI Management to record inspection results.'}
+              </div>
+            )}
 
             {inspected.hasShortage && canEdit && (
               <div className="p-3.5 rounded-xl border border-[var(--status-danger)] bg-[var(--status-danger-bg)] flex items-center justify-between gap-3">
@@ -825,8 +1078,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
                     >
                       <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                      <div className="text-xs font-semibold mt-0.5 tabular-nums break-words">
-                        {formatted}
+                      <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
+                        {c.isLtr ? <span dir="ltr">{formatted}</span> : formatted}
                       </div>
                     </div>
                   );
@@ -843,13 +1096,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs flex justify-between items-center"
                     >
                       <div>
-                        <div className="font-semibold tabular-nums">
-                          +{b.qty} · {b.shipmentNo}
-                          {b.packageNo ? ` (${b.packageNo})` : ''}
+                        <div className="font-semibold tabular-nums bidi-plaintext">
+                          +<span dir="ltr">{b.qty}</span> · <span dir="ltr">{b.shipmentNo}</span>
+                          {b.packageNo ? <span dir="ltr"> ({b.packageNo})</span> : ''}
                         </div>
-                        {b.note && <div className="text-[11px] text-[var(--text-muted)]">{b.note}</div>}
+                        {b.note && <div className="text-[11px] text-[var(--text-muted)] bidi-plaintext">{b.note}</div>}
                       </div>
-                      <div className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                      <div className="text-[11px] text-[var(--text-muted)] tabular-nums" dir="ltr">
                         {formatDate(b.arrivalDate)}
                       </div>
                     </div>
@@ -872,7 +1125,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               </button>
             </div>
             <div className="p-3 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs space-y-1">
-              <div className="font-semibold">{backfillTarget.description || backfillTarget.generalDescription}</div>
+              <div className="font-semibold bidi-plaintext">{backfillTarget.description || backfillTarget.generalDescription}</div>
               <div className="text-[var(--status-danger)] font-bold tabular-nums">
                 {t.shortage.remainingShortage}: {backfillTarget.shortage}
               </div>
@@ -890,7 +1143,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   dir="ltr"
                   value={backfillQty}
                   onChange={(e) => setBackfillQty(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums"
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums"
                 />
               </div>
               <JalaliDateInput
@@ -907,7 +1160,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   dir="ltr"
                   value={backfillShipmentNo}
                   onChange={(e) => setBackfillShipmentNo(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums"
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums"
                 />
               </div>
               <div>
@@ -919,7 +1172,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   dir="ltr"
                   value={backfillPackageNo}
                   onChange={(e) => setBackfillPackageNo(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums"
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums"
                 />
               </div>
               <div>
@@ -928,9 +1181,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </label>
                 <input
                   type="text"
+                  dir="auto"
                   value={backfillNote}
                   onChange={(e) => setBackfillNote(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm"
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext"
                 />
               </div>
               <div className="pt-2 flex justify-end gap-2">
@@ -958,13 +1212,21 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-[92vh] flex flex-col">
             <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
-              <h3 className="text-sm font-bold">
-                {editingId ? t.controls.edit : isFa ? 'ثبت آیتم جزئیات (دیتیل)' : 'Add Detailed Item'}
-              </h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-bold">
+                  {editingId ? t.controls.edit : isFa ? 'ثبت آیتم جزئیات' : 'Add Detailed Item'}
+                </h3>
+                <span className="px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[11px] font-medium tabular-nums">
+                  {editingId
+                    ? `${t.headers.rowNo}: ${draft.rowNo}`
+                    : `${t.headers.rowNo}: ${t.packing.rowNoAuto}`}
+                </span>
+              </div>
               <button type="button" onClick={() => setFormModalOpen(false)}>
                 <X className="w-5 h-5" />
               </button>
             </div>
+
             <form onSubmit={handleSaveForm} className="p-6 overflow-y-auto space-y-4">
               {closedWarningVisible && (
                 <div className="p-3 rounded-xl border border-[var(--status-danger)] bg-[var(--status-danger-bg)] space-y-2 text-xs">
@@ -987,267 +1249,351 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </div>
               )}
 
+              {/* General Auto-Sync Status Banner */}
+              {linkedGeneral ? (
+                <div className="p-3 rounded-xl border border-[var(--status-success)] bg-[var(--status-success-bg)] text-xs flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-semibold text-[var(--status-success)]">
+                    <Link2 className="w-4 h-4 shrink-0" />
+                    <span>
+                      {isFa
+                        ? 'اطلاعات مشترک به‌صورت خودکار از بخش کلی (جنرال) فراخوانی شد'
+                        : 'Shared metadata synced automatically from General'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)] flex flex-wrap gap-3 tabular-nums">
+                    {linkedGeneral.island && <span>{t.headers.island}: {linkedGeneral.island}</span>}
+                    {linkedGeneral.system && <span>{t.headers.system}: {linkedGeneral.system}</span>}
+                    {linkedGeneral.subSystem && <span>{t.headers.subSystem}: {linkedGeneral.subSystem}</span>}
+                    {linkedGeneral.unit && <span>{t.headers.unit}: {linkedGeneral.unit}</span>}
+                  </div>
+                </div>
+              ) : draft.shipmentNo?.trim() ? (
+                <div className="p-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-[11px] text-[var(--text-muted)]">
+                  {isFa
+                    ? 'این شماره پکینگ لیست در بخش کلی یافت نشد؛ در صورت نیاز اطلاعات جزیره و سیستم را به‌صورت دستی تکمیل کنید.'
+                    : 'This Packing List was not found in General yet; fill Island/System manually if needed.'}
+                </div>
+              ) : null}
+
+              {/* Primary Identifiers */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.rowNo} *</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.shipmentNo} *
+                  </label>
                   <input
                     type="text"
                     required
                     dir="ltr"
-                    value={draft.rowNo || ''}
-                    onChange={(e) => setDraft({ ...draft, rowNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    list="detailed-packings-datalist"
+                    value={draft.shipmentNo || ''}
+                    onChange={(e) => {
+                      setItemNoManual(false);
+                      setDraft({ ...draft, shipmentNo: e.target.value });
+                    }}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
                   />
+                  <datalist id="detailed-packings-datalist">
+                    {knownPackings.map((pk) => (
+                      <option key={pk} value={pk} />
+                    ))}
+                  </datalist>
                 </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.packageNo}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    list="detailed-packages-datalist"
+                    value={draft.packageNo || ''}
+                    onChange={(e) => {
+                      setItemNoManual(false);
+                      setDraft({ ...draft, packageNo: e.target.value });
+                    }}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                  />
+                  <datalist id="detailed-packages-datalist">
+                    {knownPackages.map((pkg) => (
+                      <option key={pkg} value={pkg} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.itemNo} *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    dir="ltr"
+                    value={draft.itemNo || ''}
+                    onChange={(e) => {
+                      setItemNoManual(true);
+                      setDraft({ ...draft, itemNo: e.target.value });
+                    }}
+                    className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-xs text-left tabular-nums ${
+                      itemNoTaken
+                        ? 'border-[var(--status-danger)] text-[var(--status-danger)]'
+                        : 'border-[var(--border-subtle)]'
+                    }`}
+                  />
+                  {itemNoTaken && (
+                    <div className="text-[10px] text-[var(--status-danger)] mt-1">
+                      {isFa
+                        ? 'این شماره آیتم برای این پکینگ و نگله تکراری است'
+                        : 'Duplicate Item No. in this Packing & Package'}
+                    </div>
+                  )}
+                </div>
+
                 <JalaliDateInput
                   label={t.headers.arrivalDate}
                   value={draft.arrivalDate || ''}
                   onChange={(v) => setDraft({ ...draft, arrivalDate: v })}
                 />
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.shipmentNo} *</label>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.description} *
+                  </label>
                   <input
                     type="text"
                     required
-                    dir="ltr"
-                    value={draft.shipmentNo || ''}
-                    onChange={(e) => setDraft({ ...draft, shipmentNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    dir="auto"
+                    value={draft.description || ''}
+                    onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.packageNo}</label>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.generalDescription}
+                  </label>
                   <input
                     type="text"
-                    dir="ltr"
-                    value={draft.packageNo || ''}
-                    onChange={(e) => setDraft({ ...draft, packageNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    dir="auto"
+                    value={draft.generalDescription || ''}
+                    onChange={(e) => setDraft({ ...draft, generalDescription: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.itemNo}</label>
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={draft.itemNo || ''}
-                    onChange={(e) => setDraft({ ...draft, itemNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.itemCode}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.itemCode}
+                  </label>
                   <input
                     type="text"
                     dir="ltr"
                     value={draft.itemCode || ''}
                     onChange={(e) => setDraft({ ...draft, itemCode: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.mtoRef}</label>
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={draft.mtoRef || ''}
-                    onChange={(e) => setDraft({ ...draft, mtoRef: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.size}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.size}
+                  </label>
                   <input
                     type="text"
                     dir="ltr"
                     value={draft.size || ''}
                     onChange={(e) => setDraft({ ...draft, size: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.generalDescription}</label>
-                  <input
-                    type="text"
-                    value={draft.generalDescription || ''}
-                    onChange={(e) => setDraft({ ...draft, generalDescription: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.description}</label>
-                  <input
-                    type="text"
-                    value={draft.description || ''}
-                    onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.packingQty}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.packingQty} *
+                  </label>
                   <input
                     type="number"
                     step="any"
+                    required
                     dir="ltr"
                     value={numInput(draft.packingQty)}
-                    onChange={(e) => setDraft({ ...draft, packingQty: parseOptNum(e.target.value) })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    onChange={(e) => handlePackingQtyChange(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.actualQty}</label>
-                  <input
-                    type="number"
-                    step="any"
-                    dir="ltr"
-                    value={numInput(draft.actualQty)}
-                    onChange={(e) => setDraft({ ...draft, actualQty: parseOptNum(e.target.value) })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.damagedQty}</label>
-                  <input
-                    type="number"
-                    step="any"
-                    dir="ltr"
-                    value={numInput(draft.damagedQty)}
-                    onChange={(e) => setDraft({ ...draft, damagedQty: parseOptNum(e.target.value) })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.countingUnit}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.countingUnit}
+                  </label>
                   <input
                     type="text"
+                    dir="ltr"
+                    list="counting-unit-datalist"
                     value={draft.countingUnit || ''}
                     onChange={(e) => setDraft({ ...draft, countingUnit: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    placeholder="PC / PCs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left"
                   />
+                  <datalist id="counting-unit-datalist">
+                    {COUNTING_UNIT_SUGGESTIONS.map((u) => (
+                      <option key={u} value={u} />
+                    ))}
+                  </datalist>
                 </div>
 
+                {/* Synced Classification & Storage */}
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.island}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.island}
+                  </label>
                   <input
                     type="text"
+                    dir="auto"
+                    list="detailed-island-datalist"
                     value={draft.island || ''}
                     onChange={(e) => setDraft({ ...draft, island: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
+                  <datalist id="detailed-island-datalist">
+                    {categories.island.map((v) => <option key={v} value={v} />)}
+                  </datalist>
                 </div>
+
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.system}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.system}
+                  </label>
                   <input
                     type="text"
+                    dir="auto"
+                    list="detailed-system-datalist"
                     value={draft.system || ''}
                     onChange={(e) => setDraft({ ...draft, system: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
+                  <datalist id="detailed-system-datalist">
+                    {categories.system.map((v) => <option key={v} value={v} />)}
+                  </datalist>
                 </div>
+
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.subSystem}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.subSystem}
+                  </label>
                   <input
                     type="text"
+                    dir="auto"
+                    list="detailed-subsystem-datalist"
                     value={draft.subSystem || ''}
                     onChange={(e) => setDraft({ ...draft, subSystem: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
+                  <datalist id="detailed-subsystem-datalist">
+                    {categories.subSystem.map((v) => <option key={v} value={v} />)}
+                  </datalist>
                 </div>
+
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.storageLocation}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.unit}
+                  </label>
                   <input
                     type="text"
+                    dir="auto"
+                    list="detailed-unit-datalist"
+                    value={draft.unit || ''}
+                    onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                  <datalist id="detailed-unit-datalist">
+                    {categories.unit.map((v) => <option key={v} value={v} />)}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.supplier}
+                  </label>
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={draft.supplier || ''}
+                    onChange={(e) => setDraft({ ...draft, supplier: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.origin}
+                  </label>
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={draft.origin || ''}
+                    onChange={(e) => setDraft({ ...draft, origin: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.storageLocation}
+                  </label>
+                  <input
+                    type="text"
+                    dir="auto"
+                    list="detailed-storage-datalist"
                     value={draft.storageLocation || ''}
                     onChange={(e) => setDraft({ ...draft, storageLocation: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
+                  <datalist id="detailed-storage-datalist">
+                    {categories.storageLocation.map((v) => <option key={v} value={v} />)}
+                  </datalist>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.gcvReceiptNo}</label>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.notes}
+                  </label>
                   <input
                     type="text"
-                    dir="ltr"
-                    value={draft.gcvReceiptNo || ''}
-                    onChange={(e) => setDraft({ ...draft, gcvReceiptNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.receiver}</label>
-                  <input
-                    type="text"
-                    value={draft.receiver || ''}
-                    onChange={(e) => setDraft({ ...draft, receiver: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.gcvDeliveredQty}</label>
-                  <input
-                    type="number"
-                    step="any"
-                    dir="ltr"
-                    value={numInput(draft.gcvDeliveredQty)}
-                    onChange={(e) => setDraft({ ...draft, gcvDeliveredQty: parseOptNum(e.target.value) })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.mivContractorNo}</label>
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={draft.mivContractorNo || ''}
-                    onChange={(e) => setDraft({ ...draft, mivContractorNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.mivContractorQty}</label>
-                  <input
-                    type="number"
-                    step="any"
-                    dir="ltr"
-                    value={numInput(draft.mivContractorQty)}
-                    onChange={(e) => setDraft({ ...draft, mivContractorQty: parseOptNum(e.target.value) })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-                {/* Balance Status directly next to Material Balance No. */}
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.materialBalanceNo}</label>
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={draft.materialBalanceNo || ''}
-                    onChange={(e) => setDraft({ ...draft, materialBalanceNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.balanceStatus}</label>
-                  <input
-                    type="text"
-                    value={draft.balanceStatus || ''}
-                    onChange={(e) => setDraft({ ...draft, balanceStatus: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.stocktakeInfo}</label>
-                  <input
-                    type="text"
-                    value={draft.stocktakeInfo || ''}
-                    onChange={(e) => setDraft({ ...draft, stocktakeInfo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    dir="auto"
+                    value={draft.notes || ''}
+                    onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
               </div>
+
+              {!editingId ? (
+                <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-[11px] text-[var(--text-secondary)] flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                  <span>
+                    {isFa
+                      ? 'مقدار واقعی، آسیب‌دیده، GCV، حواله‌های MIV/SMR، بالانس و انبارگردانی از طریق بخش‌های اختصاصی مربوطه ثبت و به‌صورت خودکار محاسبه می‌شوند.'
+                      : 'Actual Qty, Damaged Qty, GCV, MIV/SMR, Material Balance, and Stocktake are updated automatically via their dedicated workflow modules.'}
+                  </span>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] text-[var(--text-secondary)] space-y-1">
+                  <div className="font-semibold text-[var(--text-primary)]">
+                    {isFa ? 'خلاصه وضعیت عملیاتی (تغییر از بخش‌های اختصاصی):' : 'Operational Summary (managed via dedicated modules):'}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
+                    <span>{t.headers.opiNo}: {draft.opiNo || '-'}</span>
+                    <span>{t.headers.actualQty}: {draft.actualQty ?? (isFa ? 'در انتظار OPI' : 'Pending OPI')}</span>
+                    <span>{t.headers.gcvReceiptNo}: {draft.gcvReceiptNo || '-'}</span>
+                    <span>{t.headers.mivContractorNo}: {draft.mivContractorNo || '-'}</span>
+                    <span>{t.headers.materialBalanceNo}: {draft.materialBalanceNo || '-'}</span>
+                    <span>{t.headers.stocktakeStatus}: {draft.stocktakeStatus || '-'}</span>
+                  </div>
+                </div>
+              )}
 
               <div className="pt-3 border-t border-[var(--border-subtle)] flex justify-end gap-2">
                 <button
@@ -1268,6 +1614,21 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Safe Delete Confirmation Modal */}
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'حذف آیتم جزئیات' : 'Delete Detailed Item'}
+        itemLabel={
+          deleteTarget
+            ? `${deleteTarget.shipmentNo} / ${deleteTarget.packageNo || '-'} / #${deleteTarget.itemNo || deleteTarget.rowNo} — ${
+                deleteTarget.description || deleteTarget.generalDescription || ''
+              }`
+            : ''
+        }
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

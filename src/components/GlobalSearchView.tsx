@@ -47,10 +47,11 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
           <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-3" />
           <input
             type="text"
+            dir="auto"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t.controls.searchPlaceholder}
-            className="w-full h-10 ps-10 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm focus:outline-none focus:border-[var(--accent-primary)]"
+            className="w-full h-10 ps-10 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
           />
         </div>
         <button
@@ -74,12 +75,12 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                 {results.general.map((g) => (
                   <div key={g.id} className="p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
                     <div className="space-y-1">
-                      <div className="font-bold">{g.itemDescription}</div>
-                      <div className="text-[var(--text-muted)] tabular-nums flex flex-wrap gap-x-3 gap-y-1">
+                      <div className="font-bold bidi-plaintext">{g.itemDescription}</div>
+                      <div className="text-[var(--text-muted)] tabular-nums flex flex-wrap gap-x-3 gap-y-1 bidi-plaintext">
                         <span>{t.headers.rowNo}: {g.rowNo}</span>
-                        {g.packingListNo && <span>{t.headers.packingListNo}: {g.packingListNo}</span>}
-                        {g.packageNo && <span>{t.headers.packageNo}: {g.packageNo}</span>}
-                        {g.arrivalDate && <span>{t.headers.arrivalDate}: {formatDate(g.arrivalDate)}</span>}
+                        {g.packingListNo && <span>{t.headers.packingListNo}: <span dir="ltr">{g.packingListNo}</span></span>}
+                        {g.packageNo && <span>{t.headers.packageNo}: <span dir="ltr">{g.packageNo}</span></span>}
+                        {g.arrivalDate && <span>{t.headers.arrivalDate}: <span dir="ltr">{formatDate(g.arrivalDate)}</span></span>}
                         {g.supplier && <span>{g.supplier}</span>}
                         {g.island && <span>{g.island} / {g.system}</span>}
                       </div>
@@ -112,7 +113,7 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                     }`}
                   >
                     <div className="space-y-1">
-                      <div className="font-bold flex items-center gap-2">
+                      <div className="font-bold flex items-center gap-2 bidi-plaintext">
                         <span>{d.description || d.generalDescription}</span>
                         {d.hasShortage && (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[11px] font-bold">
@@ -121,13 +122,13 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                           </span>
                         )}
                       </div>
-                      <div className="text-[var(--text-muted)] tabular-nums flex flex-wrap gap-x-3 gap-y-1">
+                      <div className="text-[var(--text-muted)] tabular-nums flex flex-wrap gap-x-3 gap-y-1 bidi-plaintext">
                         <span>{t.headers.rowNo}: {d.rowNo}</span>
-                        {d.shipmentNo && <span>{t.headers.shipmentNo}: {d.shipmentNo}</span>}
-                        {d.packageNo && <span>{t.headers.packageNo}: {d.packageNo}</span>}
-                        {d.itemCode && <span>{t.headers.itemCode}: {d.itemCode}</span>}
-                        {d.mtoRef && <span>MTO: {d.mtoRef}</span>}
-                        {d.arrivalDate && <span>{formatDate(d.arrivalDate)}</span>}
+                        {d.shipmentNo && <span>{t.headers.shipmentNo}: <span dir="ltr">{d.shipmentNo}</span></span>}
+                        {d.packageNo && <span>{t.headers.packageNo}: <span dir="ltr">{d.packageNo}</span></span>}
+                        {d.itemCode && <span>{t.headers.itemCode}: <span dir="ltr">{d.itemCode}</span></span>}
+                        {d.mtoRef && <span>MTO: <span dir="ltr">{d.mtoRef}</span></span>}
+                        {d.arrivalDate && <span dir="ltr">{formatDate(d.arrivalDate)}</span>}
                         {d.storageLocation && <span>{t.headers.storageLocation}: {d.storageLocation}</span>}
                         <span>{t.headers.mapnaInventory}: {d.mapnaInventory}</span>
                         {d.contractorInventory > 0 && (
@@ -157,14 +158,14 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
               <div className="divide-y divide-[var(--border-subtle)]">
                 {results.transit.map((tr) => (
                   <div key={tr.id} className="p-4 text-xs space-y-1">
-                    <div className="font-bold">
+                    <div className="font-bold bidi-plaintext">
                       {tr.itemDescription} ·{' '}
                       <span className="text-[var(--accent-primary)]">{tr.overallStatus}</span>
                     </div>
-                    <div className="text-[var(--text-muted)] tabular-nums flex flex-wrap gap-x-3 gap-y-1">
-                      {tr.packingListNo && <span>{t.headers.packingListNo}: {tr.packingListNo}</span>}
-                      {tr.packageNo && <span>{t.headers.packageNo}: {tr.packageNo}</span>}
-                      {tr.arrivalDate && <span>{formatDate(tr.arrivalDate)}</span>}
+                    <div className="text-[var(--text-muted)] tabular-nums flex flex-wrap gap-x-3 gap-y-1 bidi-plaintext">
+                      {tr.packingListNo && <span>{t.headers.packingListNo}: <span dir="ltr">{tr.packingListNo}</span></span>}
+                      {tr.packageNo && <span>{t.headers.packageNo}: <span dir="ltr">{tr.packageNo}</span></span>}
+                      {tr.arrivalDate && <span dir="ltr">{formatDate(tr.arrivalDate)}</span>}
                       {tr.supplier && <span>{tr.supplier}</span>}
                       {tr.carrierContractor && <span>{tr.carrierContractor}</span>}
                     </div>

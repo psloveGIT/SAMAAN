@@ -8,12 +8,17 @@ import type {
   DatabaseSnapshot,
   DetailedComputed,
   DetailedEntry,
+  GcvDocumentRecord,
   GeneralEntry,
+  MivDocumentRecord,
+  OpiInvitationRecord,
   PackingStatusMeta,
   TransitEntry,
+  TrashRecord,
   UserAccount,
 } from '../shared/types.ts';
 import { computeDetailedEntry } from '../shared/formulas.ts';
+import { normalizeDigits } from '../shared/jalali.ts';
 import type { StoredUser } from './auth.ts';
 
 export interface PersistedDatabase {
@@ -26,6 +31,10 @@ export interface PersistedDatabase {
   packingMeta: Record<string, PackingStatusMeta>;
   categories: CategoryStore;
   auditLogs: AuditLogEntry[];
+  trash: TrashRecord[];
+  opiInvitations: OpiInvitationRecord[];
+  gcvDocuments: GcvDocumentRecord[];
+  mivDocuments: MivDocumentRecord[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -46,7 +55,7 @@ function createEmptyCategories(): CategoryStore {
 
 function createEmptyDb(): PersistedDatabase {
   return {
-    version: 1,
+    version: 2,
     sessionSecret: crypto.randomBytes(32).toString('hex'),
     users: [],
     general: [],
@@ -55,6 +64,10 @@ function createEmptyDb(): PersistedDatabase {
     packingMeta: {},
     categories: createEmptyCategories(),
     auditLogs: [],
+    trash: [],
+    opiInvitations: [],
+    gcvDocuments: [],
+    mivDocuments: [],
   };
 }
 
@@ -92,7 +105,7 @@ export class SamaanStore {
       const parsed = JSON.parse(raw) as Partial<PersistedDatabase>;
       const empty = createEmptyDb();
       return {
-        version: parsed.version || 1,
+        version: parsed.version || 2,
         sessionSecret: parsed.sessionSecret || empty.sessionSecret,
         users: Array.isArray(parsed.users) ? parsed.users : [],
         general: Array.isArray(parsed.general) ? parsed.general : [],
@@ -104,6 +117,10 @@ export class SamaanStore {
           ...(parsed.categories || {}),
         },
         auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
+        trash: Array.isArray(parsed.trash) ? parsed.trash : [],
+        opiInvitations: Array.isArray(parsed.opiInvitations) ? parsed.opiInvitations : [],
+        gcvDocuments: Array.isArray(parsed.gcvDocuments) ? parsed.gcvDocuments : [],
+        mivDocuments: Array.isArray(parsed.mivDocuments) ? parsed.mivDocuments : [],
       };
     } catch (err) {
       console.error('Failed to load local database file, starting fresh:', err);
@@ -134,6 +151,22 @@ export class SamaanStore {
       this.saveTimer = null;
       this.writeAtomic(this.db);
     }, 300);
+  }
+
+  /**
+   * Automatically numbers rows 1..N sequentially (newest at index 0 = N, oldest at bottom = 1).
+   */
+  public renumberScope(scope: 'general' | 'detailed' | 'transit'): void {
+    const arr =
+      scope === 'general'
+        ? this.db.general
+        : scope === 'detailed'
+          ? this.db.detailed
+          : this.db.transit;
+    const total = arr.length;
+    for (let i = 0; i < total; i += 1) {
+      arr[i].rowNo = String(total - i);
+    }
   }
 
   public rebuildIndexes(): void {
@@ -220,24 +253,13 @@ export class SamaanStore {
   }
 
   public nextSuggestedRowNo(scope: 'general' | 'detailed' | 'transit'): string {
-    const existingSet =
+    const arr =
       scope === 'general'
-        ? this.generalRowNos
+        ? this.db.general
         : scope === 'detailed'
-          ? this.detailedRowNos
-          : this.transitRowNos;
-    let maxNum = 0;
-    for (const rn of existingSet) {
-      const parsed = Number(rn);
-      if (Number.isInteger(parsed) && parsed > maxNum) {
-        maxNum = parsed;
-      }
-    }
-    let candidate = maxNum + 1;
-    while (existingSet.has(String(candidate))) {
-      candidate += 1;
-    }
-    return String(candidate);
+          ? this.db.detailed
+          : this.db.transit;
+    return String(arr.length + 1);
   }
 
   public isRowNoTaken(scope: 'general' | 'detailed' | 'transit', rowNo: string, excludeId?: string): boolean {
@@ -250,6 +272,89 @@ export class SamaanStore {
           ? this.db.detailed
           : this.db.transit;
     return arr.some((item) => normKey(item.rowNo) === target && item.id !== excludeId);
+  }
+
+  public isMapnaMinutesTaken(minutesNo: string, excludeId?: string): boolean {
+    const clean = normalizeDigits(normKey(minutesNo)).toLowerCase();
+    if (!clean) return false;
+    return this.db.general.some(
+      (g) => g.id !== excludeId && normalizeDigits(normKey(g.mapnaEntryMinutesNo)).toLowerCase() === clean,
+    );
+  }
+
+  public isDetailedItemNoTaken(
+    shipmentNo: string,
+    packageNo: string,
+    itemNo: string,
+    excludeId?: string,
+  ): boolean {
+    const pk = normKey(shipmentNo).toLowerCase();
+    const pkg = normKey(packageNo).toLowerCase();
+    const itm = normalizeDigits(normKey(itemNo)).toLowerCase();
+    if (!pk || !itm) return false;
+    return this.db.detailed.some(
+      (d) =>
+        d.id !== excludeId &&
+        normKey(d.shipmentNo).toLowerCase() === pk &&
+        normKey(d.packageNo).toLowerCase() === pkg &&
+        normalizeDigits(normKey(d.itemNo)).toLowerCase() === itm,
+    );
+  }
+
+  public getNextSuggestedItemNo(shipmentNo: string, packageNo: string): string {
+    const pk = normKey(shipmentNo).toLowerCase();
+    const pkg = normKey(packageNo).toLowerCase();
+    if (!pk) return '1';
+    const matching = this.db.detailed.filter(
+      (d) =>
+        normKey(d.shipmentNo).toLowerCase() === pk &&
+        (!pkg || normKey(d.packageNo).toLowerCase() === pkg),
+    );
+    if (matching.length === 0) return '1';
+    let maxNum = 0;
+    for (const d of matching) {
+      const parsed = Number(normalizeDigits(normKey(d.itemNo)));
+      if (Number.isInteger(parsed) && parsed > maxNum) {
+        maxNum = parsed;
+      }
+    }
+    let candidate = maxNum + 1;
+    while (this.isDetailedItemNoTaken(shipmentNo, packageNo, String(candidate))) {
+      candidate += 1;
+    }
+    return String(candidate);
+  }
+
+  public getGeneralSharedInfo(packingNo: string, packageNo?: string) {
+    const pk = normKey(packingNo);
+    if (!pk) return null;
+    const list = this.generalByPacking.get(pk) || [];
+    if (list.length === 0) return null;
+    const pkg = normKey(packageNo);
+    const exact = pkg ? list.find((g) => normKey(g.packageNo) === pkg) : undefined;
+    const match = exact || list[0];
+    return {
+      arrivalDate: match.arrivalDate,
+      supplier: match.supplier,
+      dispatchLocation: match.dispatchLocation,
+      island: match.island,
+      system: match.system,
+      subSystem: match.subSystem,
+      unit: match.unit,
+      itemDescription: match.itemDescription,
+      packageNo: match.packageNo,
+      packagesForPacking: Array.from(new Set(list.map((g) => normKey(g.packageNo)).filter(Boolean))),
+    };
+  }
+
+  public getLastDetailedDefaults() {
+    const latest = this.db.detailed[0];
+    if (!latest) return { shipmentNo: '', packageNo: '', countingUnit: 'PC' };
+    return {
+      shipmentNo: normKey(latest.shipmentNo),
+      packageNo: normKey(latest.packageNo),
+      countingUnit: normKey(latest.countingUnit) || 'PC',
+    };
   }
 
   public addAudit(params: {
@@ -324,6 +429,10 @@ export class SamaanStore {
       packingMeta: this.db.packingMeta,
       categories: this.db.categories,
       auditLogs: this.db.auditLogs,
+      trash: this.db.trash,
+      opiInvitations: this.db.opiInvitations,
+      gcvDocuments: this.db.gcvDocuments,
+      mivDocuments: this.db.mivDocuments,
     };
   }
 
@@ -339,6 +448,10 @@ export class SamaanStore {
     if (Array.isArray(snapshot.auditLogs)) {
       this.db.auditLogs = snapshot.auditLogs;
     }
+    this.db.trash = Array.isArray(snapshot.trash) ? snapshot.trash : [];
+    this.db.opiInvitations = Array.isArray(snapshot.opiInvitations) ? snapshot.opiInvitations : [];
+    this.db.gcvDocuments = Array.isArray(snapshot.gcvDocuments) ? snapshot.gcvDocuments : [];
+    this.db.mivDocuments = Array.isArray(snapshot.mivDocuments) ? snapshot.mivDocuments : [];
     this.rebuildIndexes();
     this.addAudit({
       user,

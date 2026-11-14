@@ -195,7 +195,7 @@ export function formatIsoDate(isoOrRaw: string, calendar: CalendarMode, shortJal
 
   const [gy, gm, gd] = iso.split('-').map(Number);
   if (calendar === 'gregorian') {
-    return `${gy}-${pad2(gm)}-${pad2(gd)}`;
+    return `${gy}/${pad2(gm)}/${pad2(gd)}`;
   }
 
   const j = toJalali(gy, gm, gd);
@@ -220,7 +220,7 @@ export function formatTimestampByCalendar(
   const ss = pad2(dt.getSeconds());
 
   if (calendar === 'gregorian') {
-    const datePart = `${gy}-${pad2(gm)}-${pad2(gd)}`;
+    const datePart = `${gy}/${pad2(gm)}/${pad2(gd)}`;
     return lang === 'fa' ? `${datePart} · ${hh}:${mm}:${ss}` : `${datePart} ${hh}:${mm}:${ss}`;
   }
 

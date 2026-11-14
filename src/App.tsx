@@ -2,16 +2,22 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { AuthGate } from './components/AuthGate.tsx';
 import { BackupView } from './components/BackupView.tsx';
+import { BalanceView } from './components/BalanceView.tsx';
 import { CategoryManagerView } from './components/CategoryManagerView.tsx';
 import { CsvImportView } from './components/CsvImportView.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
 import { DetailedView } from './components/DetailedView.tsx';
+import { GcvView } from './components/GcvView.tsx';
 import { GeneralView } from './components/GeneralView.tsx';
 import { GlobalSearchView } from './components/GlobalSearchView.tsx';
 import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
+import { MivView } from './components/MivView.tsx';
+import { OpiView } from './components/OpiView.tsx';
 import { PackingWizardModal } from './components/PackingWizardModal.tsx';
+import { StocktakeView } from './components/StocktakeView.tsx';
 import { TransitView } from './components/TransitView.tsx';
+import { TrashView } from './components/TrashView.tsx';
 import { UsersAuditView } from './components/UsersAuditView.tsx';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { apiRequest } from './lib/api.ts';
@@ -42,6 +48,7 @@ const SamaanWorkspace: React.FC = () => {
   // Cross-tab navigation filters (General -> Detailed, Dashboard -> Detailed)
   const [detailedShipmentFilter, setDetailedShipmentFilter] = useState('');
   const [detailedPackageFilter, setDetailedPackageFilter] = useState('');
+  const [detailedAutoOpenToken, setDetailedAutoOpenToken] = useState(0);
 
   const bumpRefresh = useCallback(() => {
     setRefreshSignal((s) => s + 1);
@@ -76,6 +83,14 @@ const SamaanWorkspace: React.FC = () => {
   const jumpToDetailed = (shipmentNo: string, packageNo = '') => {
     setDetailedShipmentFilter(shipmentNo);
     setDetailedPackageFilter(packageNo);
+    setActiveTab('detailed');
+  };
+
+  const goToDetailedCreate = (packingNo: string, packageNo = '') => {
+    setDetailedShipmentFilter(packingNo);
+    setDetailedPackageFilter(packageNo);
+    setDetailedAutoOpenToken((n) => n + 1);
+    setPackingModalOpen(false);
     setActiveTab('detailed');
   };
 
@@ -128,6 +143,7 @@ const SamaanWorkspace: React.FC = () => {
               refreshSignal={refreshSignal}
               initialShipmentFilter={detailedShipmentFilter}
               initialPackageFilter={detailedPackageFilter}
+              autoOpenToken={detailedAutoOpenToken}
               onDataChanged={bumpRefresh}
             />
           )}
@@ -141,6 +157,26 @@ const SamaanWorkspace: React.FC = () => {
             />
           )}
 
+          {activeTab === 'opi' && (
+            <OpiView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
+          {activeTab === 'gcv' && (
+            <GcvView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
+          {activeTab === 'miv' && (
+            <MivView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
+          {activeTab === 'balance' && (
+            <BalanceView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
+          {activeTab === 'stocktake' && (
+            <StocktakeView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
           {activeTab === 'search' && (
             <GlobalSearchView onJumpToDetailed={jumpToDetailed} />
           )}
@@ -150,6 +186,10 @@ const SamaanWorkspace: React.FC = () => {
               refreshSignal={refreshSignal}
               onCategoriesUpdated={bumpRefresh}
             />
+          )}
+
+          {activeTab === 'trash' && (
+            <TrashView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
           )}
 
           {activeTab === 'importCsv' && <CsvImportView onImportDone={bumpRefresh} />}
@@ -162,6 +202,7 @@ const SamaanWorkspace: React.FC = () => {
             open={packingModalOpen}
             onClose={() => setPackingModalOpen(false)}
             onSaved={bumpRefresh}
+            onGoToDetailed={goToDetailedCreate}
             categories={categories}
             prefillFromTransit={transitPrefill}
             prefillPackingNo={prefillPackingNo}
@@ -171,7 +212,7 @@ const SamaanWorkspace: React.FC = () => {
 
       {/* Toast Notifications */}
       {toasts.length > 0 && (
-        <div className="fixed bottom-4 end-4 z-[60] space-y-2 max-w-sm">
+        <div className="fixed bottom-4 end-4 z-[60] space-y-2 max-w-sm print:hidden">
           {toasts.map((toast) => (
             <div
               key={toast.id}
@@ -183,7 +224,7 @@ const SamaanWorkspace: React.FC = () => {
                     : 'border-[var(--accent-primary)] text-[var(--text-primary)]'
               }`}
             >
-              <span>{toast.text}</span>
+              <span className="bidi-plaintext">{toast.text}</span>
               <button type="button" onClick={() => dismissToast(toast.id)}>
                 <X className="w-4 h-4" />
               </button>

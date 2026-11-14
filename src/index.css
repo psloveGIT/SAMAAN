@@ -119,6 +119,10 @@ html[lang="en"] {
   font-variant-numeric: tabular-nums;
 }
 
+.bidi-plaintext {
+  unicode-bidi: plaintext;
+}
+
 /* Custom warm/neutral scrollbars */
 ::-webkit-scrollbar {
   width: 8px;
@@ -136,4 +140,30 @@ html[lang="en"] {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .print\:hidden {
+    display: none !important;
+  }
+  .print\:block {
+    display: block !important;
+  }
+  .print-sheet {
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
 }

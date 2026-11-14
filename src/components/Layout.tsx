@@ -3,8 +3,12 @@ import {
   BarChart3,
   Boxes,
   Calendar,
+  ClipboardCheck,
+  ClipboardList,
   Eye,
+  FileCheck2,
   FileSpreadsheet,
+  FileText,
   FolderTree,
   Globe,
   HardDriveDownload,
@@ -13,9 +17,11 @@ import {
   Menu,
   Moon,
   Plus,
+  Scale,
   Search,
   Shield,
   Sun,
+  Trash2,
   Truck,
   X,
 } from 'lucide-react';
@@ -28,8 +34,14 @@ export type NavTabKey =
   | 'general'
   | 'detailed'
   | 'transit'
+  | 'opi'
+  | 'gcv'
+  | 'miv'
+  | 'balance'
+  | 'stocktake'
   | 'search'
   | 'categories'
+  | 'trash'
   | 'importCsv'
   | 'usersAudit'
   | 'backup';
@@ -61,19 +73,44 @@ export const Layout: React.FC<LayoutProps> = ({
 
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
-  const navItems: { key: NavTabKey; label: string; icon: React.ReactNode }[] = [
-    { key: 'dashboard', label: t.nav.dashboard, icon: <BarChart3 className="w-4 h-4" /> },
-    { key: 'general', label: t.nav.general, icon: <Boxes className="w-4 h-4" /> },
-    { key: 'detailed', label: t.nav.detailed, icon: <ListChecks className="w-4 h-4" /> },
-    { key: 'transit', label: t.nav.transit, icon: <Truck className="w-4 h-4" /> },
-    { key: 'search', label: t.nav.search, icon: <Search className="w-4 h-4" /> },
-    { key: 'categories', label: t.nav.categories, icon: <FolderTree className="w-4 h-4" /> },
-    { key: 'importCsv', label: t.nav.importCsv, icon: <FileSpreadsheet className="w-4 h-4" /> },
-    { key: 'usersAudit', label: t.nav.usersAudit, icon: <Shield className="w-4 h-4" /> },
-    { key: 'backup', label: t.nav.backup, icon: <HardDriveDownload className="w-4 h-4" /> },
+  const navGroups: {
+    groupLabel: string;
+    items: { key: NavTabKey; label: string; icon: React.ReactNode }[];
+  }[] = [
+    {
+      groupLabel: t.navGroups.core,
+      items: [
+        { key: 'dashboard', label: t.nav.dashboard, icon: <BarChart3 className="w-4 h-4" /> },
+        { key: 'general', label: t.nav.general, icon: <Boxes className="w-4 h-4" /> },
+        { key: 'detailed', label: t.nav.detailed, icon: <ListChecks className="w-4 h-4" /> },
+        { key: 'transit', label: t.nav.transit, icon: <Truck className="w-4 h-4" /> },
+      ],
+    },
+    {
+      groupLabel: t.navGroups.operations,
+      items: [
+        { key: 'opi', label: t.nav.opi, icon: <FileText className="w-4 h-4" /> },
+        { key: 'gcv', label: t.nav.gcv, icon: <FileCheck2 className="w-4 h-4" /> },
+        { key: 'miv', label: t.nav.miv, icon: <ClipboardList className="w-4 h-4" /> },
+        { key: 'balance', label: t.nav.balance, icon: <Scale className="w-4 h-4" /> },
+        { key: 'stocktake', label: t.nav.stocktake, icon: <ClipboardCheck className="w-4 h-4" /> },
+      ],
+    },
+    {
+      groupLabel: t.navGroups.admin,
+      items: [
+        { key: 'search', label: t.nav.search, icon: <Search className="w-4 h-4" /> },
+        { key: 'categories', label: t.nav.categories, icon: <FolderTree className="w-4 h-4" /> },
+        { key: 'trash', label: t.nav.trash, icon: <Trash2 className="w-4 h-4" /> },
+        { key: 'importCsv', label: t.nav.importCsv, icon: <FileSpreadsheet className="w-4 h-4" /> },
+        { key: 'usersAudit', label: t.nav.usersAudit, icon: <Shield className="w-4 h-4" /> },
+        { key: 'backup', label: t.nav.backup, icon: <HardDriveDownload className="w-4 h-4" /> },
+      ],
+    },
   ];
 
-  const activeTitle = navItems.find((n) => n.key === activeTab)?.label || t.nav.dashboard;
+  const allNavItems = navGroups.flatMap((g) => g.items);
+  const activeTitle = allNavItems.find((n) => n.key === activeTab)?.label || t.nav.dashboard;
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
   const todayFormatted = formatDate(getTodayIso());
 
@@ -82,14 +119,14 @@ export const Layout: React.FC<LayoutProps> = ({
       {/* Mobile Sidebar Backdrop */}
       {mobileMenuOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden print:hidden"
           onClick={() => setMobileMenuOpen(false)}
         />
       )}
 
       {/* Sidebar Navigation */}
       <aside
-        className={`fixed lg:sticky top-0 z-50 h-screen w-64 shrink-0 border-e border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-col justify-between transition-transform duration-200 ${
+        className={`fixed lg:sticky top-0 z-50 h-screen w-64 shrink-0 border-e border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-col justify-between transition-transform duration-200 print:hidden ${
           mobileMenuOpen
             ? 'translate-x-0'
             : prefs.language === 'fa'
@@ -97,8 +134,8 @@ export const Layout: React.FC<LayoutProps> = ({
               : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        <div className="p-4 overflow-y-auto">
-          <div className="flex items-center justify-between gap-2 pb-4 mb-4 border-b border-[var(--border-subtle)]">
+        <div className="p-4 overflow-y-auto space-y-4">
+          <div className="flex items-center justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
             <SamaanLogo size="md" showWordmark showSubtitle />
             <button
               type="button"
@@ -109,28 +146,35 @@ export const Layout: React.FC<LayoutProps> = ({
             </button>
           </div>
 
-          <nav className="space-y-1">
-            {navItems.map((item) => {
-              const isActive = activeTab === item.key;
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => {
-                    onTabChange(item.key);
-                    setMobileMenuOpen(false);
-                  }}
-                  className={`w-full h-10 px-3 rounded-lg flex items-center gap-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-                    isActive
-                      ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  {item.icon}
-                  <span className="truncate">{item.label}</span>
-                </button>
-              );
-            })}
+          <nav className="space-y-4">
+            {navGroups.map((group) => (
+              <div key={group.groupLabel} className="space-y-1">
+                <div className="px-3 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                  {group.groupLabel}
+                </div>
+                {group.items.map((item) => {
+                  const isActive = activeTab === item.key;
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => {
+                        onTabChange(item.key);
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`w-full h-9 px-3 rounded-lg flex items-center gap-2.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                        isActive
+                          ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {item.icon}
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
         </div>
 
@@ -213,7 +257,7 @@ export const Layout: React.FC<LayoutProps> = ({
       {/* Main Content Area */}
       <div className="flex-1 min-w-0 flex flex-col">
         {/* Strict 3-zone Top Bar */}
-        <header className="sticky top-0 z-30 h-14 px-4 lg:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-8">
+        <header className="sticky top-0 z-30 h-14 px-4 lg:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-8 print:hidden">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"

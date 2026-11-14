@@ -183,7 +183,7 @@ export const JalaliDateInput: React.FC<JalaliDateInputProps> = ({
           value={textInput}
           onChange={(e) => setTextInput(e.target.value)}
           onBlur={handleManualBlur}
-          placeholder={placeholder || (prefs.calendar === 'jalali' ? '1404/01/15' : '2025-04-04')}
+          placeholder={placeholder || (prefs.calendar === 'jalali' ? '1404/01/15' : '2026/01/15')}
           className={`flex-1 min-w-0 h-full px-2.5 bg-transparent text-xs sm:text-sm tabular-nums text-[var(--text-primary)] focus:outline-none ${
             prefs.language === 'fa' ? 'text-right' : 'text-left'
           }`}

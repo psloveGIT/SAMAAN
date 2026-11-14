@@ -30,14 +30,14 @@ export interface PackingStatusMeta {
 
 export interface GeneralEntry {
   id: string;
-  rowNo: string; // ردیف (Unique)
+  rowNo: string; // ردیف (Auto-numbered 1..N)
   arrivalDate: string; // تاریخ ورود (ISO YYYY-MM-DD when parseable)
-  releaseNo: string; // شماره رلیز
-  releaseDate: string; // تاریخ
+  releaseNo: string; // Release Note
+  releaseDate: string; // تاریخ Release Note (defaults to arrivalDate if Release Note is empty)
   supplier: string; // تامین کننده
   dispatchLocation: string; // محل ارسال
   employerEntryMinutesNo: string; // شماره صورتجلسه ورود کارفرما
-  mapnaEntryMinutesNo: string; // شماره صورتجلسه ورود مپنا
+  mapnaEntryMinutesNo: string; // شماره صورتجلسه ورود مپنا (Unique)
   packingListNo: string; // شماره پکینگ لیست
   packageNo: string; // شماره نگله
   itemDescription: string; // شرح کالا
@@ -75,21 +75,21 @@ export interface ShortageBackfillRecord {
 
 export interface DetailedEntry {
   id: string;
-  rowNo: string; // ردیف (Unique)
+  rowNo: string; // ردیف (Auto-numbered 1..N)
   arrivalDate: string; // تاریخ ورود
   supplier: string; // تامین کننده
   origin: string; // مبدا
   shipmentNo: string; // شماره محموله (links to شماره پکینگ لیست in جنرال)
   packageNo: string; // شماره نگله
-  itemNo: string; // شماره آیتم
+  itemNo: string; // شماره آیتم (Unique per shipmentNo + packageNo)
   generalDescription: string; // شرح کلی
   description: string; // شرح
   size: string; // سایز
-  itemCode: string; // کد کالا (کد راهکاران removed per user request)
+  itemCode: string; // کد کالا
   packingQty: number | null; // مقدار پکینگ
-  actualQty: number | null; // مقدار واقعی
-  damagedQty: number | null; // آسیب دیده (added per user request)
-  mtoRef: string; // MTO (added per user request)
+  actualQty: number | null; // مقدار واقعی (Populated via OPI result; null = pending OPI)
+  damagedQty: number | null; // آسیب دیده (Populated via OPI result)
+  mtoRef: string; // MTO
   repNo: string; // شماره REP
   repStatus: string; // وضعیت REP
   repDescription: string; // توضیحات REP
@@ -104,7 +104,7 @@ export interface DetailedEntry {
   merStatus: string; // وضعیت MER
   notes: string; // توضیحات
   materialBalanceNo: string; // شماره بالانس متریال
-  balanceStatus: string; // وضعیت بالانس (kept adjacent to شماره بالانس متریال)
+  balanceStatus: string; // وضعیت بالانس
   storageLocation: string; // محل نگهداری
   gcvReceiptNo: string; // شماره رسید GCV-Rahkaran
   receiver: string; // تحویل گیرنده
@@ -124,6 +124,8 @@ export interface DetailedEntry {
   mivMapnaDate: string; // تاریخ MIV مپنا
   mivMapnaQty: number | null; // تعداد تحویل شده مپنا
   stocktakeInfo: string; // انبار گردانی / تاریخ تولید
+  stocktakeStatus?: string; // وضعیت انبارگردانی
+  stocktakeDate?: string; // تاریخ وضعیت انبارگردانی
   shortageBackfills: ShortageBackfillRecord[]; // Later deliveries filling کسری
   createdAt: string;
   updatedAt: string;
@@ -140,13 +142,14 @@ export interface DetailedComputed extends DetailedEntry {
   contractorInventory: number; // موجودی پیمانکار
   hasShortage: boolean;
   hasDamaged: boolean;
+  opiPending: boolean;
 }
 
 export interface TransitEntry {
   id: string;
   rowNo: string;
   arrivalDate: string; // تاریخ ورود
-  overallStatus: string; // وضعیت کلی ('در دست بازرسی' | 'در دست ارسال' | 'پایان' | 'رسیده' | ...)
+  overallStatus: string; // وضعیت کلی
   inspectionRequest: string; // درخواست بازرسی
   releaseNetNo: string; // رلیزنت - شماره
   releaseNetDate: string; // رلیزنت - تاریخ
@@ -168,6 +171,62 @@ export interface TransitEntry {
   linkedGeneralPackingNo?: string;
   createdAt: string;
   updatedAt: string;
+  createdBy: string;
+}
+
+export interface TrashRecord {
+  id: string;
+  scope: 'general' | 'detailed' | 'transit';
+  deletedAt: string;
+  deletedBy: string;
+  targetLabel: string;
+  data: GeneralEntry | DetailedEntry | TransitEntry;
+}
+
+export interface OpiInvitationRecord {
+  id: string;
+  invitationNo: string;
+  date: string; // ISO YYYY-MM-DD
+  time: string; // HH:mm
+  packingNos: string[];
+  location?: string;
+  notes?: string;
+  status: 'issued' | 'completed';
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface DocumentLineItem {
+  detailedId: string;
+  shipmentNo: string;
+  packageNo: string;
+  itemNo: string;
+  description: string;
+  qty: number;
+}
+
+export interface GcvDocumentRecord {
+  id: string;
+  receiptNo: string;
+  date: string;
+  receiver: string;
+  notes?: string;
+  items: DocumentLineItem[];
+  createdAt: string;
+  createdBy: string;
+}
+
+export type MivDocType = 'miv_contractor' | 'smr_contractor' | 'smr_mapna' | 'miv_mapna';
+
+export interface MivDocumentRecord {
+  id: string;
+  docType: MivDocType;
+  docNo: string;
+  date: string;
+  party?: string;
+  notes?: string;
+  items: DocumentLineItem[];
+  createdAt: string;
   createdBy: string;
 }
 
@@ -200,7 +259,22 @@ export interface AuditLogEntry {
   userFullName: string;
   role: UserRole;
   action: string;
-  scope: 'auth' | 'general' | 'detailed' | 'transit' | 'packing' | 'category' | 'import' | 'backup' | 'user';
+  scope:
+    | 'auth'
+    | 'general'
+    | 'detailed'
+    | 'transit'
+    | 'packing'
+    | 'opi'
+    | 'gcv'
+    | 'miv'
+    | 'balance'
+    | 'stocktake'
+    | 'trash'
+    | 'category'
+    | 'import'
+    | 'backup'
+    | 'user';
   targetId: string;
   summary: string;
 }
@@ -236,4 +310,8 @@ export interface DatabaseSnapshot {
   packingMeta: Record<string, PackingStatusMeta>;
   categories: CategoryStore;
   auditLogs: AuditLogEntry[];
+  trash?: TrashRecord[];
+  opiInvitations?: OpiInvitationRecord[];
+  gcvDocuments?: GcvDocumentRecord[];
+  mivDocuments?: MivDocumentRecord[];
 }

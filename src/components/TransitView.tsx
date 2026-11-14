@@ -16,6 +16,7 @@ import { exportRowsToCsv } from '../lib/csvExport.ts';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { CategoryStore, SelectionFormulaSummary, TransitEntry } from '../shared/types.ts';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 
@@ -60,6 +61,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<TransitEntry>>({});
+  const [deleteTarget, setDeleteTarget] = useState<TransitEntry | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -120,6 +122,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
 
   const columns = useMemo(
     () => [
+      { key: 'rowNo', header: t.headers.rowNo, isNum: true, get: (r: TransitEntry) => r.rowNo },
       { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, get: (r: TransitEntry) => r.arrivalDate },
       { key: 'overallStatus', header: t.headers.overallStatus, get: (r: TransitEntry) => r.overallStatus },
       { key: 'packingListNo', header: t.headers.packingListNo, get: (r: TransitEntry) => r.packingListNo },
@@ -157,16 +160,17 @@ export const TransitView: React.FC<TransitViewProps> = ({
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const { rowNo: _ignored, ...payload } = draft;
       if (editingId) {
         await apiRequest(`/api/transit/${editingId}`, {
           method: 'PATCH',
-          body: JSON.stringify(draft),
+          body: JSON.stringify(payload),
         });
         notify('success', isFa ? 'رکورد در راه ویرایش شد.' : 'Transit item updated.');
       } else {
         await apiRequest('/api/transit', {
           method: 'POST',
-          body: JSON.stringify(draft),
+          body: JSON.stringify(payload),
         });
         notify('success', isFa ? 'رکورد در راه ثبت شد.' : 'Transit item created.');
       }
@@ -179,10 +183,12 @@ export const TransitView: React.FC<TransitViewProps> = ({
     }
   };
 
-  const handleDelete = async (row: TransitEntry) => {
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
     try {
-      await apiRequest(`/api/transit/${row.id}`, { method: 'DELETE' });
-      notify('success', isFa ? 'حذف شد.' : 'Deleted.');
+      await apiRequest(`/api/transit/${deleteTarget.id}`, { method: 'DELETE' });
+      notify('success', isFa ? 'به سطل بازیافت منتقل شد.' : 'Moved to Recycle Bin.');
+      setDeleteTarget(null);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -236,10 +242,11 @@ export const TransitView: React.FC<TransitViewProps> = ({
             <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
             <input
               type="text"
+              dir="auto"
               value={q}
               onChange={(e) => { setQ(e.target.value); setPage(1); }}
               placeholder={t.controls.searchPlaceholder}
-              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
             />
           </div>
 
@@ -389,7 +396,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                       return (
                         <td
                           key={col.key}
-                          className={`py-2 px-3 whitespace-nowrap max-w-[240px] truncate tabular-nums ${
+                          className={`py-2 px-3 whitespace-nowrap max-w-[240px] truncate tabular-nums bidi-plaintext ${
                             col.isNum ? 'text-end' : 'text-start'
                           } ${
                             col.key === 'overallStatus' && row.overallStatus === 'رسیده'
@@ -428,7 +435,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(row)}
+                            onClick={() => setDeleteTarget(row)}
                             className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -472,6 +479,18 @@ export const TransitView: React.FC<TransitViewProps> = ({
         )}
       </div>
 
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'تایید حذف ردیف در راه' : 'Confirm In-Transit Deletion'}
+        itemLabel={
+          deleteTarget
+            ? `${t.headers.packingListNo}: ${deleteTarget.packingListNo || '-'} · #${deleteTarget.rowNo}`
+            : ''
+        }
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+      />
+
       {modalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="w-full max-w-3xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-[90vh] flex flex-col">
@@ -510,7 +529,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                     dir="ltr"
                     value={draft.packingListNo || ''}
                     onChange={(e) => setDraft({ ...draft, packingListNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
                   />
                 </div>
                 <div>
@@ -520,34 +539,37 @@ export const TransitView: React.FC<TransitViewProps> = ({
                     dir="ltr"
                     value={draft.packageNo || ''}
                     onChange={(e) => setDraft({ ...draft, packageNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
                   />
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.itemDescription}</label>
                   <input
                     type="text"
+                    dir="auto"
                     value={draft.itemDescription || ''}
                     onChange={(e) => setDraft({ ...draft, itemDescription: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.supplier}</label>
                   <input
                     type="text"
+                    dir="auto"
                     value={draft.supplier || ''}
                     onChange={(e) => setDraft({ ...draft, supplier: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.dispatchLocation}</label>
                   <input
                     type="text"
+                    dir="auto"
                     value={draft.dispatchLocation || ''}
                     onChange={(e) => setDraft({ ...draft, dispatchLocation: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
                 <div>
@@ -557,7 +579,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                     dir="ltr"
                     value={draft.releaseNetNo || ''}
                     onChange={(e) => setDraft({ ...draft, releaseNetNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
                   />
                 </div>
                 <JalaliDateInput
@@ -572,7 +594,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                     dir="ltr"
                     value={draft.interimNo || ''}
                     onChange={(e) => setDraft({ ...draft, interimNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
                   />
                 </div>
                 <JalaliDateInput
@@ -584,9 +606,10 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.carrierContractor}</label>
                   <input
                     type="text"
+                    dir="auto"
                     value={draft.carrierContractor || ''}
                     onChange={(e) => setDraft({ ...draft, carrierContractor: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
                 <div>
@@ -596,7 +619,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                     dir="ltr"
                     value={draft.billOfLadingNo || ''}
                     onChange={(e) => setDraft({ ...draft, billOfLadingNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
                   />
                 </div>
                 <div>
@@ -609,7 +632,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                     onChange={(e) =>
                       setDraft({ ...draft, amount: e.target.value === '' ? null : Number(e.target.value) })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
                   />
                 </div>
               </div>

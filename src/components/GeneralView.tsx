@@ -23,6 +23,7 @@ import type {
   PackingStatusMeta,
   SelectionFormulaSummary,
 } from '../shared/types.ts';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 
@@ -78,6 +79,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [inspected, setInspected] = useState<GeneralRowView | null>(null);
   const [editing, setEditing] = useState<GeneralRowView | null>(null);
   const [ackClosedEdit, setAckClosedEdit] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<GeneralRowView | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -138,7 +140,6 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     );
   }, [selectedRows, data]);
 
-  // Column definitions (excluding کد استراتژی, توضیحات, مدارک صورت وضعبت)
   const columns = useMemo(
     () => [
       { key: 'rowNo', header: t.headers.rowNo, isNum: true, get: (r: GeneralRowView) => r.rowNo },
@@ -172,7 +173,6 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     [t],
   );
 
-  // Hide columns where every displayed row has an empty value
   const visibleColumns = useMemo(() => {
     if (!hideEmptyCols || items.length === 0) return columns;
     return columns.filter((col) =>
@@ -232,9 +232,17 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     e.preventDefault();
     if (!editing) return;
     try {
+      const { rowNo: _ignored, ...rest } = editing;
+      const effectiveReleaseDate = editing.releaseNo.trim()
+        ? (editing.releaseDate || editing.arrivalDate)
+        : editing.arrivalDate;
       await apiRequest(`/api/general/${editing.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ ...editing, acknowledgeClosed: ackClosedEdit }),
+        body: JSON.stringify({
+          ...rest,
+          releaseDate: effectiveReleaseDate,
+          acknowledgeClosed: ackClosedEdit,
+        }),
       });
       notify('success', isFa ? 'ردیف با موفقیت ویرایش شد.' : 'Entry updated.');
       setEditing(null);
@@ -247,10 +255,22 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     }
   };
 
-  const handleDelete = async (row: GeneralRowView) => {
+  const handleConfirmDelete = async (cascadeDetailed: boolean) => {
+    if (!deleteTarget) return;
     try {
-      await apiRequest(`/api/general/${row.id}`, { method: 'DELETE' });
-      notify('success', isFa ? `ردیف ${row.rowNo} حذف شد.` : `Row ${row.rowNo} deleted.`);
+      const res = await apiRequest<{ ok: boolean; trashedDetailedCount?: number }>(
+        `/api/general/${deleteTarget.id}?cascadeDetailed=${cascadeDetailed ? 'true' : 'false'}`,
+        { method: 'DELETE' },
+      );
+      notify(
+        'success',
+        isFa
+          ? `ردیف ${deleteTarget.rowNo} به سطل بازیافت منتقل شد${
+              res.trashedDetailedCount ? ` (${res.trashedDetailedCount} ردیف جزئیات نیز حذف شد)` : ''
+            }.`
+          : `Row ${deleteTarget.rowNo} moved to Recycle Bin.`,
+      );
+      setDeleteTarget(null);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -283,13 +303,14 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
             <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
             <input
               type="text"
+              dir="auto"
               value={q}
               onChange={(e) => {
                 setQ(e.target.value);
                 setPage(1);
               }}
               placeholder={t.controls.searchPlaceholder}
-              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
             />
           </div>
 
@@ -492,7 +513,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       return (
                         <td
                           key={col.key}
-                          className={`py-2 px-3 whitespace-nowrap max-w-[260px] truncate tabular-nums ${
+                          className={`py-2 px-3 whitespace-nowrap max-w-[260px] truncate tabular-nums bidi-plaintext ${
                             col.isNum ? 'text-end' : 'text-start'
                           }`}
                           title={String(displayVal)}
@@ -538,7 +559,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(row)}
+                            onClick={() => setDeleteTarget(row)}
                             className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
                             title={t.controls.delete}
                           >
@@ -584,6 +605,20 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         )}
       </div>
 
+      {/* Delete Confirmation Modal */}
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'تایید حذف ردیف جنرال' : 'Confirm General Record Deletion'}
+        itemLabel={
+          deleteTarget
+            ? `${t.headers.packingListNo}: ${deleteTarget.packingListNo || '-'} · ${t.headers.packageNo}: ${deleteTarget.packageNo || '-'}`
+            : ''
+        }
+        linkedDetailedCount={deleteTarget?.detailedCount || 0}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+      />
+
       {/* Item Inspector Drawer — Strictly hides all empty fields */}
       {inspected && (
         <div className="fixed inset-0 z-50 bg-black/40 flex justify-end" onClick={() => setInspected(null)}>
@@ -593,8 +628,10 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           >
             <div className="flex items-start justify-between gap-4 pb-3 border-b border-[var(--border-subtle)]">
               <div>
-                <h3 className="text-base font-bold">{inspected.itemDescription || inspected.packingListNo}</h3>
-                <div className="text-xs text-[var(--text-muted)] mt-1 tabular-nums">
+                <h3 className="text-base font-bold bidi-plaintext">
+                  {inspected.itemDescription || inspected.packingListNo}
+                </h3>
+                <div className="text-xs text-[var(--text-muted)] mt-1 tabular-nums bidi-plaintext">
                   {t.headers.packingListNo}: {inspected.packingListNo} · {t.headers.packageNo}: {inspected.packageNo}
                 </div>
               </div>
@@ -654,7 +691,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
                     >
                       <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                      <div className="text-xs font-semibold mt-0.5 tabular-nums break-words">
+                      <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
                         {formatted}
                       </div>
                     </div>
@@ -670,8 +707,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="w-full max-w-3xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-[90vh] flex flex-col">
             <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
-              <h3 className="text-sm font-bold">
-                {t.controls.edit} · {t.headers.rowNo} {editing.rowNo}
+              <h3 className="text-sm font-bold tabular-nums">
+                {t.controls.edit} · {t.headers.rowNo} {editing.rowNo} ({t.headers.packingListNo}: {editing.packingListNo})
               </h3>
               <button type="button" onClick={() => setEditing(null)}>
                 <X className="w-5 h-5" />
@@ -697,23 +734,16 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.rowNo}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    dir="ltr"
-                    value={editing.rowNo}
-                    onChange={(e) => setEditing({ ...editing, rowNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
-                  />
-                </div>
                 <JalaliDateInput
                   label={t.headers.arrivalDate}
                   value={editing.arrivalDate}
-                  onChange={(v) => setEditing({ ...editing, arrivalDate: v })}
+                  onChange={(v) =>
+                    setEditing({
+                      ...editing,
+                      arrivalDate: v,
+                      releaseDate: editing.releaseNo.trim() ? editing.releaseDate : v,
+                    })
+                  }
                 />
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
@@ -724,29 +754,82 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     dir="ltr"
                     value={editing.packageNo}
                     onChange={(e) => setEditing({ ...editing, packageNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
                   />
                 </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.mapnaEntryMinutesNo}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={editing.mapnaEntryMinutesNo}
+                    onChange={(e) => setEditing({ ...editing, mapnaEntryMinutesNo: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.employerEntryMinutesNo}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={editing.employerEntryMinutesNo}
+                    onChange={(e) => setEditing({ ...editing, employerEntryMinutesNo: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.releaseNo}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={editing.releaseNo}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        releaseNo: e.target.value,
+                        releaseDate: e.target.value.trim() ? editing.releaseDate : editing.arrivalDate,
+                      })
+                    }
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                  />
+                </div>
+                <JalaliDateInput
+                  label={t.headers.releaseDate}
+                  disabled={!editing.releaseNo.trim()}
+                  value={editing.releaseNo.trim() ? editing.releaseDate : editing.arrivalDate}
+                  onChange={(v) => setEditing({ ...editing, releaseDate: v })}
+                />
+
                 <div className="sm:col-span-3">
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.itemDescription}
                   </label>
                   <input
                     type="text"
+                    dir="auto"
                     value={editing.itemDescription}
                     onChange={(e) => setEditing({ ...editing, itemDescription: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
+
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.island}
                   </label>
                   <input
                     type="text"
+                    dir="auto"
                     value={editing.island}
                     onChange={(e) => setEditing({ ...editing, island: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
                 <div>
@@ -755,9 +838,10 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
+                    dir="auto"
                     value={editing.system}
                     onChange={(e) => setEditing({ ...editing, system: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
                 <div>
@@ -766,9 +850,46 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
+                    dir="auto"
                     value={editing.subSystem}
                     onChange={(e) => setEditing({ ...editing, subSystem: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.unit}
+                  </label>
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={editing.unit}
+                    onChange={(e) => setEditing({ ...editing, unit: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.supplier}
+                  </label>
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={editing.supplier}
+                    onChange={(e) => setEditing({ ...editing, supplier: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.dispatchLocation}
+                  </label>
+                  <input
+                    type="text"
+                    dir="auto"
+                    value={editing.dispatchLocation}
+                    onChange={(e) => setEditing({ ...editing, dispatchLocation: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
                 <div>
@@ -786,7 +907,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         grossWeight: e.target.value === '' ? null : Number(e.target.value),
                       })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
                   />
                 </div>
                 <div>
@@ -804,7 +925,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         netWeight: e.target.value === '' ? null : Number(e.target.value),
                       })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
                   />
                 </div>
                 <div>
@@ -822,7 +943,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         freightCost: e.target.value === '' ? null : Number(e.target.value),
                       })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
                   />
                 </div>
               </div>

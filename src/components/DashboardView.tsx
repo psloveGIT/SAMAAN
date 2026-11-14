@@ -151,7 +151,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           : undefined,
     },
     {
-      label: isFa ? 'اقلام متریال (دیتیل)' : 'Detailed Material Lines',
+      label: isFa ? 'اقلام متریال' : 'Detailed Material Lines',
       value: fmt(data.counts.detailedRows),
       sub:
         data.counts.transitRows > 0
@@ -172,7 +172,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ...(data.counts.shortageItemsCount > 0
       ? [
           {
-            label: isFa ? 'اقلام دارای کسری' : 'Items with Shortage (کسری)',
+            label: isFa ? 'اقلام دارای کسری' : 'Items with Shortage',
             value: fmt(data.counts.shortageItemsCount),
             sub: `${t.headers.shortage}: ${fmt(data.totals.shortageSum)}`,
             tone: 'danger' as const,
@@ -182,7 +182,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ...(data.counts.damagedItemsCount > 0
       ? [
           {
-            label: isFa ? 'اقلام آسیب‌دیده' : 'Damaged Items (آسیب دیده)',
+            label: isFa ? 'اقلام آسیب‌دیده' : 'Damaged Items',
             value: fmt(data.counts.damagedItemsCount),
             sub: `${t.headers.damagedQty}: ${fmt(data.totals.damagedQtySum)}`,
             tone: 'danger' as const,
@@ -332,7 +332,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
             <h3 className="text-sm font-bold">
-              {isFa ? 'تفکیک موجودی بر اساس جزیره' : 'Inventory by Island (جزیره)'}
+              {isFa ? 'تفکیک موجودی بر اساس جزیره' : 'Inventory by Island'}
             </h3>
           </div>
           <div className="overflow-x-auto">
@@ -394,7 +394,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
                 <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
                   <AlertTriangle className="w-4 h-4" />
-                  <span>{isFa ? 'اقلام دارای کسری فعال' : 'Active Shortage Alerts (کسری)'}</span>
+                  <span>{isFa ? 'اقلام دارای کسری فعال' : 'Active Shortage Alerts'}</span>
                 </div>
                 <button
                   type="button"
@@ -414,14 +414,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
                   >
                     <div className="min-w-0">
-                      <div className="text-xs font-semibold truncate">
+                      <div className="text-xs font-semibold truncate bidi-plaintext">
                         {item.description || item.generalDescription}
                       </div>
-                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2">
-                        <span>{item.shipmentNo}</span>
-                        {item.packageNo && <span>· {item.packageNo}</span>}
-                        {item.arrivalDate && <span>· {formatDate(item.arrivalDate)}</span>}
-                        {item.mtoRef && <span>· MTO: {item.mtoRef}</span>}
+                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                        <span dir="ltr">{item.shipmentNo}</span>
+                        {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
+                        {item.arrivalDate && <span dir="ltr">· {formatDate(item.arrivalDate)}</span>}
+                        {item.mtoRef && <span dir="ltr">· MTO: {item.mtoRef}</span>}
                       </div>
                     </div>
                     <div className="shrink-0 text-end">
@@ -440,7 +440,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
                 <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
                   <AlertTriangle className="w-4 h-4" />
-                  <span>{isFa ? 'اقلام آسیب‌دیده ثبت‌شده' : 'Damaged Items (آسیب دیده)'}</span>
+                  <span>{isFa ? 'اقلام آسیب‌دیده ثبت‌شده' : 'Damaged Items'}</span>
                 </div>
                 <button
                   type="button"

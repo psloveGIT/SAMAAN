@@ -17,15 +17,18 @@ export function toNum(val: number | null | undefined): number {
 
 export function computeDetailedEntry(entry: DetailedEntry): DetailedComputed {
   const packingQty = toNum(entry.packingQty);
-  const actualQty = toNum(entry.actualQty);
+  const opiRecorded = entry.actualQty !== null && entry.actualQty !== undefined && Number.isFinite(entry.actualQty);
+  const actualQty = opiRecorded ? Number(entry.actualQty) : 0;
   const damagedQty = toNum(entry.damagedQty);
   const backfilledQty = roundQty(
     (entry.shortageBackfills || []).reduce((acc, b) => acc + toNum(b.qty), 0),
   );
 
-  const initialShortage = Math.max(0, roundQty(packingQty - actualQty));
-  const shortage = Math.max(0, roundQty(initialShortage - backfilledQty));
-  const surplus = Math.max(0, roundQty(actualQty + backfilledQty - packingQty));
+  // Shortage/surplus only exist after actualQty has been recorded via OPI!
+  // Leaving actualQty empty (null) in initial registration MUST NOT report a false shortage.
+  const initialShortage = opiRecorded ? Math.max(0, roundQty(packingQty - actualQty)) : 0;
+  const shortage = opiRecorded ? Math.max(0, roundQty(initialShortage - backfilledQty)) : 0;
+  const surplus = opiRecorded ? Math.max(0, roundQty(actualQty + backfilledQty - packingQty)) : 0;
   const effectiveActualQty = roundQty(actualQty + backfilledQty);
 
   const gcvDeliveredQty = toNum(entry.gcvDeliveredQty);
@@ -57,6 +60,7 @@ export function computeDetailedEntry(entry: DetailedEntry): DetailedComputed {
     contractorInventory,
     hasShortage: shortage > 0,
     hasDamaged: damagedQty > 0,
+    opiPending: !opiRecorded,
   };
 }
 

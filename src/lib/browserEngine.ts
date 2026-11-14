@@ -10,6 +10,8 @@ import type { ImportScope } from '../shared/csvParser.ts';
 import {
   computeDetailedEntry,
   computeSelectionFormulaSummary,
+  roundQty,
+  toNum,
 } from '../shared/formulas.ts';
 import { getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
 import type {
@@ -20,10 +22,16 @@ import type {
   DatabaseSnapshot,
   DetailedComputed,
   DetailedEntry,
+  DocumentLineItem,
+  GcvDocumentRecord,
   GeneralEntry,
+  MivDocType,
+  MivDocumentRecord,
+  OpiInvitationRecord,
   PackingStatusMeta,
   ShortageBackfillRecord,
   TransitEntry,
+  TrashRecord,
   UserAccount,
   UserPreferences,
   UserRole,
@@ -43,6 +51,10 @@ interface StaticDatabase {
   packingMeta: Record<string, PackingStatusMeta>;
   categories: CategoryStore;
   auditLogs: AuditLogEntry[];
+  trash: TrashRecord[];
+  opiInvitations: OpiInvitationRecord[];
+  gcvDocuments: GcvDocumentRecord[];
+  mivDocuments: MivDocumentRecord[];
 }
 
 const DB_NAME = 'samaan_static_db';
@@ -72,7 +84,7 @@ function createEmptyCategories(): CategoryStore {
 
 function createEmptyDb(): StaticDatabase {
   return {
-    version: 1,
+    version: 2,
     currentUserId: null,
     users: [],
     general: [],
@@ -81,6 +93,10 @@ function createEmptyDb(): StaticDatabase {
     packingMeta: {},
     categories: createEmptyCategories(),
     auditLogs: [],
+    trash: [],
+    opiInvitations: [],
+    gcvDocuments: [],
+    mivDocuments: [],
   };
 }
 
@@ -103,14 +119,25 @@ function openDb(): Promise<IDBDatabase> {
 async function getDb(): Promise<StaticDatabase> {
   if (cachedDb) return cachedDb;
   const idb = await openDb();
-  const loaded = await new Promise<StaticDatabase | null>((resolve, reject) => {
+  const loaded = await new Promise<Partial<StaticDatabase> | null>((resolve, reject) => {
     const tx = idb.transaction(STORE_NAME, 'readonly');
     const req = tx.objectStore(STORE_NAME).get(RECORD_KEY);
-    req.onsuccess = () => resolve((req.result as StaticDatabase) || null);
+    req.onsuccess = () => resolve((req.result as Partial<StaticDatabase>) || null);
     req.onerror = () => reject(req.error);
   });
   idb.close();
-  cachedDb = loaded || createEmptyDb();
+  const empty = createEmptyDb();
+  cachedDb = loaded
+    ? {
+        ...empty,
+        ...loaded,
+        categories: { ...createEmptyCategories(), ...(loaded.categories || {}) },
+        trash: Array.isArray(loaded.trash) ? loaded.trash : [],
+        opiInvitations: Array.isArray(loaded.opiInvitations) ? loaded.opiInvitations : [],
+        gcvDocuments: Array.isArray(loaded.gcvDocuments) ? loaded.gcvDocuments : [],
+        mivDocuments: Array.isArray(loaded.mivDocuments) ? loaded.mivDocuments : [],
+      }
+    : empty;
   return cachedDb;
 }
 
@@ -159,6 +186,16 @@ function normKey(v: string | undefined | null): string {
   return (v || '').trim();
 }
 
+function appendUniqueRef(existing: string, nextRef: string): string {
+  const cleanExisting = normKey(existing);
+  const cleanNext = normKey(nextRef);
+  if (!cleanNext) return cleanExisting;
+  if (!cleanExisting) return cleanNext;
+  const parts = cleanExisting.split(',').map((s) => s.trim());
+  if (parts.includes(cleanNext)) return cleanExisting;
+  return `${cleanExisting}, ${cleanNext}`;
+}
+
 function registerCategoryValue(db: StaticDatabase, group: CategoryGroupKey, rawVal: string | undefined | null) {
   const val = normKey(rawVal);
   if (!val || val === '-' || val === '—') return;
@@ -194,6 +231,14 @@ function rebuildCategories(db: StaticDatabase) {
     registerCategoryValue(db, 'supplier', t.supplier);
     registerCategoryValue(db, 'dispatchLocation', t.dispatchLocation);
     registerCategoryValue(db, 'carrierContractor', t.carrierContractor);
+  }
+}
+
+function renumberScope(db: StaticDatabase, scope: 'general' | 'detailed' | 'transit') {
+  const arr = scope === 'general' ? db.general : scope === 'detailed' ? db.detailed : db.transit;
+  const total = arr.length;
+  for (let i = 0; i < total; i += 1) {
+    arr[i].rowNo = String(total - i);
   }
 }
 
@@ -251,15 +296,7 @@ function syncTransitArrival(db: StaticDatabase, packingNo: string, user: UserAcc
 
 function nextSuggestedRowNo(db: StaticDatabase, scope: 'general' | 'detailed' | 'transit'): string {
   const arr = scope === 'general' ? db.general : scope === 'detailed' ? db.detailed : db.transit;
-  const used = new Set(arr.map((x) => normKey(x.rowNo)).filter(Boolean));
-  let maxNum = 0;
-  for (const r of used) {
-    const n = Number(r);
-    if (Number.isInteger(n) && n > maxNum) maxNum = n;
-  }
-  let candidate = maxNum + 1;
-  while (used.has(String(candidate))) candidate += 1;
-  return String(candidate);
+  return String(arr.length + 1);
 }
 
 function isRowNoTaken(
@@ -272,6 +309,84 @@ function isRowNoTaken(
   if (!target) return false;
   const arr = scope === 'general' ? db.general : scope === 'detailed' ? db.detailed : db.transit;
   return arr.some((item) => normKey(item.rowNo) === target && item.id !== excludeId);
+}
+
+function isMapnaMinutesTaken(db: StaticDatabase, minutesNo: string, excludeId?: string): boolean {
+  const clean = normalizeDigits(normKey(minutesNo)).toLowerCase();
+  if (!clean) return false;
+  return db.general.some(
+    (g) => g.id !== excludeId && normalizeDigits(normKey(g.mapnaEntryMinutesNo)).toLowerCase() === clean,
+  );
+}
+
+function isDetailedItemNoTaken(
+  db: StaticDatabase,
+  shipmentNo: string,
+  packageNo: string,
+  itemNo: string,
+  excludeId?: string,
+): boolean {
+  const pk = normKey(shipmentNo).toLowerCase();
+  const pkg = normKey(packageNo).toLowerCase();
+  const itm = normalizeDigits(normKey(itemNo)).toLowerCase();
+  if (!pk || !itm) return false;
+  return db.detailed.some(
+    (d) =>
+      d.id !== excludeId &&
+      normKey(d.shipmentNo).toLowerCase() === pk &&
+      normKey(d.packageNo).toLowerCase() === pkg &&
+      normalizeDigits(normKey(d.itemNo)).toLowerCase() === itm,
+  );
+}
+
+function getNextSuggestedItemNo(db: StaticDatabase, shipmentNo: string, packageNo: string): string {
+  const pk = normKey(shipmentNo).toLowerCase();
+  const pkg = normKey(packageNo).toLowerCase();
+  if (!pk) return '1';
+  const matching = db.detailed.filter(
+    (d) => normKey(d.shipmentNo).toLowerCase() === pk && (!pkg || normKey(d.packageNo).toLowerCase() === pkg),
+  );
+  if (matching.length === 0) return '1';
+  let maxNum = 0;
+  for (const d of matching) {
+    const parsed = Number(normalizeDigits(normKey(d.itemNo)));
+    if (Number.isInteger(parsed) && parsed > maxNum) maxNum = parsed;
+  }
+  let candidate = maxNum + 1;
+  while (isDetailedItemNoTaken(db, shipmentNo, packageNo, String(candidate))) candidate += 1;
+  return String(candidate);
+}
+
+function getGeneralSharedInfo(db: StaticDatabase, packingNo: string, packageNo?: string) {
+  const pk = normKey(packingNo);
+  if (!pk) return null;
+  const list = db.general.filter((g) => normKey(g.packingListNo) === pk);
+  if (list.length === 0) return null;
+  const pkg = normKey(packageNo);
+  const exact = pkg ? list.find((g) => normKey(g.packageNo) === pkg) : undefined;
+  const match = exact || list[0];
+  return {
+    arrivalDate: match.arrivalDate,
+    supplier: match.supplier,
+    dispatchLocation: match.dispatchLocation,
+    island: match.island,
+    system: match.system,
+    subSystem: match.subSystem,
+    unit: match.unit,
+    itemDescription: match.itemDescription,
+    packageNo: match.packageNo,
+    packagesForPacking: Array.from(new Set(list.map((g) => normKey(g.packageNo)).filter(Boolean))),
+  };
+}
+
+function getLastDetailedDefaults(db: StaticDatabase) {
+  const latest = db.detailed[0];
+  if (!latest) return { shipmentNo: '', packageNo: '', countingUnit: 'PC' };
+  return {
+    shipmentNo: normKey(latest.shipmentNo),
+    packageNo: normKey(latest.packageNo),
+    countingUnit: normKey(latest.countingUnit) || 'PC',
+  };
 }
 
 function matchSearch(haystackParts: (string | number | null | undefined)[], q: string): boolean {
@@ -435,25 +550,28 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { user: sanitizeUser(target) } as T;
   }
 
-  // ---------------- PACKING CHECK & CLOSURE ----------------
+  // ---------------- PACKING CHECK, LOOKUP & CLOSURE ----------------
   if (pathname === '/api/packing/check' && method === 'GET') {
     requireAuth();
     const packingNo = normKey(query.get('packingNo'));
     const packageNo = normKey(query.get('packageNo'));
-    const rowNo = normalizeDigits(normKey(query.get('rowNo')));
+    const itemNo = normalizeDigits(normKey(query.get('itemNo')));
+    const mapnaMinutesNo = normalizeDigits(normKey(query.get('mapnaMinutesNo')));
     const scope = (query.get('scope') || 'general') as 'general' | 'detailed' | 'transit';
     const excludeId = query.get('excludeId') || undefined;
 
     const genMatches = packingNo ? db.general.filter((g) => normKey(g.packingListNo) === packingNo) : [];
     const detMatches = packingNo ? db.detailed.filter((d) => normKey(d.shipmentNo) === packingNo) : [];
     const transitMatches = packingNo ? db.transit.filter((t) => normKey(t.packingListNo) === packingNo) : [];
+    const generalPackages = Array.from(new Set(genMatches.map((g) => normKey(g.packageNo)).filter(Boolean)));
     const existingPackages = Array.from(
       new Set([
-        ...genMatches.map((g) => normKey(g.packageNo)).filter(Boolean),
+        ...generalPackages,
         ...detMatches.map((d) => normKey(d.packageNo)).filter(Boolean),
       ]),
     );
     const meta = packingNo ? db.packingMeta[packingNo] : undefined;
+    const linkedGeneral = packingNo ? getGeneralSharedInfo(db, packingNo, packageNo) : null;
 
     return {
       packingNo,
@@ -462,13 +580,35 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       existsInTransit: transitMatches.length > 0,
       generalCount: genMatches.length,
       detailedCount: detMatches.length,
+      generalPackages,
       existingPackages,
-      packageExistsUnderPacking: packageNo ? existingPackages.includes(packageNo) : false,
+      packageExistsUnderPacking: packageNo ? generalPackages.includes(packageNo) : false,
       isClosed: Boolean(meta?.isClosed),
       closedAt: meta?.closedAt || null,
       closedBy: meta?.closedBy || null,
-      rowNoTaken: rowNo ? isRowNoTaken(db, scope, rowNo, excludeId) : false,
+      mapnaMinutesTaken: mapnaMinutesNo ? isMapnaMinutesTaken(db, mapnaMinutesNo, excludeId) : false,
+      itemNoTaken: packingNo && itemNo ? isDetailedItemNoTaken(db, packingNo, packageNo, itemNo, excludeId) : false,
+      nextSuggestedItemNo: packingNo ? getNextSuggestedItemNo(db, packingNo, packageNo) : '1',
+      linkedGeneral,
+      lastDetailedDefaults: getLastDetailedDefaults(db),
+      rowNoTaken: false,
       nextSuggestedRowNo: nextSuggestedRowNo(db, scope),
+    } as T;
+  }
+
+  if (pathname === '/api/general/lookup' && method === 'GET') {
+    requireAuth();
+    const packingNo = normKey(query.get('packingNo'));
+    const packageNo = normKey(query.get('packageNo'));
+    const packings = Array.from(new Set(db.general.map((g) => normKey(g.packingListNo)).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, 'fa'),
+    );
+    const shared = packingNo ? getGeneralSharedInfo(db, packingNo, packageNo) : null;
+    return {
+      packings,
+      packagesForPacking: shared?.packagesForPacking || [],
+      shared,
+      lastDetailedDefaults: getLastDetailedDefaults(db),
     } as T;
   }
 
@@ -534,15 +674,14 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const start = (page - 1) * pageSize;
     const items = filtered.slice(start, start + pageSize).map((g) => {
       const pk = normKey(g.packingListNo);
+      const pkg = normKey(g.packageNo);
       const linkedDetails = pk ? db.detailed.filter((d) => normKey(d.shipmentNo) === pk) : [];
-      const detailedCount = linkedDetails.filter(
-        (d) => !g.packageNo || normKey(d.packageNo) === normKey(g.packageNo),
-      ).length;
-      const hasLinkedShortage = linkedDetails.some((d) => computeDetailedEntry(d).hasShortage);
+      const matchingPkgDetails = linkedDetails.filter((d) => !pkg || normKey(d.packageNo) === pkg);
+      const hasLinkedShortage = matchingPkgDetails.some((d) => computeDetailedEntry(d).hasShortage);
       return {
         ...g,
         packingClosed: Boolean(pk && db.packingMeta[pk]?.isClosed),
-        detailedCount,
+        detailedCount: matchingPkgDetails.length,
         hasLinkedShortage,
       };
     });
@@ -564,45 +703,52 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const isContinuation = Boolean(body.isContinuation);
     const acknowledgeClosed = Boolean(body.acknowledgeClosed);
     const entries = (body.entries as Partial<GeneralEntry>[]) || [];
-    const detailedItems = (body.detailedItems as Partial<DetailedEntry>[]) || [];
 
     if (!pk) throw new StaticEngineError('شماره پکینگ لیست الزامی است / Packing List No. is required', 400);
     if (!entries.length) throw new StaticEngineError('حداقل یک نگله/آیتم باید ثبت شود', 400);
 
     const existingGen = db.general.filter((g) => normKey(g.packingListNo) === pk);
-    const existingDet = db.detailed.filter((d) => normKey(d.shipmentNo) === pk);
     if (db.packingMeta[pk]?.isClosed && !acknowledgeClosed) {
       throw new StaticEngineError('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 409, 'CLOSED_PACKING_WARNING');
     }
-    if ((existingGen.length > 0 || existingDet.length > 0) && !isContinuation) {
+    if (existingGen.length > 0 && !isContinuation) {
       throw new StaticEngineError('شماره پکینگ لیست تکراری است. آیا ادامه همان پکینگ لیست قبلی است؟', 409, 'DUPLICATE_PACKING_PROMPT');
     }
 
     const existingPackages = new Set(existingGen.map((g) => normKey(g.packageNo)).filter(Boolean));
-    const batchRowNos = new Set<string>();
+    const batchMapnaMinutes = new Set<string>();
     const preparedGeneral: GeneralEntry[] = [];
     const now = new Date().toISOString();
 
     for (const raw of entries) {
-      const rowNo = normalizeDigits(normKey(raw.rowNo)) || nextSuggestedRowNo(db, 'general');
-      if (isRowNoTaken(db, 'general', rowNo) || batchRowNos.has(rowNo)) {
-        throw new StaticEngineError(`شماره ردیف ${rowNo} تکراری است. ستون ردیف باید یکتا باشد.`, 409, 'DUPLICATE_ROW_NO');
-      }
-      batchRowNos.add(rowNo);
       const pkgNo = normKey(raw.packageNo);
       if (isContinuation && existingGen.length > 0 && (!pkgNo || existingPackages.has(pkgNo))) {
         throw new StaticEngineError(`برای ادامه پکینگ لیست ${pk}، باید شماره نگله جدید و متفاوت وارد کنید.`, 409, 'DUPLICATE_PACKAGE_ON_CONTINUATION');
       }
+
+      const cleanMapnaMinutes = normalizeDigits(normKey(raw.mapnaEntryMinutesNo));
+      if (cleanMapnaMinutes) {
+        const lowerKey = cleanMapnaMinutes.toLowerCase();
+        if (isMapnaMinutesTaken(db, cleanMapnaMinutes) || batchMapnaMinutes.has(lowerKey)) {
+          throw new StaticEngineError(`شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است.`, 409, 'DUPLICATE_MAPNA_MINUTES');
+        }
+        batchMapnaMinutes.add(lowerKey);
+      }
+
+      const cleanArrival = normKey(raw.arrivalDate);
+      const cleanReleaseNo = normKey(raw.releaseNo);
+      const cleanReleaseDate = cleanReleaseNo ? (normKey(raw.releaseDate) || cleanArrival) : cleanArrival;
+
       preparedGeneral.push({
         id: makeId(),
-        rowNo,
-        arrivalDate: normKey(raw.arrivalDate),
-        releaseNo: normKey(raw.releaseNo),
-        releaseDate: normKey(raw.releaseDate),
+        rowNo: '0',
+        arrivalDate: cleanArrival,
+        releaseNo: cleanReleaseNo,
+        releaseDate: cleanReleaseDate,
         supplier: normKey(raw.supplier),
         dispatchLocation: normKey(raw.dispatchLocation),
         employerEntryMinutesNo: normKey(raw.employerEntryMinutesNo),
-        mapnaEntryMinutesNo: normKey(raw.mapnaEntryMinutesNo),
+        mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
         itemDescription: normKey(raw.itemDescription),
@@ -628,73 +774,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       });
     }
 
-    const preparedDetailed: DetailedEntry[] = [];
-    if (detailedItems.length > 0) {
-      let autoCounter = Number(nextSuggestedRowNo(db, 'detailed'));
-      for (const d of detailedItems) {
-        while (isRowNoTaken(db, 'detailed', String(autoCounter))) autoCounter += 1;
-        const dRowNo = normalizeDigits(normKey(d.rowNo)) || String(autoCounter++);
-        preparedDetailed.push({
-          id: makeId(),
-          rowNo: dRowNo,
-          arrivalDate: normKey(d.arrivalDate || preparedGeneral[0].arrivalDate),
-          supplier: normKey(d.supplier || preparedGeneral[0].supplier),
-          origin: normKey(d.origin || preparedGeneral[0].dispatchLocation),
-          shipmentNo: pk,
-          packageNo: normKey(d.packageNo || preparedGeneral[0].packageNo),
-          itemNo: normKey(d.itemNo),
-          generalDescription: normKey(d.generalDescription || preparedGeneral[0].itemDescription),
-          description: normKey(d.description || preparedGeneral[0].itemDescription),
-          size: normKey(d.size),
-          itemCode: normKey(d.itemCode),
-          packingQty: d.packingQty ?? null,
-          actualQty: d.actualQty ?? null,
-          damagedQty: d.damagedQty ?? null,
-          mtoRef: normKey(d.mtoRef),
-          repNo: normKey(d.repNo),
-          repStatus: normKey(d.repStatus),
-          repDescription: normKey(d.repDescription),
-          countingUnit: normKey(d.countingUnit),
-          island: normKey(d.island || preparedGeneral[0].island),
-          system: normKey(d.system || preparedGeneral[0].system),
-          subSystem: normKey(d.subSystem || preparedGeneral[0].subSystem),
-          unit: normKey(d.unit || preparedGeneral[0].unit),
-          opiNo: normKey(d.opiNo || preparedGeneral[0].opiInvitationNo),
-          opiDate: normKey(d.opiDate || preparedGeneral[0].opiInvitationDate),
-          merNo: normKey(d.merNo),
-          merStatus: normKey(d.merStatus),
-          notes: normKey(d.notes),
-          materialBalanceNo: normKey(d.materialBalanceNo),
-          balanceStatus: normKey(d.balanceStatus),
-          storageLocation: normKey(d.storageLocation),
-          gcvReceiptNo: normKey(d.gcvReceiptNo),
-          receiver: normKey(d.receiver),
-          gcvDeliveredQty: d.gcvDeliveredQty ?? null,
-          mivContractorNo: normKey(d.mivContractorNo),
-          mivContractorDate: normKey(d.mivContractorDate),
-          mivContractorQty: d.mivContractorQty ?? null,
-          smrContractorNo: normKey(d.smrContractorNo),
-          smrContractorDate: normKey(d.smrContractorDate),
-          smrContractorQty: d.smrContractorQty ?? null,
-          smrContractorNote: normKey(d.smrContractorNote),
-          smrMapnaNo: normKey(d.smrMapnaNo),
-          smrMapnaDate: normKey(d.smrMapnaDate),
-          smrMapnaQty: d.smrMapnaQty ?? null,
-          smrMapnaNote: normKey(d.smrMapnaNote),
-          mivMapnaNo: normKey(d.mivMapnaNo),
-          mivMapnaDate: normKey(d.mivMapnaDate),
-          mivMapnaQty: d.mivMapnaQty ?? null,
-          stocktakeInfo: normKey(d.stocktakeInfo),
-          shortageBackfills: [],
-          createdAt: now,
-          updatedAt: now,
-          createdBy: u.username,
-        });
-      }
-    }
-
     db.general.unshift(...preparedGeneral);
-    if (preparedDetailed.length > 0) db.detailed.unshift(...preparedDetailed);
+    renumberScope(db, 'general');
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, pk, sanitizeUser(u));
     addAudit(
@@ -706,7 +787,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       `${isContinuation ? 'ادامه ثبت روی پکینگ لیست' : 'ثبت پکینگ لیست جدید'} ${pk} (${preparedGeneral.length} ردیف)`,
     );
     await saveDb(db);
-    return { createdGeneral: preparedGeneral, createdDetailedCount: preparedDetailed.length, transitUpdated } as T;
+    return { createdGeneral: preparedGeneral, createdDetailedCount: 0, transitUpdated } as T;
   }
 
   if (pathname.startsWith('/api/general/') && method === 'PATCH') {
@@ -718,15 +799,26 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (db.packingMeta[pk]?.isClosed && !body.acknowledgeClosed) {
       throw new StaticEngineError('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 409, 'CLOSED_PACKING_WARNING');
     }
-    if (body.rowNo !== undefined) {
-      const clean = normalizeDigits(normKey(String(body.rowNo)));
-      if (!clean || isRowNoTaken(db, 'general', clean, item.id)) {
-        throw new StaticEngineError('شماره ردیف باید یکتا و غیرخالی باشد', 409);
+    const { acknowledgeClosed: _ack, rowNo: _ignoredRow, ...patch } = body as Partial<GeneralEntry> & { acknowledgeClosed?: boolean };
+    if (patch.mapnaEntryMinutesNo !== undefined) {
+      const cleanMin = normalizeDigits(normKey(patch.mapnaEntryMinutesNo));
+      if (cleanMin && isMapnaMinutesTaken(db, cleanMin, item.id)) {
+        throw new StaticEngineError(`شماره صورتجلسه ورود مپنا «${cleanMin}» تکراری است.`, 409, 'DUPLICATE_MAPNA_MINUTES');
       }
-      item.rowNo = clean;
+      patch.mapnaEntryMinutesNo = cleanMin;
     }
-    const { acknowledgeClosed: _ack, ...patch } = body;
-    Object.assign(item, { ...patch, rowNo: item.rowNo, updatedAt: new Date().toISOString() });
+
+    const finalArrival = normKey(patch.arrivalDate ?? item.arrivalDate);
+    const finalReleaseNo = normKey(patch.releaseNo ?? item.releaseNo);
+    const finalReleaseDate = finalReleaseNo ? (normKey(patch.releaseDate ?? item.releaseDate) || finalArrival) : finalArrival;
+
+    Object.assign(item, {
+      ...patch,
+      releaseNo: finalReleaseNo,
+      releaseDate: finalReleaseDate,
+      rowNo: item.rowNo,
+      updatedAt: new Date().toISOString(),
+    });
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, item.packingListNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'UPDATE_GENERAL', 'general', `${item.packingListNo} (#${item.rowNo})`, `ویرایش ردیف جنرال ${item.rowNo}`);
@@ -739,10 +831,50 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const id = pathname.split('/').pop()!;
     const idx = db.general.findIndex((g) => g.id === id);
     if (idx === -1) throw new StaticEngineError('Record not found', 404);
+    const cascadeDetailed = query.get('cascadeDetailed') === 'true';
     const [removed] = db.general.splice(idx, 1);
-    addAudit(db, sanitizeUser(u), 'DELETE_GENERAL', 'general', `${removed.packingListNo} (#${removed.rowNo})`, `حذف ردیف جنرال ${removed.rowNo}`);
+    const now = new Date().toISOString();
+    const deletedBy = u.fullName || u.username;
+
+    db.trash.unshift({
+      id: makeId(),
+      scope: 'general',
+      deletedAt: now,
+      deletedBy,
+      targetLabel: `${removed.packingListNo || '-'} (${removed.packageNo || '-'})`,
+      data: removed,
+    });
+
+    let trashedDetailedCount = 0;
+    if (cascadeDetailed) {
+      const pk = normKey(removed.packingListNo);
+      const pkg = normKey(removed.packageNo);
+      const remaining: DetailedEntry[] = [];
+      for (const d of db.detailed) {
+        if (normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg)) {
+          trashedDetailedCount += 1;
+          db.trash.unshift({
+            id: makeId(),
+            scope: 'detailed',
+            deletedAt: now,
+            deletedBy,
+            targetLabel: `${d.shipmentNo} / ${d.packageNo || '-'} / #${d.itemNo || d.rowNo}`,
+            data: d,
+          });
+        } else {
+          remaining.push(d);
+        }
+      }
+      if (trashedDetailedCount > 0) {
+        db.detailed = remaining;
+        renumberScope(db, 'detailed');
+      }
+    }
+
+    renumberScope(db, 'general');
+    addAudit(db, sanitizeUser(u), 'DELETE_GENERAL', 'general', `${removed.packingListNo} (#${removed.rowNo})`, `انتقال ردیف جنرال ${removed.rowNo} به سطل بازیافت`);
     await saveDb(db);
-    return { ok: true } as T;
+    return { ok: true, trashedDetailedCount } as T;
   }
 
   // ---------------- DETAILED ----------------
@@ -779,7 +911,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         d.rowNo, d.shipmentNo, d.packageNo, d.itemNo, d.generalDescription, d.description,
         d.itemCode, d.mtoRef, d.supplier, d.origin, d.island, d.system, d.subSystem, d.unit,
         d.opiNo, d.merNo, d.repNo, d.materialBalanceNo, d.balanceStatus, d.gcvReceiptNo,
-        d.receiver, d.mivContractorNo, d.smrContractorNo, d.smrMapnaNo, d.mivMapnaNo, d.storageLocation,
+        d.receiver, d.mivContractorNo, d.smrContractorNo, d.smrMapnaNo, d.mivMapnaNo,
+        d.storageLocation, d.stocktakeStatus,
       ], q)) continue;
       const comp = computeDetailedEntry(d);
       if (shortageOnly && !comp.hasShortage) continue;
@@ -806,26 +939,80 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (db.packingMeta[pk]?.isClosed && !body.acknowledgeClosed) {
       throw new StaticEngineError('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 409, 'CLOSED_PACKING_WARNING');
     }
-    const rowNo = normalizeDigits(normKey(String(body.rowNo || ''))) || nextSuggestedRowNo(db, 'detailed');
-    if (isRowNoTaken(db, 'detailed', rowNo)) {
-      throw new StaticEngineError(`شماره ردیف ${rowNo} تکراری است. ستون ردیف باید یکتا باشد.`, 409, 'DUPLICATE_ROW_NO');
+
+    const pkgNo = normKey(String(body.packageNo || ''));
+    const itemNo = normalizeDigits(normKey(String(body.itemNo || ''))) || getNextSuggestedItemNo(db, pk, pkgNo);
+    if (isDetailedItemNoTaken(db, pk, pkgNo, itemNo)) {
+      throw new StaticEngineError(`شماره آیتم ${itemNo} برای پکینگ «${pk}» و نگله «${pkgNo || '-'}» تکراری است.`, 409, 'DUPLICATE_ITEM_NO');
     }
+
+    const shared = getGeneralSharedInfo(db, pk, pkgNo);
     const now = new Date().toISOString();
-    const { acknowledgeClosed: _ack, ...raw } = body;
+    const { acknowledgeClosed: _ack, rowNo: _ignoredRow, ...raw } = body;
+    const rawDet = raw as Partial<DetailedEntry>;
     const created: DetailedEntry = {
-      ...(raw as unknown as DetailedEntry),
       id: makeId(),
-      rowNo,
+      rowNo: '0',
+      arrivalDate: normKey(rawDet.arrivalDate) || shared?.arrivalDate || '',
+      supplier: normKey(rawDet.supplier) || shared?.supplier || '',
+      origin: normKey(rawDet.origin) || shared?.dispatchLocation || '',
       shipmentNo: pk,
+      packageNo: pkgNo,
+      itemNo,
+      generalDescription: normKey(rawDet.generalDescription) || shared?.itemDescription || '',
+      description: normKey(rawDet.description),
+      size: normKey(rawDet.size),
+      itemCode: normKey(rawDet.itemCode),
+      packingQty: rawDet.packingQty ?? null,
+      actualQty: rawDet.actualQty ?? null,
+      damagedQty: rawDet.damagedQty ?? null,
+      mtoRef: normKey(rawDet.mtoRef),
+      repNo: normKey(rawDet.repNo),
+      repStatus: normKey(rawDet.repStatus),
+      repDescription: normKey(rawDet.repDescription),
+      countingUnit: normKey(rawDet.countingUnit),
+      island: normKey(rawDet.island) || shared?.island || '',
+      system: normKey(rawDet.system) || shared?.system || '',
+      subSystem: normKey(rawDet.subSystem) || shared?.subSystem || '',
+      unit: normKey(rawDet.unit) || shared?.unit || '',
+      opiNo: normKey(rawDet.opiNo),
+      opiDate: normKey(rawDet.opiDate),
+      merNo: normKey(rawDet.merNo),
+      merStatus: normKey(rawDet.merStatus),
+      notes: normKey(rawDet.notes),
+      materialBalanceNo: normKey(rawDet.materialBalanceNo),
+      balanceStatus: normKey(rawDet.balanceStatus),
+      storageLocation: normKey(rawDet.storageLocation),
+      gcvReceiptNo: normKey(rawDet.gcvReceiptNo),
+      receiver: normKey(rawDet.receiver),
+      gcvDeliveredQty: rawDet.gcvDeliveredQty ?? null,
+      mivContractorNo: normKey(rawDet.mivContractorNo),
+      mivContractorDate: normKey(rawDet.mivContractorDate),
+      mivContractorQty: rawDet.mivContractorQty ?? null,
+      smrContractorNo: normKey(rawDet.smrContractorNo),
+      smrContractorDate: normKey(rawDet.smrContractorDate),
+      smrContractorQty: rawDet.smrContractorQty ?? null,
+      smrContractorNote: normKey(rawDet.smrContractorNote),
+      smrMapnaNo: normKey(rawDet.smrMapnaNo),
+      smrMapnaDate: normKey(rawDet.smrMapnaDate),
+      smrMapnaQty: rawDet.smrMapnaQty ?? null,
+      smrMapnaNote: normKey(rawDet.smrMapnaNote),
+      mivMapnaNo: normKey(rawDet.mivMapnaNo),
+      mivMapnaDate: normKey(rawDet.mivMapnaDate),
+      mivMapnaQty: rawDet.mivMapnaQty ?? null,
+      stocktakeInfo: normKey(rawDet.stocktakeInfo),
+      stocktakeStatus: normKey(rawDet.stocktakeStatus),
+      stocktakeDate: normKey(rawDet.stocktakeDate),
       shortageBackfills: [],
       createdAt: now,
       updatedAt: now,
       createdBy: u.username,
     };
     db.detailed.unshift(created);
+    renumberScope(db, 'detailed');
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, pk, sanitizeUser(u));
-    addAudit(db, sanitizeUser(u), 'CREATE_DETAILED', 'detailed', `${pk} (#${rowNo})`, `ثبت آیتم جزئیات ردیف ${rowNo}`);
+    addAudit(db, sanitizeUser(u), 'CREATE_DETAILED', 'detailed', `${pk} / ${pkgNo || '-'} (#${itemNo})`, `ثبت آیتم جزئیات ردیف ${created.rowNo}`);
     await saveDb(db);
     return { item: computeDetailedEntry(created), transitUpdated } as T;
   }
@@ -865,15 +1052,21 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (db.packingMeta[pk]?.isClosed && !body.acknowledgeClosed) {
       throw new StaticEngineError('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 409, 'CLOSED_PACKING_WARNING');
     }
-    if (body.rowNo !== undefined) {
-      const clean = normalizeDigits(normKey(String(body.rowNo)));
-      if (!clean || isRowNoTaken(db, 'detailed', clean, item.id)) {
-        throw new StaticEngineError('شماره ردیف باید یکتا و غیرخالی باشد', 409);
-      }
-      item.rowNo = clean;
+    const { acknowledgeClosed: _ack, rowNo: _ignoredRow, ...patch } = body as Partial<DetailedEntry> & { acknowledgeClosed?: boolean };
+    const nextPkg = normKey(patch.packageNo ?? item.packageNo);
+    const nextItemNo = normalizeDigits(normKey(patch.itemNo ?? item.itemNo));
+    if (nextItemNo && isDetailedItemNoTaken(db, pk, nextPkg, nextItemNo, item.id)) {
+      throw new StaticEngineError(`شماره آیتم ${nextItemNo} برای پکینگ «${pk}» و نگله «${nextPkg || '-'}» تکراری است.`, 409, 'DUPLICATE_ITEM_NO');
     }
-    const { acknowledgeClosed: _ack, ...patch } = body;
-    Object.assign(item, { ...patch, rowNo: item.rowNo, updatedAt: new Date().toISOString() });
+
+    Object.assign(item, {
+      ...patch,
+      shipmentNo: pk,
+      packageNo: nextPkg,
+      itemNo: nextItemNo,
+      rowNo: item.rowNo,
+      updatedAt: new Date().toISOString(),
+    });
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, item.shipmentNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'UPDATE_DETAILED', 'detailed', `${item.shipmentNo} (#${item.rowNo})`, `ویرایش آیتم جزئیات ${item.rowNo}`);
@@ -887,7 +1080,16 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const idx = db.detailed.findIndex((d) => d.id === id);
     if (idx === -1) throw new StaticEngineError('Record not found', 404);
     const [removed] = db.detailed.splice(idx, 1);
-    addAudit(db, sanitizeUser(u), 'DELETE_DETAILED', 'detailed', `${removed.shipmentNo} (#${removed.rowNo})`, `حذف ردیف جزئیات ${removed.rowNo}`);
+    db.trash.unshift({
+      id: makeId(),
+      scope: 'detailed',
+      deletedAt: new Date().toISOString(),
+      deletedBy: u.fullName || u.username,
+      targetLabel: `${removed.shipmentNo} / ${removed.packageNo || '-'} / #${removed.itemNo || removed.rowNo}`,
+      data: removed,
+    });
+    renumberScope(db, 'detailed');
+    addAudit(db, sanitizeUser(u), 'DELETE_DETAILED', 'detailed', `${removed.shipmentNo} (#${removed.rowNo})`, `انتقال ردیف جزئیات ${removed.rowNo} به سطل بازیافت`);
     await saveDb(db);
     return { ok: true } as T;
   }
@@ -930,15 +1132,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
 
   if (pathname === '/api/transit' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
-    const rowNo = normalizeDigits(normKey(String(body.rowNo || ''))) || nextSuggestedRowNo(db, 'transit');
     const pk = normKey(String(body.packingListNo || ''));
     const alreadyInWarehouse =
       pk && (db.general.some((g) => normKey(g.packingListNo) === pk) || db.detailed.some((d) => normKey(d.shipmentNo) === pk));
     const now = new Date().toISOString();
+    const { rowNo: _ignoredRow, ...raw } = body;
     const created: TransitEntry = {
-      ...(body as unknown as TransitEntry),
+      ...(raw as unknown as TransitEntry),
       id: makeId(),
-      rowNo,
+      rowNo: '0',
       packingListNo: pk,
       overallStatus: alreadyInWarehouse ? 'رسیده' : normKey(String(body.overallStatus || '')) || 'در دست ارسال',
       linkedGeneralPackingNo: alreadyInWarehouse ? pk : undefined,
@@ -947,8 +1149,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       createdBy: u.username,
     };
     db.transit.unshift(created);
+    renumberScope(db, 'transit');
     rebuildCategories(db);
-    addAudit(db, sanitizeUser(u), 'CREATE_TRANSIT', 'transit', pk || rowNo, `ثبت محموله در راه ${pk || rowNo}`);
+    addAudit(db, sanitizeUser(u), 'CREATE_TRANSIT', 'transit', pk || created.rowNo, `ثبت محموله در راه ${pk || created.rowNo}`);
     await saveDb(db);
     return { item: created } as T;
   }
@@ -958,7 +1161,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const id = pathname.split('/').pop()!;
     const item = db.transit.find((t) => t.id === id);
     if (!item) throw new StaticEngineError('Record not found', 404);
-    Object.assign(item, { ...body, updatedAt: new Date().toISOString() });
+    const { rowNo: _ignoredRow, ...patch } = body;
+    Object.assign(item, { ...patch, rowNo: item.rowNo, updatedAt: new Date().toISOString() });
     rebuildCategories(db);
     addAudit(db, sanitizeUser(u), 'UPDATE_TRANSIT', 'transit', item.packingListNo || item.rowNo, `ویرایش محموله در راه`);
     await saveDb(db);
@@ -971,9 +1175,381 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const idx = db.transit.findIndex((t) => t.id === id);
     if (idx === -1) throw new StaticEngineError('Record not found', 404);
     const [removed] = db.transit.splice(idx, 1);
-    addAudit(db, sanitizeUser(u), 'DELETE_TRANSIT', 'transit', removed.packingListNo || removed.rowNo, `حذف ردیف در راه`);
+    db.trash.unshift({
+      id: makeId(),
+      scope: 'transit',
+      deletedAt: new Date().toISOString(),
+      deletedBy: u.fullName || u.username,
+      targetLabel: `${removed.packingListNo || '-'} (#${removed.rowNo})`,
+      data: removed,
+    });
+    renumberScope(db, 'transit');
+    addAudit(db, sanitizeUser(u), 'DELETE_TRANSIT', 'transit', removed.packingListNo || removed.rowNo, `انتقال ردیف در راه به سطل بازیافت`);
     await saveDb(db);
     return { ok: true } as T;
+  }
+
+  // ---------------- RECYCLE BIN / TRASH ----------------
+  if (pathname === '/api/trash' && method === 'GET') {
+    requireAuth();
+    const scope = query.get('scope') || '';
+    const q = query.get('q') || '';
+    const items = db.trash.filter((item) => {
+      if (scope && item.scope !== scope) return false;
+      return matchSearch([item.targetLabel, item.deletedBy, item.scope], q);
+    });
+    return { items } as T;
+  }
+
+  if (pathname.startsWith('/api/trash/') && pathname.endsWith('/restore') && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.slice('/api/trash/'.length, -'/restore'.length);
+    const idx = db.trash.findIndex((t) => t.id === id);
+    if (idx === -1) throw new StaticEngineError('Trash item not found', 404);
+    const entry = db.trash[idx];
+    if (entry.scope === 'general') {
+      const g = entry.data as GeneralEntry;
+      if (g.mapnaEntryMinutesNo && isMapnaMinutesTaken(db, g.mapnaEntryMinutesNo)) {
+        throw new StaticEngineError(`شماره صورتجلسه ورود مپنا «${g.mapnaEntryMinutesNo}» در حال حاضر فعال است.`, 409);
+      }
+      db.trash.splice(idx, 1);
+      db.general.unshift({ ...g, updatedAt: new Date().toISOString() });
+      renumberScope(db, 'general');
+    } else if (entry.scope === 'detailed') {
+      const d = entry.data as DetailedEntry;
+      if (d.itemNo && isDetailedItemNoTaken(db, d.shipmentNo, d.packageNo, d.itemNo)) {
+        throw new StaticEngineError(`شماره آیتم ${d.itemNo} در محموله ${d.shipmentNo} / نگله ${d.packageNo || '-'} قبلاً وجود دارد.`, 409);
+      }
+      db.trash.splice(idx, 1);
+      db.detailed.unshift({ ...d, updatedAt: new Date().toISOString() });
+      renumberScope(db, 'detailed');
+    } else {
+      const t = entry.data as TransitEntry;
+      db.trash.splice(idx, 1);
+      db.transit.unshift({ ...t, updatedAt: new Date().toISOString() });
+      renumberScope(db, 'transit');
+    }
+    rebuildCategories(db);
+    addAudit(db, sanitizeUser(u), 'RESTORE_TRASH', 'trash', entry.targetLabel, `بازیابی ردیف ${entry.scope} (${entry.targetLabel})`);
+    await saveDb(db);
+    return { ok: true } as T;
+  }
+
+  if (pathname.startsWith('/api/trash/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.trash.findIndex((t) => t.id === id);
+    if (idx === -1) throw new StaticEngineError('Trash item not found', 404);
+    const [purged] = db.trash.splice(idx, 1);
+    addAudit(db, sanitizeUser(u), 'PURGE_TRASH', 'trash', purged.targetLabel, `حذف دائمی ${purged.targetLabel}`);
+    await saveDb(db);
+    return { ok: true } as T;
+  }
+
+  // ---------------- OPI ----------------
+  if (pathname === '/api/opi' && method === 'GET') {
+    requireAuth();
+    const packingsSet = new Set<string>();
+    for (const g of db.general) {
+      const pk = normKey(g.packingListNo);
+      if (pk) packingsSet.add(pk);
+    }
+    for (const d of db.detailed) {
+      const pk = normKey(d.shipmentNo);
+      if (pk) packingsSet.add(pk);
+    }
+    return {
+      invitations: db.opiInvitations,
+      detailedItems: db.detailed.map(computeDetailedEntry),
+      packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
+    } as T;
+  }
+
+  if (pathname === '/api/opi' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const cleanNo = normKey(String(body.invitationNo || ''));
+    const cleanDate = normKey(String(body.date || ''));
+    const cleanPackings = Array.from(new Set(((body.packingNos as string[]) || []).map(normKey).filter(Boolean)));
+    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+      throw new StaticEngineError('شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است', 400);
+    }
+    const record: OpiInvitationRecord = {
+      id: makeId(),
+      invitationNo: cleanNo,
+      date: cleanDate,
+      time: normKey(String(body.time || '')) || '09:00',
+      packingNos: cleanPackings,
+      location: normKey(String(body.location || '')),
+      notes: normKey(String(body.notes || '')),
+      status: 'issued',
+      createdAt: new Date().toISOString(),
+      createdBy: u.fullName || u.username,
+    };
+    db.opiInvitations.unshift(record);
+    const now = new Date().toISOString();
+    for (const g of db.general) {
+      if (cleanPackings.includes(normKey(g.packingListNo))) {
+        g.opiInvitationNo = cleanNo;
+        g.opiInvitationDate = cleanDate;
+        g.updatedAt = now;
+      }
+    }
+    for (const d of db.detailed) {
+      if (cleanPackings.includes(normKey(d.shipmentNo))) {
+        d.opiNo = cleanNo;
+        d.opiDate = cleanDate;
+        d.updatedAt = now;
+      }
+    }
+    addAudit(db, sanitizeUser(u), 'ISSUE_OPI_INVITATION', 'opi', cleanNo, `صدور دعوتنامه OPI شماره ${cleanNo}`);
+    await saveDb(db);
+    return { invitation: record } as T;
+  }
+
+  if (pathname === '/api/opi/results' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const results = (body.results as Array<{
+      detailedId: string;
+      actualQty: number | null;
+      damagedQty?: number | null;
+      repNo?: string;
+      repStatus?: string;
+      repDescription?: string;
+      notes?: string;
+    }>) || [];
+    if (!results.length) throw new StaticEngineError('حداقل یک قلم انتخاب کنید', 400);
+    const now = new Date().toISOString();
+    const cleanOpiNo = normKey(String(body.opiNo || ''));
+    const cleanOpiDate = normKey(String(body.opiDate || ''));
+    let updatedCount = 0;
+
+    for (const r of results) {
+      const d = db.detailed.find((x) => x.id === r.detailedId);
+      if (!d) continue;
+      if (r.actualQty !== undefined && r.actualQty !== null && Number.isFinite(r.actualQty)) {
+        d.actualQty = r.actualQty;
+      }
+      if (r.damagedQty !== undefined && r.damagedQty !== null && Number.isFinite(r.damagedQty)) {
+        d.damagedQty = r.damagedQty;
+      }
+      if (cleanOpiNo) d.opiNo = cleanOpiNo;
+      if (cleanOpiDate) d.opiDate = cleanOpiDate;
+      if (r.repNo !== undefined) d.repNo = normKey(r.repNo);
+      if (r.repStatus !== undefined) d.repStatus = normKey(r.repStatus);
+      if (r.repDescription !== undefined) d.repDescription = normKey(r.repDescription);
+      if (r.notes !== undefined && normKey(r.notes)) d.notes = normKey(r.notes);
+      d.updatedAt = now;
+      updatedCount += 1;
+    }
+
+    if (body.invitationId) {
+      const inv = db.opiInvitations.find((x) => x.id === String(body.invitationId));
+      if (inv) inv.status = 'completed';
+    }
+    addAudit(db, sanitizeUser(u), 'RECORD_OPI_RESULTS', 'opi', cleanOpiNo || 'OPI', `ثبت نتایج OPI برای ${updatedCount} قلم`);
+    await saveDb(db);
+    return { ok: true, updatedCount } as T;
+  }
+
+  // ---------------- GCV ----------------
+  if (pathname === '/api/gcv' && method === 'GET') {
+    requireAuth();
+    return {
+      documents: db.gcvDocuments,
+      detailedItems: db.detailed.map(computeDetailedEntry),
+    } as T;
+  }
+
+  if (pathname === '/api/gcv' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const cleanNo = normKey(String(body.receiptNo || ''));
+    const cleanReceiver = normKey(String(body.receiver || ''));
+    const items = (body.items as Array<{ detailedId: string; qty: number }>) || [];
+    if (!cleanNo || !cleanReceiver || !items.length) {
+      throw new StaticEngineError('شماره رسید GCV، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است', 400);
+    }
+
+    const lineItems: DocumentLineItem[] = [];
+    for (const reqItem of items) {
+      const qty = Number(reqItem.qty);
+      if (!Number.isFinite(qty) || qty <= 0) throw new StaticEngineError('تعداد تحویلی باید بزرگتر از صفر باشد', 400);
+      const d = db.detailed.find((x) => x.id === reqItem.detailedId);
+      if (!d) throw new StaticEngineError('آیتم یافت نشد', 404);
+      const comp = computeDetailedEntry(d);
+      if (comp.opiPending) {
+        throw new StaticEngineError(`برای آیتم ${d.itemNo || d.rowNo} هنوز OPI ثبت نشده است.`, 400);
+      }
+      if (qty > comp.mapnaInventory) {
+        throw new StaticEngineError(`مقدار تحویلی (${qty}) بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`, 400);
+      }
+      lineItems.push({
+        detailedId: d.id,
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        itemNo: d.itemNo,
+        description: d.description || d.generalDescription,
+        qty,
+      });
+    }
+
+    const now = new Date().toISOString();
+    for (const line of lineItems) {
+      const d = db.detailed.find((x) => x.id === line.detailedId)!;
+      d.gcvReceiptNo = appendUniqueRef(d.gcvReceiptNo, cleanNo);
+      d.receiver = cleanReceiver;
+      d.gcvDeliveredQty = roundQty(toNum(d.gcvDeliveredQty) + line.qty);
+      d.updatedAt = now;
+    }
+
+    const doc: GcvDocumentRecord = {
+      id: makeId(),
+      receiptNo: cleanNo,
+      date: normKey(String(body.date || '')),
+      receiver: cleanReceiver,
+      notes: normKey(String(body.notes || '')),
+      items: lineItems,
+      createdAt: now,
+      createdBy: u.fullName || u.username,
+    };
+    db.gcvDocuments.unshift(doc);
+    addAudit(db, sanitizeUser(u), 'CREATE_GCV_RECEIPT', 'gcv', cleanNo, `ثبت رسید GCV شماره ${cleanNo}`);
+    await saveDb(db);
+    return { document: doc } as T;
+  }
+
+  // ---------------- MIV & SMR ----------------
+  if (pathname === '/api/miv' && method === 'GET') {
+    requireAuth();
+    return {
+      documents: db.mivDocuments,
+      detailedItems: db.detailed.map(computeDetailedEntry),
+    } as T;
+  }
+
+  if (pathname === '/api/miv' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const docType = body.docType as MivDocType;
+    const validTypes: MivDocType[] = ['miv_contractor', 'smr_contractor', 'smr_mapna', 'miv_mapna'];
+    if (!validTypes.includes(docType)) throw new StaticEngineError('نوع فرم معتبر نیست', 400);
+    const cleanNo = normKey(String(body.docNo || ''));
+    const cleanDate = normKey(String(body.date || ''));
+    const items = (body.items as Array<{ detailedId: string; qty: number }>) || [];
+    if (!cleanNo || !items.length) throw new StaticEngineError('شماره سند و حداقل یک قلم کالا الزامی است', 400);
+
+    const lineItems: DocumentLineItem[] = [];
+    for (const reqItem of items) {
+      const qty = Number(reqItem.qty);
+      if (!Number.isFinite(qty) || qty <= 0) throw new StaticEngineError('تعداد باید بزرگتر از صفر باشد', 400);
+      const d = db.detailed.find((x) => x.id === reqItem.detailedId);
+      if (!d) throw new StaticEngineError('آیتم یافت نشد', 404);
+      const comp = computeDetailedEntry(d);
+      if ((docType === 'miv_contractor' || docType === 'smr_mapna') && qty > comp.contractorInventory) {
+        throw new StaticEngineError(`تعداد (${qty}) از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`, 400);
+      }
+      if (docType === 'miv_mapna' && qty > comp.mapnaInventory) {
+        throw new StaticEngineError(`تعداد (${qty}) از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`, 400);
+      }
+      lineItems.push({
+        detailedId: d.id,
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        itemNo: d.itemNo,
+        description: d.description || d.generalDescription,
+        qty,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const cleanNotes = normKey(String(body.notes || ''));
+    for (const line of lineItems) {
+      const d = db.detailed.find((x) => x.id === line.detailedId)!;
+      if (docType === 'miv_contractor') {
+        d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
+        d.mivContractorDate = cleanDate || d.mivContractorDate;
+        d.mivContractorQty = roundQty(toNum(d.mivContractorQty) + line.qty);
+      } else if (docType === 'smr_contractor') {
+        d.smrContractorNo = appendUniqueRef(d.smrContractorNo, cleanNo);
+        d.smrContractorDate = cleanDate || d.smrContractorDate;
+        d.smrContractorQty = roundQty(toNum(d.smrContractorQty) + line.qty);
+        if (cleanNotes) d.smrContractorNote = cleanNotes;
+      } else if (docType === 'smr_mapna') {
+        d.smrMapnaNo = appendUniqueRef(d.smrMapnaNo, cleanNo);
+        d.smrMapnaDate = cleanDate || d.smrMapnaDate;
+        d.smrMapnaQty = roundQty(toNum(d.smrMapnaQty) + line.qty);
+        if (cleanNotes) d.smrMapnaNote = cleanNotes;
+      } else if (docType === 'miv_mapna') {
+        d.mivMapnaNo = appendUniqueRef(d.mivMapnaNo, cleanNo);
+        d.mivMapnaDate = cleanDate || d.mivMapnaDate;
+        d.mivMapnaQty = roundQty(toNum(d.mivMapnaQty) + line.qty);
+      }
+      d.updatedAt = now;
+    }
+
+    const doc: MivDocumentRecord = {
+      id: makeId(),
+      docType,
+      docNo: cleanNo,
+      date: cleanDate,
+      party: normKey(String(body.party || '')),
+      notes: cleanNotes,
+      items: lineItems,
+      createdAt: now,
+      createdBy: u.fullName || u.username,
+    };
+    db.mivDocuments.unshift(doc);
+    addAudit(db, sanitizeUser(u), `CREATE_${docType.toUpperCase()}`, 'miv', cleanNo, `ثبت فرم ${docType} شماره ${cleanNo}`);
+    await saveDb(db);
+    return { document: doc } as T;
+  }
+
+  // ---------------- MATERIAL BALANCE ----------------
+  if (pathname === '/api/balance/assign' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const detailedIds = (body.detailedIds as string[]) || [];
+    const cleanNo = normKey(String(body.materialBalanceNo || ''));
+    const cleanStatus = normKey(String(body.balanceStatus || ''));
+    if (!detailedIds.length || (!cleanNo && !cleanStatus)) {
+      throw new StaticEngineError('انتخاب اقلام و شماره یا وضعیت بالانس الزامی است', 400);
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    for (const id of detailedIds) {
+      const d = db.detailed.find((x) => x.id === id);
+      if (!d) continue;
+      if (cleanNo) d.materialBalanceNo = cleanNo;
+      if (cleanStatus) d.balanceStatus = cleanStatus;
+      d.updatedAt = now;
+      updatedCount += 1;
+    }
+    addAudit(db, sanitizeUser(u), 'ASSIGN_MATERIAL_BALANCE', 'balance', cleanNo || cleanStatus, `ثبت بالانس متریال برای ${updatedCount} ردیف`);
+    await saveDb(db);
+    return { ok: true, updatedCount } as T;
+  }
+
+  // ---------------- STOCKTAKE ----------------
+  if (pathname === '/api/stocktake/assign' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const detailedIds = (body.detailedIds as string[]) || [];
+    const cleanStatus = normKey(String(body.stocktakeStatus || ''));
+    const cleanDate = normKey(String(body.stocktakeDate || ''));
+    const cleanInfo = normKey(String(body.stocktakeInfo || ''));
+    if (!detailedIds.length || !cleanStatus) {
+      throw new StaticEngineError('انتخاب اقلام و وضعیت انبارگردانی الزامی است', 400);
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    for (const id of detailedIds) {
+      const d = db.detailed.find((x) => x.id === id);
+      if (!d) continue;
+      d.stocktakeStatus = cleanStatus;
+      if (cleanDate) d.stocktakeDate = cleanDate;
+      d.stocktakeInfo = cleanInfo || (cleanDate ? `${cleanStatus} (${cleanDate})` : cleanStatus);
+      d.updatedAt = now;
+      updatedCount += 1;
+    }
+    addAudit(db, sanitizeUser(u), 'ASSIGN_STOCKTAKE', 'stocktake', cleanStatus, `ثبت وضعیت انبارگردانی «${cleanStatus}» برای ${updatedCount} ردیف`);
+    await saveDb(db);
+    return { ok: true, updatedCount } as T;
   }
 
   // ---------------- SEARCH ----------------
@@ -989,8 +1565,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     ], q)).slice(0, limit);
 
     const detailed = db.detailed.filter((d) => matchSearch([
-      d.rowNo, d.shipmentNo, d.packageNo, d.generalDescription, d.description, d.itemCode, d.mtoRef,
-      d.supplier, d.gcvReceiptNo, d.mivContractorNo, d.smrContractorNo, d.materialBalanceNo, d.balanceStatus, d.storageLocation,
+      d.rowNo, d.shipmentNo, d.packageNo, d.itemNo, d.generalDescription, d.description, d.itemCode, d.mtoRef,
+      d.supplier, d.gcvReceiptNo, d.mivContractorNo, d.smrContractorNo, d.materialBalanceNo, d.balanceStatus, d.storageLocation, d.stocktakeStatus,
     ], q)).slice(0, limit).map(computeDetailedEntry);
 
     const transit = db.transit.filter((t) => matchSearch([
@@ -1206,64 +1782,42 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const matrix = parseCsvMatrix(csvText);
     const targetScope = (body.scope as ImportScope | undefined) || detectCsvScope(matrix) || 'general';
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
-    const policy = (body.duplicateRowPolicy as 'auto_reassign' | 'skip') || 'auto_reassign';
 
     let imported = 0;
-    let skipped = 0;
+    const skipped = 0;
     let transitAutoArrived = 0;
     const touchedPackings = new Set<string>();
 
     if (targetScope === 'general') {
       const parsed = parseGeneralCsv(matrix, cal, u.username);
-      let nextAuto = Number(nextSuggestedRowNo(db, 'general'));
-      const seen = new Set(db.general.map((g) => normKey(g.rowNo)).filter(Boolean));
       for (const r of parsed.rows) {
-        let rowNo = r.rowNo;
-        if (!rowNo || seen.has(rowNo)) {
-          if (policy === 'skip') { skipped += 1; continue; }
-          while (seen.has(String(nextAuto))) nextAuto += 1;
-          rowNo = String(nextAuto++);
-        }
-        seen.add(rowNo);
         if (r.packingListNo) touchedPackings.add(r.packingListNo);
-        db.general.push({ ...r, rowNo, id: makeId() });
+        db.general.push({ ...r, id: makeId() });
         imported += 1;
       }
+      renumberScope(db, 'general');
     } else if (targetScope === 'detailed') {
       const parsed = parseDetailedCsv(matrix, cal, u.username);
-      let nextAuto = Number(nextSuggestedRowNo(db, 'detailed'));
-      const seen = new Set(db.detailed.map((d) => normKey(d.rowNo)).filter(Boolean));
       for (const r of parsed.rows) {
-        let rowNo = r.rowNo;
-        if (!rowNo || seen.has(rowNo)) {
-          if (policy === 'skip') { skipped += 1; continue; }
-          while (seen.has(String(nextAuto))) nextAuto += 1;
-          rowNo = String(nextAuto++);
-        }
-        seen.add(rowNo);
         if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
-        db.detailed.push({ ...r, rowNo, id: makeId() });
+        db.detailed.push({ ...r, id: makeId() });
         imported += 1;
       }
+      renumberScope(db, 'detailed');
     } else {
       const parsed = parseTransitCsv(matrix, cal, u.username);
-      let nextAuto = Number(nextSuggestedRowNo(db, 'transit'));
-      const seen = new Set(db.transit.map((t) => normKey(t.rowNo)).filter(Boolean));
       for (const r of parsed.rows) {
-        while (seen.has(String(nextAuto))) nextAuto += 1;
-        const rowNo = String(nextAuto++);
-        seen.add(rowNo);
         const pk = normKey(r.packingListNo);
         const arrived = pk && (db.general.some((g) => normKey(g.packingListNo) === pk) || db.detailed.some((d) => normKey(d.shipmentNo) === pk));
         db.transit.push({
           ...r,
-          rowNo,
           id: makeId(),
           overallStatus: arrived ? 'رسیده' : r.overallStatus,
           linkedGeneralPackingNo: arrived ? pk : undefined,
         });
         imported += 1;
       }
+      renumberScope(db, 'transit');
     }
 
     rebuildCategories(db);
@@ -1313,6 +1867,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       packingMeta: db.packingMeta,
       categories: db.categories,
       auditLogs: db.auditLogs,
+      trash: db.trash,
+      opiInvitations: db.opiInvitations,
+      gcvDocuments: db.gcvDocuments,
+      mivDocuments: db.mivDocuments,
     } as DatabaseSnapshot as T;
   }
 
@@ -1325,6 +1883,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.packingMeta = snap.packingMeta || {};
     db.categories = { ...createEmptyCategories(), ...(snap.categories || {}) };
     if (Array.isArray(snap.auditLogs)) db.auditLogs = snap.auditLogs;
+    db.trash = Array.isArray(snap.trash) ? snap.trash : [];
+    db.opiInvitations = Array.isArray(snap.opiInvitations) ? snap.opiInvitations : [];
+    db.gcvDocuments = Array.isArray(snap.gcvDocuments) ? snap.gcvDocuments : [];
+    db.mivDocuments = Array.isArray(snap.mivDocuments) ? snap.mivDocuments : [];
     rebuildCategories(db);
     addAudit(db, sanitizeUser(u), 'RESTORE_SNAPSHOT', 'backup', 'database', `بازیابی نسخه پشتیبان در مرورگر`);
     await saveDb(db);

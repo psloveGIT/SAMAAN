@@ -31,6 +31,8 @@ import { normKey, store } from './src/server/store.ts';
 import {
   computeDetailedEntry,
   computeSelectionFormulaSummary,
+  roundQty,
+  toNum,
 } from './src/shared/formulas.ts';
 import { getMonthKeyFromIso, normalizeDigits } from './src/shared/jalali.ts';
 import type {
@@ -39,9 +41,15 @@ import type {
   DatabaseSnapshot,
   DetailedComputed,
   DetailedEntry,
+  DocumentLineItem,
+  GcvDocumentRecord,
   GeneralEntry,
+  MivDocType,
+  MivDocumentRecord,
+  OpiInvitationRecord,
   ShortageBackfillRecord,
   TransitEntry,
+  TrashRecord,
   UserPreferences,
   UserRole,
 } from './src/shared/types.ts';
@@ -67,6 +75,16 @@ function inDateRange(isoDate: string, fromDate: string, toDate: string): boolean
   if (fromDate && isoDate < fromDate) return false;
   if (toDate && isoDate > toDate) return false;
   return true;
+}
+
+function appendUniqueRef(existing: string, nextRef: string): string {
+  const cleanExisting = normKey(existing);
+  const cleanNext = normKey(nextRef);
+  if (!cleanNext) return cleanExisting;
+  if (!cleanExisting) return cleanNext;
+  const parts = cleanExisting.split(',').map((s) => s.trim());
+  if (parts.includes(cleanNext)) return cleanExisting;
+  return `${cleanExisting}, ${cleanNext}`;
 }
 
 async function startServer() {
@@ -254,24 +272,27 @@ async function startServer() {
     res.json({ user: sanitizeUser(target) });
   });
 
-  // ---------------- PACKING CHECK & CLOSURE ----------------
+  // ---------------- PACKING CHECK, LOOKUP & CLOSURE ----------------
   app.get('/api/packing/check', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
     const packingNo = normKey(String(req.query.packingNo || ''));
     const packageNo = normKey(String(req.query.packageNo || ''));
-    const rowNo = normalizeDigits(normKey(String(req.query.rowNo || '')));
+    const itemNo = normalizeDigits(normKey(String(req.query.itemNo || '')));
+    const mapnaMinutesNo = normalizeDigits(normKey(String(req.query.mapnaMinutesNo || '')));
     const scope = (String(req.query.scope || 'general') as 'general' | 'detailed' | 'transit');
     const excludeId = req.query.excludeId ? String(req.query.excludeId) : undefined;
 
     const genMatches = packingNo ? store.generalByPacking.get(packingNo) || [] : [];
     const detMatches = packingNo ? store.detailedByPacking.get(packingNo) || [] : [];
     const transitMatches = packingNo ? store.transitByPacking.get(packingNo) || [] : [];
+    const generalPackages = Array.from(new Set(genMatches.map((g) => normKey(g.packageNo)).filter(Boolean)));
     const existingPackages = Array.from(
       new Set([
-        ...genMatches.map((g) => normKey(g.packageNo)).filter(Boolean),
+        ...generalPackages,
         ...detMatches.map((d) => normKey(d.packageNo)).filter(Boolean),
       ]),
     );
     const meta = packingNo ? store.db.packingMeta[packingNo] : undefined;
+    const linkedGeneral = packingNo ? store.getGeneralSharedInfo(packingNo, packageNo) : null;
 
     res.json({
       packingNo,
@@ -280,13 +301,32 @@ async function startServer() {
       existsInTransit: transitMatches.length > 0,
       generalCount: genMatches.length,
       detailedCount: detMatches.length,
+      generalPackages,
       existingPackages,
-      packageExistsUnderPacking: packageNo ? existingPackages.includes(packageNo) : false,
+      packageExistsUnderPacking: packageNo ? generalPackages.includes(packageNo) : false,
       isClosed: Boolean(meta?.isClosed),
       closedAt: meta?.closedAt || null,
       closedBy: meta?.closedBy || null,
-      rowNoTaken: rowNo ? store.isRowNoTaken(scope, rowNo, excludeId) : false,
+      mapnaMinutesTaken: mapnaMinutesNo ? store.isMapnaMinutesTaken(mapnaMinutesNo, excludeId) : false,
+      itemNoTaken: packingNo && itemNo ? store.isDetailedItemNoTaken(packingNo, packageNo, itemNo, excludeId) : false,
+      nextSuggestedItemNo: packingNo ? store.getNextSuggestedItemNo(packingNo, packageNo) : '1',
+      linkedGeneral,
+      lastDetailedDefaults: store.getLastDetailedDefaults(),
+      rowNoTaken: false,
       nextSuggestedRowNo: store.nextSuggestedRowNo(scope),
+    });
+  });
+
+  app.get('/api/general/lookup', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
+    const packingNo = normKey(String(req.query.packingNo || ''));
+    const packageNo = normKey(String(req.query.packageNo || ''));
+    const packings = Array.from(store.generalByPacking.keys()).sort((a, b) => a.localeCompare(b, 'fa'));
+    const shared = packingNo ? store.getGeneralSharedInfo(packingNo, packageNo) : null;
+    res.json({
+      packings,
+      packagesForPacking: shared?.packagesForPacking || [],
+      shared,
+      lastDetailedDefaults: store.getLastDetailedDefaults(),
     });
   });
 
@@ -379,15 +419,16 @@ async function startServer() {
     const start = (page - 1) * pageSize;
     const items = filtered.slice(start, start + pageSize).map((g) => {
       const pk = normKey(g.packingListNo);
+      const pkg = normKey(g.packageNo);
       const linkedDetails = pk ? store.detailedByPacking.get(pk) || [] : [];
-      const detailedCount = linkedDetails.filter(
-        (d) => !g.packageNo || normKey(d.packageNo) === normKey(g.packageNo),
-      ).length;
-      const hasShortage = linkedDetails.some((d) => computeDetailedEntry(d).hasShortage);
+      const matchingPkgDetails = linkedDetails.filter(
+        (d) => !pkg || normKey(d.packageNo) === pkg,
+      );
+      const hasShortage = matchingPkgDetails.some((d) => computeDetailedEntry(d).hasShortage);
       return {
         ...g,
         packingClosed: Boolean(pk && store.db.packingMeta[pk]?.isClosed),
-        detailedCount,
+        detailedCount: matchingPkgDetails.length,
         hasLinkedShortage: hasShortage,
       };
     });
@@ -411,13 +452,11 @@ async function startServer() {
       isContinuation,
       acknowledgeClosed,
       entries,
-      detailedItems,
     } = req.body as {
       packingListNo?: string;
       isContinuation?: boolean;
       acknowledgeClosed?: boolean;
       entries?: Partial<GeneralEntry>[];
-      detailedItems?: Partial<DetailedEntry>[];
     };
 
     const pk = normKey(packingListNo);
@@ -430,8 +469,8 @@ async function startServer() {
       return;
     }
 
+    // Check duplicates in GENERAL only (so deleting from General allows re-entry even if Detailed items remain)
     const existingGen = store.generalByPacking.get(pk) || [];
-    const existingDet = store.detailedByPacking.get(pk) || [];
     const meta = store.db.packingMeta[pk];
 
     if (meta?.isClosed && !acknowledgeClosed) {
@@ -442,7 +481,7 @@ async function startServer() {
       return;
     }
 
-    if ((existingGen.length > 0 || existingDet.length > 0) && !isContinuation) {
+    if (existingGen.length > 0 && !isContinuation) {
       res.status(409).json({
         code: 'DUPLICATE_PACKING_PROMPT',
         error: 'شماره پکینگ لیست تکراری است. آیا ادامه همان پکینگ لیست قبلی است؟',
@@ -450,23 +489,12 @@ async function startServer() {
       return;
     }
 
-    // Validate unique ردیف and distinct شماره نگله on continuation
     const existingPackages = new Set(existingGen.map((g) => normKey(g.packageNo)).filter(Boolean));
-    const batchRowNos = new Set<string>();
+    const batchMapnaMinutes = new Set<string>();
     const preparedGeneral: GeneralEntry[] = [];
     const now = new Date().toISOString();
 
     for (const raw of entries) {
-      const rowNo = normalizeDigits(normKey(raw.rowNo)) || store.nextSuggestedRowNo('general');
-      if (store.isRowNoTaken('general', rowNo) || batchRowNos.has(rowNo)) {
-        res.status(409).json({
-          code: 'DUPLICATE_ROW_NO',
-          error: `شماره ردیف ${rowNo} تکراری است. ستون ردیف باید یکتا باشد.`,
-        });
-        return;
-      }
-      batchRowNos.add(rowNo);
-
       const pkgNo = normKey(raw.packageNo);
       if (isContinuation && existingGen.length > 0 && (!pkgNo || existingPackages.has(pkgNo))) {
         res.status(409).json({
@@ -476,16 +504,33 @@ async function startServer() {
         return;
       }
 
+      const cleanMapnaMinutes = normalizeDigits(normKey(raw.mapnaEntryMinutesNo));
+      if (cleanMapnaMinutes) {
+        const lowerKey = cleanMapnaMinutes.toLowerCase();
+        if (store.isMapnaMinutesTaken(cleanMapnaMinutes) || batchMapnaMinutes.has(lowerKey)) {
+          res.status(409).json({
+            code: 'DUPLICATE_MAPNA_MINUTES',
+            error: `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است و قبلاً ثبت شده است.`,
+          });
+          return;
+        }
+        batchMapnaMinutes.add(lowerKey);
+      }
+
+      const cleanArrival = normKey(raw.arrivalDate);
+      const cleanReleaseNo = normKey(raw.releaseNo);
+      const cleanReleaseDate = cleanReleaseNo ? (normKey(raw.releaseDate) || cleanArrival) : cleanArrival;
+
       preparedGeneral.push({
         id: makeId(),
-        rowNo,
-        arrivalDate: normKey(raw.arrivalDate),
-        releaseNo: normKey(raw.releaseNo),
-        releaseDate: normKey(raw.releaseDate),
+        rowNo: '0',
+        arrivalDate: cleanArrival,
+        releaseNo: cleanReleaseNo,
+        releaseDate: cleanReleaseDate,
         supplier: normKey(raw.supplier),
         dispatchLocation: normKey(raw.dispatchLocation),
         employerEntryMinutesNo: normKey(raw.employerEntryMinutesNo),
-        mapnaEntryMinutesNo: normKey(raw.mapnaEntryMinutesNo),
+        mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
         itemDescription: normKey(raw.itemDescription),
@@ -511,90 +556,8 @@ async function startServer() {
       });
     }
 
-    // Optional linked detailed items entered alongside General
-    const preparedDetailed: DetailedEntry[] = [];
-    const batchDetRowNos = new Set<string>();
-    if (Array.isArray(detailedItems) && detailedItems.length > 0) {
-      let autoCounter = Number(store.nextSuggestedRowNo('detailed'));
-      for (const d of detailedItems) {
-        let dRowNo = normalizeDigits(normKey(d.rowNo));
-        if (!dRowNo) {
-          while (store.isRowNoTaken('detailed', String(autoCounter)) || batchDetRowNos.has(String(autoCounter))) {
-            autoCounter += 1;
-          }
-          dRowNo = String(autoCounter);
-          autoCounter += 1;
-        } else if (store.isRowNoTaken('detailed', dRowNo) || batchDetRowNos.has(dRowNo)) {
-          res.status(409).json({
-            code: 'DUPLICATE_ROW_NO',
-            error: `شماره ردیف جزئیات ${dRowNo} تکراری است.`,
-          });
-          return;
-        }
-        batchDetRowNos.add(dRowNo);
-        preparedDetailed.push({
-          id: makeId(),
-          rowNo: dRowNo,
-          arrivalDate: normKey(d.arrivalDate || preparedGeneral[0].arrivalDate),
-          supplier: normKey(d.supplier || preparedGeneral[0].supplier),
-          origin: normKey(d.origin || preparedGeneral[0].dispatchLocation),
-          shipmentNo: pk,
-          packageNo: normKey(d.packageNo || preparedGeneral[0].packageNo),
-          itemNo: normKey(d.itemNo),
-          generalDescription: normKey(d.generalDescription || preparedGeneral[0].itemDescription),
-          description: normKey(d.description || preparedGeneral[0].itemDescription),
-          size: normKey(d.size),
-          itemCode: normKey(d.itemCode),
-          packingQty: d.packingQty ?? null,
-          actualQty: d.actualQty ?? null,
-          damagedQty: d.damagedQty ?? null,
-          mtoRef: normKey(d.mtoRef),
-          repNo: normKey(d.repNo),
-          repStatus: normKey(d.repStatus),
-          repDescription: normKey(d.repDescription),
-          countingUnit: normKey(d.countingUnit),
-          island: normKey(d.island || preparedGeneral[0].island),
-          system: normKey(d.system || preparedGeneral[0].system),
-          subSystem: normKey(d.subSystem || preparedGeneral[0].subSystem),
-          unit: normKey(d.unit || preparedGeneral[0].unit),
-          opiNo: normKey(d.opiNo || preparedGeneral[0].opiInvitationNo),
-          opiDate: normKey(d.opiDate || preparedGeneral[0].opiInvitationDate),
-          merNo: normKey(d.merNo),
-          merStatus: normKey(d.merStatus),
-          notes: normKey(d.notes),
-          materialBalanceNo: normKey(d.materialBalanceNo),
-          balanceStatus: normKey(d.balanceStatus),
-          storageLocation: normKey(d.storageLocation),
-          gcvReceiptNo: normKey(d.gcvReceiptNo),
-          receiver: normKey(d.receiver),
-          gcvDeliveredQty: d.gcvDeliveredQty ?? null,
-          mivContractorNo: normKey(d.mivContractorNo),
-          mivContractorDate: normKey(d.mivContractorDate),
-          mivContractorQty: d.mivContractorQty ?? null,
-          smrContractorNo: normKey(d.smrContractorNo),
-          smrContractorDate: normKey(d.smrContractorDate),
-          smrContractorQty: d.smrContractorQty ?? null,
-          smrContractorNote: normKey(d.smrContractorNote),
-          smrMapnaNo: normKey(d.smrMapnaNo),
-          smrMapnaDate: normKey(d.smrMapnaDate),
-          smrMapnaQty: d.smrMapnaQty ?? null,
-          smrMapnaNote: normKey(d.smrMapnaNote),
-          mivMapnaNo: normKey(d.mivMapnaNo),
-          mivMapnaDate: normKey(d.mivMapnaDate),
-          mivMapnaQty: d.mivMapnaQty ?? null,
-          stocktakeInfo: normKey(d.stocktakeInfo),
-          shortageBackfills: [],
-          createdAt: now,
-          updatedAt: now,
-          createdBy: req.currentUser!.username,
-        });
-      }
-    }
-
     store.db.general.unshift(...preparedGeneral);
-    if (preparedDetailed.length > 0) {
-      store.db.detailed.unshift(...preparedDetailed);
-    }
+    store.renumberScope('general');
     store.rebuildIndexes();
 
     const transitUpdated = store.syncTransitArrival(pk, sanitizeUser(req.currentUser!));
@@ -603,15 +566,13 @@ async function startServer() {
       action: isContinuation ? 'CONTINUE_PACKING_GENERAL' : 'CREATE_PACKING_GENERAL',
       scope: 'general',
       targetId: pk,
-      summary: `${isContinuation ? 'ادامه ثبت روی پکینگ لیست' : 'ثبت پکینگ لیست جدید'} ${pk} (${preparedGeneral.length} ردیف جنرال${
-        preparedDetailed.length > 0 ? ` + ${preparedDetailed.length} ردیف دیتیل` : ''
-      })`,
+      summary: `${isContinuation ? 'ادامه ثبت روی پکینگ لیست' : 'ثبت پکینگ لیست جدید'} ${pk} (${preparedGeneral.length} ردیف جنرال)`,
     });
     store.saveImmediate();
 
     res.json({
       createdGeneral: preparedGeneral,
-      createdDetailedCount: preparedDetailed.length,
+      createdDetailedCount: 0,
       transitUpdated,
     });
   });
@@ -622,7 +583,7 @@ async function startServer() {
       res.status(404).json({ error: 'Record not found' });
       return;
     }
-    const { acknowledgeClosed, ...patch } = req.body as Partial<GeneralEntry> & {
+    const { acknowledgeClosed, rowNo: _ignoredRowNo, ...patch } = req.body as Partial<GeneralEntry> & {
       acknowledgeClosed?: boolean;
     };
     const pk = normKey(patch.packingListNo ?? item.packingListNo);
@@ -633,17 +594,29 @@ async function startServer() {
       });
       return;
     }
-    if (patch.rowNo !== undefined) {
-      const cleanRowNo = normalizeDigits(normKey(patch.rowNo));
-      if (!cleanRowNo || store.isRowNoTaken('general', cleanRowNo, item.id)) {
-        res.status(409).json({ error: 'شماره ردیف باید یکتا و غیرخالی باشد' });
+
+    if (patch.mapnaEntryMinutesNo !== undefined) {
+      const cleanMapnaMinutes = normalizeDigits(normKey(patch.mapnaEntryMinutesNo));
+      if (cleanMapnaMinutes && store.isMapnaMinutesTaken(cleanMapnaMinutes, item.id)) {
+        res.status(409).json({
+          code: 'DUPLICATE_MAPNA_MINUTES',
+          error: `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است.`,
+        });
         return;
       }
-      item.rowNo = cleanRowNo;
+      patch.mapnaEntryMinutesNo = cleanMapnaMinutes;
     }
+
+    const finalArrival = normKey(patch.arrivalDate ?? item.arrivalDate);
+    const finalReleaseNo = normKey(patch.releaseNo ?? item.releaseNo);
+    const finalReleaseDate = finalReleaseNo
+      ? (normKey(patch.releaseDate ?? item.releaseDate) || finalArrival)
+      : finalArrival;
 
     Object.assign(item, {
       ...patch,
+      releaseNo: finalReleaseNo,
+      releaseDate: finalReleaseDate,
       rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
@@ -666,17 +639,61 @@ async function startServer() {
       res.status(404).json({ error: 'Record not found' });
       return;
     }
+    const cascadeDetailed = String(req.query.cascadeDetailed || '') === 'true';
     const [removed] = store.db.general.splice(idx, 1);
+    const now = new Date().toISOString();
+    const deletedBy = req.currentUser!.fullName || req.currentUser!.username;
+
+    const trashEntry: TrashRecord = {
+      id: makeId(),
+      scope: 'general',
+      deletedAt: now,
+      deletedBy,
+      targetLabel: `${removed.packingListNo || '-'} (${removed.packageNo || '-'})`,
+      data: removed,
+    };
+    store.db.trash.unshift(trashEntry);
+
+    let trashedDetailedCount = 0;
+    if (cascadeDetailed) {
+      const pk = normKey(removed.packingListNo);
+      const pkg = normKey(removed.packageNo);
+      const remainingDetailed: DetailedEntry[] = [];
+      for (const d of store.db.detailed) {
+        const matches = normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
+        if (matches) {
+          trashedDetailedCount += 1;
+          store.db.trash.unshift({
+            id: makeId(),
+            scope: 'detailed',
+            deletedAt: now,
+            deletedBy,
+            targetLabel: `${d.shipmentNo} / ${d.packageNo || '-'} / #${d.itemNo || d.rowNo}`,
+            data: d,
+          });
+        } else {
+          remainingDetailed.push(d);
+        }
+      }
+      if (trashedDetailedCount > 0) {
+        store.db.detailed = remainingDetailed;
+        store.renumberScope('detailed');
+      }
+    }
+
+    store.renumberScope('general');
     store.rebuildIndexes();
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_GENERAL',
       scope: 'general',
       targetId: `${removed.packingListNo} (#${removed.rowNo})`,
-      summary: `حذف ردیف جنرال ${removed.rowNo} (${removed.packingListNo} / ${removed.packageNo})`,
+      summary: `انتقال ردیف جنرال ${removed.rowNo} (${removed.packingListNo} / ${removed.packageNo || '-'}) به سطل بازیافت${
+        trashedDetailedCount > 0 ? ` همراه با ${trashedDetailedCount} ردیف جزئیات` : ''
+      }`,
     });
     store.saveImmediate();
-    res.json({ ok: true });
+    res.json({ ok: true, trashedDetailedCount });
   });
 
   // ---------------- DETAILED (دیتیل / جزئیات) ----------------
@@ -737,6 +754,7 @@ async function startServer() {
             d.smrMapnaNo,
             d.mivMapnaNo,
             d.storageLocation,
+            d.stocktakeStatus,
           ],
           q,
         )
@@ -765,7 +783,7 @@ async function startServer() {
   });
 
   app.post('/api/detailed', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { acknowledgeClosed, ...raw } = req.body as Partial<DetailedEntry> & {
+    const { acknowledgeClosed, rowNo: _ignoredRowNo, ...raw } = req.body as Partial<DetailedEntry> & {
       acknowledgeClosed?: boolean;
     };
     const pk = normKey(raw.shipmentNo);
@@ -781,26 +799,28 @@ async function startServer() {
       return;
     }
 
-    const rowNo = normalizeDigits(normKey(raw.rowNo)) || store.nextSuggestedRowNo('detailed');
-    if (store.isRowNoTaken('detailed', rowNo)) {
+    const pkgNo = normKey(raw.packageNo);
+    const itemNo = normalizeDigits(normKey(raw.itemNo)) || store.getNextSuggestedItemNo(pk, pkgNo);
+    if (store.isDetailedItemNoTaken(pk, pkgNo, itemNo)) {
       res.status(409).json({
-        code: 'DUPLICATE_ROW_NO',
-        error: `شماره ردیف ${rowNo} تکراری است. ستون ردیف باید یکتا باشد.`,
+        code: 'DUPLICATE_ITEM_NO',
+        error: `شماره آیتم ${itemNo} برای پکینگ «${pk}» و نگله «${pkgNo || '-'}» تکراری است.`,
       });
       return;
     }
 
+    const shared = store.getGeneralSharedInfo(pk, pkgNo);
     const now = new Date().toISOString();
     const created: DetailedEntry = {
       id: makeId(),
-      rowNo,
-      arrivalDate: normKey(raw.arrivalDate),
-      supplier: normKey(raw.supplier),
-      origin: normKey(raw.origin),
+      rowNo: '0',
+      arrivalDate: normKey(raw.arrivalDate) || shared?.arrivalDate || '',
+      supplier: normKey(raw.supplier) || shared?.supplier || '',
+      origin: normKey(raw.origin) || shared?.dispatchLocation || '',
       shipmentNo: pk,
-      packageNo: normKey(raw.packageNo),
-      itemNo: normKey(raw.itemNo),
-      generalDescription: normKey(raw.generalDescription),
+      packageNo: pkgNo,
+      itemNo,
+      generalDescription: normKey(raw.generalDescription) || shared?.itemDescription || '',
       description: normKey(raw.description),
       size: normKey(raw.size),
       itemCode: normKey(raw.itemCode),
@@ -812,10 +832,10 @@ async function startServer() {
       repStatus: normKey(raw.repStatus),
       repDescription: normKey(raw.repDescription),
       countingUnit: normKey(raw.countingUnit),
-      island: normKey(raw.island),
-      system: normKey(raw.system),
-      subSystem: normKey(raw.subSystem),
-      unit: normKey(raw.unit),
+      island: normKey(raw.island) || shared?.island || '',
+      system: normKey(raw.system) || shared?.system || '',
+      subSystem: normKey(raw.subSystem) || shared?.subSystem || '',
+      unit: normKey(raw.unit) || shared?.unit || '',
       opiNo: normKey(raw.opiNo),
       opiDate: normKey(raw.opiDate),
       merNo: normKey(raw.merNo),
@@ -842,6 +862,8 @@ async function startServer() {
       mivMapnaDate: normKey(raw.mivMapnaDate),
       mivMapnaQty: raw.mivMapnaQty ?? null,
       stocktakeInfo: normKey(raw.stocktakeInfo),
+      stocktakeStatus: normKey(raw.stocktakeStatus),
+      stocktakeDate: normKey(raw.stocktakeDate),
       shortageBackfills: [],
       createdAt: now,
       updatedAt: now,
@@ -849,14 +871,15 @@ async function startServer() {
     };
 
     store.db.detailed.unshift(created);
+    store.renumberScope('detailed');
     store.rebuildIndexes();
     const transitUpdated = store.syncTransitArrival(pk, sanitizeUser(req.currentUser!));
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'CREATE_DETAILED',
       scope: 'detailed',
-      targetId: `${pk} (#${rowNo})`,
-      summary: `ثبت آیتم جزئیات ردیف ${rowNo} برای محموله ${pk} (${created.description || created.generalDescription})`,
+      targetId: `${pk} / ${pkgNo || '-'} (#${itemNo})`,
+      summary: `ثبت آیتم جزئیات ردیف ${created.rowNo} (آیتم ${itemNo}) برای محموله ${pk} (${created.description || created.generalDescription})`,
     });
     store.saveImmediate();
     res.json({ item: computeDetailedEntry(created), transitUpdated });
@@ -868,7 +891,7 @@ async function startServer() {
       res.status(404).json({ error: 'Record not found' });
       return;
     }
-    const { acknowledgeClosed, ...patch } = req.body as Partial<DetailedEntry> & {
+    const { acknowledgeClosed, rowNo: _ignoredRowNo, ...patch } = req.body as Partial<DetailedEntry> & {
       acknowledgeClosed?: boolean;
     };
     const pk = normKey(patch.shipmentNo ?? item.shipmentNo);
@@ -879,17 +902,22 @@ async function startServer() {
       });
       return;
     }
-    if (patch.rowNo !== undefined) {
-      const cleanRowNo = normalizeDigits(normKey(patch.rowNo));
-      if (!cleanRowNo || store.isRowNoTaken('detailed', cleanRowNo, item.id)) {
-        res.status(409).json({ error: 'شماره ردیف باید یکتا و غیرخالی باشد' });
-        return;
-      }
-      item.rowNo = cleanRowNo;
+
+    const nextPkg = normKey(patch.packageNo ?? item.packageNo);
+    const nextItemNo = normalizeDigits(normKey(patch.itemNo ?? item.itemNo));
+    if (nextItemNo && store.isDetailedItemNoTaken(pk, nextPkg, nextItemNo, item.id)) {
+      res.status(409).json({
+        code: 'DUPLICATE_ITEM_NO',
+        error: `شماره آیتم ${nextItemNo} برای پکینگ «${pk}» و نگله «${nextPkg || '-'}» تکراری است.`,
+      });
+      return;
     }
 
     Object.assign(item, {
       ...patch,
+      shipmentNo: pk,
+      packageNo: nextPkg,
+      itemNo: nextItemNo,
       rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
@@ -957,13 +985,22 @@ async function startServer() {
       return;
     }
     const [removed] = store.db.detailed.splice(idx, 1);
+    store.db.trash.unshift({
+      id: makeId(),
+      scope: 'detailed',
+      deletedAt: new Date().toISOString(),
+      deletedBy: req.currentUser!.fullName || req.currentUser!.username,
+      targetLabel: `${removed.shipmentNo} / ${removed.packageNo || '-'} / #${removed.itemNo || removed.rowNo}`,
+      data: removed,
+    });
+    store.renumberScope('detailed');
     store.rebuildIndexes();
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_DETAILED',
       scope: 'detailed',
       targetId: `${removed.shipmentNo} (#${removed.rowNo})`,
-      summary: `حذف ردیف جزئیات ${removed.rowNo} (${removed.shipmentNo})`,
+      summary: `انتقال ردیف جزئیات ${removed.rowNo} (${removed.shipmentNo}) به سطل بازیافت`,
     });
     store.saveImmediate();
     res.json({ ok: true });
@@ -1023,12 +1060,7 @@ async function startServer() {
   });
 
   app.post('/api/transit', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const raw = req.body as Partial<TransitEntry>;
-    const rowNo = normalizeDigits(normKey(raw.rowNo)) || store.nextSuggestedRowNo('transit');
-    if (store.isRowNoTaken('transit', rowNo)) {
-      res.status(409).json({ error: `شماره ردیف ${rowNo} تکراری است` });
-      return;
-    }
+    const { rowNo: _ignoredRowNo, ...raw } = req.body as Partial<TransitEntry>;
     const now = new Date().toISOString();
     const pk = normKey(raw.packingListNo);
     const alreadyInWarehouse =
@@ -1036,7 +1068,7 @@ async function startServer() {
 
     const created: TransitEntry = {
       id: makeId(),
-      rowNo,
+      rowNo: '0',
       arrivalDate: normKey(raw.arrivalDate),
       overallStatus: alreadyInWarehouse ? 'رسیده' : normKey(raw.overallStatus) || 'در دست ارسال',
       inspectionRequest: normKey(raw.inspectionRequest),
@@ -1064,13 +1096,14 @@ async function startServer() {
     };
 
     store.db.transit.unshift(created);
+    store.renumberScope('transit');
     store.rebuildIndexes();
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'CREATE_TRANSIT',
       scope: 'transit',
-      targetId: `${pk || rowNo}`,
-      summary: `ثبت محموله در راه ${pk || rowNo} (${created.overallStatus})`,
+      targetId: `${pk || created.rowNo}`,
+      summary: `ثبت محموله در راه ${pk || created.rowNo} (${created.overallStatus})`,
     });
     store.saveImmediate();
     res.json({ item: created });
@@ -1082,9 +1115,10 @@ async function startServer() {
       res.status(404).json({ error: 'Record not found' });
       return;
     }
-    const patch = req.body as Partial<TransitEntry>;
+    const { rowNo: _ignoredRowNo, ...patch } = req.body as Partial<TransitEntry>;
     Object.assign(item, {
       ...patch,
+      rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
     store.rebuildIndexes();
@@ -1106,22 +1140,521 @@ async function startServer() {
       return;
     }
     const [removed] = store.db.transit.splice(idx, 1);
+    store.db.trash.unshift({
+      id: makeId(),
+      scope: 'transit',
+      deletedAt: new Date().toISOString(),
+      deletedBy: req.currentUser!.fullName || req.currentUser!.username,
+      targetLabel: `${removed.packingListNo || '-'} (#${removed.rowNo})`,
+      data: removed,
+    });
+    store.renumberScope('transit');
     store.rebuildIndexes();
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_TRANSIT',
       scope: 'transit',
       targetId: `${removed.packingListNo || removed.rowNo}`,
-      summary: `حذف ردیف در راه ${removed.packingListNo || removed.rowNo}`,
+      summary: `انتقال ردیف در راه ${removed.packingListNo || removed.rowNo} به سطل بازیافت`,
     });
     store.saveImmediate();
     res.json({ ok: true });
   });
 
+  // ---------------- RECYCLE BIN / TRASH (سطل بازیافت) ----------------
+  app.get('/api/trash', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
+    const scope = String(req.query.scope || '');
+    const q = String(req.query.q || '');
+    const items = store.db.trash.filter((item) => {
+      if (scope && item.scope !== scope) return false;
+      return matchSearch([item.targetLabel, item.deletedBy, item.scope], q);
+    });
+    res.json({ items });
+  });
+
+  app.post('/api/trash/:id/restore', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const idx = store.db.trash.findIndex((t) => t.id === req.params.id);
+    if (idx === -1) {
+      res.status(404).json({ error: 'Trash item not found' });
+      return;
+    }
+    const entry = store.db.trash[idx];
+    if (entry.scope === 'general') {
+      const g = entry.data as GeneralEntry;
+      if (g.mapnaEntryMinutesNo && store.isMapnaMinutesTaken(g.mapnaEntryMinutesNo)) {
+        res.status(409).json({
+          error: `شماره صورتجلسه ورود مپنا «${g.mapnaEntryMinutesNo}» در حال حاضر در سیستم فعال است و امکان بازیابی مستقیم وجود ندارد.`,
+        });
+        return;
+      }
+      store.db.trash.splice(idx, 1);
+      store.db.general.unshift({ ...g, updatedAt: new Date().toISOString() });
+      store.renumberScope('general');
+    } else if (entry.scope === 'detailed') {
+      const d = entry.data as DetailedEntry;
+      if (d.itemNo && store.isDetailedItemNoTaken(d.shipmentNo, d.packageNo, d.itemNo)) {
+        res.status(409).json({
+          error: `شماره آیتم ${d.itemNo} در محموله ${d.shipmentNo} / نگله ${d.packageNo || '-'} قبلاً وجود دارد.`,
+        });
+        return;
+      }
+      store.db.trash.splice(idx, 1);
+      store.db.detailed.unshift({ ...d, updatedAt: new Date().toISOString() });
+      store.renumberScope('detailed');
+    } else {
+      const t = entry.data as TransitEntry;
+      store.db.trash.splice(idx, 1);
+      store.db.transit.unshift({ ...t, updatedAt: new Date().toISOString() });
+      store.renumberScope('transit');
+    }
+
+    store.rebuildIndexes();
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'RESTORE_TRASH',
+      scope: 'trash',
+      targetId: entry.targetLabel,
+      summary: `بازیابی ردیف ${entry.scope} (${entry.targetLabel}) از سطل بازیافت`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true });
+  });
+
+  app.delete('/api/trash/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const idx = store.db.trash.findIndex((t) => t.id === req.params.id);
+    if (idx === -1) {
+      res.status(404).json({ error: 'Trash item not found' });
+      return;
+    }
+    const [purged] = store.db.trash.splice(idx, 1);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'PURGE_TRASH',
+      scope: 'trash',
+      targetId: purged.targetLabel,
+      summary: `حذف دائمی ردیف ${purged.scope} (${purged.targetLabel}) از سطل بازیافت`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true });
+  });
+
+  // ---------------- OPI MANAGEMENT ----------------
+  app.get('/api/opi', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    const packingsSet = new Set<string>();
+    for (const g of store.db.general) {
+      const pk = normKey(g.packingListNo);
+      if (pk) packingsSet.add(pk);
+    }
+    for (const d of store.db.detailed) {
+      const pk = normKey(d.shipmentNo);
+      if (pk) packingsSet.add(pk);
+    }
+    res.json({
+      invitations: store.db.opiInvitations,
+      detailedItems: store.getDetailedComputedList(),
+      packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
+    });
+  });
+
+  app.post('/api/opi', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { invitationNo, date, time, packingNos, location, notes } = req.body as {
+      invitationNo?: string;
+      date?: string;
+      time?: string;
+      packingNos?: string[];
+      location?: string;
+      notes?: string;
+    };
+    const cleanNo = normKey(invitationNo);
+    const cleanDate = normKey(date);
+    const cleanPackings = Array.from(new Set((packingNos || []).map(normKey).filter(Boolean)));
+    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+      res.status(400).json({ error: 'شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است' });
+      return;
+    }
+
+    const record: OpiInvitationRecord = {
+      id: makeId(),
+      invitationNo: cleanNo,
+      date: cleanDate,
+      time: normKey(time) || '09:00',
+      packingNos: cleanPackings,
+      location: normKey(location),
+      notes: normKey(notes),
+      status: 'issued',
+      createdAt: new Date().toISOString(),
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+    store.db.opiInvitations.unshift(record);
+
+    const now = new Date().toISOString();
+    for (const g of store.db.general) {
+      if (cleanPackings.includes(normKey(g.packingListNo))) {
+        g.opiInvitationNo = cleanNo;
+        g.opiInvitationDate = cleanDate;
+        g.updatedAt = now;
+      }
+    }
+    for (const d of store.db.detailed) {
+      if (cleanPackings.includes(normKey(d.shipmentNo))) {
+        d.opiNo = cleanNo;
+        d.opiDate = cleanDate;
+        d.updatedAt = now;
+      }
+    }
+
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'ISSUE_OPI_INVITATION',
+      scope: 'opi',
+      targetId: cleanNo,
+      summary: `صدور دعوتنامه OPI شماره ${cleanNo} برای ${cleanPackings.length} پکینگ لیست (${cleanPackings.join('، ')})`,
+    });
+    store.saveImmediate();
+    res.json({ invitation: record });
+  });
+
+  app.post('/api/opi/results', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { invitationId, opiNo, opiDate, results } = req.body as {
+      invitationId?: string;
+      opiNo?: string;
+      opiDate?: string;
+      results?: Array<{
+        detailedId: string;
+        actualQty: number | null;
+        damagedQty?: number | null;
+        repNo?: string;
+        repStatus?: string;
+        repDescription?: string;
+        notes?: string;
+      }>;
+    };
+    if (!Array.isArray(results) || results.length === 0) {
+      res.status(400).json({ error: 'حداقل یک قلم جهت ثبت نتیجه OPI انتخاب کنید' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const cleanOpiNo = normKey(opiNo);
+    const cleanOpiDate = normKey(opiDate);
+    let updatedCount = 0;
+
+    for (const r of results) {
+      const d = store.db.detailed.find((x) => x.id === r.detailedId);
+      if (!d) continue;
+      if (r.actualQty !== undefined && r.actualQty !== null && Number.isFinite(r.actualQty)) {
+        d.actualQty = r.actualQty;
+      }
+      if (r.damagedQty !== undefined && r.damagedQty !== null && Number.isFinite(r.damagedQty)) {
+        d.damagedQty = r.damagedQty;
+      }
+      if (cleanOpiNo) d.opiNo = cleanOpiNo;
+      if (cleanOpiDate) d.opiDate = cleanOpiDate;
+      if (r.repNo !== undefined) d.repNo = normKey(r.repNo);
+      if (r.repStatus !== undefined) d.repStatus = normKey(r.repStatus);
+      if (r.repDescription !== undefined) d.repDescription = normKey(r.repDescription);
+      if (r.notes !== undefined && normKey(r.notes)) d.notes = normKey(r.notes);
+      d.updatedAt = now;
+      updatedCount += 1;
+    }
+
+    if (invitationId) {
+      const inv = store.db.opiInvitations.find((x) => x.id === invitationId);
+      if (inv) inv.status = 'completed';
+    }
+
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'RECORD_OPI_RESULTS',
+      scope: 'opi',
+      targetId: cleanOpiNo || 'OPI',
+      summary: `ثبت نتایج بازرسی OPI (${cleanOpiNo || '-'}) برای ${updatedCount} قلم کالا`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true, updatedCount });
+  });
+
+  // ---------------- GCV RECEIPTS ----------------
+  app.get('/api/gcv', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    res.json({
+      documents: store.db.gcvDocuments,
+      detailedItems: store.getDetailedComputedList(),
+    });
+  });
+
+  app.post('/api/gcv', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { receiptNo, date, receiver, notes, items } = req.body as {
+      receiptNo?: string;
+      date?: string;
+      receiver?: string;
+      notes?: string;
+      items?: Array<{ detailedId: string; qty: number }>;
+    };
+    const cleanNo = normKey(receiptNo);
+    const cleanReceiver = normKey(receiver);
+    if (!cleanNo || !cleanReceiver || !Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ error: 'شماره رسید GCV، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است' });
+      return;
+    }
+
+    const lineItems: DocumentLineItem[] = [];
+    for (const reqItem of items) {
+      const qty = Number(reqItem.qty);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        res.status(400).json({ error: 'تعداد تحویلی باید بزرگتر از صفر باشد' });
+        return;
+      }
+      const d = store.db.detailed.find((x) => x.id === reqItem.detailedId);
+      if (!d) {
+        res.status(404).json({ error: 'آیتم دیتیل یافت نشد' });
+        return;
+      }
+      const comp = computeDetailedEntry(d);
+      if (comp.opiPending) {
+        res.status(400).json({ error: `برای آیتم ${d.itemNo || d.rowNo} (${d.description}) هنوز OPI و مقدار واقعی ثبت نشده است.` });
+        return;
+      }
+      if (qty > comp.mapnaInventory) {
+        res.status(400).json({ error: `مقدار تحویلی (${qty}) برای آیتم ${d.description || d.itemNo} بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.` });
+        return;
+      }
+      lineItems.push({
+        detailedId: d.id,
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        itemNo: d.itemNo,
+        description: d.description || d.generalDescription,
+        qty,
+      });
+    }
+
+    const now = new Date().toISOString();
+    for (const line of lineItems) {
+      const d = store.db.detailed.find((x) => x.id === line.detailedId)!;
+      d.gcvReceiptNo = appendUniqueRef(d.gcvReceiptNo, cleanNo);
+      d.receiver = cleanReceiver;
+      d.gcvDeliveredQty = roundQty(toNum(d.gcvDeliveredQty) + line.qty);
+      d.updatedAt = now;
+    }
+
+    const doc: GcvDocumentRecord = {
+      id: makeId(),
+      receiptNo: cleanNo,
+      date: normKey(date),
+      receiver: cleanReceiver,
+      notes: normKey(notes),
+      items: lineItems,
+      createdAt: now,
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+    store.db.gcvDocuments.unshift(doc);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'CREATE_GCV_RECEIPT',
+      scope: 'gcv',
+      targetId: cleanNo,
+      summary: `ثبت رسید GCV شماره ${cleanNo} برای ${cleanReceiver} (${lineItems.length} قلم کالا)`,
+    });
+    store.saveImmediate();
+    res.json({ document: doc });
+  });
+
+  // ---------------- MIV & SMR ----------------
+  app.get('/api/miv', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    res.json({
+      documents: store.db.mivDocuments,
+      detailedItems: store.getDetailedComputedList(),
+    });
+  });
+
+  app.post('/api/miv', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { docType, docNo, date, party, notes, items } = req.body as {
+      docType?: MivDocType;
+      docNo?: string;
+      date?: string;
+      party?: string;
+      notes?: string;
+      items?: Array<{ detailedId: string; qty: number }>;
+    };
+    const validTypes: MivDocType[] = ['miv_contractor', 'smr_contractor', 'smr_mapna', 'miv_mapna'];
+    if (!docType || !validTypes.includes(docType)) {
+      res.status(400).json({ error: 'نوع فرم معتبر نیست' });
+      return;
+    }
+    const cleanNo = normKey(docNo);
+    const cleanDate = normKey(date);
+    if (!cleanNo || !Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ error: 'شماره سند و حداقل یک قلم کالا الزامی است' });
+      return;
+    }
+
+    const lineItems: DocumentLineItem[] = [];
+    for (const reqItem of items) {
+      const qty = Number(reqItem.qty);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        res.status(400).json({ error: 'تعداد باید بزرگتر از صفر باشد' });
+        return;
+      }
+      const d = store.db.detailed.find((x) => x.id === reqItem.detailedId);
+      if (!d) {
+        res.status(404).json({ error: 'آیتم دیتیل یافت نشد' });
+        return;
+      }
+      const comp = computeDetailedEntry(d);
+      if ((docType === 'miv_contractor' || docType === 'smr_mapna') && qty > comp.contractorInventory) {
+        res.status(400).json({
+          error: `تعداد (${qty}) برای ${d.description || d.itemNo} از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`,
+        });
+        return;
+      }
+      if (docType === 'miv_mapna' && qty > comp.mapnaInventory) {
+        res.status(400).json({
+          error: `تعداد (${qty}) برای ${d.description || d.itemNo} از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
+        });
+        return;
+      }
+      lineItems.push({
+        detailedId: d.id,
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        itemNo: d.itemNo,
+        description: d.description || d.generalDescription,
+        qty,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const cleanNotes = normKey(notes);
+    for (const line of lineItems) {
+      const d = store.db.detailed.find((x) => x.id === line.detailedId)!;
+      if (docType === 'miv_contractor') {
+        d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
+        d.mivContractorDate = cleanDate || d.mivContractorDate;
+        d.mivContractorQty = roundQty(toNum(d.mivContractorQty) + line.qty);
+      } else if (docType === 'smr_contractor') {
+        d.smrContractorNo = appendUniqueRef(d.smrContractorNo, cleanNo);
+        d.smrContractorDate = cleanDate || d.smrContractorDate;
+        d.smrContractorQty = roundQty(toNum(d.smrContractorQty) + line.qty);
+        if (cleanNotes) d.smrContractorNote = cleanNotes;
+      } else if (docType === 'smr_mapna') {
+        d.smrMapnaNo = appendUniqueRef(d.smrMapnaNo, cleanNo);
+        d.smrMapnaDate = cleanDate || d.smrMapnaDate;
+        d.smrMapnaQty = roundQty(toNum(d.smrMapnaQty) + line.qty);
+        if (cleanNotes) d.smrMapnaNote = cleanNotes;
+      } else if (docType === 'miv_mapna') {
+        d.mivMapnaNo = appendUniqueRef(d.mivMapnaNo, cleanNo);
+        d.mivMapnaDate = cleanDate || d.mivMapnaDate;
+        d.mivMapnaQty = roundQty(toNum(d.mivMapnaQty) + line.qty);
+      }
+      d.updatedAt = now;
+    }
+
+    const doc: MivDocumentRecord = {
+      id: makeId(),
+      docType,
+      docNo: cleanNo,
+      date: cleanDate,
+      party: normKey(party),
+      notes: cleanNotes,
+      items: lineItems,
+      createdAt: now,
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+    store.db.mivDocuments.unshift(doc);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: `CREATE_${docType.toUpperCase()}`,
+      scope: 'miv',
+      targetId: cleanNo,
+      summary: `ثبت فرم ${docType} شماره ${cleanNo} برای ${lineItems.length} قلم کالا`,
+    });
+    store.saveImmediate();
+    res.json({ document: doc });
+  });
+
+  // ---------------- MATERIAL BALANCE ----------------
+  app.post('/api/balance/assign', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { detailedIds, materialBalanceNo, balanceStatus } = req.body as {
+      detailedIds?: string[];
+      materialBalanceNo?: string;
+      balanceStatus?: string;
+    };
+    if (!Array.isArray(detailedIds) || detailedIds.length === 0) {
+      res.status(400).json({ error: 'حداقل یک آیتم انتخاب کنید' });
+      return;
+    }
+    const cleanNo = normKey(materialBalanceNo);
+    const cleanStatus = normKey(balanceStatus);
+    if (!cleanNo && !cleanStatus) {
+      res.status(400).json({ error: 'شماره بالانس یا وضعیت بالانس الزامی است' });
+      return;
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    for (const id of detailedIds) {
+      const d = store.db.detailed.find((x) => x.id === id);
+      if (!d) continue;
+      if (cleanNo) d.materialBalanceNo = cleanNo;
+      if (cleanStatus) d.balanceStatus = cleanStatus;
+      d.updatedAt = now;
+      updatedCount += 1;
+    }
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'ASSIGN_MATERIAL_BALANCE',
+      scope: 'balance',
+      targetId: cleanNo || cleanStatus,
+      summary: `ثبت وضعیت بالانس متریال (${cleanNo || '-'} / ${cleanStatus || '-'}) برای ${updatedCount} ردیف`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true, updatedCount });
+  });
+
+  // ---------------- STOCKTAKE ----------------
+  app.post('/api/stocktake/assign', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { detailedIds, stocktakeStatus, stocktakeDate, stocktakeInfo } = req.body as {
+      detailedIds?: string[];
+      stocktakeStatus?: string;
+      stocktakeDate?: string;
+      stocktakeInfo?: string;
+    };
+    if (!Array.isArray(detailedIds) || detailedIds.length === 0) {
+      res.status(400).json({ error: 'حداقل یک آیتم انتخاب کنید' });
+      return;
+    }
+    const cleanStatus = normKey(stocktakeStatus);
+    const cleanDate = normKey(stocktakeDate);
+    const cleanInfo = normKey(stocktakeInfo);
+    if (!cleanStatus) {
+      res.status(400).json({ error: 'وضعیت انبارگردانی الزامی است' });
+      return;
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    for (const id of detailedIds) {
+      const d = store.db.detailed.find((x) => x.id === id);
+      if (!d) continue;
+      d.stocktakeStatus = cleanStatus;
+      if (cleanDate) d.stocktakeDate = cleanDate;
+      d.stocktakeInfo = cleanInfo || (cleanDate ? `${cleanStatus} (${cleanDate})` : cleanStatus);
+      d.updatedAt = now;
+      updatedCount += 1;
+    }
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'ASSIGN_STOCKTAKE',
+      scope: 'stocktake',
+      targetId: cleanStatus,
+      summary: `ثبت وضعیت انبارگردانی «${cleanStatus}» در تاریخ ${cleanDate || '-'} برای ${updatedCount} ردیف`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true, updatedCount });
+  });
+
   // ---------------- GLOBAL SEARCH ----------------
   app.get('/api/search', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
     const q = String(req.query.q || '').trim();
-    const limit = Math.min(100, Number(req.query.limit || 40));
+    const limit = Math.min(100, Number(queryLimit(req.query.limit)));
     if (!q) {
       res.json({ general: [], detailed: [], transit: [] });
       return;
@@ -1156,6 +1689,7 @@ async function startServer() {
             d.rowNo,
             d.shipmentNo,
             d.packageNo,
+            d.itemNo,
             d.generalDescription,
             d.description,
             d.itemCode,
@@ -1167,6 +1701,7 @@ async function startServer() {
             d.materialBalanceNo,
             d.balanceStatus,
             d.storageLocation,
+            d.stocktakeStatus,
           ],
           q,
         ),
@@ -1274,7 +1809,6 @@ async function startServer() {
       return;
     }
 
-    // Update across all entries (supports both rename and merge)
     let updatedCount = 0;
     for (const g of store.db.general) {
       if (group === 'island' && g.island === from) { g.island = to; updatedCount += 1; }
@@ -1363,14 +1897,12 @@ async function startServer() {
     const detailedSummary = computeSelectionFormulaSummary({ detailed: detailedComputed });
     const transitSummary = computeSelectionFormulaSummary({ transit: store.db.transit });
 
-    // Transit status breakdown
     const transitByStatus: Record<string, number> = {};
     for (const t of store.db.transit) {
       const st = normKey(t.overallStatus) || 'نامشخص';
       transitByStatus[st] = (transitByStatus[st] || 0) + 1;
     }
 
-    // Island breakdown
     const byIslandMap: Record<string, { name: string; generalCount: number; detailedCount: number; shortageQty: number; mapnaStock: number; contractorStock: number }> = {};
     for (const g of store.db.general) {
       const isl = normKey(g.island) || 'سایر';
@@ -1390,7 +1922,6 @@ async function startServer() {
       byIslandMap[isl].contractorStock += d.contractorInventory;
     }
 
-    // Monthly arrival trend grouped in active calendar
     const monthBuckets: Record<string, { monthKey: string; generalRows: number; detailedRows: number; grossWeight: number }> = {};
     for (const g of store.db.general) {
       const mk = getMonthKeyFromIso(g.arrivalDate, calendar);
@@ -1489,7 +2020,7 @@ async function startServer() {
   });
 
   app.post('/api/import/commit', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { csvText, scope, assumedCalendar, duplicateRowPolicy } = req.body as {
+    const { csvText, scope, assumedCalendar } = req.body as {
       csvText?: string;
       scope?: ImportScope;
       assumedCalendar?: CalendarMode;
@@ -1502,70 +2033,36 @@ async function startServer() {
     const matrix = parseCsvMatrix(csvText);
     const targetScope = scope || detectCsvScope(matrix) || 'general';
     const cal = assumedCalendar || 'jalali';
-    const policy = duplicateRowPolicy || 'auto_reassign';
 
     let imported = 0;
-    let skipped = 0;
+    const skipped = 0;
     let transitAutoArrived = 0;
     const touchedPackings = new Set<string>();
 
     if (targetScope === 'general') {
       const parsed = parseGeneralCsv(matrix, cal, req.currentUser!.username);
-      let nextAuto = Number(store.nextSuggestedRowNo('general'));
-      const seen = new Set(store.generalRowNos);
       const newItems: GeneralEntry[] = [];
-
       for (const r of parsed.rows) {
-        let rowNo = r.rowNo;
-        if (!rowNo || seen.has(rowNo)) {
-          if (policy === 'skip') {
-            skipped += 1;
-            continue;
-          }
-          while (seen.has(String(nextAuto))) nextAuto += 1;
-          rowNo = String(nextAuto);
-          nextAuto += 1;
-        }
-        seen.add(rowNo);
         if (r.packingListNo) touchedPackings.add(r.packingListNo);
-        newItems.push({ ...r, rowNo, id: makeId() });
+        newItems.push({ ...r, id: makeId() });
         imported += 1;
       }
       store.db.general.push(...newItems);
+      store.renumberScope('general');
     } else if (targetScope === 'detailed') {
       const parsed = parseDetailedCsv(matrix, cal, req.currentUser!.username);
-      let nextAuto = Number(store.nextSuggestedRowNo('detailed'));
-      const seen = new Set(store.detailedRowNos);
       const newItems: DetailedEntry[] = [];
-
       for (const r of parsed.rows) {
-        let rowNo = r.rowNo;
-        if (!rowNo || seen.has(rowNo)) {
-          if (policy === 'skip') {
-            skipped += 1;
-            continue;
-          }
-          while (seen.has(String(nextAuto))) nextAuto += 1;
-          rowNo = String(nextAuto);
-          nextAuto += 1;
-        }
-        seen.add(rowNo);
         if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
-        newItems.push({ ...r, rowNo, id: makeId() });
+        newItems.push({ ...r, id: makeId() });
         imported += 1;
       }
       store.db.detailed.push(...newItems);
+      store.renumberScope('detailed');
     } else {
       const parsed = parseTransitCsv(matrix, cal, req.currentUser!.username);
-      let nextAuto = Number(store.nextSuggestedRowNo('transit'));
-      const seen = new Set(store.transitRowNos);
       const newItems: TransitEntry[] = [];
-
       for (const r of parsed.rows) {
-        while (seen.has(String(nextAuto))) nextAuto += 1;
-        const rowNo = String(nextAuto);
-        seen.add(rowNo);
-        nextAuto += 1;
         const pk = normKey(r.packingListNo);
         const alreadyArrived =
           pk &&
@@ -1573,7 +2070,6 @@ async function startServer() {
             (store.detailedByPacking.get(pk)?.length || 0) > 0);
         newItems.push({
           ...r,
-          rowNo,
           id: makeId(),
           overallStatus: alreadyArrived ? 'رسیده' : r.overallStatus,
           linkedGeneralPackingNo: alreadyArrived ? pk : undefined,
@@ -1581,6 +2077,7 @@ async function startServer() {
         imported += 1;
       }
       store.db.transit.push(...newItems);
+      store.renumberScope('transit');
     }
 
     store.rebuildIndexes();
@@ -1680,6 +2177,11 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`SAMAAN server running at http://0.0.0.0:${PORT}`);
   });
+}
+
+function queryLimit(val: unknown): number {
+  const n = Number(val || 40);
+  return Number.isFinite(n) && n > 0 ? n : 40;
 }
 
 startServer().catch((err) => {
