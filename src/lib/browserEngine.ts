@@ -249,6 +249,17 @@ function appendUniqueRef(existing: string, nextRef: string): string {
   return `${cleanExisting}, ${cleanNext}`;
 }
 
+function removeRefToken(existing: string, token: string): string {
+  const cleanExisting = normKey(existing);
+  const cleanToken = normKey(token);
+  if (!cleanExisting || !cleanToken) return cleanExisting;
+  const parts = cleanExisting
+    .split(/[,،|]+/)
+    .map((s) => normKey(s))
+    .filter((s) => s && s !== cleanToken);
+  return Array.from(new Set(parts)).join(', ');
+}
+
 function registerCategoryValue(db: StaticDatabase, group: CategoryGroupKey, rawVal: string | undefined | null) {
   const val = normKey(rawVal);
   if (!val || val === '-' || val === '—') return;
@@ -1583,6 +1594,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return {
       minutes: db.siteEntryMinutes,
       generalEntries: db.general,
+      transitEntries: db.transit,
+      detailedItems: db.detailed.map(computeDetailedEntry),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     } as T;
   }
@@ -1672,6 +1685,107 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     addAudit(db, sanitizeUser(u), 'CREATE_SITE_ENTRY_MINUTES', 'siteEntry', cleanNo, `ثبت صورتجلسه ورود کالا به کارگاه شماره ${cleanNo}`);
     await saveDb(db);
     return { record } as T;
+  }
+
+  if (pathname.startsWith('/api/site-entry/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const rec = db.siteEntryMinutes.find((r) => r.id === id);
+    if (!rec) throw new StaticEngineError(errMsg('صورتجلسه ورود کالا یافت نشد', 'Site entry minutes record not found'), 404);
+    const raw = body as Partial<SiteEntryMinutesRecord>;
+    const cleanNo = normKey(raw.minutesNo ?? rec.minutesNo);
+    const cleanDate = normKey(raw.date ?? rec.date);
+    const cleanPackings = Array.from(
+      new Set(((raw.packingListNos !== undefined ? raw.packingListNos : rec.packingListNos) || []).map(normKey).filter(Boolean)),
+    );
+    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+      throw new StaticEngineError(
+        errMsg(
+          'شماره صورتجلسه، تاریخ و حداقل یک پکینگ لیست الزامی است',
+          'Minutes No., date, and at least one Packing List are required',
+        ),
+        400,
+      );
+    }
+    if (Array.isArray(raw.items)) {
+      rec.items = raw.items
+        .map((it) => ({
+          description: normKey(it?.description),
+          packingListNo: normKey(it?.packingListNo),
+          packageNo: normKey(it?.packageNo),
+          dimensions: normKey(it?.dimensions),
+          qty: normKey(it?.qty),
+          unit: normKey(it?.unit),
+          netWeight: normKey(it?.netWeight),
+          grossWeight: normKey(it?.grossWeight),
+          remarks: normKey(it?.remarks),
+        }))
+        .filter(
+          (it) =>
+            it.description ||
+            it.packingListNo ||
+            it.packageNo ||
+            it.dimensions ||
+            it.qty ||
+            it.unit ||
+            it.netWeight ||
+            it.grossWeight ||
+            it.remarks,
+        );
+    }
+    rec.minutesNo = cleanNo;
+    if (raw.releaseNoteNo !== undefined) rec.releaseNoteNo = normKey(raw.releaseNoteNo);
+    if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
+    if (raw.entryType === 'permanent' || raw.entryType === 'temporary') rec.entryType = raw.entryType;
+    if (raw.goodsUsage === 'project' || raw.goodsUsage === 'site_equip' || raw.goodsUsage === 'general') {
+      rec.goodsUsage = raw.goodsUsage;
+    }
+    if (raw.contractNo !== undefined) rec.contractNo = normKey(raw.contractNo);
+    rec.date = cleanDate;
+    if (raw.arrivalDate !== undefined) rec.arrivalDate = normKey(raw.arrivalDate) || cleanDate;
+    rec.packingListNos = cleanPackings;
+    if (raw.supplier !== undefined) rec.supplier = normKey(raw.supplier);
+    if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
+    if (raw.system !== undefined) rec.system = normKey(raw.system);
+    if (raw.island !== undefined) rec.island = normKey(raw.island);
+    if (raw.origin !== undefined) rec.origin = normKey(raw.origin);
+    if (raw.carrierCompany !== undefined) rec.carrierCompany = normKey(raw.carrierCompany);
+    if (raw.trafficLocation !== undefined) rec.trafficLocation = normKey(raw.trafficLocation);
+    if (raw.vehicleType !== undefined) rec.vehicleType = normKey(raw.vehicleType);
+    if (raw.driverName !== undefined) rec.driverName = normKey(raw.driverName);
+    if (raw.vehicleNo !== undefined) rec.vehicleNo = normKey(raw.vehicleNo);
+    if (raw.waybillNo !== undefined) rec.waybillNo = normKey(raw.waybillNo);
+    if (raw.warehouseKeeper !== undefined) rec.warehouseKeeper = normKey(raw.warehouseKeeper);
+    if (raw.contractorManager !== undefined) rec.contractorManager = normKey(raw.contractorManager);
+    if (raw.mapnaSecurity !== undefined) rec.mapnaSecurity = normKey(raw.mapnaSecurity);
+    if (raw.qcChecked !== undefined) rec.qcChecked = Boolean(raw.qcChecked);
+    if (raw.qcTechOffice !== undefined) rec.qcTechOffice = normKey(raw.qcTechOffice);
+    if (raw.hseChecked !== undefined) rec.hseChecked = Boolean(raw.hseChecked);
+    if (raw.hseOfficer !== undefined) rec.hseOfficer = normKey(raw.hseOfficer);
+    if (raw.equipmentSupply !== undefined) {
+      rec.equipmentSupply = normKey(raw.equipmentSupply);
+      rec.mapnaRep = normKey(raw.equipmentSupply);
+    } else if (raw.mapnaRep !== undefined) {
+      rec.mapnaRep = normKey(raw.mapnaRep);
+    }
+    if (raw.employerRep !== undefined) rec.employerRep = normKey(raw.employerRep);
+    if (raw.conditionStatus) rec.conditionStatus = raw.conditionStatus;
+    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+
+    addAudit(db, sanitizeUser(u), 'UPDATE_SITE_ENTRY_MINUTES', 'siteEntry', cleanNo, `ویرایش صورتجلسه ورود کالا به کارگاه شماره ${cleanNo}`);
+    await saveDb(db);
+    return { record: rec } as T;
+  }
+
+  if (pathname.startsWith('/api/site-entry/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.siteEntryMinutes.findIndex((r) => r.id === id);
+    if (idx === -1) throw new StaticEngineError(errMsg('صورتجلسه ورود کالا یافت نشد', 'Site entry minutes record not found'), 404);
+    const [removed] = db.siteEntryMinutes.splice(idx, 1);
+    addAudit(db, sanitizeUser(u), 'DELETE_SITE_ENTRY_MINUTES', 'siteEntry', removed.minutesNo, `حذف صورتجلسه ورود کالا به کارگاه شماره ${removed.minutesNo}`);
+    await saveDb(db);
+    return { ok: true } as T;
   }
 
   // ---------------- OPI ----------------
@@ -1771,6 +1885,134 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     addAudit(db, sanitizeUser(u), 'ISSUE_OPI_INVITATION', 'opi', cleanNo, `صدور دعوتنامه OPI شماره ${cleanNo}`);
     await saveDb(db);
     return { invitation: record } as T;
+  }
+
+  if (pathname.startsWith('/api/opi/') && pathname !== '/api/opi/results' && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const rec = db.opiInvitations.find((x) => x.id === id);
+    if (!rec) throw new StaticEngineError(errMsg('دعوتنامه OPI یافت نشد', 'OPI invitation not found'), 404);
+    const raw = body as Partial<OpiInvitationRecord>;
+    const cleanNo = normKey(raw.invitationNo ?? rec.invitationNo);
+    const cleanDate = normKey(raw.date ?? rec.date);
+    const cleanPackings = Array.from(
+      new Set(((raw.packingNos !== undefined ? raw.packingNos : rec.packingNos) || []).map(normKey).filter(Boolean)),
+    );
+    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+      throw new StaticEngineError(
+        errMsg('شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است', 'Invitation No., date, and at least one Packing List are required'),
+        400,
+      );
+    }
+
+    const oldNo = normKey(rec.invitationNo);
+    const oldPackings = [...rec.packingNos];
+    const now = new Date().toISOString();
+
+    for (const g of db.general) {
+      const pk = normKey(g.packingListNo);
+      if (oldPackings.includes(pk) && normKey(g.opiInvitationNo) === oldNo && !cleanPackings.includes(pk)) {
+        const fallback = db.opiInvitations.find((inv) => inv.id !== rec.id && inv.packingNos.includes(pk));
+        g.opiInvitationNo = fallback ? fallback.invitationNo : '';
+        g.opiInvitationDate = fallback ? fallback.date : '';
+        g.updatedAt = now;
+      }
+      if (cleanPackings.includes(pk)) {
+        g.opiInvitationNo = cleanNo;
+        g.opiInvitationDate = cleanDate;
+        g.updatedAt = now;
+      }
+    }
+    for (const d of db.detailed) {
+      const pk = normKey(d.shipmentNo);
+      if (oldPackings.includes(pk) && normKey(d.opiNo) === oldNo && !cleanPackings.includes(pk) && d.actualQty == null) {
+        const fallback = db.opiInvitations.find((inv) => inv.id !== rec.id && inv.packingNos.includes(pk));
+        d.opiNo = fallback ? fallback.invitationNo : '';
+        d.opiDate = fallback ? fallback.date : '';
+        d.updatedAt = now;
+      }
+      if (cleanPackings.includes(pk) && (d.actualQty == null || normKey(d.opiNo) === oldNo || !normKey(d.opiNo))) {
+        d.opiNo = cleanNo;
+        d.opiDate = cleanDate;
+        d.updatedAt = now;
+      }
+    }
+
+    if (Array.isArray(raw.items)) {
+      rec.items = raw.items
+        .map((it) => ({
+          itemNo: normKey(it?.itemNo),
+          packingListNo: normKey(it?.packingListNo),
+          packageNo: normKey(it?.packageNo),
+          description: normKey(it?.description),
+          uom: normKey(it?.uom),
+          remarks: normKey(it?.remarks),
+        }))
+        .filter(
+          (it) =>
+            it.itemNo ||
+            it.packingListNo ||
+            it.packageNo ||
+            it.description ||
+            it.uom ||
+            it.remarks,
+        );
+    }
+
+    rec.invitationNo = cleanNo;
+    if (raw.issueDate !== undefined) rec.issueDate = normKey(raw.issueDate) || cleanDate;
+    rec.date = cleanDate;
+    if (raw.time !== undefined) rec.time = normKey(raw.time) || '09:00';
+    rec.packingNos = cleanPackings;
+    if (raw.location !== undefined) rec.location = normKey(raw.location);
+    if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
+    if (raw.system !== undefined) rec.system = normKey(raw.system);
+    if (raw.island !== undefined) rec.island = normKey(raw.island);
+    if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
+    if (raw.supplier !== undefined) rec.supplier = normKey(raw.supplier);
+    if (raw.contractNo !== undefined) rec.contractNo = normKey(raw.contractNo);
+    if (raw.purchasePackageNo !== undefined) rec.purchasePackageNo = normKey(raw.purchasePackageNo);
+    if (raw.installerContractor !== undefined) rec.installerContractor = normKey(raw.installerContractor);
+    if (raw.supplierRep !== undefined) rec.supplierRep = normKey(raw.supplierRep);
+    if (raw.equipmentSupply !== undefined) rec.equipmentSupply = normKey(raw.equipmentSupply);
+    if (raw.employerRep !== undefined) rec.employerRep = normKey(raw.employerRep);
+    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+    if (raw.status === 'issued' || raw.status === 'completed') rec.status = raw.status;
+
+    addAudit(db, sanitizeUser(u), 'UPDATE_OPI_INVITATION', 'opi', cleanNo, `ویرایش دعوتنامه OPI شماره ${cleanNo}`);
+    await saveDb(db);
+    return { invitation: rec } as T;
+  }
+
+  if (pathname.startsWith('/api/opi/') && pathname !== '/api/opi/results' && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.opiInvitations.findIndex((x) => x.id === id);
+    if (idx === -1) throw new StaticEngineError(errMsg('دعوتنامه OPI یافت نشد', 'OPI invitation not found'), 404);
+    const [removed] = db.opiInvitations.splice(idx, 1);
+    const oldNo = normKey(removed.invitationNo);
+    const now = new Date().toISOString();
+    for (const g of db.general) {
+      const pk = normKey(g.packingListNo);
+      if (removed.packingNos.includes(pk) && normKey(g.opiInvitationNo) === oldNo) {
+        const fallback = db.opiInvitations.find((inv) => inv.packingNos.includes(pk));
+        g.opiInvitationNo = fallback ? fallback.invitationNo : '';
+        g.opiInvitationDate = fallback ? fallback.date : '';
+        g.updatedAt = now;
+      }
+    }
+    for (const d of db.detailed) {
+      const pk = normKey(d.shipmentNo);
+      if (removed.packingNos.includes(pk) && normKey(d.opiNo) === oldNo && d.actualQty == null) {
+        const fallback = db.opiInvitations.find((inv) => inv.packingNos.includes(pk));
+        d.opiNo = fallback ? fallback.invitationNo : '';
+        d.opiDate = fallback ? fallback.date : '';
+        d.updatedAt = now;
+      }
+    }
+    addAudit(db, sanitizeUser(u), 'DELETE_OPI_INVITATION', 'opi', removed.invitationNo, `حذف دعوتنامه OPI شماره ${removed.invitationNo}`);
+    await saveDb(db);
+    return { ok: true } as T;
   }
 
   if (pathname === '/api/opi/results' && method === 'POST') {
@@ -1914,6 +2156,91 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { record } as T;
   }
 
+  if (pathname.startsWith('/api/opi-minutes/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const rec = db.opiMinutes.find((r) => r.id === id);
+    if (!rec) throw new StaticEngineError(errMsg('صورتجلسه گشایش و بازرسی یافت نشد', 'OPI minutes record not found'), 404);
+    const raw = body as Partial<OpiMinutesRecord>;
+    const cleanNo = normKey(raw.minutesNo ?? rec.minutesNo);
+    const cleanDate = normKey(raw.date ?? rec.date);
+    const cleanPacking = normKey(raw.packingListNo ?? rec.packingListNo);
+    if (!cleanNo || !cleanDate || !cleanPacking) {
+      throw new StaticEngineError(
+        errMsg('شماره صورتجلسه، تاریخ و شماره پکینگ لیست الزامی است', 'Minutes No., date, and Packing List No. are required'),
+        400,
+      );
+    }
+    if (Array.isArray(raw.items)) {
+      rec.items = raw.items
+        .map((it) => ({
+          itemNo: normKey(it?.itemNo),
+          packingListNo: normKey(it?.packingListNo),
+          packageNo: normKey(it?.packageNo),
+          description: normKey(it?.description),
+          uom: normKey(it?.uom),
+          remarks: normKey(it?.remarks),
+        }))
+        .filter(
+          (it) =>
+            it.itemNo ||
+            it.packingListNo ||
+            it.packageNo ||
+            it.description ||
+            it.uom ||
+            it.remarks,
+        );
+    }
+    rec.minutesNo = cleanNo;
+    if (raw.invitationNo !== undefined) rec.invitationNo = normKey(raw.invitationNo);
+    rec.date = cleanDate;
+    if (raw.time !== undefined) rec.time = normKey(raw.time);
+    rec.packingListNo = cleanPacking;
+    if (Array.isArray(raw.packageNos)) {
+      rec.packageNos = Array.from(new Set(raw.packageNos.map(normKey).filter(Boolean)));
+    }
+    if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
+    if (raw.supplier !== undefined) rec.supplier = normKey(raw.supplier);
+    if (raw.system !== undefined) rec.system = normKey(raw.system);
+    if (raw.island !== undefined) rec.island = normKey(raw.island);
+    if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
+    if (raw.contractNo !== undefined) rec.contractNo = normKey(raw.contractNo);
+    if (raw.purchasePackageNo !== undefined) rec.purchasePackageNo = normKey(raw.purchasePackageNo);
+    if (raw.merNo !== undefined) rec.merNo = normKey(raw.merNo);
+    if (raw.location !== undefined) rec.location = normKey(raw.location);
+    if (raw.storekeeper !== undefined) rec.storekeeper = normKey(raw.storekeeper);
+    if (raw.mapnaInspector !== undefined) rec.mapnaInspector = normKey(raw.mapnaInspector);
+    if (raw.sellerRep !== undefined) {
+      rec.sellerRep = normKey(raw.sellerRep);
+      rec.contractorInspector = normKey(raw.sellerRep);
+    } else if (raw.contractorInspector !== undefined) {
+      rec.contractorInspector = normKey(raw.contractorInspector);
+    }
+    if (raw.employerInspector !== undefined) rec.employerInspector = normKey(raw.employerInspector);
+    if (raw.qcInspector !== undefined) rec.qcInspector = normKey(raw.qcInspector);
+    if (raw.resultStatus === 'compliant' || raw.resultStatus === 'has_discrepancy') rec.resultStatus = raw.resultStatus;
+    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+
+    if (rec.invitationNo) {
+      const inv = db.opiInvitations.find((x) => normKey(x.invitationNo) === rec.invitationNo);
+      if (inv) inv.status = 'completed';
+    }
+    addAudit(db, sanitizeUser(u), 'UPDATE_OPI_MINUTES', 'opiMinutes', cleanNo, `ویرایش صورتجلسه گشایش و بازرسی بسته‌ها شماره ${cleanNo}`);
+    await saveDb(db);
+    return { record: rec } as T;
+  }
+
+  if (pathname.startsWith('/api/opi-minutes/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.opiMinutes.findIndex((r) => r.id === id);
+    if (idx === -1) throw new StaticEngineError(errMsg('صورتجلسه گشایش و بازرسی یافت نشد', 'OPI minutes record not found'), 404);
+    const [removed] = db.opiMinutes.splice(idx, 1);
+    addAudit(db, sanitizeUser(u), 'DELETE_OPI_MINUTES', 'opiMinutes', removed.minutesNo, `حذف صورتجلسه گشایش و بازرسی بسته‌ها شماره ${removed.minutesNo}`);
+    await saveDb(db);
+    return { ok: true } as T;
+  }
+
   if (pathname === '/api/osdr' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
     const cleanNo = normKey(String(body.reportNo || ''));
@@ -1945,6 +2272,49 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     addAudit(db, sanitizeUser(u), 'CREATE_OSDR_REPORT', 'osdr', cleanNo, `ثبت گزارش مغایرت، کسری و آسیب‌دیدگی شماره ${cleanNo}`);
     await saveDb(db);
     return { report: record } as T;
+  }
+
+  if (pathname.startsWith('/api/osdr/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const rec = db.osdrReports.find((r) => r.id === id);
+    if (!rec) throw new StaticEngineError(errMsg('گزارش مغایرت OSDR یافت نشد', 'OSDR report not found'), 404);
+    const raw = body as Partial<OsdrReportRecord>;
+    const cleanNo = normKey(raw.reportNo ?? rec.reportNo);
+    const cleanDate = normKey(raw.date ?? rec.date);
+    const cleanPacking = normKey(raw.packingListNo ?? rec.packingListNo);
+    const nextItems = raw.items !== undefined ? raw.items : rec.items;
+    if (!cleanNo || !cleanDate || !cleanPacking || !Array.isArray(nextItems) || nextItems.length === 0) {
+      throw new StaticEngineError(
+        errMsg(
+          'شماره گزارش مغایرت، تاریخ، شماره پکینگ و حداقل یک قلم مغایرت الزامی است',
+          'Report No., date, Packing List No., and at least one discrepancy item are required',
+        ),
+        400,
+      );
+    }
+    rec.reportNo = cleanNo;
+    rec.date = cleanDate;
+    if (raw.opiMinutesNo !== undefined) rec.opiMinutesNo = normKey(raw.opiMinutesNo);
+    rec.packingListNo = cleanPacking;
+    if (raw.supplier !== undefined) rec.supplier = normKey(raw.supplier);
+    rec.items = nextItems;
+    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+
+    addAudit(db, sanitizeUser(u), 'UPDATE_OSDR_REPORT', 'osdr', cleanNo, `ویرایش گزارش مغایرت OSDR شماره ${cleanNo}`);
+    await saveDb(db);
+    return { report: rec } as T;
+  }
+
+  if (pathname.startsWith('/api/osdr/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.osdrReports.findIndex((r) => r.id === id);
+    if (idx === -1) throw new StaticEngineError(errMsg('گزارش مغایرت OSDR یافت نشد', 'OSDR report not found'), 404);
+    const [removed] = db.osdrReports.splice(idx, 1);
+    addAudit(db, sanitizeUser(u), 'DELETE_OSDR_REPORT', 'osdr', removed.reportNo, `حذف گزارش مغایرت OSDR شماره ${removed.reportNo}`);
+    await saveDb(db);
+    return { ok: true } as T;
   }
 
   // ---------------- GCV ----------------
@@ -2061,6 +2431,155 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     addAudit(db, sanitizeUser(u), 'CREATE_GCV_RECEIPT', 'gcv', cleanNo, `ثبت رسید مصرف مستقیم کالا شماره ${cleanNo}`);
     await saveDb(db);
     return { document: doc } as T;
+  }
+
+  if (pathname.startsWith('/api/gcv/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const existing = db.gcvDocuments.find((doc) => doc.id === id);
+    if (!existing) throw new StaticEngineError(errMsg('رسید GCV یافت نشد', 'GCV document not found'), 404);
+    const raw = body as Partial<GcvDocumentRecord> & {
+      items?: Array<{
+        detailedId: string;
+        qty: number;
+        technicalInfo?: string;
+        tagNo?: string;
+        uom?: string;
+        remark?: string;
+      }>;
+    };
+    const cleanNo = normKey(raw.receiptNo ?? existing.receiptNo);
+    const cleanReceiver = normKey(raw.receiver ?? existing.receiver);
+    const items = raw.items || [];
+    if (!cleanNo || !cleanReceiver || !items.length) {
+      throw new StaticEngineError(
+        errMsg('شماره رسید، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است', 'Receipt No., receiver, and at least one item are required'),
+        400,
+      );
+    }
+
+    const oldQtyByDetailedId = new Map<string, number>();
+    for (const oldLine of existing.items) {
+      oldQtyByDetailedId.set(oldLine.detailedId, roundQty((oldQtyByDetailedId.get(oldLine.detailedId) || 0) + oldLine.qty));
+    }
+
+    const nextLines: DocumentLineItem[] = [];
+    for (const reqItem of items) {
+      const qty = Number(reqItem.qty);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new StaticEngineError(errMsg('تعداد تحویلی باید بزرگتر از صفر باشد', 'Delivered quantity must be greater than zero'), 400);
+      }
+      const d = db.detailed.find((x) => x.id === reqItem.detailedId);
+      if (!d) throw new StaticEngineError(errMsg('آیتم یافت نشد', 'Item not found'), 404);
+      const oldQtyForItem = oldQtyByDetailedId.get(d.id) || 0;
+      const revertedItem: DetailedEntry = {
+        ...d,
+        gcvDeliveredQty: Math.max(0, roundQty(toNum(d.gcvDeliveredQty) - oldQtyForItem)),
+      };
+      const comp = computeDetailedEntry(revertedItem);
+      if (comp.opiPending) {
+        throw new StaticEngineError(
+          errMsg(`برای آیتم ${d.itemNo || d.rowNo} هنوز OPI ثبت نشده است.`, `Item ${d.itemNo || d.rowNo} is pending OPI / Actual Qty.`),
+          400,
+        );
+      }
+      if (qty > comp.mapnaInventory) {
+        throw new StaticEngineError(
+          errMsg(
+            `مقدار تحویلی (${qty}) بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`,
+            `Delivered qty (${qty}) exceeds MAPNA stock (${comp.mapnaInventory}).`,
+          ),
+          400,
+        );
+      }
+      nextLines.push({
+        detailedId: d.id,
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        itemNo: d.itemNo,
+        description: d.description || d.generalDescription,
+        qty,
+        technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        uom: normKey(reqItem.uom) || d.countingUnit || '',
+        remark: normKey(reqItem.remark) || '',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const otherDocs = db.gcvDocuments.filter((doc) => doc.id !== existing.id);
+    for (const oldLine of existing.items) {
+      const d = db.detailed.find((x) => x.id === oldLine.detailedId);
+      if (!d) continue;
+      d.gcvDeliveredQty = Math.max(0, roundQty(toNum(d.gcvDeliveredQty) - oldLine.qty));
+      d.gcvReceiptNo = removeRefToken(d.gcvReceiptNo, existing.receiptNo);
+      if (d.gcvDeliveredQty === 0) {
+        const remainingDoc = otherDocs.find((doc) => doc.items.some((it) => it.detailedId === d.id));
+        d.receiver = remainingDoc ? remainingDoc.receiver : '';
+      }
+      d.updatedAt = now;
+    }
+
+    for (const line of nextLines) {
+      const d = db.detailed.find((x) => x.id === line.detailedId)!;
+      d.gcvReceiptNo = appendUniqueRef(d.gcvReceiptNo, cleanNo);
+      d.receiver = cleanReceiver;
+      d.gcvDeliveredQty = roundQty(toNum(d.gcvDeliveredQty) + line.qty);
+      d.updatedAt = now;
+    }
+
+    existing.receiptNo = cleanNo;
+    if (raw.date !== undefined) existing.date = normKey(raw.date);
+    existing.receiver = cleanReceiver;
+    if (raw.projectName !== undefined) existing.projectName = normKey(raw.projectName);
+    if (raw.purchaseRequestNo !== undefined) existing.purchaseRequestNo = normKey(raw.purchaseRequestNo);
+    if (raw.supplier !== undefined) existing.supplier = normKey(raw.supplier);
+    if (raw.buyerName !== undefined) existing.buyerName = normKey(raw.buyerName);
+    if (raw.purchasePackageNo !== undefined) existing.purchasePackageNo = normKey(raw.purchasePackageNo);
+    if (raw.releaseNoteNo !== undefined) existing.releaseNoteNo = normKey(raw.releaseNoteNo);
+    if (raw.purchaseBy !== undefined) {
+      existing.purchaseBy =
+        raw.purchaseBy === 'site_admin' || raw.purchaseBy === 'contractor_supplier' || raw.purchaseBy === 'tehran_proc'
+          ? raw.purchaseBy
+          : undefined;
+    }
+    if (raw.islandSystem !== undefined) existing.islandSystem = normKey(raw.islandSystem);
+    if (raw.waybillNo !== undefined) existing.waybillNo = normKey(raw.waybillNo);
+    if (raw.storekeeper !== undefined) existing.storekeeper = normKey(raw.storekeeper);
+    existing.receiverManager = normKey(raw.receiverManager) || cleanReceiver;
+    if (raw.equipmentSupply !== undefined) existing.equipmentSupply = normKey(raw.equipmentSupply);
+    if (raw.mapnaSiteManager !== undefined) existing.mapnaSiteManager = normKey(raw.mapnaSiteManager);
+    if (raw.notes !== undefined) existing.notes = normKey(raw.notes);
+    existing.items = nextLines;
+
+    addAudit(db, sanitizeUser(u), 'UPDATE_GCV_RECEIPT', 'gcv', cleanNo, `ویرایش رسید مصرف مستقیم کالا شماره ${cleanNo}`);
+    await saveDb(db);
+    return { document: existing } as T;
+  }
+
+  if (pathname.startsWith('/api/gcv/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.gcvDocuments.findIndex((doc) => doc.id === id);
+    if (idx === -1) throw new StaticEngineError(errMsg('رسید GCV یافت نشد', 'GCV document not found'), 404);
+    const [removed] = db.gcvDocuments.splice(idx, 1);
+    const now = new Date().toISOString();
+    for (const oldLine of removed.items) {
+      const d = db.detailed.find((x) => x.id === oldLine.detailedId);
+      if (!d) continue;
+      d.gcvDeliveredQty = Math.max(0, roundQty(toNum(d.gcvDeliveredQty) - oldLine.qty));
+      d.gcvReceiptNo = removeRefToken(d.gcvReceiptNo, removed.receiptNo);
+      const remainingDoc = db.gcvDocuments.find((doc) => doc.items.some((it) => it.detailedId === d.id));
+      if (d.gcvDeliveredQty === 0 && !remainingDoc) {
+        d.receiver = '';
+      } else if (remainingDoc && d.receiver === removed.receiver) {
+        d.receiver = remainingDoc.receiver;
+      }
+      d.updatedAt = now;
+    }
+    addAudit(db, sanitizeUser(u), 'DELETE_GCV_RECEIPT', 'gcv', removed.receiptNo, `حذف رسید مصرف مستقیم کالا شماره ${removed.receiptNo}`);
+    await saveDb(db);
+    return { ok: true } as T;
   }
 
   // ---------------- MIV & SMR ----------------
@@ -2215,6 +2734,253 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { document: doc } as T;
   }
 
+  if (pathname.startsWith('/api/miv/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const existing = db.mivDocuments.find((doc) => doc.id === id);
+    if (!existing) throw new StaticEngineError(errMsg('سند MIV / SMR یافت نشد', 'MIV / SMR document not found'), 404);
+    const raw = body as Partial<MivDocumentRecord> & {
+      items?: Array<{
+        detailedId: string;
+        qty: number;
+        requestedQty?: number;
+        technicalInfo?: string;
+        tagNo?: string;
+        codeNo?: string;
+        location?: string;
+        uom?: string;
+        opiNo?: string;
+        returnReason?: string;
+        remark?: string;
+      }>;
+    };
+    const nextDocType = (raw.docType || existing.docType) as MivDocType;
+    const validTypes: MivDocType[] = ['miv_contractor', 'smr_contractor', 'smr_mapna', 'miv_mapna'];
+    if (!validTypes.includes(nextDocType)) {
+      throw new StaticEngineError(errMsg('نوع فرم معتبر نیست', 'Invalid document type'), 400);
+    }
+    const cleanNo = normKey(raw.docNo ?? existing.docNo);
+    const cleanDate = normKey(raw.date ?? existing.date);
+    const items = raw.items || [];
+    if (!cleanNo || !items.length) {
+      throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
+    }
+
+    const oldQtyByDetailedId = new Map<string, number>();
+    for (const oldLine of existing.items) {
+      oldQtyByDetailedId.set(oldLine.detailedId, roundQty((oldQtyByDetailedId.get(oldLine.detailedId) || 0) + oldLine.qty));
+    }
+
+    const nextLines: DocumentLineItem[] = [];
+    for (const reqItem of items) {
+      const qty = Number(reqItem.qty);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new StaticEngineError(errMsg('تعداد باید بزرگتر از صفر باشد', 'Quantity must be greater than zero'), 400);
+      }
+      const d = db.detailed.find((x) => x.id === reqItem.detailedId);
+      if (!d) throw new StaticEngineError(errMsg('آیتم یافت نشد', 'Item not found'), 404);
+      const oldQtyForItem = oldQtyByDetailedId.get(d.id) || 0;
+      const simulated: DetailedEntry = { ...d };
+      if (oldQtyForItem > 0) {
+        if (existing.docType === 'miv_contractor') {
+          simulated.mivContractorQty = Math.max(0, roundQty(toNum(simulated.mivContractorQty) - oldQtyForItem));
+        } else if (existing.docType === 'smr_contractor') {
+          simulated.smrContractorQty = Math.max(0, roundQty(toNum(simulated.smrContractorQty) - oldQtyForItem));
+        } else if (existing.docType === 'smr_mapna') {
+          simulated.smrMapnaQty = Math.max(0, roundQty(toNum(simulated.smrMapnaQty) - oldQtyForItem));
+        } else if (existing.docType === 'miv_mapna') {
+          simulated.mivMapnaQty = Math.max(0, roundQty(toNum(simulated.mivMapnaQty) - oldQtyForItem));
+        }
+      }
+      const comp = computeDetailedEntry(simulated);
+      if ((nextDocType === 'miv_contractor' || nextDocType === 'smr_mapna') && qty > comp.contractorInventory) {
+        throw new StaticEngineError(
+          errMsg(
+            `تعداد (${qty}) از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`,
+            `Qty (${qty}) exceeds Contractor stock (${comp.contractorInventory}).`,
+          ),
+          400,
+        );
+      }
+      if (nextDocType === 'miv_mapna' && qty > comp.mapnaInventory) {
+        throw new StaticEngineError(
+          errMsg(
+            `تعداد (${qty}) از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
+            `Qty (${qty}) exceeds MAPNA stock (${comp.mapnaInventory}).`,
+          ),
+          400,
+        );
+      }
+      const reqQtyNum = Number(reqItem.requestedQty);
+      nextLines.push({
+        detailedId: d.id,
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        itemNo: d.itemNo,
+        description: d.description || d.generalDescription,
+        qty,
+        requestedQty: Number.isFinite(reqQtyNum) && reqQtyNum > 0 ? reqQtyNum : qty,
+        technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        codeNo: normKey(reqItem.codeNo) || d.itemCode || '',
+        location: normKey(reqItem.location) || d.storageLocation || '',
+        uom: normKey(reqItem.uom) || d.countingUnit || '',
+        opiNo: normKey(reqItem.opiNo) || d.opiNo || '',
+        returnReason: normKey(reqItem.returnReason) || '',
+        remark: normKey(reqItem.remark) || '',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const otherDocs = db.mivDocuments.filter((doc) => doc.id !== existing.id);
+    for (const oldLine of existing.items) {
+      const d = db.detailed.find((x) => x.id === oldLine.detailedId);
+      if (!d) continue;
+      if (existing.docType === 'miv_contractor') {
+        d.mivContractorQty = Math.max(0, roundQty(toNum(d.mivContractorQty) - oldLine.qty));
+        d.mivContractorNo = removeRefToken(d.mivContractorNo, existing.docNo);
+        if (d.mivContractorQty === 0 && !otherDocs.some((od) => od.docType === 'miv_contractor' && od.items.some((it) => it.detailedId === d.id))) {
+          d.mivContractorDate = '';
+        }
+      } else if (existing.docType === 'smr_contractor') {
+        d.smrContractorQty = Math.max(0, roundQty(toNum(d.smrContractorQty) - oldLine.qty));
+        d.smrContractorNo = removeRefToken(d.smrContractorNo, existing.docNo);
+        if (d.smrContractorQty === 0 && !otherDocs.some((od) => od.docType === 'smr_contractor' && od.items.some((it) => it.detailedId === d.id))) {
+          d.smrContractorDate = '';
+        }
+      } else if (existing.docType === 'smr_mapna') {
+        d.smrMapnaQty = Math.max(0, roundQty(toNum(d.smrMapnaQty) - oldLine.qty));
+        d.smrMapnaNo = removeRefToken(d.smrMapnaNo, existing.docNo);
+        if (d.smrMapnaQty === 0 && !otherDocs.some((od) => od.docType === 'smr_mapna' && od.items.some((it) => it.detailedId === d.id))) {
+          d.smrMapnaDate = '';
+        }
+      } else if (existing.docType === 'miv_mapna') {
+        d.mivMapnaQty = Math.max(0, roundQty(toNum(d.mivMapnaQty) - oldLine.qty));
+        d.mivMapnaNo = removeRefToken(d.mivMapnaNo, existing.docNo);
+        if (d.mivMapnaQty === 0 && !otherDocs.some((od) => od.docType === 'miv_mapna' && od.items.some((it) => it.detailedId === d.id))) {
+          d.mivMapnaDate = '';
+        }
+      }
+      d.updatedAt = now;
+    }
+
+    const cleanNotes = normKey(raw.notes ?? existing.notes);
+    for (const line of nextLines) {
+      const d = db.detailed.find((x) => x.id === line.detailedId)!;
+      if (nextDocType === 'miv_contractor') {
+        d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
+        d.mivContractorDate = cleanDate || d.mivContractorDate;
+        d.mivContractorQty = roundQty(toNum(d.mivContractorQty) + line.qty);
+      } else if (nextDocType === 'smr_contractor') {
+        d.smrContractorNo = appendUniqueRef(d.smrContractorNo, cleanNo);
+        d.smrContractorDate = cleanDate || d.smrContractorDate;
+        d.smrContractorQty = roundQty(toNum(d.smrContractorQty) + line.qty);
+        if (cleanNotes) d.smrContractorNote = cleanNotes;
+      } else if (nextDocType === 'smr_mapna') {
+        d.smrMapnaNo = appendUniqueRef(d.smrMapnaNo, cleanNo);
+        d.smrMapnaDate = cleanDate || d.smrMapnaDate;
+        d.smrMapnaQty = roundQty(toNum(d.smrMapnaQty) + line.qty);
+        if (cleanNotes) d.smrMapnaNote = cleanNotes;
+      } else if (nextDocType === 'miv_mapna') {
+        d.mivMapnaNo = appendUniqueRef(d.mivMapnaNo, cleanNo);
+        d.mivMapnaDate = cleanDate || d.mivMapnaDate;
+        d.mivMapnaQty = roundQty(toNum(d.mivMapnaQty) + line.qty);
+      }
+      d.updatedAt = now;
+    }
+
+    existing.docType = nextDocType;
+    existing.docNo = cleanNo;
+    existing.date = cleanDate;
+    if (raw.party !== undefined) existing.party = normKey(raw.party);
+    if (raw.projectName !== undefined) existing.projectName = normKey(raw.projectName);
+    if (raw.contractNo !== undefined) existing.contractNo = normKey(raw.contractNo);
+    if (raw.purchasePackageNo !== undefined) existing.purchasePackageNo = normKey(raw.purchasePackageNo);
+    if (raw.supplier !== undefined) existing.supplier = normKey(raw.supplier);
+    if (raw.releaseNoteNo !== undefined) existing.releaseNoteNo = normKey(raw.releaseNoteNo);
+    if (raw.islandSystem !== undefined) existing.islandSystem = normKey(raw.islandSystem);
+    if (raw.unit !== undefined) existing.unit = normKey(raw.unit);
+    if (raw.receiptNo !== undefined) existing.receiptNo = normKey(raw.receiptNo);
+    if (raw.storekeeper !== undefined) existing.storekeeper = normKey(raw.storekeeper);
+    if (raw.equipmentSupply !== undefined) existing.equipmentSupply = normKey(raw.equipmentSupply);
+    if (raw.techOffice !== undefined) existing.techOffice = normKey(raw.techOffice);
+    if (raw.installationDept !== undefined) existing.installationDept = normKey(raw.installationDept);
+    if (raw.qcInspector !== undefined) existing.qcInspector = normKey(raw.qcInspector);
+    if (raw.installerRep !== undefined) existing.installerRep = normKey(raw.installerRep);
+    if (raw.requester !== undefined) existing.requester = normKey(raw.requester);
+    if (raw.receiver !== undefined) existing.receiver = normKey(raw.receiver);
+    existing.notes = cleanNotes;
+    existing.items = nextLines;
+
+    addAudit(
+      db,
+      sanitizeUser(u),
+      `UPDATE_${nextDocType.toUpperCase()}`,
+      nextDocType.startsWith('smr') ? 'smr' : 'miv',
+      cleanNo,
+      `ویرایش فرم ${nextDocType} شماره ${cleanNo}`,
+    );
+    await saveDb(db);
+    return { document: existing } as T;
+  }
+
+  if (pathname.startsWith('/api/miv/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.mivDocuments.findIndex((doc) => doc.id === id);
+    if (idx === -1) throw new StaticEngineError(errMsg('سند MIV / SMR یافت نشد', 'MIV / SMR document not found'), 404);
+    const [removed] = db.mivDocuments.splice(idx, 1);
+    const now = new Date().toISOString();
+    for (const oldLine of removed.items) {
+      const d = db.detailed.find((x) => x.id === oldLine.detailedId);
+      if (!d) continue;
+      if (removed.docType === 'miv_contractor') {
+        d.mivContractorQty = Math.max(0, roundQty(toNum(d.mivContractorQty) - oldLine.qty));
+        d.mivContractorNo = removeRefToken(d.mivContractorNo, removed.docNo);
+        const rem = db.mivDocuments.find((doc) => doc.docType === 'miv_contractor' && doc.items.some((it) => it.detailedId === d.id));
+        if (d.mivContractorQty === 0 && !rem) d.mivContractorDate = '';
+        else if (rem && d.mivContractorDate === removed.date) d.mivContractorDate = rem.date;
+      } else if (removed.docType === 'smr_contractor') {
+        d.smrContractorQty = Math.max(0, roundQty(toNum(d.smrContractorQty) - oldLine.qty));
+        d.smrContractorNo = removeRefToken(d.smrContractorNo, removed.docNo);
+        const rem = db.mivDocuments.find((doc) => doc.docType === 'smr_contractor' && doc.items.some((it) => it.detailedId === d.id));
+        if (d.smrContractorQty === 0 && !rem) {
+          d.smrContractorDate = '';
+          if (d.smrContractorNote === removed.notes) d.smrContractorNote = '';
+        } else if (rem && d.smrContractorDate === removed.date) {
+          d.smrContractorDate = rem.date;
+        }
+      } else if (removed.docType === 'smr_mapna') {
+        d.smrMapnaQty = Math.max(0, roundQty(toNum(d.smrMapnaQty) - oldLine.qty));
+        d.smrMapnaNo = removeRefToken(d.smrMapnaNo, removed.docNo);
+        const rem = db.mivDocuments.find((doc) => doc.docType === 'smr_mapna' && doc.items.some((it) => it.detailedId === d.id));
+        if (d.smrMapnaQty === 0 && !rem) {
+          d.smrMapnaDate = '';
+          if (d.smrMapnaNote === removed.notes) d.smrMapnaNote = '';
+        } else if (rem && d.smrMapnaDate === removed.date) {
+          d.smrMapnaDate = rem.date;
+        }
+      } else if (removed.docType === 'miv_mapna') {
+        d.mivMapnaQty = Math.max(0, roundQty(toNum(d.mivMapnaQty) - oldLine.qty));
+        d.mivMapnaNo = removeRefToken(d.mivMapnaNo, removed.docNo);
+        const rem = db.mivDocuments.find((doc) => doc.docType === 'miv_mapna' && doc.items.some((it) => it.detailedId === d.id));
+        if (d.mivMapnaQty === 0 && !rem) d.mivMapnaDate = '';
+        else if (rem && d.mivMapnaDate === removed.date) d.mivMapnaDate = rem.date;
+      }
+      d.updatedAt = now;
+    }
+    addAudit(
+      db,
+      sanitizeUser(u),
+      `DELETE_${removed.docType.toUpperCase()}`,
+      removed.docType.startsWith('smr') ? 'smr' : 'miv',
+      removed.docNo,
+      `حذف فرم ${removed.docType} شماره ${removed.docNo}`,
+    );
+    await saveDb(db);
+    return { ok: true } as T;
+  }
+
   // ---------------- SUBSTITUTION ----------------
   if (pathname === '/api/substitutions' && method === 'GET') {
     requireAuth();
@@ -2300,12 +3066,86 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const id = pathname.split('/').pop()!;
     const rec = db.substitutions.find((s) => s.id === id);
     if (!rec) throw new StaticEngineError(errMsg('سند جایگزینی یافت نشد', 'Substitution record not found'), 404);
-    if (body.status) rec.status = body.status as SubstitutionRecord['status'];
-    if (body.approvedBy !== undefined) rec.approvedBy = normKey(String(body.approvedBy));
-    if (body.notes !== undefined) rec.notes = normKey(String(body.notes));
-    addAudit(db, sanitizeUser(u), 'UPDATE_SUBSTITUTION', 'substitution', rec.docNo, `تغییر وضعیت جایگزینی شماره ${rec.docNo}`);
+    const raw = body as Partial<SubstitutionRecord>;
+    if (raw.docNo !== undefined) {
+      const cleanNo = normKey(raw.docNo);
+      if (!cleanNo) throw new StaticEngineError(errMsg('شماره سند جایگزینی الزامی است', 'Document No. is required'), 400);
+      rec.docNo = cleanNo;
+    }
+    if (raw.date !== undefined) {
+      const cleanDate = normKey(raw.date);
+      if (!cleanDate) throw new StaticEngineError(errMsg('تاریخ سند جایگزینی الزامی است', 'Date is required'), 400);
+      rec.date = cleanDate;
+    }
+    if (raw.detailedId !== undefined && raw.detailedId !== rec.detailedId) {
+      const d = db.detailed.find((x) => x.id === raw.detailedId);
+      if (!d) throw new StaticEngineError(errMsg('کالای اصلی یافت نشد', 'Original detailed item not found'), 404);
+      rec.detailedId = d.id;
+      rec.shipmentNo = d.shipmentNo;
+      rec.packageNo = d.packageNo;
+      rec.itemNo = d.itemNo;
+      rec.originalDescription = d.description || d.generalDescription;
+      rec.originalItemCode = d.itemCode;
+      rec.countingUnit = d.countingUnit || 'PC';
+    }
+    if (raw.qty !== undefined) {
+      const numQty = Number(raw.qty);
+      if (!Number.isFinite(numQty) || numQty <= 0) {
+        throw new StaticEngineError(errMsg('تعداد جایگزینی باید بزرگتر از صفر باشد', 'Substitution quantity must be greater than zero'), 400);
+      }
+      rec.qty = numQty;
+    }
+    if (raw.substituteDescription !== undefined) {
+      const cleanSubDesc = normKey(raw.substituteDescription);
+      if (!cleanSubDesc) throw new StaticEngineError(errMsg('مشخصات کالای جایگزین الزامی است', 'Substitute description is required'), 400);
+      rec.substituteDescription = cleanSubDesc;
+    }
+    if (raw.reason !== undefined) {
+      const cleanReason = normKey(raw.reason);
+      if (!cleanReason) throw new StaticEngineError(errMsg('دلیل جایگزینی الزامی است', 'Reason is required'), 400);
+      rec.reason = cleanReason;
+    }
+    if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
+    if (raw.contractNo !== undefined) rec.contractNo = normKey(raw.contractNo);
+    if (raw.system !== undefined) rec.system = normKey(raw.system);
+    if (raw.island !== undefined) rec.island = normKey(raw.island);
+    if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
+    if (raw.supplier !== undefined) rec.supplier = normKey(raw.supplier);
+    if (raw.supplyUrgency !== undefined) rec.supplyUrgency = normKey(raw.supplyUrgency);
+    if (raw.installerContractor !== undefined) rec.installerContractor = normKey(raw.installerContractor);
+    if (raw.mivNo !== undefined) rec.mivNo = normKey(raw.mivNo);
+    if (raw.merNcrNo !== undefined) rec.merNcrNo = normKey(raw.merNcrNo);
+    if (raw.originalDrawingNo !== undefined) rec.originalDrawingNo = normKey(raw.originalDrawingNo);
+    if (raw.originalRemarks !== undefined) rec.originalRemarks = normKey(raw.originalRemarks);
+    if (raw.substitutePackageNo !== undefined) rec.substitutePackageNo = normKey(raw.substitutePackageNo);
+    if (raw.substituteItemCode !== undefined) rec.substituteItemCode = normKey(raw.substituteItemCode);
+    if (raw.substituteSize !== undefined) rec.substituteSize = normKey(raw.substituteSize);
+    if (raw.substituteDrawingNo !== undefined) rec.substituteDrawingNo = normKey(raw.substituteDrawingNo);
+    if (raw.substituteRemarks !== undefined) rec.substituteRemarks = normKey(raw.substituteRemarks);
+    if (raw.supplierNotes !== undefined) rec.supplierNotes = normKey(raw.supplierNotes);
+    if (raw.reprocureBy !== undefined) rec.reprocureBy = normKey(raw.reprocureBy);
+    if (raw.costBorneBy !== undefined) rec.costBorneBy = normKey(raw.costBorneBy);
+    if (raw.approvedBy !== undefined) rec.approvedBy = normKey(raw.approvedBy);
+    if (raw.mapnaRep !== undefined) rec.mapnaRep = normKey(raw.mapnaRep);
+    if (raw.installerSignatory !== undefined) rec.installerSignatory = normKey(raw.installerSignatory);
+    if (raw.supplierSignatory !== undefined) rec.supplierSignatory = normKey(raw.supplierSignatory);
+    if (raw.status) rec.status = raw.status;
+    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+
+    addAudit(db, sanitizeUser(u), 'UPDATE_SUBSTITUTION', 'substitution', rec.docNo, `ویرایش فرم جایگزینی شماره ${rec.docNo}`);
     await saveDb(db);
     return { record: rec } as T;
+  }
+
+  if (pathname.startsWith('/api/substitutions/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.substitutions.findIndex((s) => s.id === id);
+    if (idx === -1) throw new StaticEngineError(errMsg('سند جایگزینی یافت نشد', 'Substitution record not found'), 404);
+    const [removed] = db.substitutions.splice(idx, 1);
+    addAudit(db, sanitizeUser(u), 'DELETE_SUBSTITUTION', 'substitution', removed.docNo, `حذف فرم جایگزینی شماره ${removed.docNo}`);
+    await saveDb(db);
+    return { ok: true } as T;
   }
 
   // ---------------- MATERIAL ESTIMATION (MTO) ----------------
@@ -2542,6 +3382,42 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     );
     await saveDb(db);
     return { record } as T;
+  }
+
+  if (pathname.startsWith('/api/periodic-inspections/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const rec = db.periodicInspections.find((r) => r.id === id);
+    if (!rec) throw new StaticEngineError(errMsg('سابقه بازدید ادواری یافت نشد', 'Periodic inspection record not found'), 404);
+    const raw = body as Partial<PeriodicInspectionRecord>;
+    const cleanDate = normKey(raw.inspectionDate ?? rec.inspectionDate);
+    if (!cleanDate) {
+      throw new StaticEngineError(errMsg('تاریخ بازدید ادواری الزامی است', 'Inspection date is required'), 400);
+    }
+    rec.inspectionDate = cleanDate;
+    if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
+    if (raw.supervisorName !== undefined) rec.supervisorName = normKey(raw.supervisorName);
+    if (raw.inspectorsSignatory !== undefined) rec.inspectorsSignatory = normKey(raw.inspectorsSignatory);
+    if (raw.siteSupervisorSignatory !== undefined) rec.siteSupervisorSignatory = normKey(raw.siteSupervisorSignatory);
+    if (raw.projectManagerSignatory !== undefined) rec.projectManagerSignatory = normKey(raw.projectManagerSignatory);
+    if (raw.copyTo !== undefined) rec.copyTo = normKey(raw.copyTo);
+    if (Array.isArray(raw.answers)) {
+      rec.answers = raw.answers.map((a) => ({
+        questionKey: normKey(a?.questionKey),
+        status: (a?.status === '+' || a?.status === '-' ? a.status : '') as '+' | '-' | '',
+        remarks: normKey(a?.remarks),
+      }));
+    }
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'UPDATE_PERIODIC_INSPECTION',
+      'periodicInspection',
+      cleanDate,
+      `ویرایش چک‌لیست بازدید ادواری انبار مورخ ${cleanDate}`,
+    );
+    await saveDb(db);
+    return { record: rec } as T;
   }
 
   if (pathname.startsWith('/api/periodic-inspections/') && method === 'DELETE') {

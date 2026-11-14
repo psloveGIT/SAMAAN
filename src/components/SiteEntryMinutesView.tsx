@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ClipboardSignature,
   Download,
+  Pencil,
   Plus,
   Printer,
   Search,
@@ -16,16 +17,21 @@ import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
+  DetailedComputed,
   GeneralEntry,
   SiteEntryLineItem,
   SiteEntryMinutesRecord,
+  TransitEntry,
 } from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
 interface SiteEntryApiResponse {
   minutes: SiteEntryMinutesRecord[];
   generalEntries: GeneralEntry[];
+  transitEntries?: TransitEntry[];
+  detailedItems?: DetailedComputed[];
   packings: string[];
 }
 
@@ -33,6 +39,11 @@ interface SiteEntryMinutesViewProps {
   refreshSignal: number;
   onDataChanged: () => void;
 }
+
+const joinUnique = (values: Array<string | undefined | null>): string => {
+  const uniq = Array.from(new Set(values.map((v) => (v || '').trim()).filter(Boolean)));
+  return uniq.join(' / ');
+};
 
 const buildItemsFromGeneral = (
   packings: string[],
@@ -53,7 +64,7 @@ const buildItemsFromGeneral = (
           packageNo: g.packageNo || '',
           dimensions: dims,
           qty: g.itemCount != null ? String(g.itemCount) : '1',
-          unit: 'بسته',
+          unit: (g.packageType || '').trim() || 'بسته',
           netWeight: g.netWeight != null ? String(g.netWeight) : '',
           grossWeight: g.grossWeight != null ? String(g.grossWeight) : '',
           remarks: '',
@@ -871,18 +882,11 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
 
   const [items, setItems] = useState<SiteEntryLineItem[]>([]);
 
-  const [warehouseKeeper, setWarehouseKeeper] = useState('');
-  const [contractorManager, setContractorManager] = useState('');
-  const [mapnaSecurity, setMapnaSecurity] = useState('');
-  const [qcChecked, setQcChecked] = useState(false);
-  const [qcTechOffice, setQcTechOffice] = useState('');
-  const [hseChecked, setHseChecked] = useState(false);
-  const [hseOfficer, setHseOfficer] = useState('');
-  const [equipmentSupply, setEquipmentSupply] = useState('');
-  const [employerRep, setEmployerRep] = useState('');
   const [conditionStatus, setConditionStatus] = useState<SiteEntryMinutesRecord['conditionStatus']>('healthy');
   const [notes, setNotes] = useState('');
 
+  const [editingRecord, setEditingRecord] = useState<SiteEntryMinutesRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SiteEntryMinutesRecord | null>(null);
   const [printSheet, setPrintSheet] = useState<SiteEntryMinutesRecord | null>(null);
   const [printReportOpen, setPrintReportOpen] = useState(false);
 
@@ -909,6 +913,51 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
     return all.filter((p) => p.toLowerCase().includes(needle));
   }, [data, packingSearch]);
 
+  const syncMetadataFromPackings = useCallback(
+    (packings: string[]) => {
+      const generalEntries = data?.generalEntries || [];
+      const transitEntries = data?.transitEntries || [];
+      const detailedItems = data?.detailedItems || [];
+
+      const genMatches = generalEntries.filter((g) => packings.includes((g.packingListNo || '').trim()));
+      const transitMatches = transitEntries.filter(
+        (tr) =>
+          packings.includes((tr.packingListNo || '').trim()) ||
+          packings.includes((tr.linkedGeneralPackingNo || '').trim()),
+      );
+      const detMatches = detailedItems.filter((d) => packings.includes((d.shipmentNo || '').trim()));
+
+      const autoMinutesNo = joinUnique(genMatches.map((g) => g.mapnaEntryMinutesNo));
+      const autoReleaseNo = joinUnique([
+        ...genMatches.map((g) => g.releaseNo),
+        ...transitMatches.map((tr) => tr.releaseNetNo),
+      ]);
+      const autoArrivalDate = genMatches.map((g) => (g.arrivalDate || '').trim()).find(Boolean) || getTodayIso();
+
+      setMinutesNo(autoMinutesNo);
+      setReleaseNoteNo(autoReleaseNo);
+      setArrivalDate(autoArrivalDate);
+      setSupplier(joinUnique([...genMatches.map((g) => g.supplier), ...detMatches.map((d) => d.supplier)]));
+      setUnit(joinUnique([...genMatches.map((g) => g.unit), ...detMatches.map((d) => d.unit)]));
+      setSystem(joinUnique([...genMatches.map((g) => g.system), ...detMatches.map((d) => d.system)]));
+      setIsland(joinUnique([...genMatches.map((g) => g.island), ...detMatches.map((d) => d.island)]));
+      setOrigin(
+        joinUnique([
+          ...genMatches.map((g) => g.dispatchLocation),
+          ...detMatches.map((d) => d.origin),
+          ...transitMatches.map((tr) => tr.dispatchLocation),
+        ]),
+      );
+      setCarrierCompany(joinUnique(transitMatches.map((tr) => tr.carrierContractor)));
+      setDriverName(joinUnique(genMatches.map((g) => g.driverName)));
+      setVehicleNo(joinUnique(genMatches.map((g) => g.vehicleNo)));
+      setWaybillNo(
+        joinUnique([...genMatches.map((g) => g.billOfLadingNo), ...transitMatches.map((tr) => tr.billOfLadingNo)]),
+      );
+    },
+    [data],
+  );
+
   const togglePacking = (pk: string) => {
     const isRemoving = selectedPackings.includes(pk);
     const nextPackings = isRemoving
@@ -916,27 +965,74 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
       : [...selectedPackings, pk];
 
     setSelectedPackings(nextPackings);
+    syncMetadataFromPackings(nextPackings);
 
     const generalEntries = data?.generalEntries || [];
     if (!isRemoving) {
-      const match = generalEntries.find((g) => (g.packingListNo || '').trim() === pk);
-      if (match) {
-        if (!releaseNoteNo && match.releaseNo) setReleaseNoteNo(match.releaseNo);
-        if (!supplier && match.supplier) setSupplier(match.supplier);
-        if (!unit && match.unit) setUnit(match.unit);
-        if (!system && match.system) setSystem(match.system);
-        if (!island && match.island) setIsland(match.island);
-        if (!origin && match.dispatchLocation) setOrigin(match.dispatchLocation);
-        if (match.arrivalDate) setArrivalDate(match.arrivalDate);
-        if (!driverName && match.driverName) setDriverName(match.driverName);
-        if (!vehicleNo && match.vehicleNo) setVehicleNo(match.vehicleNo);
-        if (!waybillNo && match.billOfLadingNo) setWaybillNo(match.billOfLadingNo);
-      }
       const addedRows = buildItemsFromGeneral([pk], generalEntries);
       setItems((prev) => [...prev, ...addedRows]);
     } else {
       setItems((prev) => prev.filter((it) => it.packingListNo !== pk));
     }
+  };
+
+  const resetForm = () => {
+    setEditingRecord(null);
+    setMinutesNo('');
+    setReleaseNoteNo('');
+    setProjectName('');
+    setEntryType('permanent');
+    setGoodsUsage('project');
+    setContractNo('');
+    setDate(getTodayIso());
+    setArrivalDate(getTodayIso());
+    setSelectedPackings([]);
+    setItems([]);
+    setSupplier('');
+    setUnit('');
+    setSystem('');
+    setIsland('');
+    setOrigin('');
+    setCarrierCompany('');
+    setTrafficLocation('');
+    setVehicleType('');
+    setDriverName('');
+    setVehicleNo('');
+    setWaybillNo('');
+    setConditionStatus('healthy');
+    setNotes('');
+  };
+
+  const startEdit = (rec: SiteEntryMinutesRecord) => {
+    setEditingRecord(rec);
+    setMinutesNo(rec.minutesNo || '');
+    setReleaseNoteNo(rec.releaseNoteNo || '');
+    setProjectName(rec.projectName || '');
+    setEntryType(rec.entryType || 'permanent');
+    setGoodsUsage(rec.goodsUsage || 'project');
+    setContractNo(rec.contractNo || '');
+    setDate(rec.date || getTodayIso());
+    setArrivalDate(rec.arrivalDate || rec.date || getTodayIso());
+    setSelectedPackings(rec.packingListNos || []);
+    setSupplier(rec.supplier || '');
+    setUnit(rec.unit || '');
+    setSystem(rec.system || '');
+    setIsland(rec.island || '');
+    setOrigin(rec.origin || '');
+    setCarrierCompany(rec.carrierCompany || '');
+    setTrafficLocation(rec.trafficLocation || '');
+    setVehicleType(rec.vehicleType || '');
+    setDriverName(rec.driverName || '');
+    setVehicleNo(rec.vehicleNo || '');
+    setWaybillNo(rec.waybillNo || '');
+    setItems(
+      rec.items && rec.items.length > 0
+        ? rec.items
+        : buildItemsFromGeneral(rec.packingListNos || [], data?.generalEntries || []),
+    );
+    setConditionStatus(rec.conditionStatus || 'healthy');
+    setNotes(rec.notes || '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const updateItemField = (index: number, key: keyof SiteEntryLineItem, value: string) => {
@@ -984,80 +1080,87 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
       return;
     }
 
+    const payload = {
+      minutesNo,
+      releaseNoteNo,
+      projectName,
+      entryType,
+      goodsUsage,
+      contractNo,
+      date,
+      arrivalDate,
+      packingListNos: selectedPackings,
+      supplier,
+      unit,
+      system,
+      island,
+      origin,
+      carrierCompany,
+      trafficLocation,
+      vehicleType,
+      driverName,
+      vehicleNo,
+      waybillNo,
+      items,
+      conditionStatus,
+      notes,
+    };
+
     try {
-      const res = await apiRequest<{ record: SiteEntryMinutesRecord }>('/api/site-entry', {
-        method: 'POST',
-        body: JSON.stringify({
-          minutesNo,
-          releaseNoteNo,
-          projectName,
-          entryType,
-          goodsUsage,
-          contractNo,
-          date,
-          arrivalDate,
-          packingListNos: selectedPackings,
-          supplier,
-          unit,
-          system,
-          island,
-          origin,
-          carrierCompany,
-          trafficLocation,
-          vehicleType,
-          driverName,
-          vehicleNo,
-          waybillNo,
-          items,
-          warehouseKeeper,
-          contractorManager,
-          mapnaSecurity,
-          qcChecked,
-          qcTechOffice,
-          hseChecked,
-          hseOfficer,
-          equipmentSupply,
-          employerRep,
-          mapnaRep: equipmentSupply,
-          conditionStatus,
-          notes,
-        }),
+      if (editingRecord) {
+        const res = await apiRequest<{ record: SiteEntryMinutesRecord }>(`/api/site-entry/${editingRecord.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `صورتجلسه ورود شماره ${res.record.minutesNo} با موفقیت ویرایش شد.`
+            : `Site Entry Minutes ${res.record.minutesNo} updated.`,
+        );
+        resetForm();
+        setPrintSheet(res.record);
+        triggerAutoSnapshot(`Edit Site Entry ${res.record.minutesNo}`);
+        onDataChanged();
+        loadData();
+      } else {
+        const res = await apiRequest<{ record: SiteEntryMinutesRecord }>('/api/site-entry', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `صورتجلسه ورود شماره ${res.record.minutesNo} با موفقیت ثبت شد.`
+            : `Site Entry Minutes ${res.record.minutesNo} saved.`,
+        );
+        resetForm();
+        setPrintSheet(res.record);
+        triggerAutoSnapshot(`Site Entry ${res.record.minutesNo}`);
+        onDataChanged();
+        loadData();
+      }
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await apiRequest<{ ok: boolean }>(`/api/site-entry/${deleteTarget.id}`, {
+        method: 'DELETE',
       });
       notify(
         'success',
         isFa
-          ? `صورتجلسه ورود شماره ${res.record.minutesNo} با موفقیت ثبت شد.`
-          : `Site Entry Minutes ${res.record.minutesNo} saved.`,
+          ? `صورتجلسه ورود شماره ${deleteTarget.minutesNo} حذف شد.`
+          : `Site Entry Minutes ${deleteTarget.minutesNo} deleted.`,
       );
-      setMinutesNo('');
-      setReleaseNoteNo('');
-      setContractNo('');
-      setSelectedPackings([]);
-      setItems([]);
-      setSupplier('');
-      setUnit('');
-      setSystem('');
-      setIsland('');
-      setOrigin('');
-      setCarrierCompany('');
-      setTrafficLocation('');
-      setVehicleType('');
-      setDriverName('');
-      setVehicleNo('');
-      setWaybillNo('');
-      setWarehouseKeeper('');
-      setContractorManager('');
-      setMapnaSecurity('');
-      setQcChecked(false);
-      setQcTechOffice('');
-      setHseChecked(false);
-      setHseOfficer('');
-      setEquipmentSupply('');
-      setEmployerRep('');
-      setConditionStatus('healthy');
-      setNotes('');
-      setPrintSheet(res.record);
-      triggerAutoSnapshot(`Site Entry ${res.record.minutesNo}`);
+      if (editingRecord?.id === deleteTarget.id) resetForm();
+      if (printSheet?.id === deleteTarget.id) setPrintSheet(null);
+      setDeleteTarget(null);
+      triggerAutoSnapshot(`Delete Site Entry ${deleteTarget.minutesNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -1141,10 +1244,82 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             <div className="flex items-center gap-2 text-sm font-bold">
               <ClipboardSignature className="w-4 h-4 text-[var(--accent-primary)]" />
               <span>{t.nav.siteEntry}</span>
+              {editingRecord && (
+                <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
+                  {isFa ? `حالت ویرایش: ${editingRecord.minutesNo}` : `Editing: ${editingRecord.minutesNo}`}
+                </span>
+              )}
             </div>
-            <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
-              MD1EX-FQP02/15-01
-            </span>
+            <div className="flex items-center gap-2">
+              {editingRecord && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>{t.controls.cancel}</span>
+                </button>
+              )}
+              <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
+                MD1EX-FQP02/15-01
+              </span>
+            </div>
+          </div>
+
+          {/* Packing List Selection (Pick first to auto-fill General & Transit metadata) */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="text-xs font-semibold text-[var(--text-secondary)]">
+                {isFa
+                  ? `۱. انتخاب پکینگ لیست‌های وارده (${selectedPackings.length.toLocaleString('fa-IR')} مورد — تکمیل خودکار از بخش ثبت کلی)`
+                  : `1. Select Arriving Packing Lists (${selectedPackings.length} selected — auto-fills from General)`} *
+              </label>
+              <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                <input
+                  type="text"
+                  dir={isFa && !packingSearch ? 'rtl' : 'ltr'}
+                  value={packingSearch}
+                  onChange={(e) => setPackingSearch(e.target.value)}
+                  placeholder={isFa ? 'فیلتر شماره پکینگ...' : 'Filter packing no...'}
+                  className={`flex-1 min-w-0 h-full bg-transparent text-xs focus:outline-none ${
+                    isFa && !packingSearch ? 'text-right' : 'text-left'
+                  }`}
+                />
+              </div>
+            </div>
+
+            <div className="max-h-40 overflow-y-auto p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+              {filteredPackings.length === 0 ? (
+                <div className="col-span-full text-center py-4 text-xs text-[var(--text-muted)]">
+                  {t.controls.noData}
+                </div>
+              ) : (
+                filteredPackings.map((pk) => {
+                  const checked = selectedPackings.includes(pk);
+                  return (
+                    <label
+                      key={pk}
+                      className={`px-2.5 py-2 rounded-lg border text-xs cursor-pointer flex items-center gap-2 transition-colors ${
+                        checked
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => togglePacking(pk)}
+                      />
+                      <span dir="ltr" className="truncate tabular-nums">
+                        {pk}
+                      </span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           {/* Row 1: Core Notice Header & Dates */}
@@ -1425,61 +1600,6 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             </div>
           </div>
 
-          {/* Packing List Selection */}
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="text-xs font-semibold text-[var(--text-secondary)]">
-                {isFa
-                  ? `انتخاب پکینگ لیست‌های وارده (${selectedPackings.length.toLocaleString('fa-IR')} مورد)`
-                  : `Select Arriving Packing Lists (${selectedPackings.length} selected)`} *
-              </label>
-              <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                <input
-                  type="text"
-                  dir={isFa && !packingSearch ? 'rtl' : 'ltr'}
-                  value={packingSearch}
-                  onChange={(e) => setPackingSearch(e.target.value)}
-                  placeholder={isFa ? 'فیلتر شماره پکینگ...' : 'Filter packing no...'}
-                  className={`flex-1 min-w-0 h-full bg-transparent text-xs focus:outline-none ${
-                    isFa && !packingSearch ? 'text-right' : 'text-left'
-                  }`}
-                />
-              </div>
-            </div>
-
-            <div className="max-h-40 overflow-y-auto p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-              {filteredPackings.length === 0 ? (
-                <div className="col-span-full text-center py-4 text-xs text-[var(--text-muted)]">
-                  {t.controls.noData}
-                </div>
-              ) : (
-                filteredPackings.map((pk) => {
-                  const checked = selectedPackings.includes(pk);
-                  return (
-                    <label
-                      key={pk}
-                      className={`px-2.5 py-2 rounded-lg border text-xs cursor-pointer flex items-center gap-2 transition-colors ${
-                        checked
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => togglePacking(pk)}
-                      />
-                      <span dir="ltr" className="truncate tabular-nums">
-                        {pk}
-                      </span>
-                    </label>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
           {/* Editable Line Items Preview for the Form Table */}
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -1614,115 +1734,8 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             )}
           </div>
 
-          {/* Signers & Approvals Section */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'انباردار / پیمانکار' : 'Storekeeper / Contractor'}
-              </label>
-              <input
-                type="text"
-                dir={!warehouseKeeper ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={warehouseKeeper}
-                onChange={(e) => setWarehouseKeeper(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'مدیر پروژه / سرپرست کارگاه پیمانکار' : 'Contractor PM / Site Supervisor'}
-              </label>
-              <input
-                type="text"
-                dir={!contractorManager ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={contractorManager}
-                onChange={(e) => setContractorManager(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'انتظامات مپنا' : 'MAPNA Security'}
-              </label>
-              <input
-                type="text"
-                dir={!mapnaSecurity ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={mapnaSecurity}
-                onChange={(e) => setMapnaSecurity(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'تامین تجهیزات' : 'Equipment Supply'}
-              </label>
-              <input
-                type="text"
-                dir={!equipmentSupply ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={equipmentSupply}
-                onChange={(e) => setEquipmentSupply(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1 flex items-center justify-between">
-                <span>{isFa ? 'QC / دفتر فنی' : 'QC / Tech Office'}</span>
-                <label className="inline-flex items-center gap-1 cursor-pointer text-[10px]">
-                  <input
-                    type="checkbox"
-                    checked={qcChecked}
-                    onChange={(e) => setQcChecked(e.target.checked)}
-                  />
-                  <span>{isFa ? 'تایید' : 'Checked'}</span>
-                </label>
-              </label>
-              <input
-                type="text"
-                dir={!qcTechOffice ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={qcTechOffice}
-                onChange={(e) => setQcTechOffice(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1 flex items-center justify-between">
-                <span>HSE</span>
-                <label className="inline-flex items-center gap-1 cursor-pointer text-[10px]">
-                  <input
-                    type="checkbox"
-                    checked={hseChecked}
-                    onChange={(e) => setHseChecked(e.target.checked)}
-                  />
-                  <span>{isFa ? 'تایید' : 'Checked'}</span>
-                </label>
-              </label>
-              <input
-                type="text"
-                dir={!hseOfficer ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={hseOfficer}
-                onChange={(e) => setHseOfficer(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'نماینده کارفرما / دستگاه نظارت' : 'Employer / Supervision Rep.'}
-              </label>
-              <input
-                type="text"
-                dir={!employerRep ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={employerRep}
-                onChange={(e) => setEmployerRep(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
+          {/* Notes & Submit */}
+          <div className="space-y-3">
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                 {t.headers.notes}
@@ -1732,18 +1745,41 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                 dir={!notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
+                placeholder={isFa ? 'توضیحات تکمیلی صورتجلسه (اختیاری)...' : 'Additional minutes notes (optional)...'}
                 className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
+            <p className="text-[11px] text-[var(--text-muted)]">
+              {isFa
+                ? 'با انتخاب هر پکینگ لیست، مشخصات حمل، پیمانکار، مبدا، سیستم/جزیره و اقلام به‌صورت خودکار از «ثبت کلی تجهیزات» خوانده می‌شوند. بخش‌های امضاء روی نسخه چاپی به‌صورت دستی امضاء و ممهور می‌گردند.'
+                : 'Selecting a Packing List automatically loads shipment, contractor, origin, system/island, and package items from General Registry. Signature blocks remain blank on the printed sheet for physical signing.'}
+            </p>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            {editingRecord && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+              >
+                {t.controls.cancel}
+              </button>
+            )}
             <button
               type="submit"
               className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isFa ? 'ثبت صورتجلسه ورود و نمایش فرم چاپی' : 'Save Minutes & Preview Form'}</span>
+              <span>
+                {editingRecord
+                  ? isFa
+                    ? 'ذخیره ویرایش صورتجلسه و نمایش فرم'
+                    : 'Save Changes & Preview'
+                  : isFa
+                    ? 'ثبت صورتجلسه ورود و نمایش فرم چاپی'
+                    : 'Save Minutes & Preview Form'}
+              </span>
             </button>
           </div>
         </form>
@@ -1793,7 +1829,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                 <th className="py-2.5 px-4">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Contractor'}</th>
                 <th className="py-2.5 px-4">{t.headers.billOfLadingNo}</th>
                 <th className="py-2.5 px-4">{isFa ? 'وضعیت ظاهری' : 'Condition'}</th>
-                <th className="py-2.5 px-4">{t.controls.print}</th>
+                <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -1832,14 +1868,38 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                       </span>
                     </td>
                     <td className="py-2.5 px-4">
-                      <button
-                        type="button"
-                        onClick={() => setPrintSheet(rec)}
-                        className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                      >
-                        <Printer className="w-3.5 h-3.5" />
-                        <span>{t.controls.print}</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setPrintSheet(rec)}
+                          className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>{t.controls.print}</span>
+                        </button>
+                        {canEdit && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEdit(rec)}
+                              className="h-7 px-2 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
+                              title={t.controls.edit}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              <span>{t.controls.edit}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(rec)}
+                              className="h-7 px-2 rounded-lg border border-[var(--border-subtle)] text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] text-[11px] font-medium inline-flex items-center gap-1"
+                              title={t.controls.delete}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>{t.controls.delete}</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1898,6 +1958,19 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
         title={t.nav.siteEntry}
         columns={reportColumns}
         rows={data?.minutes || []}
+      />
+
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'حذف صورتجلسه ورود به کارگاه' : 'Delete Site Entry Minutes'}
+        itemLabel={deleteTarget ? `${deleteTarget.minutesNo} · ${deleteTarget.packingListNos.join(', ')}` : ''}
+        message={
+          isFa
+            ? 'آیا از حذف این صورتجلسه اطمینان دارید؟ این عملیات قابل بازگشت نیست.'
+            : 'Are you sure you want to delete this site entry minutes record? This action cannot be undone.'
+        }
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

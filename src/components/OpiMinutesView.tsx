@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   Download,
   FileWarning,
+  Pencil,
   Plus,
   Printer,
   Trash2,
@@ -25,6 +26,7 @@ import type {
   OsdrReportItem,
   OsdrReportRecord,
 } from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
@@ -759,6 +761,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const [qcInspector, setQcInspector] = useState('');
   const [resultStatus, setResultStatus] = useState<'compliant' | 'has_discrepancy'>('compliant');
   const [notes, setNotes] = useState('');
+  const [editingMinutes, setEditingMinutes] = useState<OpiMinutesRecord | null>(null);
+  const [deleteMinutesTarget, setDeleteMinutesTarget] = useState<OpiMinutesRecord | null>(null);
   const [printMinutes, setPrintMinutes] = useState<OpiMinutesRecord | null>(null);
   const [printMinutesTableOpen, setPrintMinutesTableOpen] = useState(false);
 
@@ -771,6 +775,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const [osdrNotes, setOsdrNotes] = useState('');
   const [osdrSelectedIds, setOsdrSelectedIds] = useState<Record<string, boolean>>({});
   const [osdrRemarks, setOsdrRemarks] = useState<Record<string, string>>({});
+  const [editingOsdr, setEditingOsdr] = useState<OsdrReportRecord | null>(null);
+  const [deleteOsdrTarget, setDeleteOsdrTarget] = useState<OsdrReportRecord | null>(null);
   const [printOsdr, setPrintOsdr] = useState<OsdrReportRecord | null>(null);
   const [printOsdrTableOpen, setPrintOsdrTableOpen] = useState(false);
 
@@ -794,27 +800,34 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     (pk: string, pkgs: string[]) => {
       if (!pk) {
         setItems([]);
+        setSupplier('');
+        setSystem('');
+        setIsland('');
+        setUnit('');
+        setLocation('');
+        setContractNo('');
+        setMerNo('');
         return;
       }
       const detItems = data?.detailedItems || [];
       const genEntries = data?.generalEntries || [];
       const genMatch = genEntries.find((g) => (g.packingListNo || '').trim() === pk);
       const detMatch = detItems.find((d) => (d.shipmentNo || '').trim() === pk);
-      if (!supplier && (genMatch?.supplier || detMatch?.supplier)) {
-        setSupplier(genMatch?.supplier || detMatch?.supplier || '');
-      }
-      if (!system && (genMatch?.system || detMatch?.system)) {
-        setSystem(genMatch?.system || detMatch?.system || '');
-      }
-      if (!island && (genMatch?.island || detMatch?.island)) {
-        setIsland(genMatch?.island || detMatch?.island || '');
-      }
-      if (!unit && (genMatch?.unit || detMatch?.unit)) {
-        setUnit(genMatch?.unit || detMatch?.unit || '');
+
+      setSupplier(genMatch?.supplier || detMatch?.supplier || '');
+      setSystem(genMatch?.system || detMatch?.system || '');
+      setIsland(genMatch?.island || detMatch?.island || '');
+      setUnit(genMatch?.unit || detMatch?.unit || '');
+      setLocation(detMatch?.storageLocation || genMatch?.dispatchLocation || '');
+      setContractNo(detMatch?.mtoRef || '');
+      setMerNo(detMatch?.merNo || '');
+      if (!editingMinutes) {
+        const autoInv = genMatch?.opiInvitationNo || detMatch?.opiNo || '';
+        if (autoInv) setInvitationNo(autoInv);
       }
       setItems(buildMomItemsForPacking(pk, pkgs, detItems, genEntries));
     },
-    [data, supplier, system, island, unit],
+    [data, editingMinutes],
   );
 
   // Auto-fill packingListNo / location / date / metadata when linking an invitation
@@ -823,28 +836,93 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     if (!invNo) return;
     const inv = (data?.invitations || []).find((i) => i.invitationNo === invNo);
     if (inv) {
-      if (inv.location && !location) setLocation(inv.location);
+      if (inv.location) setLocation(inv.location);
       if (inv.date) setDate(inv.date);
       if (inv.time) setTime(inv.time);
-      if (inv.projectName && !projectName) setProjectName(inv.projectName);
-      if (inv.supplier && !supplier) setSupplier(inv.supplier);
-      if (inv.system && !system) setSystem(inv.system);
-      if (inv.island && !island) setIsland(inv.island);
-      if (inv.unit && !unit) setUnit(inv.unit);
-      if (inv.contractNo && !contractNo) setContractNo(inv.contractNo);
-      if (inv.purchasePackageNo && !purchasePackageNo) setPurchasePackageNo(inv.purchasePackageNo);
-      if (inv.packingNos.length > 0 && !packingListNo) {
+      if (inv.projectName) setProjectName(inv.projectName);
+      if (inv.supplier) setSupplier(inv.supplier);
+      if (inv.system) setSystem(inv.system);
+      if (inv.island) setIsland(inv.island);
+      if (inv.unit) setUnit(inv.unit);
+      if (inv.contractNo) setContractNo(inv.contractNo);
+      if (inv.purchasePackageNo) setPurchasePackageNo(inv.purchasePackageNo);
+      if (inv.packingNos.length > 0) {
         const pk = inv.packingNos[0];
         setPackingListNo(pk);
+        setSelectedPackages([]);
         if (inv.items && inv.items.length > 0) {
           setItems(inv.items);
         } else {
           syncFromPacking(pk, []);
         }
-      } else if (inv.items && inv.items.length > 0 && items.length === 0) {
+      } else if (inv.items && inv.items.length > 0) {
         setItems(inv.items);
       }
     }
+  };
+
+  const resetMinutesForm = () => {
+    setEditingMinutes(null);
+    setMinutesNo('');
+    setInvitationNo('');
+    setDate(getTodayIso());
+    setTime('09:00');
+    setPackingListNo('');
+    setSelectedPackages([]);
+    setProjectName('');
+    setSupplier('');
+    setSystem('');
+    setIsland('');
+    setUnit('');
+    setContractNo('');
+    setPurchasePackageNo('');
+    setMerNo('');
+    setItems([]);
+    setLocation('');
+    setStorekeeper('');
+    setMapnaInspector('');
+    setSellerRep('');
+    setEmployerInspector('');
+    setQcInspector('');
+    setResultStatus('compliant');
+    setNotes('');
+  };
+
+  const startEditMinutes = (rec: OpiMinutesRecord) => {
+    setEditingMinutes(rec);
+    setMinutesNo(rec.minutesNo || '');
+    setInvitationNo(rec.invitationNo || '');
+    setDate(rec.date || getTodayIso());
+    setTime(rec.time || '09:00');
+    setPackingListNo(rec.packingListNo || '');
+    setSelectedPackages(rec.packageNos || []);
+    setProjectName(rec.projectName || '');
+    setSupplier(rec.supplier || '');
+    setSystem(rec.system || '');
+    setIsland(rec.island || '');
+    setUnit(rec.unit || '');
+    setContractNo(rec.contractNo || '');
+    setPurchasePackageNo(rec.purchasePackageNo || '');
+    setMerNo(rec.merNo || '');
+    setItems(
+      rec.items && rec.items.length > 0
+        ? rec.items
+        : buildMomItemsForPacking(
+            rec.packingListNo,
+            rec.packageNos || [],
+            data?.detailedItems || [],
+            data?.generalEntries || [],
+          ),
+    );
+    setLocation(rec.location || '');
+    setStorekeeper(rec.storekeeper || '');
+    setMapnaInspector(rec.mapnaInspector || '');
+    setSellerRep(rec.sellerRep || rec.contractorInspector || '');
+    setEmployerInspector(rec.employerInspector || '');
+    setQcInspector(rec.qcInspector || '');
+    setResultStatus(rec.resultStatus || 'compliant');
+    setNotes(rec.notes || '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const packagesForSelectedPacking = useMemo(() => {
@@ -862,7 +940,14 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       : [...selectedPackages, pkg];
     setSelectedPackages(next);
     if (packingListNo) {
-      syncFromPacking(packingListNo, next);
+      setItems(
+        buildMomItemsForPacking(
+          packingListNo,
+          next,
+          data?.detailedItems || [],
+          data?.generalEntries || [],
+        ),
+      );
     }
   };
 
@@ -890,51 +975,88 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
   const handleSaveMinutes = async (e: React.FormEvent) => {
     e.preventDefault();
+    const payload = {
+      minutesNo,
+      invitationNo,
+      date,
+      time,
+      packingListNo,
+      packageNos: selectedPackages.length > 0 ? selectedPackages : packagesForSelectedPacking,
+      projectName,
+      supplier,
+      system,
+      island,
+      unit,
+      contractNo,
+      purchasePackageNo,
+      items,
+      merNo,
+      location,
+      storekeeper,
+      mapnaInspector,
+      sellerRep,
+      employerInspector,
+      contractorInspector: sellerRep,
+      qcInspector,
+      resultStatus,
+      notes,
+    };
+
     try {
-      const res = await apiRequest<{ record: OpiMinutesRecord }>('/api/opi-minutes', {
-        method: 'POST',
-        body: JSON.stringify({
-          minutesNo,
-          invitationNo,
-          date,
-          time,
-          packingListNo,
-          packageNos: selectedPackages.length > 0 ? selectedPackages : packagesForSelectedPacking,
-          projectName,
-          supplier,
-          system,
-          island,
-          unit,
-          contractNo,
-          purchasePackageNo,
-          items,
-          merNo,
-          location,
-          storekeeper,
-          mapnaInspector,
-          sellerRep,
-          employerInspector,
-          contractorInspector: sellerRep,
-          qcInspector,
-          resultStatus,
-          notes,
-        }),
+      if (editingMinutes) {
+        const res = await apiRequest<{ record: OpiMinutesRecord }>(`/api/opi-minutes/${editingMinutes.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `صورتجلسه گشایش شماره ${res.record.minutesNo} ویرایش شد.`
+            : `Inspection Minutes ${res.record.minutesNo} updated.`,
+        );
+        resetMinutesForm();
+        setPrintMinutes(res.record);
+        triggerAutoSnapshot(`Edit OPI Minutes ${res.record.minutesNo}`);
+        onDataChanged();
+        loadData();
+      } else {
+        const res = await apiRequest<{ record: OpiMinutesRecord }>('/api/opi-minutes', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `صورتجلسه گشایش و بازرسی شماره ${res.record.minutesNo} ثبت شد.`
+            : `Inspection Minutes ${res.record.minutesNo} saved.`,
+        );
+        resetMinutesForm();
+        setPrintMinutes(res.record);
+        triggerAutoSnapshot(`OPI Minutes ${res.record.minutesNo}`);
+        onDataChanged();
+        loadData();
+      }
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    }
+  };
+
+  const handleConfirmDeleteMinutes = async () => {
+    if (!deleteMinutesTarget) return;
+    try {
+      await apiRequest<{ ok: boolean }>(`/api/opi-minutes/${deleteMinutesTarget.id}`, {
+        method: 'DELETE',
       });
       notify(
         'success',
         isFa
-          ? `صورتجلسه گشایش و بازرسی شماره ${res.record.minutesNo} ثبت شد.`
-          : `Inspection Minutes ${res.record.minutesNo} saved.`,
+          ? `صورتجلسه شماره ${deleteMinutesTarget.minutesNo} حذف شد.`
+          : `Inspection Minutes ${deleteMinutesTarget.minutesNo} deleted.`,
       );
-      setMinutesNo('');
-      setInvitationNo('');
-      setSelectedPackages([]);
-      setItems([]);
-      setMerNo('');
-      setLocation('');
-      setNotes('');
-      setPrintMinutes(res.record);
-      triggerAutoSnapshot(`OPI Minutes ${res.record.minutesNo}`);
+      if (editingMinutes?.id === deleteMinutesTarget.id) resetMinutesForm();
+      if (printMinutes?.id === deleteMinutesTarget.id) setPrintMinutes(null);
+      setDeleteMinutesTarget(null);
+      triggerAutoSnapshot(`Delete OPI Minutes ${deleteMinutesTarget.minutesNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -944,12 +1066,13 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
   // Discrepancy items eligible for OSDR
   const discrepancyItems = useMemo(() => {
+    const editingItemIds = new Set((editingOsdr?.items || []).map((i) => i.detailedId));
     const all = (data?.detailedItems || []).filter(
-      (d) => d.hasShortage || d.hasDamaged || d.surplus > 0,
+      (d) => d.hasShortage || d.hasDamaged || d.surplus > 0 || editingItemIds.has(d.id),
     );
     if (!osdrPackingNo) return all;
     return all.filter((d) => d.shipmentNo === osdrPackingNo);
-  }, [data, osdrPackingNo]);
+  }, [data, osdrPackingNo, editingOsdr]);
 
   const getDiscrepancyType = (d: DetailedComputed): OsdrReportItem['discrepancyType'] => {
     if (d.shortage > 0 && d.damagedQty && d.damagedQty > 0) return 'shortage_and_damaged';
@@ -970,10 +1093,47 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
   const handlePackingChangeForOsdr = (pk: string) => {
     setOsdrPackingNo(pk);
-    const sample = (data?.detailedItems || []).find((d) => d.shipmentNo === pk && d.supplier);
-    if (sample && !osdrSupplier) setOsdrSupplier(sample.supplier);
+    if (!pk) {
+      setOsdrSupplier('');
+      setOsdrMinutesNo('');
+      return;
+    }
+    const sampleDet = (data?.detailedItems || []).find((d) => d.shipmentNo === pk && d.supplier);
+    const sampleGen = (data?.generalEntries || []).find((g) => (g.packingListNo || '').trim() === pk && g.supplier);
+    setOsdrSupplier(sampleDet?.supplier || sampleGen?.supplier || '');
     const matchingMin = (data?.minutes || []).find((m) => m.packingListNo === pk);
-    if (matchingMin && !osdrMinutesNo) setOsdrMinutesNo(matchingMin.minutesNo);
+    setOsdrMinutesNo(matchingMin?.minutesNo || '');
+  };
+
+  const resetOsdrForm = () => {
+    setEditingOsdr(null);
+    setOsdrReportNo('');
+    setOsdrDate(getTodayIso());
+    setOsdrMinutesNo('');
+    setOsdrPackingNo('');
+    setOsdrSupplier('');
+    setOsdrNotes('');
+    setOsdrSelectedIds({});
+    setOsdrRemarks({});
+  };
+
+  const startEditOsdr = (rep: OsdrReportRecord) => {
+    setEditingOsdr(rep);
+    setOsdrReportNo(rep.reportNo || '');
+    setOsdrDate(rep.date || getTodayIso());
+    setOsdrMinutesNo(rep.opiMinutesNo || '');
+    setOsdrPackingNo(rep.packingListNo || '');
+    setOsdrSupplier(rep.supplier || '');
+    setOsdrNotes(rep.notes || '');
+    const nextSel: Record<string, boolean> = {};
+    const nextRem: Record<string, string> = {};
+    for (const item of rep.items || []) {
+      nextSel[item.detailedId] = true;
+      if (item.remarks) nextRem[item.detailedId] = item.remarks;
+    }
+    setOsdrSelectedIds(nextSel);
+    setOsdrRemarks(nextRem);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSaveOsdr = async (e: React.FormEvent) => {
@@ -1001,31 +1161,71 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       remarks: osdrRemarks[d.id] || '',
     }));
 
+    const payload = {
+      reportNo: osdrReportNo,
+      date: osdrDate,
+      opiMinutesNo: osdrMinutesNo,
+      packingListNo: osdrPackingNo || chosen[0].shipmentNo,
+      supplier: osdrSupplier || chosen[0].supplier,
+      items: itemsPayload,
+      notes: osdrNotes,
+    };
+
     try {
-      const res = await apiRequest<{ report: OsdrReportRecord }>('/api/osdr', {
-        method: 'POST',
-        body: JSON.stringify({
-          reportNo: osdrReportNo,
-          date: osdrDate,
-          opiMinutesNo: osdrMinutesNo,
-          packingListNo: osdrPackingNo || chosen[0].shipmentNo,
-          supplier: osdrSupplier || chosen[0].supplier,
-          items: itemsPayload,
-          notes: osdrNotes,
-        }),
+      if (editingOsdr) {
+        const res = await apiRequest<{ report: OsdrReportRecord }>(`/api/osdr/${editingOsdr.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `گزارش مغایرت شماره ${res.report.reportNo} ویرایش شد.`
+            : `OSDR Report ${res.report.reportNo} updated.`,
+        );
+        resetOsdrForm();
+        setPrintOsdr(res.report);
+        triggerAutoSnapshot(`Edit OSDR ${res.report.reportNo}`);
+        onDataChanged();
+        loadData();
+      } else {
+        const res = await apiRequest<{ report: OsdrReportRecord }>('/api/osdr', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `گزارش مغایرت، کسری و آسیب‌دیدگی شماره ${res.report.reportNo} ثبت شد.`
+            : `OSDR Report ${res.report.reportNo} issued.`,
+        );
+        resetOsdrForm();
+        setPrintOsdr(res.report);
+        triggerAutoSnapshot(`OSDR ${res.report.reportNo}`);
+        onDataChanged();
+        loadData();
+      }
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    }
+  };
+
+  const handleConfirmDeleteOsdr = async () => {
+    if (!deleteOsdrTarget) return;
+    try {
+      await apiRequest<{ ok: boolean }>(`/api/osdr/${deleteOsdrTarget.id}`, {
+        method: 'DELETE',
       });
       notify(
         'success',
         isFa
-          ? `گزارش مغایرت، کسری و آسیب‌دیدگی شماره ${res.report.reportNo} ثبت شد.`
-          : `OSDR Report ${res.report.reportNo} issued.`,
+          ? `گزارش مغایرت شماره ${deleteOsdrTarget.reportNo} حذف شد.`
+          : `OSDR Report ${deleteOsdrTarget.reportNo} deleted.`,
       );
-      setOsdrReportNo('');
-      setOsdrNotes('');
-      setOsdrSelectedIds({});
-      setOsdrRemarks({});
-      setPrintOsdr(res.report);
-      triggerAutoSnapshot(`OSDR ${res.report.reportNo}`);
+      if (editingOsdr?.id === deleteOsdrTarget.id) resetOsdrForm();
+      if (printOsdr?.id === deleteOsdrTarget.id) setPrintOsdr(null);
+      setDeleteOsdrTarget(null);
+      triggerAutoSnapshot(`Delete OSDR ${deleteOsdrTarget.reportNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -1163,12 +1363,31 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-bold">
-                  {isFa ? 'ثبت صورتجلسه گشایش و بازرسی بسته‌ها' : 'Record Package Opening & Inspection Minutes'}
-                </h3>
-                <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
-                  MD1EX-FQP02/06-03
-                </span>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold">
+                    {isFa ? 'ثبت صورتجلسه گشایش و بازرسی بسته‌ها' : 'Record Package Opening & Inspection Minutes'}
+                  </h3>
+                  {editingMinutes && (
+                    <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
+                      {isFa ? `حالت ویرایش: ${editingMinutes.minutesNo}` : `Editing: ${editingMinutes.minutesNo}`}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {editingMinutes && (
+                    <button
+                      type="button"
+                      onClick={resetMinutesForm}
+                      className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>{t.controls.cancel}</span>
+                    </button>
+                  )}
+                  <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
+                    MD1EX-FQP02/06-03
+                  </span>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -1595,13 +1814,31 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 />
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex items-center justify-end gap-2">
+                {editingMinutes && (
+                  <button
+                    type="button"
+                    onClick={resetMinutesForm}
+                    className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>{t.controls.cancel}</span>
+                  </button>
+                )}
                 <button
                   type="submit"
                   className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>{isFa ? 'ثبت صورتجلسه گشایش و چاپ فرم' : 'Save Minutes & Preview'}</span>
+                  <span>
+                    {editingMinutes
+                      ? isFa
+                        ? 'ذخیره تغییرات صورتجلسه'
+                        : 'Update Minutes'
+                      : isFa
+                        ? 'ثبت صورتجلسه گشایش و چاپ فرم'
+                        : 'Save Minutes & Preview'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -1697,6 +1934,26 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                               <Printer className="w-3.5 h-3.5" />
                               <span>{t.controls.print}</span>
                             </button>
+                            {canEdit && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => startEditMinutes(rec)}
+                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                                  title={t.controls.edit}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteMinutesTarget(rec)}
+                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                                  title={t.controls.delete}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
                             {rec.resultStatus === 'has_discrepancy' && canEdit && (
                               <button
                                 type="button"
@@ -1730,9 +1987,26 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               onSubmit={handleSaveOsdr}
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
             >
-              <div className="flex items-center gap-2 text-sm font-bold">
-                <AlertTriangle className="w-4 h-4 text-[var(--status-warning)]" />
-                <span>{isFa ? 'صدور گزارش مغایرت، کسری و آسیب‌دیدگی (OSDR)' : 'Issue OSDR Discrepancy Report'}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm font-bold">
+                  <AlertTriangle className="w-4 h-4 text-[var(--status-warning)]" />
+                  <span>{isFa ? 'صدور گزارش مغایرت، کسری و آسیب‌دیدگی (OSDR)' : 'Issue OSDR Discrepancy Report'}</span>
+                  {editingOsdr && (
+                    <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
+                      {isFa ? `حالت ویرایش: ${editingOsdr.reportNo}` : `Editing: ${editingOsdr.reportNo}`}
+                    </span>
+                  )}
+                </div>
+                {editingOsdr && (
+                  <button
+                    type="button"
+                    onClick={resetOsdrForm}
+                    className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>{t.controls.cancel}</span>
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -1906,13 +2180,31 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 />
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex items-center justify-end gap-2">
+                {editingOsdr && (
+                  <button
+                    type="button"
+                    onClick={resetOsdrForm}
+                    className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>{t.controls.cancel}</span>
+                  </button>
+                )}
                 <button
                   type="submit"
                   className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
                 >
                   <FileWarning className="w-4 h-4" />
-                  <span>{isFa ? 'ثبت گزارش مغایرت (OSDR) و نمایش فرم چاپی' : 'Issue OSDR & Preview Sheet'}</span>
+                  <span>
+                    {editingOsdr
+                      ? isFa
+                        ? 'ذخیره تغییرات گزارش OSDR'
+                        : 'Update OSDR Report'
+                      : isFa
+                        ? 'ثبت گزارش مغایرت (OSDR) و نمایش فرم چاپی'
+                        : 'Issue OSDR & Preview Sheet'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -1987,14 +2279,36 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                           {rep.items.length}
                         </td>
                         <td className="py-2.5 px-4 text-end">
-                          <button
-                            type="button"
-                            onClick={() => setPrintOsdr(rep)}
-                            className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                            <span>{t.controls.print}</span>
-                          </button>
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setPrintOsdr(rep)}
+                              className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>{t.controls.print}</span>
+                            </button>
+                            {canEdit && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => startEditOsdr(rep)}
+                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                                  title={t.controls.edit}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteOsdrTarget(rep)}
+                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                                  title={t.controls.delete}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -2179,6 +2493,34 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         title={isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (OSDR)' : 'OSDR Reports'}
         columns={osdrColumns}
         rows={data?.osdrReports || []}
+      />
+
+      <ConfirmActionModal
+        open={Boolean(deleteMinutesTarget)}
+        title={isFa ? 'حذف صورتجلسه گشایش و بازرسی' : 'Delete OPI Minutes'}
+        message={
+          deleteMinutesTarget
+            ? isFa
+              ? `آیا از حذف صورتجلسه شماره ${deleteMinutesTarget.minutesNo} اطمینان دارید؟`
+              : `Delete OPI Minutes ${deleteMinutesTarget.minutesNo}?`
+            : ''
+        }
+        onConfirm={handleConfirmDeleteMinutes}
+        onCancel={() => setDeleteMinutesTarget(null)}
+      />
+
+      <ConfirmActionModal
+        open={Boolean(deleteOsdrTarget)}
+        title={isFa ? 'حذف گزارش مغایرت (OSDR)' : 'Delete OSDR Report'}
+        message={
+          deleteOsdrTarget
+            ? isFa
+              ? `آیا از حذف گزارش OSDR شماره ${deleteOsdrTarget.reportNo} اطمینان دارید؟`
+              : `Delete OSDR Report ${deleteOsdrTarget.reportNo}?`
+            : ''
+        }
+        onConfirm={handleConfirmDeleteOsdr}
+        onCancel={() => setDeleteOsdrTarget(null)}
       />
     </div>
   );

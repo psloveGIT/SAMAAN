@@ -29,14 +29,14 @@ export function verifyPassword(password: string, storedHash: string): boolean {
   return crypto.timingSafeEqual(derived, keyBuf);
 }
 
-export function signSessionToken(userId: string, secret: string): string {
+export function signSessionToken(userId: string, secret: string, username?: string): string {
   const exp = Date.now() + TOKEN_TTL_MS;
-  const payload = Buffer.from(JSON.stringify({ uid: userId, exp })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ uid: userId, uname: username || '', exp })).toString('base64url');
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
   return `${payload}.${sig}`;
 }
 
-export function verifySessionToken(token: string, secret: string): string | null {
+export function verifySessionToken(token: string, secret: string): { uid: string; uname?: string } | null {
   const parts = token.split('.');
   if (parts.length !== 2) return null;
   const [payload, sig] = parts;
@@ -49,12 +49,13 @@ export function verifySessionToken(token: string, secret: string): string | null
   try {
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
       uid: string;
+      uname?: string;
       exp: number;
     };
     if (!parsed.uid || typeof parsed.exp !== 'number' || parsed.exp < Date.now()) {
       return null;
     }
-    return parsed.uid;
+    return { uid: parsed.uid, uname: parsed.uname };
   } catch {
     return null;
   }

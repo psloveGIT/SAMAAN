@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, ClipboardList, Download, Printer, Search, X } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Download, Pencil, Printer, Search, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { roundQty } from '../shared/formulas.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
   DetailedComputed,
@@ -13,6 +14,7 @@ import type {
   MivDocType,
   MivDocumentRecord,
 } from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
@@ -580,11 +582,15 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [notes, setNotes] = useState('');
 
   const [itemSearch, setItemSearch] = useState('');
+  const [shipmentFilter, setShipmentFilter] = useState('');
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({});
   const [reqQtyMap, setReqQtyMap] = useState<Record<string, string>>({});
   const [remarkMap, setRemarkMap] = useState<Record<string, string>>({});
   const [printDoc, setPrintDoc] = useState<MivDocumentRecord | null>(null);
   const [printReportOpen, setPrintReportOpen] = useState(false);
+
+  const [editingDoc, setEditingDoc] = useState<MivDocumentRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MivDocumentRecord | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -617,15 +623,47 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     [data],
   );
 
-  const getAvailableQty = (item: DetailedComputed, type: MivOnlyType) => {
-    if (type === 'miv_contractor') return item.contractorInventory;
-    return item.mapnaInventory;
-  };
+  const knownPackings = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of data?.detailedItems || []) {
+      if (d.shipmentNo) set.add(d.shipmentNo);
+    }
+    for (const g of data?.generalEntries || []) {
+      if (g.packingListNo) set.add(g.packingListNo);
+    }
+    return Array.from(set);
+  }, [data]);
+
+  const oldQtyByDetailedId = useMemo(() => {
+    const map = new Map<string, number>();
+    if (editingDoc) {
+      for (const it of editingDoc.items) {
+        map.set(it.detailedId, roundQty((map.get(it.detailedId) || 0) + (it.qty || 0)));
+      }
+    }
+    return map;
+  }, [editingDoc]);
+
+  const getAvailableQty = useCallback(
+    (item: DetailedComputed, type: MivOnlyType) => {
+      const oldQty = oldQtyByDetailedId.get(item.id) || 0;
+      if (type === 'miv_contractor') {
+        const extra = editingDoc?.docType === 'miv_contractor' ? oldQty : 0;
+        return roundQty(item.contractorInventory + extra);
+      }
+      const extra = editingDoc?.docType === 'miv_mapna' ? oldQty : 0;
+      return roundQty(item.mapnaInventory + extra);
+    },
+    [editingDoc, oldQtyByDetailedId],
+  );
 
   const eligibleItems = useMemo(() => {
     const all = (data?.detailedItems || []).filter((d) => {
-      if (docType === 'miv_contractor') return d.contractorInventory > 0;
-      return !d.opiPending && d.mapnaInventory > 0;
+      if (shipmentFilter && (d.shipmentNo || '').trim() !== shipmentFilter.trim()) return false;
+      const avail = getAvailableQty(d, docType);
+      const isExistingEditItem = oldQtyByDetailedId.has(d.id) || Boolean(qtyMap[d.id]);
+      if (docType === 'miv_contractor') return avail > 0 || isExistingEditItem;
+      return !d.opiPending && (avail > 0 || isExistingEditItem);
     });
     const q = itemSearch.trim().toLowerCase();
     if (!q) return all;
@@ -635,7 +673,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         .toLowerCase()
         .includes(q),
     );
-  }, [data, docType, itemSearch]);
+  }, [data, docType, itemSearch, shipmentFilter, getAvailableQty, oldQtyByDetailedId, qtyMap]);
 
   const detailedLookup = useMemo(() => {
     const map = new Map<string, DetailedComputed>();
@@ -643,44 +681,69 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     return map;
   }, [data]);
 
-  const autoFillFromItem = useCallback(
-    (item: DetailedComputed) => {
+  const autoFillFromPackingOrItem = useCallback(
+    (packingNo: string, item?: DetailedComputed, overwrite = false) => {
+      const targetPacking = (item?.shipmentNo || packingNo || '').trim();
+      if (!targetPacking) return;
       const generalEntries = data?.generalEntries || [];
+      const genMatches = generalEntries.filter(
+        (g) => (g.packingListNo || '').trim() === targetPacking,
+      );
       const genMatch =
-        generalEntries.find(
-          (g) =>
-            (g.packingListNo || '').trim() === (item.shipmentNo || '').trim() &&
-            (g.packageNo || '').trim() === (item.packageNo || '').trim(),
-        ) ||
-        generalEntries.find(
-          (g) => (g.packingListNo || '').trim() === (item.shipmentNo || '').trim(),
-        );
+        (item
+          ? genMatches.find((g) => (g.packageNo || '').trim() === (item.packageNo || '').trim())
+          : undefined) || genMatches[0];
 
-      const combinedIslandSystem = [
-        item.system || genMatch?.system,
-        item.island || genMatch?.island,
-      ]
-        .map((s) => (s || '').trim())
-        .filter(Boolean)
-        .join(' / ');
+      const detMatches = (data?.detailedItems || []).filter(
+        (d) => (d.shipmentNo || '').trim() === targetPacking,
+      );
+      const refDet = item || detMatches[0];
 
-      if (!islandSystem.trim() && combinedIslandSystem) {
+      const combinedIslandSystem = Array.from(
+        new Set(
+          [
+            refDet?.system || genMatch?.system,
+            refDet?.island || genMatch?.island,
+          ]
+            .map((s) => (s || '').trim())
+            .filter(Boolean),
+        ),
+      ).join(' / ');
+      const nextUnit = (refDet?.unit || genMatch?.unit || '').trim();
+      const nextReceiptNo = (refDet?.gcvReceiptNo || genMatch?.mapnaEntryMinutesNo || '').trim();
+      const nextContractNo = (refDet?.mtoRef || '').trim();
+      const nextParty = (refDet?.receiver || '').trim();
+
+      if (combinedIslandSystem && (overwrite || !islandSystem.trim())) {
         setIslandSystem(combinedIslandSystem);
       }
-      if (!unit.trim() && (item.unit || genMatch?.unit)) {
-        setUnit(item.unit || genMatch?.unit || '');
+      if (nextUnit && (overwrite || !unit.trim())) {
+        setUnit(nextUnit);
       }
-      if (!receiptNo.trim() && (item.gcvReceiptNo || genMatch?.mapnaEntryMinutesNo)) {
-        setReceiptNo(item.gcvReceiptNo || genMatch?.mapnaEntryMinutesNo || '');
+      if (nextReceiptNo && (overwrite || !receiptNo.trim())) {
+        setReceiptNo(nextReceiptNo);
+      }
+      if (nextContractNo && (overwrite || !contractNo.trim())) {
+        setContractNo(nextContractNo);
+      }
+      if (docType === 'miv_contractor' && nextParty && (overwrite || !party.trim())) {
+        setParty(nextParty);
       }
     },
-    [data?.generalEntries, islandSystem, unit, receiptNo],
+    [data?.generalEntries, data?.detailedItems, islandSystem, unit, receiptNo, contractNo, party, docType],
   );
+
+  const handlePackingFilterChange = (val: string) => {
+    setShipmentFilter(val);
+    if (val) {
+      autoFillFromPackingOrItem(val, undefined, true);
+    }
+  };
 
   const updateIssuedQty = (item: DetailedComputed, value: string) => {
     setQtyMap((prev) => ({ ...prev, [item.id]: value }));
     if (Number(value) > 0) {
-      autoFillFromItem(item);
+      autoFillFromPackingOrItem(item.shipmentNo, item, false);
       setReqQtyMap((prev) => (prev[item.id] ? prev : { ...prev, [item.id]: value }));
     }
   };
@@ -707,6 +770,60 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
       .filter((x) => Number.isFinite(x.qty) && x.qty > 0);
   }, [qtyMap, reqQtyMap, remarkMap, detailedLookup]);
 
+  const resetForm = () => {
+    setEditingDoc(null);
+    setDocNo('');
+    setContractNo('');
+    setParty('');
+    setIslandSystem('');
+    setUnit('');
+    setReceiptNo('');
+    setStorekeeper('');
+    setEquipmentSupply('');
+    setTechOffice('');
+    setInstallationDept('');
+    setRequester('');
+    setReceiver('');
+    setNotes('');
+    setQtyMap({});
+    setReqQtyMap({});
+    setRemarkMap({});
+  };
+
+  const startEdit = (doc: MivDocumentRecord) => {
+    setEditingDoc(doc);
+    setDocType((doc.docType === 'miv_mapna' ? 'miv_mapna' : 'miv_contractor'));
+    setDocNo(doc.docNo);
+    setDate(doc.date);
+    setParty(doc.party || '');
+    setProjectName(doc.projectName || '');
+    setContractNo(doc.contractNo || '');
+    setIslandSystem(doc.islandSystem || '');
+    setUnit(doc.unit || '');
+    setReceiptNo(doc.receiptNo || '');
+    setStorekeeper(doc.storekeeper || '');
+    setEquipmentSupply(doc.equipmentSupply || '');
+    setTechOffice(doc.techOffice || '');
+    setInstallationDept(doc.installationDept || '');
+    setRequester(doc.requester || '');
+    setReceiver(doc.receiver || '');
+    setNotes(doc.notes || '');
+    setShipmentFilter('');
+    setItemSearch('');
+    const nextQty: Record<string, string> = {};
+    const nextReqQty: Record<string, string> = {};
+    const nextRemark: Record<string, string> = {};
+    for (const it of doc.items) {
+      nextQty[it.detailedId] = String(it.qty);
+      if (it.requestedQty !== undefined) nextReqQty[it.detailedId] = String(it.requestedQty);
+      if (it.remark) nextRemark[it.detailedId] = it.remark;
+    }
+    setQtyMap(nextQty);
+    setReqQtyMap(nextReqQty);
+    setRemarkMap(nextRemark);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedEntries.length === 0) {
@@ -715,52 +832,69 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     }
 
     try {
-      const res = await apiRequest<{ document: MivDocumentRecord }>('/api/miv', {
-        method: 'POST',
-        body: JSON.stringify({
-          docType,
-          docNo,
-          date,
-          party,
-          projectName,
-          contractNo,
-          islandSystem,
-          unit,
-          receiptNo,
-          storekeeper,
-          equipmentSupply,
-          techOffice,
-          installationDept,
-          requester,
-          receiver,
-          notes,
-          items: selectedEntries,
-        }),
-      });
+      const payload = {
+        docType,
+        docNo,
+        date,
+        party,
+        projectName,
+        contractNo,
+        islandSystem,
+        unit,
+        receiptNo,
+        storekeeper,
+        equipmentSupply,
+        techOffice,
+        installationDept,
+        requester,
+        receiver,
+        notes,
+        items: selectedEntries,
+      };
+
+      const res = editingDoc
+        ? await apiRequest<{ document: MivDocumentRecord }>(`/api/miv/${editingDoc.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+          })
+        : await apiRequest<{ document: MivDocumentRecord }>('/api/miv', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+
+      notify(
+        'success',
+        editingDoc
+          ? isFa
+            ? `حواله انبار شماره ${res.document.docNo} ویرایش و موجودی اقلام به‌روزرسانی شد.`
+            : `MIV Document ${res.document.docNo} updated.`
+          : isFa
+            ? `حواله انبار شماره ${res.document.docNo} ثبت و موجودی اقلام به‌روزرسانی شد.`
+            : `MIV Document ${res.document.docNo} saved.`,
+      );
+      resetForm();
+      setPrintDoc(res.document);
+      triggerAutoSnapshot(`${editingDoc ? 'Edit ' : ''}MIV ${res.document.docNo}`);
+      onDataChanged();
+      loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await apiRequest(`/api/miv/${deleteTarget.id}`, { method: 'DELETE' });
       notify(
         'success',
         isFa
-          ? `حواله انبار شماره ${res.document.docNo} ثبت و موجودی اقلام به‌روزرسانی شد.`
-          : `MIV Document ${res.document.docNo} saved.`,
+          ? `حواله انبار شماره ${deleteTarget.docNo} حذف و موجودی اقلام بازگردانی شد.`
+          : `MIV Document ${deleteTarget.docNo} deleted.`,
       );
-      setDocNo('');
-      setContractNo('');
-      setParty('');
-      setIslandSystem('');
-      setUnit('');
-      setReceiptNo('');
-      setStorekeeper('');
-      setEquipmentSupply('');
-      setTechOffice('');
-      setInstallationDept('');
-      setRequester('');
-      setReceiver('');
-      setNotes('');
-      setQtyMap({});
-      setReqQtyMap({});
-      setRemarkMap({});
-      setPrintDoc(res.document);
-      triggerAutoSnapshot(`MIV ${res.document.docNo}`);
+      if (editingDoc?.id === deleteTarget.id) resetForm();
+      setDeleteTarget(null);
+      triggerAutoSnapshot(`Delete MIV ${deleteTarget.docNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -841,11 +975,28 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-bold">
               <ClipboardList className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{t.nav.miv}</span>
+              <span>
+                {editingDoc
+                  ? isFa
+                    ? `ویرایش حواله انبار (${editingDoc.docNo})`
+                    : `Edit MIV (${editingDoc.docNo})`
+                  : t.nav.miv}
+              </span>
             </div>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-              MD1EX-FQP02/05-03
-            </span>
+            <div className="flex items-center gap-3">
+              {editingDoc && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="text-xs text-[var(--status-danger)] hover:underline"
+                >
+                  {t.controls.cancel}
+                </button>
+              )}
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                MD1EX-FQP02/05-03
+              </span>
+            </div>
           </div>
 
           {/* Row 1: Type, Doc No, Date, Project, Contract */}
@@ -1078,16 +1229,30 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
               <div className="text-xs font-semibold text-[var(--text-secondary)]">
                 {isFa ? 'انتخاب اقلام، تعداد درخواستی و تعداد تحویل' : 'Select Items & Requested / Issued Quantities'}
               </div>
-              <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                <input
-                  type="text"
-                  dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                  value={itemSearch}
-                  onChange={(e) => setItemSearch(e.target.value)}
-                  placeholder={t.controls.searchPlaceholder}
-                  className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-                />
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={shipmentFilter}
+                  onChange={(e) => handlePackingFilterChange(e.target.value)}
+                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                >
+                  <option value="">{isFa ? 'فیلتر پکینگ لیست: همه' : 'Packing List: All'}</option>
+                  {knownPackings.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+                  <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                  <input
+                    type="text"
+                    dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                    placeholder={t.controls.searchPlaceholder}
+                    className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
+                  />
+                </div>
               </div>
             </div>
 
@@ -1207,7 +1372,15 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
               className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isFa ? 'ثبت حواله انبار و چاپ فرم' : 'Save & Print MIV'}</span>
+              <span>
+                {editingDoc
+                  ? isFa
+                    ? 'ذخیره تغییرات حواله و چاپ'
+                    : 'Save Changes & Print MIV'
+                  : isFa
+                    ? 'ثبت حواله انبار و چاپ فرم'
+                    : 'Save & Print MIV'}
+              </span>
             </button>
           </div>
         </form>
@@ -1256,7 +1429,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                 <th className="py-2.5 px-4">{isFa ? 'شماره قرارداد' : 'Contract'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Party'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'تعداد اقلام' : 'Items'}</th>
-                <th className="py-2.5 px-4">{t.controls.print}</th>
+                <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -1288,14 +1461,36 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                     <td className="py-2.5 px-4 bidi-plaintext">{doc.party || '-'}</td>
                     <td className="py-2.5 px-4 tabular-nums">{doc.items.length}</td>
                     <td className="py-2.5 px-4">
-                      <button
-                        type="button"
-                        onClick={() => setPrintDoc(doc)}
-                        className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                      >
-                        <Printer className="w-3.5 h-3.5" />
-                        <span>{t.controls.print}</span>
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setPrintDoc(doc)}
+                          className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>{t.controls.print}</span>
+                        </button>
+                        {canEdit && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEdit(doc)}
+                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]"
+                              title={t.controls.edit}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(doc)}
+                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)]"
+                              title={t.controls.delete}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1356,6 +1551,21 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         title={t.nav.miv}
         columns={historyColumns}
         rows={mivDocuments}
+      />
+
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'تأیید حذف حواله انبار (MIV)' : 'Confirm MIV Deletion'}
+        message={
+          deleteTarget
+            ? isFa
+              ? `آیا از حذف حواله انبار «${deleteTarget.docNo}» اطمینان دارید؟ موجودی اقلام مربوطه بازگردانی خواهد شد.`
+              : `Delete MIV document "${deleteTarget.docNo}"? Related inventories will be restored.`
+            : ''
+        }
+        confirmLabel={t.controls.delete}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

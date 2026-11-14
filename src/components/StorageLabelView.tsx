@@ -4,7 +4,7 @@ import { CheckSquare, Eye, Printer, Search, Square, Tag, X } from 'lucide-react'
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { MD1_STACKED_LOGO } from '../lib/assets.ts';
-import type { DetailedComputed } from '../shared/types.ts';
+import type { DetailedComputed, GeneralEntry } from '../shared/types.ts';
 
 const LABEL_META_STORAGE_KEY = 'samaan_storage_label_meta_v1';
 
@@ -33,6 +33,7 @@ interface LabelMetaConfig {
 
 interface OfficialStorageLabelSheetProps {
   item: DetailedComputed;
+  generalEntries?: GeneralEntry[];
   meta: LabelMetaConfig;
   fields: LabelFieldToggles;
   formatDate: (iso: string) => string;
@@ -41,11 +42,28 @@ interface OfficialStorageLabelSheetProps {
 
 const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
   item,
+  generalEntries = [],
   meta,
   fields,
   formatDate,
   compact = false,
 }) => {
+  const genMatch =
+    generalEntries.find(
+      (g) =>
+        (g.packingListNo || '').trim() === (item.shipmentNo || '').trim() &&
+        (g.packageNo || '').trim() === (item.packageNo || '').trim(),
+    ) ||
+    generalEntries.find(
+      (g) => (g.packingListNo || '').trim() === (item.shipmentNo || '').trim(),
+    );
+
+  const effectiveIsland = item.island || genMatch?.island || '';
+  const effectiveSystem = item.system || genMatch?.system || '';
+  const effectiveUnit = item.unit || genMatch?.unit || '';
+  const effectiveSupplier = item.supplier || genMatch?.supplier || '';
+  const effectiveArrivalDate = item.arrivalDate || genMatch?.arrivalDate || '';
+
   const pkgDisplay = [
     fields.shipmentNo ? item.shipmentNo : '',
     fields.packageNo ? item.packageNo : '',
@@ -54,10 +72,10 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
     .join(' / ');
 
   const systemDisplay = [
-    fields.islandSystem ? item.island : '',
-    item.system,
+    fields.islandSystem ? effectiveIsland : '',
+    effectiveSystem,
     item.subSystem,
-    fields.islandSystem ? item.unit : '',
+    fields.islandSystem ? effectiveUnit : '',
   ]
     .filter(Boolean)
     .join(' / ');
@@ -76,10 +94,10 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
       ltr: true,
     });
   }
-  if (fields.arrivalDate && item.arrivalDate) {
+  if (fields.arrivalDate && effectiveArrivalDate) {
     extraFooterLines.push({
       label: 'Arrival Date:',
-      value: formatDate(item.arrivalDate),
+      value: formatDate(effectiveArrivalDate),
       ltr: true,
     });
   }
@@ -269,7 +287,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
           },
           {
             label: 'VENDOR:',
-            value: item.supplier || '',
+            value: effectiveSupplier,
             isLtr: false,
           },
         ].map((row) => (
@@ -428,6 +446,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
   const [shipmentFilter, setShipmentFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [items, setItems] = useState<DetailedComputed[]>([]);
+  const [generalEntries, setGeneralEntries] = useState<GeneralEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [labelsPerPage, setLabelsPerPage] = useState<1 | 2>(1);
@@ -464,10 +483,14 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
         ...(q ? { q } : {}),
         ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
       });
-      const res = await apiRequest<{ items: DetailedComputed[] }>(
-        `/api/detailed?${params.toString()}`,
-      );
-      setItems(res.items || []);
+      const [detRes, genRes] = await Promise.all([
+        apiRequest<{ items: DetailedComputed[] }>(`/api/detailed?${params.toString()}`),
+        apiRequest<{ items: GeneralEntry[] }>('/api/general?page=1&pageSize=1000').catch(() => ({
+          items: [] as GeneralEntry[],
+        })),
+      ]);
+      setItems(detRes.items || []);
+      setGeneralEntries(genRes.items || []);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
@@ -589,6 +612,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
                   <div key={item.id} className="samaan-label-card">
                     <OfficialStorageLabelSheet
                       item={item}
+                      generalEntries={generalEntries}
                       meta={meta}
                       fields={fields}
                       formatDate={formatDate}
@@ -897,6 +921,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
               >
                 <OfficialStorageLabelSheet
                   item={item}
+                  generalEntries={generalEntries}
                   meta={meta}
                   fields={fields}
                   formatDate={formatDate}
@@ -951,6 +976,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
                     <OfficialStorageLabelSheet
                       key={item.id}
                       item={item}
+                      generalEntries={generalEntries}
                       meta={meta}
                       fields={fields}
                       formatDate={formatDate}

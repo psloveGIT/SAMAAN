@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   Download,
   FileText,
+  Pencil,
   Plus,
   Printer,
   Search,
@@ -22,8 +23,18 @@ import type {
   OpiInvitationLineItem,
   OpiInvitationRecord,
 } from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+
+const joinUnique = (values: (string | undefined | null)[]): string => {
+  const seen = new Set<string>();
+  for (const v of values) {
+    const clean = (v || '').trim();
+    if (clean) seen.add(clean);
+  }
+  return Array.from(seen).join(' / ');
+};
 
 const buildOpiItemsForPackings = (
   packings: string[],
@@ -686,7 +697,9 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const [packingSearch, setPackingSearch] = useState('');
   const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
 
-  // Print Invitation Preview & Report Modals
+  // Print Invitation Preview, Edit/Delete & Report Modals
+  const [editingInvitation, setEditingInvitation] = useState<OpiInvitationRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<OpiInvitationRecord | null>(null);
   const [printInvitation, setPrintInvitation] = useState<OpiInvitationRecord | null>(null);
   const [printInvTableOpen, setPrintInvTableOpen] = useState(false);
   const [printItemsTableOpen, setPrintItemsTableOpen] = useState(false);
@@ -721,6 +734,30 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     return all.filter((p) => p.toLowerCase().includes(needle));
   }, [data, packingSearch]);
 
+  const syncMetadataFromPackings = useCallback(
+    (packings: string[]) => {
+      const detItems = data?.detailedItems || [];
+      const genEntries = data?.generalEntries || [];
+      const genMatches = genEntries.filter((g) => packings.includes((g.packingListNo || '').trim()));
+      const detMatches = detItems.filter((d) => packings.includes((d.shipmentNo || '').trim()));
+
+      setSystem(joinUnique([...genMatches.map((g) => g.system), ...detMatches.map((d) => d.system)]));
+      setIsland(joinUnique([...genMatches.map((g) => g.island), ...detMatches.map((d) => d.island)]));
+      setUnit(joinUnique([...genMatches.map((g) => g.unit), ...detMatches.map((d) => d.unit)]));
+      setSupplier(joinUnique([...genMatches.map((g) => g.supplier), ...detMatches.map((d) => d.supplier)]));
+      setLocation(joinUnique([...detMatches.map((d) => d.storageLocation), ...genMatches.map((g) => g.dispatchLocation)]));
+      setContractNo(joinUnique(detMatches.map((d) => d.mtoRef)));
+
+      if (!editingInvitation) {
+        const autoInvNo = joinUnique(genMatches.map((g) => g.opiInvitationNo));
+        if (autoInvNo) setInvitationNo(autoInvNo);
+        const autoInvDate = genMatches.map((g) => (g.opiInvitationDate || '').trim()).find(Boolean);
+        if (autoInvDate) setDate(autoInvDate);
+      }
+    },
+    [data, editingInvitation],
+  );
+
   const togglePacking = (pk: string) => {
     const isRemoving = selectedPackings.includes(pk);
     const nextPackings = isRemoving
@@ -728,29 +765,67 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       : [...selectedPackings, pk];
 
     setSelectedPackings(nextPackings);
+    syncMetadataFromPackings(nextPackings);
 
     const detItems = data?.detailedItems || [];
     const genEntries = data?.generalEntries || [];
     if (!isRemoving) {
-      const genMatch = genEntries.find((g) => (g.packingListNo || '').trim() === pk);
-      const detMatch = detItems.find((d) => (d.shipmentNo || '').trim() === pk);
-      if (!system && (genMatch?.system || detMatch?.system)) {
-        setSystem(genMatch?.system || detMatch?.system || '');
-      }
-      if (!island && (genMatch?.island || detMatch?.island)) {
-        setIsland(genMatch?.island || detMatch?.island || '');
-      }
-      if (!unit && (genMatch?.unit || detMatch?.unit)) {
-        setUnit(genMatch?.unit || detMatch?.unit || '');
-      }
-      if (!supplier && (genMatch?.supplier || detMatch?.supplier)) {
-        setSupplier(genMatch?.supplier || detMatch?.supplier || '');
-      }
       const addedRows = buildOpiItemsForPackings([pk], detItems, genEntries);
       setItems((prev) => [...prev, ...addedRows]);
     } else {
       setItems((prev) => prev.filter((it) => it.packingListNo !== pk));
     }
+  };
+
+  const resetInvitationForm = () => {
+    setEditingInvitation(null);
+    setInvitationNo('');
+    setIssueDate(getTodayIso());
+    setDate(getTodayIso());
+    setTime('09:00');
+    setLocation('');
+    setProjectName('');
+    setContractNo('');
+    setPurchasePackageNo('');
+    setSystem('');
+    setIsland('');
+    setUnit('');
+    setSupplier('');
+    setItems([]);
+    setInstallerContractor('');
+    setSupplierRep('');
+    setEquipmentSupply('');
+    setEmployerRep('');
+    setNotes('');
+    setSelectedPackings([]);
+  };
+
+  const startEditInvitation = (inv: OpiInvitationRecord) => {
+    setEditingInvitation(inv);
+    setInvitationNo(inv.invitationNo || '');
+    setIssueDate(inv.issueDate || getTodayIso());
+    setDate(inv.date || getTodayIso());
+    setTime(inv.time || '09:00');
+    setLocation(inv.location || '');
+    setProjectName(inv.projectName || '');
+    setSystem(inv.system || '');
+    setIsland(inv.island || '');
+    setUnit(inv.unit || '');
+    setSupplier(inv.supplier || '');
+    setContractNo(inv.contractNo || '');
+    setPurchasePackageNo(inv.purchasePackageNo || '');
+    setSelectedPackings(inv.packingNos || []);
+    setItems(
+      inv.items && inv.items.length > 0
+        ? inv.items
+        : buildOpiItemsForPackings(inv.packingNos || [], data?.detailedItems || [], data?.generalEntries || []),
+    );
+    setInstallerContractor(inv.installerContractor || '');
+    setSupplierRep(inv.supplierRep || '');
+    setEquipmentSupply(inv.equipmentSupply || '');
+    setEmployerRep(inv.employerRep || '');
+    setNotes(inv.notes || '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const updateItemField = (index: number, key: keyof OpiInvitationLineItem, value: string) => {
@@ -781,54 +856,81 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       notify('warning', isFa ? 'حداقل یک پکینگ لیست انتخاب کنید.' : 'Select at least one Packing List.');
       return;
     }
+    const payload = {
+      invitationNo,
+      issueDate,
+      date,
+      time,
+      packingNos: selectedPackings,
+      location,
+      projectName,
+      system,
+      island,
+      unit,
+      supplier,
+      contractNo,
+      purchasePackageNo,
+      items,
+      installerContractor,
+      supplierRep,
+      equipmentSupply,
+      employerRep,
+      notes,
+    };
+
     try {
-      const res = await apiRequest<{ invitation: OpiInvitationRecord }>('/api/opi', {
-        method: 'POST',
-        body: JSON.stringify({
-          invitationNo,
-          issueDate,
-          date,
-          time,
-          packingNos: selectedPackings,
-          location,
-          projectName,
-          system,
-          island,
-          unit,
-          supplier,
-          contractNo,
-          purchasePackageNo,
-          items,
-          installerContractor,
-          supplierRep,
-          equipmentSupply,
-          employerRep,
-          notes,
-        }),
-      });
+      if (editingInvitation) {
+        const res = await apiRequest<{ invitation: OpiInvitationRecord }>(`/api/opi/${editingInvitation.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `دعوتنامه شماره ${res.invitation.invitationNo} ویرایش شد.`
+            : `Inspection Invitation ${res.invitation.invitationNo} updated.`,
+        );
+        resetInvitationForm();
+        setPrintInvitation(res.invitation);
+        triggerAutoSnapshot(`Edit OPI ${res.invitation.invitationNo}`);
+        onDataChanged();
+        loadData();
+      } else {
+        const res = await apiRequest<{ invitation: OpiInvitationRecord }>('/api/opi', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `دعوتنامه گشایش و بازرسی شماره ${res.invitation.invitationNo} صادر شد.`
+            : `Inspection Invitation ${res.invitation.invitationNo} issued.`,
+        );
+        resetInvitationForm();
+        setPrintInvitation(res.invitation);
+        triggerAutoSnapshot(`OPI ${res.invitation.invitationNo}`);
+        onDataChanged();
+        loadData();
+      }
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    }
+  };
+
+  const handleConfirmDeleteInvitation = async () => {
+    if (!deleteTarget) return;
+    try {
+      await apiRequest<{ ok: boolean }>(`/api/opi/${deleteTarget.id}`, { method: 'DELETE' });
       notify(
         'success',
         isFa
-          ? `دعوتنامه گشایش و بازرسی شماره ${res.invitation.invitationNo} صادر شد.`
-          : `Inspection Invitation ${res.invitation.invitationNo} issued.`,
+          ? `دعوتنامه شماره ${deleteTarget.invitationNo} حذف شد.`
+          : `Invitation ${deleteTarget.invitationNo} deleted.`,
       );
-      setInvitationNo('');
-      setLocation('');
-      setContractNo('');
-      setPurchasePackageNo('');
-      setSystem('');
-      setIsland('');
-      setUnit('');
-      setSupplier('');
-      setItems([]);
-      setInstallerContractor('');
-      setSupplierRep('');
-      setEquipmentSupply('');
-      setEmployerRep('');
-      setNotes('');
-      setSelectedPackings([]);
-      setPrintInvitation(res.invitation);
-      triggerAutoSnapshot(`OPI ${res.invitation.invitationNo}`);
+      if (editingInvitation?.id === deleteTarget.id) resetInvitationForm();
+      if (printInvitation?.id === deleteTarget.id) setPrintInvitation(null);
+      setDeleteTarget(null);
+      triggerAutoSnapshot(`Delete OPI ${deleteTarget.invitationNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -1061,12 +1163,31 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-bold">
-                  {isFa ? 'صدور دعوتنامه جدید گشایش و بازرسی بسته‌ها' : 'Issue New Package Opening & Inspection Invitation'}
-                </h3>
-                <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
-                  MD1EX-FQP02/02-03
-                </span>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold">
+                    {isFa ? 'صدور دعوتنامه جدید گشایش و بازرسی بسته‌ها' : 'Issue New Package Opening & Inspection Invitation'}
+                  </h3>
+                  {editingInvitation && (
+                    <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
+                      {isFa ? `حالت ویرایش: ${editingInvitation.invitationNo}` : `Editing: ${editingInvitation.invitationNo}`}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {editingInvitation && (
+                    <button
+                      type="button"
+                      onClick={resetInvitationForm}
+                      className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>{t.controls.cancel}</span>
+                    </button>
+                  )}
+                  <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
+                    MD1EX-FQP02/02-03
+                  </span>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -1448,13 +1569,31 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 />
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex items-center justify-end gap-2">
+                {editingInvitation && (
+                  <button
+                    type="button"
+                    onClick={resetInvitationForm}
+                    className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>{t.controls.cancel}</span>
+                  </button>
+                )}
                 <button
                   type="submit"
                   className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
                 >
                   <FileText className="w-4 h-4" />
-                  <span>{isFa ? 'ثبت دعوتنامه و نمایش فرم چاپی' : 'Issue & Preview Form'}</span>
+                  <span>
+                    {editingInvitation
+                      ? isFa
+                        ? 'ذخیره تغییرات دعوتنامه'
+                        : 'Update Invitation'
+                      : isFa
+                        ? 'ثبت دعوتنامه و نمایش فرم چاپی'
+                        : 'Issue & Preview Form'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -1563,17 +1702,35 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                               <span>{t.controls.print}</span>
                             </button>
                             {canEdit && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setResultInvitationId(inv.id);
-                                  setResultPackingFilter('');
-                                  setTab('results');
-                                }}
-                                className="h-7 px-2.5 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold"
-                              >
-                                {isFa ? 'ثبت نتایج' : 'Record Results'}
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => startEditInvitation(inv)}
+                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                                  title={t.controls.edit}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteTarget(inv)}
+                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                                  title={t.controls.delete}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setResultInvitationId(inv.id);
+                                    setResultPackingFilter('');
+                                    setTab('results');
+                                  }}
+                                  className="h-7 px-2.5 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold"
+                                >
+                                  {isFa ? 'ثبت نتایج' : 'Record Results'}
+                                </button>
+                              </>
                             )}
                           </div>
                         </td>
@@ -1878,6 +2035,20 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
         title={isFa ? 'گزارش اقلام و نتایج بازرسی گشایش بسته‌ها' : 'OPI Inspection Items Report'}
         columns={itemReportColumns}
         rows={itemsForResults}
+      />
+
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'حذف دعوتنامه OPI' : 'Delete OPI Invitation'}
+        message={
+          deleteTarget
+            ? isFa
+              ? `آیا از حذف دعوتنامه شماره ${deleteTarget.invitationNo} اطمینان دارید؟`
+              : `Delete OPI Invitation ${deleteTarget.invitationNo}?`
+            : ''
+        }
+        onConfirm={handleConfirmDeleteInvitation}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

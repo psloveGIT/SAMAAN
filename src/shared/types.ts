@@ -3,6 +3,13 @@ export type CalendarMode = 'jalali' | 'gregorian';
 export type ThemeMode = 'light' | 'dark';
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
+export interface ProjectInfo {
+  id: string;
+  name: string;
+  code?: string;
+  createdAt: string;
+}
+
 export interface UserPreferences {
   language: Language;
   calendar: CalendarMode;

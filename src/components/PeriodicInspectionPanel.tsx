@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, ClipboardList, Printer, RotateCcw, Trash2, X } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Pencil, Printer, RotateCcw, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { PeriodicInspectionAnswer, PeriodicInspectionRecord } from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 
 interface ChecklistQuestionDef {
@@ -659,6 +660,8 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   >(createEmptyAnswersMap);
 
   const [printRec, setPrintRec] = useState<PeriodicInspectionRecord | null>(null);
+  const [editingRecord, setEditingRecord] = useState<PeriodicInspectionRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PeriodicInspectionRecord | null>(null);
 
   const loadRecords = useCallback(async () => {
     setLoading(true);
@@ -710,6 +713,40 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
     setAnswersMap(createEmptyAnswersMap());
   };
 
+  const resetForm = () => {
+    setEditingRecord(null);
+    setProjectName('');
+    setInspectionDate(getTodayIso());
+    setSupervisorName('');
+    setInspectorsSignatory('');
+    setSiteSupervisorSignatory('');
+    setProjectManagerSignatory('');
+    setCopyTo('');
+    setAnswersMap(createEmptyAnswersMap());
+  };
+
+  const startEdit = (rec: PeriodicInspectionRecord) => {
+    setEditingRecord(rec);
+    setProjectName(rec.projectName || '');
+    setInspectionDate(rec.inspectionDate);
+    setSupervisorName(rec.supervisorName || '');
+    setInspectorsSignatory(rec.inspectorsSignatory || '');
+    setSiteSupervisorSignatory(rec.siteSupervisorSignatory || '');
+    setProjectManagerSignatory(rec.projectManagerSignatory || '');
+    setCopyTo(rec.copyTo || '');
+    const nextMap = createEmptyAnswersMap();
+    for (const ans of rec.answers || []) {
+      if (nextMap[ans.questionKey] !== undefined) {
+        nextMap[ans.questionKey] = {
+          status: ans.status || '',
+          remarks: ans.remarks || '',
+        };
+      }
+    }
+    setAnswersMap(nextMap);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inspectionDate.trim()) {
@@ -740,25 +777,44 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
         remarks: answersMap[q.key]?.remarks || '',
       }));
 
-      const res = await apiRequest<{ record: PeriodicInspectionRecord }>('/api/periodic-inspections', {
-        method: 'POST',
-        body: JSON.stringify({
-          projectName,
-          inspectionDate,
-          supervisorName,
-          inspectorsSignatory,
-          siteSupervisorSignatory: siteSupervisorSignatory || supervisorName,
-          projectManagerSignatory,
-          copyTo,
-          answers,
-        }),
-      });
+      const payload = {
+        projectName,
+        inspectionDate,
+        supervisorName,
+        inspectorsSignatory,
+        siteSupervisorSignatory: siteSupervisorSignatory || supervisorName,
+        projectManagerSignatory,
+        copyTo,
+        answers,
+      };
+
+      const res = editingRecord
+        ? await apiRequest<{ record: PeriodicInspectionRecord }>(
+            `/api/periodic-inspections/${editingRecord.id}`,
+            {
+              method: 'PATCH',
+              body: JSON.stringify(payload),
+            },
+          )
+        : await apiRequest<{ record: PeriodicInspectionRecord }>('/api/periodic-inspections', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+
       notify(
         'success',
-        isFa ? 'چک‌لیست بازدید ادواری انبار ثبت شد.' : 'Periodic inspection checklist saved.',
+        editingRecord
+          ? isFa
+            ? 'چک‌لیست بازدید ادواری انبار ویرایش شد.'
+            : 'Periodic inspection checklist updated.'
+          : isFa
+            ? 'چک‌لیست بازدید ادواری انبار ثبت شد.'
+            : 'Periodic inspection checklist saved.',
       );
+      const wasEditing = Boolean(editingRecord);
+      resetForm();
       setPrintRec(res.record);
-      triggerAutoSnapshot(`Periodic Inspection ${res.record.inspectionDate}`);
+      triggerAutoSnapshot(`${wasEditing ? 'Edit ' : ''}Periodic Inspection ${res.record.inspectionDate}`);
       onDataChanged();
       loadRecords();
     } catch (err) {
@@ -768,10 +824,13 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
     }
   };
 
-  const handleDelete = async (rec: PeriodicInspectionRecord) => {
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
     try {
-      await apiRequest(`/api/periodic-inspections/${rec.id}`, { method: 'DELETE' });
+      await apiRequest(`/api/periodic-inspections/${deleteTarget.id}`, { method: 'DELETE' });
       notify('success', isFa ? 'سابقه چک‌لیست حذف شد.' : 'Checklist record deleted.');
+      if (editingRecord?.id === deleteTarget.id) resetForm();
+      setDeleteTarget(null);
       onDataChanged();
       loadRecords();
     } catch (err) {
@@ -840,13 +899,26 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
             <div className="flex items-center gap-2 text-sm font-bold">
               <ClipboardList className="w-4 h-4 text-[var(--accent-primary)]" />
               <span>
-                {isFa
-                  ? 'چک‌لیست بازدید ادواری انبار (کنترل مستندات و فیزیکی)'
-                  : 'Periodic Warehouse Inspection Checklist'}
+                {editingRecord
+                  ? isFa
+                    ? `ویرایش چک‌لیست بازدید ادواری (${formatDate(editingRecord.inspectionDate)})`
+                    : `Edit Periodic Inspection (${formatDate(editingRecord.inspectionDate)})`
+                  : isFa
+                    ? 'چک‌لیست بازدید ادواری انبار (کنترل مستندات و فیزیکی)'
+                    : 'Periodic Warehouse Inspection Checklist'}
               </span>
               <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
                 (MD1EX-FQP02/07-03)
               </span>
+              {editingRecord && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="text-xs font-medium text-[var(--status-danger)] hover:underline"
+                >
+                  {t.controls.cancel}
+                </button>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1083,7 +1155,15 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
               className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2 disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isFa ? 'ثبت چک‌لیست بازدید ادواری و پیش‌نمایش چاپ' : 'Save & Preview Checklist'}</span>
+              <span>
+                {editingRecord
+                  ? isFa
+                    ? 'ذخیره تغییرات چک‌لیست و پیش‌نمایش چاپ'
+                    : 'Save Changes & Preview Checklist'
+                  : isFa
+                    ? 'ثبت چک‌لیست بازدید ادواری و پیش‌نمایش چاپ'
+                    : 'Save & Preview Checklist'}
+              </span>
             </button>
           </div>
         </form>
@@ -1161,14 +1241,24 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                             <span>{t.controls.print}</span>
                           </button>
                           {canEdit && (
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(rec)}
-                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)]"
-                              title={t.controls.delete}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => startEdit(rec)}
+                                className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]"
+                                title={t.controls.edit}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget(rec)}
+                                className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)]"
+                                title={t.controls.delete}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -1225,6 +1315,20 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
           </div>
         </div>
       )}
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'تأیید حذف چک‌لیست بازدید ادواری' : 'Confirm Checklist Deletion'}
+        message={
+          deleteTarget
+            ? isFa
+              ? `آیا از حذف سابقه بازدید ادواری تاریخ ${formatDate(deleteTarget.inspectionDate)} اطمینان دارید؟`
+              : `Delete periodic inspection checklist dated ${formatDate(deleteTarget.inspectionDate)}?`
+            : ''
+        }
+        confirmLabel={t.controls.delete}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

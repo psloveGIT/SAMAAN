@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, CornerUpLeft, Download, Printer, Search, X } from 'lucide-react';
+import { CheckCircle2, CornerUpLeft, Download, Pencil, Printer, Search, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { roundQty } from '../shared/formulas.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
   DetailedComputed,
@@ -13,6 +14,7 @@ import type {
   MivDocType,
   MivDocumentRecord,
 } from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
@@ -483,11 +485,15 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
   const [notes, setNotes] = useState('');
 
   const [itemSearch, setItemSearch] = useState('');
+  const [shipmentFilter, setShipmentFilter] = useState('');
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({});
   const [reasonMap, setReasonMap] = useState<Record<string, string>>({});
   const [remarkMap, setRemarkMap] = useState<Record<string, string>>({});
   const [printDoc, setPrintDoc] = useState<MivDocumentRecord | null>(null);
   const [printReportOpen, setPrintReportOpen] = useState(false);
+
+  const [editingDoc, setEditingDoc] = useState<MivDocumentRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MivDocumentRecord | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -520,14 +526,51 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
     [data],
   );
 
-  const getAvailableQty = (item: DetailedComputed, type: SmrOnlyType) => {
-    if (type === 'smr_mapna') return item.contractorInventory;
-    return item.mivContractorQty || 0;
-  };
+  const knownPackings = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of data?.detailedItems || []) {
+      if (d.shipmentNo) set.add(d.shipmentNo);
+    }
+    for (const g of data?.generalEntries || []) {
+      if (g.packingListNo) set.add(g.packingListNo);
+    }
+    return Array.from(set);
+  }, [data]);
+
+  const oldQtyByDetailedId = useMemo(() => {
+    const map = new Map<string, number>();
+    if (editingDoc) {
+      for (const it of editingDoc.items) {
+        map.set(it.detailedId, roundQty((map.get(it.detailedId) || 0) + (it.qty || 0)));
+      }
+    }
+    return map;
+  }, [editingDoc]);
+
+  const getAvailableQty = useCallback(
+    (item: DetailedComputed, type: SmrOnlyType) => {
+      const oldQty = oldQtyByDetailedId.get(item.id) || 0;
+      if (type === 'smr_mapna') {
+        const delta =
+          editingDoc?.docType === 'smr_mapna'
+            ? oldQty
+            : editingDoc?.docType === 'smr_contractor'
+              ? -oldQty
+              : 0;
+        return roundQty(item.contractorInventory + delta);
+      }
+      const extra = editingDoc?.docType === 'smr_contractor' ? oldQty : 0;
+      return roundQty((item.mivContractorQty || 0) + extra);
+    },
+    [editingDoc, oldQtyByDetailedId],
+  );
 
   const eligibleItems = useMemo(() => {
     const all = (data?.detailedItems || []).filter((d) => {
-      if (docType === 'smr_mapna') return d.contractorInventory > 0;
+      if (shipmentFilter && (d.shipmentNo || '').trim() !== shipmentFilter.trim()) return false;
+      const avail = getAvailableQty(d, docType);
+      const isExistingEditItem = oldQtyByDetailedId.has(d.id) || Boolean(qtyMap[d.id]);
+      if (docType === 'smr_mapna') return avail > 0 || isExistingEditItem;
       return !d.opiPending;
     });
     const q = itemSearch.trim().toLowerCase();
@@ -538,7 +581,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
         .toLowerCase()
         .includes(q),
     );
-  }, [data, docType, itemSearch]);
+  }, [data, docType, itemSearch, shipmentFilter, getAvailableQty, oldQtyByDetailedId, qtyMap]);
 
   const detailedLookup = useMemo(() => {
     const map = new Map<string, DetailedComputed>();
@@ -546,36 +589,66 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
     return map;
   }, [data]);
 
-  const autoFillFromItem = useCallback(
-    (item: DetailedComputed) => {
+  const autoFillFromPackingOrItem = useCallback(
+    (packingNo: string, item?: DetailedComputed, overwrite = false) => {
+      const targetPacking = (item?.shipmentNo || packingNo || '').trim();
+      if (!targetPacking) return;
       const generalEntries = data?.generalEntries || [];
+      const genMatches = generalEntries.filter(
+        (g) => (g.packingListNo || '').trim() === targetPacking,
+      );
       const genMatch =
-        generalEntries.find(
-          (g) =>
-            (g.packingListNo || '').trim() === (item.shipmentNo || '').trim() &&
-            (g.packageNo || '').trim() === (item.packageNo || '').trim(),
-        ) ||
-        generalEntries.find(
-          (g) => (g.packingListNo || '').trim() === (item.shipmentNo || '').trim(),
-        );
+        (item
+          ? genMatches.find((g) => (g.packageNo || '').trim() === (item.packageNo || '').trim())
+          : undefined) || genMatches[0];
 
-      if (!supplier.trim() && (item.supplier || genMatch?.supplier)) {
-        setSupplier(item.supplier || genMatch?.supplier || '');
+      const detMatches = (data?.detailedItems || []).filter(
+        (d) => (d.shipmentNo || '').trim() === targetPacking,
+      );
+      const refDet = item || detMatches[0];
+
+      const nextSupplier = (refDet?.supplier || genMatch?.supplier || '').trim();
+      const nextIslandSystem = Array.from(
+        new Set(
+          [refDet?.island || genMatch?.island, refDet?.system || genMatch?.system]
+            .map((s) => (s || '').trim())
+            .filter(Boolean),
+        ),
+      ).join(' / ');
+      const nextReleaseNo = (genMatch?.releaseNo || '').trim();
+      const nextPkg = (refDet?.mtoRef || '').trim();
+      const nextParty = (refDet?.receiver || '').trim();
+
+      if (nextSupplier && (overwrite || !supplier.trim())) {
+        setSupplier(nextSupplier);
       }
-      if (!islandSystem.trim() && (item.island || genMatch?.island)) {
-        setIslandSystem(item.island || genMatch?.island || '');
+      if (nextIslandSystem && (overwrite || !islandSystem.trim())) {
+        setIslandSystem(nextIslandSystem);
       }
-      if (!releaseNoteNo.trim() && genMatch?.releaseNo) {
-        setReleaseNoteNo(genMatch.releaseNo);
+      if (nextReleaseNo && (overwrite || !releaseNoteNo.trim())) {
+        setReleaseNoteNo(nextReleaseNo);
+      }
+      if (nextPkg && (overwrite || !purchasePackageNo.trim())) {
+        setPurchasePackageNo(nextPkg);
+      }
+      if (nextParty && (overwrite || !party.trim())) {
+        setParty(nextParty);
       }
     },
-    [data?.generalEntries, supplier, islandSystem, releaseNoteNo],
+    [data?.generalEntries, data?.detailedItems, supplier, islandSystem, releaseNoteNo, purchasePackageNo, party],
   );
+
+  const handlePackingFilterChange = (val: string) => {
+    setShipmentFilter(val);
+    if (val) {
+      autoFillFromPackingOrItem(val, undefined, true);
+    }
+  };
 
   const updateReturnQty = (item: DetailedComputed, value: string) => {
     setQtyMap((prev) => ({ ...prev, [item.id]: value }));
     if (Number(value) > 0) {
-      autoFillFromItem(item);
+      autoFillFromPackingOrItem(item.shipmentNo, item, false);
     }
   };
 
@@ -595,6 +668,58 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
       .filter((x) => Number.isFinite(x.qty) && x.qty > 0);
   }, [qtyMap, reasonMap, remarkMap, detailedLookup]);
 
+  const resetForm = () => {
+    setEditingDoc(null);
+    setDocNo('');
+    setPurchasePackageNo('');
+    setSupplier('');
+    setIslandSystem('');
+    setParty('');
+    setReleaseNoteNo('');
+    setStorekeeper('');
+    setEquipmentSupply('');
+    setTechOffice('');
+    setQcInspector('');
+    setInstallerRep('');
+    setNotes('');
+    setQtyMap({});
+    setReasonMap({});
+    setRemarkMap({});
+  };
+
+  const startEdit = (doc: MivDocumentRecord) => {
+    setEditingDoc(doc);
+    setDocType(doc.docType === 'smr_mapna' ? 'smr_mapna' : 'smr_contractor');
+    setDocNo(doc.docNo);
+    setDate(doc.date);
+    setParty(doc.party || '');
+    setProjectName(doc.projectName || '');
+    setPurchasePackageNo(doc.purchasePackageNo || '');
+    setSupplier(doc.supplier || '');
+    setIslandSystem(doc.islandSystem || '');
+    setReleaseNoteNo(doc.releaseNoteNo || '');
+    setStorekeeper(doc.storekeeper || '');
+    setEquipmentSupply(doc.equipmentSupply || '');
+    setTechOffice(doc.techOffice || '');
+    setQcInspector(doc.qcInspector || '');
+    setInstallerRep(doc.installerRep || '');
+    setNotes(doc.notes || '');
+    setShipmentFilter('');
+    setItemSearch('');
+    const nextQty: Record<string, string> = {};
+    const nextReason: Record<string, string> = {};
+    const nextRemark: Record<string, string> = {};
+    for (const it of doc.items) {
+      nextQty[it.detailedId] = String(it.qty);
+      if (it.returnReason) nextReason[it.detailedId] = it.returnReason;
+      if (it.remark) nextRemark[it.detailedId] = it.remark;
+    }
+    setQtyMap(nextQty);
+    setReasonMap(nextReason);
+    setRemarkMap(nextRemark);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedEntries.length === 0) {
@@ -603,50 +728,68 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
     }
 
     try {
-      const res = await apiRequest<{ document: MivDocumentRecord }>('/api/miv', {
-        method: 'POST',
-        body: JSON.stringify({
-          docType,
-          docNo,
-          date,
-          party,
-          projectName,
-          purchasePackageNo,
-          supplier,
-          islandSystem,
-          releaseNoteNo,
-          storekeeper,
-          equipmentSupply,
-          techOffice,
-          qcInspector,
-          installerRep: installerRep || party,
-          notes,
-          items: selectedEntries,
-        }),
-      });
+      const payload = {
+        docType,
+        docNo,
+        date,
+        party,
+        projectName,
+        purchasePackageNo,
+        supplier,
+        islandSystem,
+        releaseNoteNo,
+        storekeeper,
+        equipmentSupply,
+        techOffice,
+        qcInspector,
+        installerRep: installerRep || party,
+        notes,
+        items: selectedEntries,
+      };
+
+      const res = editingDoc
+        ? await apiRequest<{ document: MivDocumentRecord }>(`/api/miv/${editingDoc.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+          })
+        : await apiRequest<{ document: MivDocumentRecord }>('/api/miv', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+
+      notify(
+        'success',
+        editingDoc
+          ? isFa
+            ? `فرم ارجاع شماره ${res.document.docNo} ویرایش و موجودی اقلام به‌روزرسانی شد.`
+            : `Return Form ${res.document.docNo} updated.`
+          : isFa
+            ? `فرم ارجاع کالا شماره ${res.document.docNo} ثبت و موجودی اقلام به‌روزرسانی شد.`
+            : `Return Form ${res.document.docNo} saved.`,
+      );
+      resetForm();
+      setPrintDoc(res.document);
+      triggerAutoSnapshot(`${editingDoc ? 'Edit ' : ''}SMR ${res.document.docNo}`);
+      onDataChanged();
+      loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await apiRequest(`/api/miv/${deleteTarget.id}`, { method: 'DELETE' });
       notify(
         'success',
         isFa
-          ? `فرم ارجاع کالا شماره ${res.document.docNo} ثبت و موجودی اقلام به‌روزرسانی شد.`
-          : `Return Form ${res.document.docNo} saved.`,
+          ? `فرم ارجاع شماره ${deleteTarget.docNo} حذف و موجودی اقلام بازگردانی شد.`
+          : `Return Form ${deleteTarget.docNo} deleted.`,
       );
-      setDocNo('');
-      setPurchasePackageNo('');
-      setSupplier('');
-      setIslandSystem('');
-      setParty('');
-      setReleaseNoteNo('');
-      setStorekeeper('');
-      setEquipmentSupply('');
-      setTechOffice('');
-      setQcInspector('');
-      setInstallerRep('');
-      setNotes('');
-      setQtyMap({});
-      setReasonMap({});
-      setRemarkMap({});
-      setPrintDoc(res.document);
-      triggerAutoSnapshot(`SMR ${res.document.docNo}`);
+      if (editingDoc?.id === deleteTarget.id) resetForm();
+      setDeleteTarget(null);
+      triggerAutoSnapshot(`Delete SMR ${deleteTarget.docNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -728,11 +871,28 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-bold">
               <CornerUpLeft className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{t.nav.smr}</span>
+              <span>
+                {editingDoc
+                  ? isFa
+                    ? `ویرایش فرم ارجاع (${editingDoc.docNo})`
+                    : `Edit Return Form (${editingDoc.docNo})`
+                  : t.nav.smr}
+              </span>
             </div>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-              MD1EX-FQP02/08-03
-            </span>
+            <div className="flex items-center gap-3">
+              {editingDoc && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="text-xs text-[var(--status-danger)] hover:underline"
+                >
+                  {t.controls.cancel}
+                </button>
+              )}
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                MD1EX-FQP02/08-03
+              </span>
+            </div>
           </div>
 
           {/* Row 1: Type, SMR No, SMR Date, Project, Purchase Package */}
@@ -951,16 +1111,30 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
               <div className="text-xs font-semibold text-[var(--text-secondary)]">
                 {isFa ? 'انتخاب اقلام، تعداد و دلیل ارجاع' : 'Select Items, Return Quantities & Reasons'}
               </div>
-              <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                <input
-                  type="text"
-                  dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                  value={itemSearch}
-                  onChange={(e) => setItemSearch(e.target.value)}
-                  placeholder={t.controls.searchPlaceholder}
-                  className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-                />
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={shipmentFilter}
+                  onChange={(e) => handlePackingFilterChange(e.target.value)}
+                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                >
+                  <option value="">{isFa ? 'فیلتر پکینگ لیست: همه' : 'Packing List: All'}</option>
+                  {knownPackings.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+                  <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                  <input
+                    type="text"
+                    dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                    placeholder={t.controls.searchPlaceholder}
+                    className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
+                  />
+                </div>
               </div>
             </div>
 
@@ -1078,7 +1252,15 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
               className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isFa ? 'ثبت فرم ارجاع و چاپ' : 'Save & Print Return Form'}</span>
+              <span>
+                {editingDoc
+                  ? isFa
+                    ? 'ذخیره تغییرات فرم ارجاع و چاپ'
+                    : 'Save Changes & Print Return Form'
+                  : isFa
+                    ? 'ثبت فرم ارجاع و چاپ'
+                    : 'Save & Print Return Form'}
+              </span>
             </button>
           </div>
         </form>
@@ -1127,7 +1309,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                 <th className="py-2.5 px-4">{t.headers.supplier}</th>
                 <th className="py-2.5 px-4">{isFa ? 'پیمانکار نصب' : 'Contractor'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'تعداد اقلام' : 'Items'}</th>
-                <th className="py-2.5 px-4">{t.controls.print}</th>
+                <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -1157,14 +1339,36 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                     <td className="py-2.5 px-4 bidi-plaintext">{doc.party || '-'}</td>
                     <td className="py-2.5 px-4 tabular-nums">{doc.items.length}</td>
                     <td className="py-2.5 px-4">
-                      <button
-                        type="button"
-                        onClick={() => setPrintDoc(doc)}
-                        className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                      >
-                        <Printer className="w-3.5 h-3.5" />
-                        <span>{t.controls.print}</span>
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setPrintDoc(doc)}
+                          className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>{t.controls.print}</span>
+                        </button>
+                        {canEdit && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEdit(doc)}
+                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]"
+                              title={t.controls.edit}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(doc)}
+                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)]"
+                              title={t.controls.delete}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1225,6 +1429,21 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
         title={t.nav.smr}
         columns={historyColumns}
         rows={smrDocuments}
+      />
+
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'تأیید حذف فرم ارجاع (SMR)' : 'Confirm SMR Deletion'}
+        message={
+          deleteTarget
+            ? isFa
+              ? `آیا از حذف فرم ارجاع «${deleteTarget.docNo}» اطمینان دارید؟ موجودی اقلام مربوطه بازگردانی خواهد شد.`
+              : `Delete SMR document "${deleteTarget.docNo}"? Related inventories will be restored.`
+            : ''
+        }
+        confirmLabel={t.controls.delete}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

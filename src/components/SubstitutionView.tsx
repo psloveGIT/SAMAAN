@@ -4,8 +4,10 @@ import {
   ArrowLeftRight,
   CheckCircle2,
   Download,
+  Pencil,
   Printer,
   Search,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
@@ -18,6 +20,7 @@ import type {
   GeneralEntry,
   SubstitutionRecord,
 } from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
@@ -552,6 +555,9 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   const [printRec, setPrintRec] = useState<SubstitutionRecord | null>(null);
   const [printReportOpen, setPrintReportOpen] = useState(false);
 
+  const [editingRec, setEditingRec] = useState<SubstitutionRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SubstitutionRecord | null>(null);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -571,16 +577,21 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   const filteredItems = useMemo(() => {
     const all = data?.detailedItems || [];
     const q = itemSearch.trim().toLowerCase();
-    if (!q) return all.slice(0, 80);
-    return all
-      .filter((d) =>
-        [d.shipmentNo, d.packageNo, d.itemNo, d.description, d.generalDescription, d.itemCode]
-          .join(' ')
-          .toLowerCase()
-          .includes(q),
-      )
-      .slice(0, 80);
-  }, [data, itemSearch]);
+    const list = (!q
+      ? all
+      : all.filter((d) =>
+          [d.shipmentNo, d.packageNo, d.itemNo, d.description, d.generalDescription, d.itemCode]
+            .join(' ')
+            .toLowerCase()
+            .includes(q),
+        )
+    ).slice(0, 80);
+    if (selectedItemId && !list.some((d) => d.id === selectedItemId)) {
+      const selected = all.find((d) => d.id === selectedItemId);
+      if (selected) return [selected, ...list];
+    }
+    return list;
+  }, [data, itemSearch, selectedItemId]);
 
   const selectedOriginal = useMemo(
     () => (data?.detailedItems || []).find((d) => d.id === selectedItemId) || null,
@@ -611,17 +622,92 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         (g) => (g.packingListNo || '').trim() === (found.shipmentNo || '').trim(),
       );
 
-    if (!qty && found.packingQty) setQty(String(found.packingQty));
-    if (!system.trim() && (found.system || genMatch?.system)) setSystem(found.system || genMatch?.system || '');
-    if (!island.trim() && (found.island || genMatch?.island)) setIsland(found.island || genMatch?.island || '');
-    if (!unit.trim() && (found.unit || genMatch?.unit)) setUnit(found.unit || genMatch?.unit || '');
-    if (!supplier.trim() && (found.supplier || genMatch?.supplier)) setSupplier(found.supplier || genMatch?.supplier || '');
-    if (!mivNo.trim() && (found.mivContractorNo || found.mivMapnaNo)) {
+    if (found.packingQty) setQty(String(found.packingQty));
+    setSystem(found.system || genMatch?.system || '');
+    setIsland(found.island || genMatch?.island || '');
+    setUnit(found.unit || genMatch?.unit || '');
+    setSupplier(found.supplier || genMatch?.supplier || '');
+    if (found.mtoRef) {
+      setContractNo(found.mtoRef);
+    }
+    if (found.receiver) {
+      setInstallerContractor(found.receiver);
+    }
+    if (found.mivContractorNo || found.mivMapnaNo) {
       setMivNo(found.mivContractorNo || found.mivMapnaNo || '');
     }
-    if (!merNcrNo.trim() && (found.merNo || found.repNo)) {
+    if (found.merNo || found.repNo) {
       setMerNcrNo(found.merNo || found.repNo || '');
     }
+  };
+
+  const resetForm = () => {
+    setEditingRec(null);
+    setDocNo('');
+    setContractNo('');
+    setSystem('');
+    setIsland('');
+    setUnit('');
+    setSupplier('');
+    setSupplyUrgency('عادی');
+    setInstallerContractor('');
+    setMivNo('');
+    setMerNcrNo('');
+    setSelectedItemId('');
+    setOriginalDrawingNo('');
+    setOriginalRemarks('');
+    setSubstitutePackageNo('');
+    setSubstituteDescription('');
+    setSubstituteItemCode('');
+    setSubstituteSize('');
+    setSubstituteDrawingNo('');
+    setSubstituteRemarks('');
+    setQty('');
+    setReason('');
+    setSupplierNotes('');
+    setReprocureBy('');
+    setCostBorneBy('');
+    setApprovedBy('');
+    setInstallerSignatory('');
+    setSupplierSignatory('');
+    setStatus('pending');
+    setNotes('');
+  };
+
+  const startEdit = (rec: SubstitutionRecord) => {
+    setEditingRec(rec);
+    setDocNo(rec.docNo);
+    setDate(rec.date);
+    setProjectName(rec.projectName || '');
+    setContractNo(rec.contractNo || '');
+    setSelectedItemId(rec.detailedId);
+    setSystem(rec.system || '');
+    setIsland(rec.island || '');
+    setUnit(rec.unit || '');
+    setSupplier(rec.supplier || '');
+    setSupplyUrgency(rec.supplyUrgency || 'عادی');
+    setInstallerContractor(rec.installerContractor || '');
+    setMivNo(rec.mivNo || '');
+    setMerNcrNo(rec.merNcrNo || '');
+    setOriginalDrawingNo(rec.originalDrawingNo || '');
+    setOriginalRemarks(rec.originalRemarks || '');
+    setSubstitutePackageNo(rec.substitutePackageNo || '');
+    setSubstituteDescription(rec.substituteDescription);
+    setSubstituteItemCode(rec.substituteItemCode || '');
+    setSubstituteSize(rec.substituteSize || '');
+    setSubstituteDrawingNo(rec.substituteDrawingNo || '');
+    setSubstituteRemarks(rec.substituteRemarks || '');
+    setQty(String(rec.qty));
+    setReason(rec.reason);
+    setSupplierNotes(rec.supplierNotes || '');
+    setReprocureBy(rec.reprocureBy || '');
+    setCostBorneBy(rec.costBorneBy || '');
+    setApprovedBy(rec.approvedBy || rec.mapnaRep || '');
+    setInstallerSignatory(rec.installerSignatory || '');
+    setSupplierSignatory(rec.supplierSignatory || '');
+    setStatus(rec.status);
+    setNotes(rec.notes || '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -632,80 +718,84 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     }
 
     try {
-      const res = await apiRequest<{ record: SubstitutionRecord }>('/api/substitutions', {
-        method: 'POST',
-        body: JSON.stringify({
-          docNo,
-          date,
-          detailedId: selectedItemId,
-          projectName,
-          contractNo,
-          system,
-          island,
-          unit,
-          supplier,
-          supplyUrgency,
-          installerContractor,
-          mivNo,
-          merNcrNo,
-          originalDrawingNo,
-          originalRemarks,
-          substitutePackageNo,
-          substituteDescription,
-          substituteItemCode,
-          substituteSize,
-          substituteDrawingNo,
-          substituteRemarks,
-          qty: Number(qty),
-          reason,
-          supplierNotes,
-          reprocureBy,
-          costBorneBy,
-          approvedBy,
-          mapnaRep: approvedBy,
-          installerSignatory: installerSignatory || installerContractor,
-          supplierSignatory: supplierSignatory || supplier,
-          status,
-          notes,
-        }),
-      });
+      const payload = {
+        docNo,
+        date,
+        detailedId: selectedItemId,
+        projectName,
+        contractNo,
+        system,
+        island,
+        unit,
+        supplier,
+        supplyUrgency,
+        installerContractor,
+        mivNo,
+        merNcrNo,
+        originalDrawingNo,
+        originalRemarks,
+        substitutePackageNo,
+        substituteDescription,
+        substituteItemCode,
+        substituteSize,
+        substituteDrawingNo,
+        substituteRemarks,
+        qty: Number(qty),
+        reason,
+        supplierNotes,
+        reprocureBy,
+        costBorneBy,
+        approvedBy,
+        mapnaRep: approvedBy,
+        installerSignatory: installerSignatory || installerContractor,
+        supplierSignatory: supplierSignatory || supplier,
+        status,
+        notes,
+      };
+
+      const res = editingRec
+        ? await apiRequest<{ record: SubstitutionRecord }>(`/api/substitutions/${editingRec.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+          })
+        : await apiRequest<{ record: SubstitutionRecord }>('/api/substitutions', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+
+      notify(
+        'success',
+        editingRec
+          ? isFa
+            ? `فرم جایگزینی شماره ${res.record.docNo} ویرایش شد.`
+            : `Substitution record ${res.record.docNo} updated.`
+          : isFa
+            ? `فرم جایگزینی شماره ${res.record.docNo} ثبت شد.`
+            : `Substitution record ${res.record.docNo} saved.`,
+      );
+      resetForm();
+      setPrintRec(res.record);
+      triggerAutoSnapshot(`${editingRec ? 'Edit ' : ''}Substitution ${res.record.docNo}`);
+      onDataChanged();
+      loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await apiRequest(`/api/substitutions/${deleteTarget.id}`, { method: 'DELETE' });
       notify(
         'success',
         isFa
-          ? `فرم جایگزینی شماره ${res.record.docNo} ثبت شد.`
-          : `Substitution record ${res.record.docNo} saved.`,
+          ? `فرم جایگزینی شماره ${deleteTarget.docNo} حذف شد.`
+          : `Substitution record ${deleteTarget.docNo} deleted.`,
       );
-      setDocNo('');
-      setContractNo('');
-      setSystem('');
-      setIsland('');
-      setUnit('');
-      setSupplier('');
-      setSupplyUrgency('عادی');
-      setInstallerContractor('');
-      setMivNo('');
-      setMerNcrNo('');
-      setSelectedItemId('');
-      setOriginalDrawingNo('');
-      setOriginalRemarks('');
-      setSubstitutePackageNo('');
-      setSubstituteDescription('');
-      setSubstituteItemCode('');
-      setSubstituteSize('');
-      setSubstituteDrawingNo('');
-      setSubstituteRemarks('');
-      setQty('');
-      setReason('');
-      setSupplierNotes('');
-      setReprocureBy('');
-      setCostBorneBy('');
-      setApprovedBy('');
-      setInstallerSignatory('');
-      setSupplierSignatory('');
-      setStatus('pending');
-      setNotes('');
-      setPrintRec(res.record);
-      triggerAutoSnapshot(`Substitution ${res.record.docNo}`);
+      if (editingRec?.id === deleteTarget.id) resetForm();
+      setDeleteTarget(null);
+      triggerAutoSnapshot(`Delete Substitution ${deleteTarget.docNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -797,11 +887,30 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-bold">
               <ArrowLeftRight className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{isFa ? 'ثبت درخواست و مجوز جایگزینی تجهیزات (REP)' : 'Register Equipment Substitution Form (REP)'}</span>
+              <span>
+                {editingRec
+                  ? isFa
+                    ? `ویرایش درخواست جایگزینی (${editingRec.docNo})`
+                    : `Edit Equipment Substitution (${editingRec.docNo})`
+                  : isFa
+                    ? 'ثبت درخواست و مجوز جایگزینی تجهیزات (REP)'
+                    : 'Register Equipment Substitution Form (REP)'}
+              </span>
             </div>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-              MD1EX-FQP02/10-03
-            </span>
+            <div className="flex items-center gap-3">
+              {editingRec && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="text-xs text-[var(--status-danger)] hover:underline"
+                >
+                  {t.controls.cancel}
+                </button>
+              )}
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                MD1EX-FQP02/10-03
+              </span>
+            </div>
           </div>
 
           {/* Row 1: Doc No, Date, Project, Contract */}
@@ -1301,7 +1410,15 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
               className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2 shrink-0"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isFa ? 'ثبت سند جایگزینی و چاپ' : 'Save & Print Substitution'}</span>
+              <span>
+                {editingRec
+                  ? isFa
+                    ? 'ذخیره تغییرات جایگزینی و چاپ'
+                    : 'Save Changes & Print'
+                  : isFa
+                    ? 'ثبت سند جایگزینی و چاپ'
+                    : 'Save & Print Substitution'}
+              </span>
             </button>
           </div>
         </form>
@@ -1430,6 +1547,26 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                           <Printer className="w-3.5 h-3.5" />
                           <span>{t.controls.print}</span>
                         </button>
+                        {canEdit && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEdit(rec)}
+                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]"
+                              title={t.controls.edit}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(rec)}
+                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)]"
+                              title={t.controls.delete}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1487,6 +1624,21 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         title={t.nav.substitution}
         columns={reportColumns}
         rows={data?.records || []}
+      />
+
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'تأیید حذف سند جایگزینی (REP)' : 'Confirm Substitution Deletion'}
+        message={
+          deleteTarget
+            ? isFa
+              ? `آیا از حذف سند جایگزینی «${deleteTarget.docNo}» اطمینان دارید؟`
+              : `Delete substitution record "${deleteTarget.docNo}"?`
+            : ''
+        }
+        confirmLabel={t.controls.delete}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, Download, FileCheck2, Printer, Search, X } from 'lucide-react';
+import { CheckCircle2, Download, FileCheck2, Pencil, Printer, Search, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { roundQty } from '../shared/formulas.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
   DetailedComputed,
@@ -12,6 +13,7 @@ import type {
   GcvDocumentRecord,
   GeneralEntry,
 } from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
@@ -557,8 +559,12 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   const [notes, setNotes] = useState('');
 
   const [itemSearch, setItemSearch] = useState('');
+  const [shipmentFilter, setShipmentFilter] = useState('');
+  const [lastAutoPacking, setLastAutoPacking] = useState('');
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({});
   const [remarkMap, setRemarkMap] = useState<Record<string, string>>({});
+  const [editingDoc, setEditingDoc] = useState<GcvDocumentRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<GcvDocumentRecord | null>(null);
   const [printDoc, setPrintDoc] = useState<GcvDocumentRecord | null>(null);
   const [printReportOpen, setPrintReportOpen] = useState(false);
 
@@ -578,17 +584,45 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
     loadData();
   }, [loadData, refreshSignal]);
 
+  const oldQtyByDetailedId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const line of editingDoc?.items || []) {
+      map.set(line.detailedId, roundQty((map.get(line.detailedId) || 0) + line.qty));
+    }
+    return map;
+  }, [editingDoc]);
+
+  const getAvailableQty = useCallback(
+    (item: DetailedComputed) => roundQty(item.mapnaInventory + (oldQtyByDetailedId.get(item.id) || 0)),
+    [oldQtyByDetailedId],
+  );
+
+  const knownPackings = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of data?.detailedItems || []) {
+      if (!d.opiPending && (d.mapnaInventory > 0 || oldQtyByDetailedId.has(d.id)) && d.shipmentNo) {
+        set.add(d.shipmentNo);
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [data, oldQtyByDetailedId]);
+
   const deliverableItems = useMemo(() => {
-    const all = (data?.detailedItems || []).filter((d) => !d.opiPending && d.mapnaInventory > 0);
+    const all = (data?.detailedItems || []).filter(
+      (d) => (!d.opiPending && getAvailableQty(d) > 0) || oldQtyByDetailedId.has(d.id),
+    );
+    const byShipment = shipmentFilter
+      ? all.filter((d) => (d.shipmentNo || '').trim() === shipmentFilter)
+      : all;
     const q = itemSearch.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter((d) =>
+    if (!q) return byShipment;
+    return byShipment.filter((d) =>
       [d.shipmentNo, d.packageNo, d.itemNo, d.description, d.generalDescription, d.itemCode, d.size]
         .join(' ')
         .toLowerCase()
         .includes(q),
     );
-  }, [data, itemSearch]);
+  }, [data, shipmentFilter, itemSearch, getAvailableQty, oldQtyByDetailedId]);
 
   const detailedLookup = useMemo(() => {
     const map = new Map<string, DetailedComputed>();
@@ -596,47 +630,113 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
     return map;
   }, [data]);
 
-  const autoFillFromItem = useCallback(
-    (item: DetailedComputed) => {
+  const autoFillFromPacking = useCallback(
+    (pk: string, pkgNo = '', detItem?: DetailedComputed) => {
+      if (!pk) return;
       const generalEntries = data?.generalEntries || [];
       const genMatch =
         generalEntries.find(
           (g) =>
-            (g.packingListNo || '').trim() === (item.shipmentNo || '').trim() &&
-            (g.packageNo || '').trim() === (item.packageNo || '').trim(),
-        ) ||
-        generalEntries.find(
-          (g) => (g.packingListNo || '').trim() === (item.shipmentNo || '').trim(),
-        );
+            (g.packingListNo || '').trim() === pk.trim() &&
+            (!pkgNo || (g.packageNo || '').trim() === pkgNo.trim()),
+        ) || generalEntries.find((g) => (g.packingListNo || '').trim() === pk.trim());
+      const detMatch =
+        detItem || (data?.detailedItems || []).find((d) => (d.shipmentNo || '').trim() === pk.trim());
 
-      if (!supplier.trim() && (item.supplier || genMatch?.supplier)) {
-        setSupplier(item.supplier || genMatch?.supplier || '');
-      }
-      const combinedIslandSystem = [
-        item.island || genMatch?.island,
-        item.system || genMatch?.system,
+      const nextSupplier = detMatch?.supplier || genMatch?.supplier || '';
+      const nextIslandSystem = [
+        detMatch?.island || genMatch?.island,
+        detMatch?.system || genMatch?.system,
       ]
         .map((s) => (s || '').trim())
         .filter(Boolean)
         .join(' / ');
-      if (!islandSystem.trim() && combinedIslandSystem) {
-        setIslandSystem(combinedIslandSystem);
+      const nextWaybill = genMatch?.billOfLadingNo || '';
+      const nextRelease = genMatch?.releaseNo || '';
+      const nextPr = detMatch?.mtoRef || '';
+
+      const switchedPacking = lastAutoPacking !== pk;
+      if (switchedPacking || !supplier.trim()) {
+        if (nextSupplier) setSupplier(nextSupplier);
       }
-      if (!waybillNo.trim() && genMatch?.billOfLadingNo) {
-        setWaybillNo(genMatch.billOfLadingNo);
+      if (switchedPacking || !islandSystem.trim()) {
+        if (nextIslandSystem) setIslandSystem(nextIslandSystem);
       }
-      if (!releaseNoteNo.trim() && genMatch?.releaseNo) {
-        setReleaseNoteNo(genMatch.releaseNo);
+      if (switchedPacking || !waybillNo.trim()) {
+        if (nextWaybill) setWaybillNo(nextWaybill);
       }
+      if (switchedPacking || !releaseNoteNo.trim()) {
+        if (nextRelease) setReleaseNoteNo(nextRelease);
+      }
+      if (switchedPacking || !purchaseRequestNo.trim()) {
+        if (nextPr) setPurchaseRequestNo(nextPr);
+      }
+      setLastAutoPacking(pk);
     },
-    [data?.generalEntries, supplier, islandSystem, waybillNo, releaseNoteNo],
+    [data, lastAutoPacking, supplier, islandSystem, waybillNo, releaseNoteNo, purchaseRequestNo],
   );
 
   const updateItemQty = (item: DetailedComputed, value: string) => {
     setQtyMap((prev) => ({ ...prev, [item.id]: value }));
     if (Number(value) > 0) {
-      autoFillFromItem(item);
+      autoFillFromPacking(item.shipmentNo, item.packageNo, item);
     }
+  };
+
+  const resetForm = () => {
+    setEditingDoc(null);
+    setReceiptNo('');
+    setDate(getTodayIso());
+    setProjectName('');
+    setReceiver('');
+    setPurchaseRequestNo('');
+    setSupplier('');
+    setBuyerName('');
+    setPurchasePackageNo('');
+    setReleaseNoteNo('');
+    setPurchaseBy('');
+    setIslandSystem('');
+    setWaybillNo('');
+    setStorekeeper('');
+    setReceiverManager('');
+    setEquipmentSupply('');
+    setMapnaSiteManager('');
+    setNotes('');
+    setShipmentFilter('');
+    setLastAutoPacking('');
+    setQtyMap({});
+    setRemarkMap({});
+  };
+
+  const startEdit = (doc: GcvDocumentRecord) => {
+    setEditingDoc(doc);
+    setReceiptNo(doc.receiptNo || '');
+    setDate(doc.date || getTodayIso());
+    setProjectName(doc.projectName || '');
+    setReceiver(doc.receiver || '');
+    setPurchaseRequestNo(doc.purchaseRequestNo || '');
+    setSupplier(doc.supplier || '');
+    setBuyerName(doc.buyerName || '');
+    setPurchasePackageNo(doc.purchasePackageNo || '');
+    setReleaseNoteNo(doc.releaseNoteNo || '');
+    setPurchaseBy(doc.purchaseBy || '');
+    setIslandSystem(doc.islandSystem || '');
+    setWaybillNo(doc.waybillNo || '');
+    setStorekeeper(doc.storekeeper || '');
+    setReceiverManager(doc.receiverManager || '');
+    setEquipmentSupply(doc.equipmentSupply || '');
+    setMapnaSiteManager(doc.mapnaSiteManager || '');
+    setNotes(doc.notes || '');
+    setLastAutoPacking(doc.items[0]?.shipmentNo || '');
+    const nextQty: Record<string, string> = {};
+    const nextRem: Record<string, string> = {};
+    for (const line of doc.items || []) {
+      nextQty[line.detailedId] = String(line.qty);
+      if (line.remark) nextRem[line.detailedId] = line.remark;
+    }
+    setQtyMap(nextQty);
+    setRemarkMap(nextRem);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const selectedEntries = useMemo(() => {
@@ -665,55 +765,80 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
       return;
     }
 
+    const payload = {
+      receiptNo,
+      date,
+      projectName,
+      receiver,
+      purchaseRequestNo,
+      supplier,
+      buyerName,
+      purchasePackageNo,
+      releaseNoteNo,
+      purchaseBy: purchaseBy || undefined,
+      islandSystem,
+      waybillNo,
+      storekeeper,
+      receiverManager: receiverManager || receiver,
+      equipmentSupply,
+      mapnaSiteManager,
+      notes,
+      items: selectedEntries,
+    };
+
     try {
-      const res = await apiRequest<{ document: GcvDocumentRecord }>('/api/gcv', {
-        method: 'POST',
-        body: JSON.stringify({
-          receiptNo,
-          date,
-          projectName,
-          receiver,
-          purchaseRequestNo,
-          supplier,
-          buyerName,
-          purchasePackageNo,
-          releaseNoteNo,
-          purchaseBy: purchaseBy || undefined,
-          islandSystem,
-          waybillNo,
-          storekeeper,
-          receiverManager: receiverManager || receiver,
-          equipmentSupply,
-          mapnaSiteManager,
-          notes,
-          items: selectedEntries,
-        }),
-      });
+      if (editingDoc) {
+        const res = await apiRequest<{ document: GcvDocumentRecord }>(`/api/gcv/${editingDoc.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `رسید مصرف مستقیم کالا شماره ${res.document.receiptNo} ویرایش و موجودی‌ها به‌روزرسانی شد.`
+            : `Direct Material Consumption Receipt ${res.document.receiptNo} updated.`,
+        );
+        resetForm();
+        setPrintDoc(res.document);
+        triggerAutoSnapshot(`Edit GCV ${res.document.receiptNo}`);
+        onDataChanged();
+        loadData();
+      } else {
+        const res = await apiRequest<{ document: GcvDocumentRecord }>('/api/gcv', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        notify(
+          'success',
+          isFa
+            ? `رسید مصرف مستقیم کالا شماره ${res.document.receiptNo} ثبت و موجودی‌ها به‌روزرسانی شد.`
+            : `Direct Material Consumption Receipt ${res.document.receiptNo} created.`,
+        );
+        resetForm();
+        setPrintDoc(res.document);
+        triggerAutoSnapshot(`GCV ${res.document.receiptNo}`);
+        onDataChanged();
+        loadData();
+      }
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await apiRequest<{ ok: boolean }>(`/api/gcv/${deleteTarget.id}`, { method: 'DELETE' });
       notify(
         'success',
         isFa
-          ? `رسید مصرف مستقیم کالا شماره ${res.document.receiptNo} ثبت و موجودی‌ها به‌روزرسانی شد.`
-          : `Direct Material Consumption Receipt ${res.document.receiptNo} created.`,
+          ? `رسید GCV شماره ${deleteTarget.receiptNo} حذف و موجودی اقلام بازگردانی شد.`
+          : `GCV ${deleteTarget.receiptNo} deleted and stock restored.`,
       );
-      setReceiptNo('');
-      setReceiver('');
-      setPurchaseRequestNo('');
-      setSupplier('');
-      setBuyerName('');
-      setPurchasePackageNo('');
-      setReleaseNoteNo('');
-      setPurchaseBy('');
-      setIslandSystem('');
-      setWaybillNo('');
-      setStorekeeper('');
-      setReceiverManager('');
-      setEquipmentSupply('');
-      setMapnaSiteManager('');
-      setNotes('');
-      setQtyMap({});
-      setRemarkMap({});
-      setPrintDoc(res.document);
-      triggerAutoSnapshot(`GCV ${res.document.receiptNo}`);
+      if (editingDoc?.id === deleteTarget.id) resetForm();
+      if (printDoc?.id === deleteTarget.id) setPrintDoc(null);
+      setDeleteTarget(null);
+      triggerAutoSnapshot(`Delete GCV ${deleteTarget.receiptNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -795,10 +920,27 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
             <div className="flex items-center gap-2 text-sm font-bold">
               <FileCheck2 className="w-4 h-4 text-[var(--accent-primary)]" />
               <span>{isFa ? 'ثبت رسید مصرف مستقیم کالا (GCV)' : 'Not-Stored Goods Consumption Voucher (GCV)'}</span>
+              {editingDoc && (
+                <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
+                  {isFa ? `حالت ویرایش: ${editingDoc.receiptNo}` : `Editing: ${editingDoc.receiptNo}`}
+                </span>
+              )}
             </div>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-              MD1EX-FQP02/11-03
-            </span>
+            <div className="flex items-center gap-2">
+              {editingDoc && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>{t.controls.cancel}</span>
+                </button>
+              )}
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                MD1EX-FQP02/11-03
+              </span>
+            </div>
           </div>
 
           {/* Row 1: Core Document Details */}
@@ -1074,16 +1216,34 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                   ? 'اقلام آماده تحویل از موجودی مپنا (دارای بازرسی ثبت‌شده)'
                   : 'Deliverable Items from MAPNA Stock (OPI Recorded)'}
               </div>
-              <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                <input
-                  type="text"
-                  dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                  value={itemSearch}
-                  onChange={(e) => setItemSearch(e.target.value)}
-                  placeholder={t.controls.searchPlaceholder}
-                  className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-                />
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={shipmentFilter}
+                  onChange={(e) => {
+                    const pk = e.target.value;
+                    setShipmentFilter(pk);
+                    if (pk) autoFillFromPacking(pk);
+                  }}
+                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                >
+                  <option value="">{t.headers.packingListNo}: {t.controls.all}</option>
+                  {knownPackings.map((pk) => (
+                    <option key={pk} value={pk}>
+                      {pk}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+                  <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                  <input
+                    type="text"
+                    dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                    placeholder={t.controls.searchPlaceholder}
+                    className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
+                  />
+                </div>
               </div>
             </div>
 
@@ -1111,63 +1271,68 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                       </td>
                     </tr>
                   ) : (
-                    deliverableItems.map((item) => (
-                      <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
-                        <td className="py-2 px-3 tabular-nums" dir="ltr">
-                          {item.shipmentNo}
-                        </td>
-                        <td className="py-2 px-3 tabular-nums" dir="ltr">
-                          {item.packageNo}
-                        </td>
-                        <td className="py-2 px-3 tabular-nums" dir="ltr">
-                          {item.itemNo}
-                        </td>
-                        <td
-                          className="py-2 px-3 max-w-[230px] truncate bidi-plaintext"
-                          title={item.description}
-                        >
-                          {item.description || item.generalDescription}
-                        </td>
-                        <td className="py-2 px-3 bidi-plaintext">{item.size || '-'}</td>
-                        <td className="py-2 px-3 font-semibold text-[var(--accent-primary)] tabular-nums">
-                          {item.mapnaInventory} {item.countingUnit}
-                        </td>
-                        <td className="py-2 px-3 w-36">
-                          <div className="flex items-center gap-1.5">
+                    deliverableItems.map((item) => {
+                      const avail = getAvailableQty(item);
+                      return (
+                        <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
+                          <td className="py-2 px-3 tabular-nums" dir="ltr">
+                            {item.shipmentNo}
+                          </td>
+                          <td className="py-2 px-3 tabular-nums" dir="ltr">
+                            {item.packageNo}
+                          </td>
+                          <td className="py-2 px-3 tabular-nums" dir="ltr">
+                            {item.itemNo}
+                          </td>
+                          <td
+                            className="py-2 px-3 max-w-[230px] truncate bidi-plaintext"
+                            title={item.description}
+                          >
+                            {item.description || item.generalDescription}
+                          </td>
+                          <td className="py-2 px-3 bidi-plaintext">{item.size || '-'}</td>
+                          <td className="py-2 px-3 font-semibold text-[var(--accent-primary)] tabular-nums">
+                            {avail} {item.countingUnit}
+                          </td>
+                          <td className="py-2 px-3 w-36">
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                max={avail}
+                                dir={isFa && !qtyMap[item.id] ? 'rtl' : 'ltr'}
+                                value={qtyMap[item.id] || ''}
+                                onChange={(e) => updateItemQty(item, e.target.value)}
+                                placeholder="0"
+                                className="w-20 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
+                              />
+                              {avail > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateItemQty(item, String(avail))}
+                                  className="px-2 h-8 rounded bg-[var(--bg-subtle)] text-[10px] font-semibold hover:bg-[var(--accent-soft)]"
+                                >
+                                  {isFa ? 'کل' : 'Max'}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2 px-3 w-36">
                             <input
-                              type="number"
-                              step="any"
-                              min="0"
-                              max={item.mapnaInventory}
-                              dir={isFa && !qtyMap[item.id] ? 'rtl' : 'ltr'}
-                              value={qtyMap[item.id] || ''}
-                              onChange={(e) => updateItemQty(item, e.target.value)}
-                              placeholder="0"
-                              className="w-20 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
+                              type="text"
+                              dir={!remarkMap[item.id] ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                              value={remarkMap[item.id] || ''}
+                              onChange={(e) =>
+                                setRemarkMap((prev) => ({ ...prev, [item.id]: e.target.value }))
+                              }
+                              placeholder={isFa ? 'اختیاری' : 'Optional'}
+                              className="w-full h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                             />
-                            <button
-                              type="button"
-                              onClick={() => updateItemQty(item, String(item.mapnaInventory))}
-                              className="px-2 h-8 rounded bg-[var(--bg-subtle)] text-[10px] font-semibold hover:bg-[var(--accent-soft)]"
-                            >
-                              {isFa ? 'کل' : 'Max'}
-                            </button>
-                          </div>
-                        </td>
-                        <td className="py-2 px-3 w-36">
-                          <input
-                            type="text"
-                            dir={!remarkMap[item.id] ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                            value={remarkMap[item.id] || ''}
-                            onChange={(e) =>
-                              setRemarkMap((prev) => ({ ...prev, [item.id]: e.target.value }))
-                            }
-                            placeholder={isFa ? 'اختیاری' : 'Optional'}
-                            className="w-full h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                          />
-                        </td>
-                      </tr>
-                    ))
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1180,13 +1345,33 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                 ? `${selectedEntries.length.toLocaleString('fa-IR')} قلم انتخاب‌شده`
                 : `${selectedEntries.length} items selected`}
             </span>
-            <button
-              type="submit"
-              className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{isFa ? 'ثبت رسید مصرف مستقیم کالا و صدور فرم' : 'Save Receipt & Print'}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {editingDoc && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                >
+                  <X className="w-4 h-4" />
+                  <span>{t.controls.cancel}</span>
+                </button>
+              )}
+              <button
+                type="submit"
+                className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>
+                  {editingDoc
+                    ? isFa
+                      ? 'ذخیره تغییرات رسید GCV'
+                      : 'Update GCV Receipt'
+                    : isFa
+                      ? 'ثبت رسید مصرف مستقیم کالا و صدور فرم'
+                      : 'Save Receipt & Print'}
+                </span>
+              </button>
+            </div>
           </div>
         </form>
       )}
@@ -1235,7 +1420,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                 <th className="py-2.5 px-4">{t.headers.receiver}</th>
                 <th className="py-2.5 px-4">{isFa ? 'تعداد اقلام' : 'Items'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'ثبت‌کننده' : 'Created By'}</th>
-                <th className="py-2.5 px-4">{t.controls.print}</th>
+                <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -1268,14 +1453,36 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                     <td className="py-2.5 px-4 tabular-nums">{doc.items.length}</td>
                     <td className="py-2.5 px-4">{doc.createdBy}</td>
                     <td className="py-2.5 px-4">
-                      <button
-                        type="button"
-                        onClick={() => setPrintDoc(doc)}
-                        className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                      >
-                        <Printer className="w-3.5 h-3.5" />
-                        <span>{t.controls.print}</span>
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setPrintDoc(doc)}
+                          className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>{t.controls.print}</span>
+                        </button>
+                        {canEdit && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEdit(doc)}
+                              className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                              title={t.controls.edit}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(doc)}
+                              className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                              title={t.controls.delete}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1336,6 +1543,20 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         title={t.nav.gcv}
         columns={historyColumns}
         rows={data?.documents || []}
+      />
+
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'حذف رسید مصرف مستقیم کالا (GCV)' : 'Delete GCV Receipt'}
+        message={
+          deleteTarget
+            ? isFa
+              ? `آیا از حذف رسید شماره ${deleteTarget.receiptNo} اطمینان دارید؟ مقدار تحویلی به موجودی مپنا بازگردانده می‌شود.`
+              : `Delete GCV Receipt ${deleteTarget.receiptNo}? Delivered quantities will return to MAPNA inventory.`
+            : ''
+        }
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

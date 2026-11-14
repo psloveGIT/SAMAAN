@@ -6,7 +6,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { roundQty, toNum } from '../shared/formulas.ts';
-import type { DetailedComputed, MaterialEstimateRecord } from '../shared/types.ts';
+import type { DetailedComputed, GeneralEntry, MaterialEstimateRecord } from '../shared/types.ts';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
 interface BalanceViewProps {
@@ -568,6 +568,8 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
     contractorPm: '',
   });
 
+  const [generalEntries, setGeneralEntries] = useState<GeneralEntry[]>([]);
+
   const loadItems = useCallback(async () => {
     setLoading(true);
     try {
@@ -577,14 +579,18 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
         ...(q ? { q } : {}),
         ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
       });
-      const [detRes, estRes] = await Promise.all([
+      const [detRes, estRes, genRes] = await Promise.all([
         apiRequest<{ items: DetailedComputed[] }>(`/api/detailed?${params.toString()}`),
         apiRequest<{ records: MaterialEstimateRecord[] }>('/api/estimations').catch(() => ({
           records: [] as MaterialEstimateRecord[],
         })),
+        apiRequest<{ items: GeneralEntry[] }>('/api/general?page=1&pageSize=1000').catch(() => ({
+          items: [] as GeneralEntry[],
+        })),
       ]);
       setItems(detRes.items || []);
       setEstimates(estRes.records || []);
+      setGeneralEntries(genRes.items || []);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
@@ -705,12 +711,60 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
 
   const openOfficialBmrModal = () => {
     const first = printRows[0];
+    const genMatch = first
+      ? generalEntries.find(
+          (g) =>
+            (g.packingListNo || '').trim() === (first.shipmentNo || '').trim() &&
+            (g.packageNo || '').trim() === (first.packageNo || '').trim(),
+        ) ||
+        generalEntries.find((g) => (g.packingListNo || '').trim() === (first.shipmentNo || '').trim())
+      : undefined;
+
+    const joinUnique = (vals: (string | undefined)[]) =>
+      Array.from(new Set(vals.map((v) => (v || '').trim()).filter(Boolean))).join(' / ');
+
+    const nextSystem = joinUnique(
+      printRows.map((r) => {
+        const g = generalEntries.find(
+          (ge) => (ge.packingListNo || '').trim() === (r.shipmentNo || '').trim(),
+        );
+        return r.system || g?.system;
+      }),
+    );
+    const nextIsland = joinUnique(
+      printRows.map((r) => {
+        const g = generalEntries.find(
+          (ge) => (ge.packingListNo || '').trim() === (r.shipmentNo || '').trim(),
+        );
+        return r.island || g?.island;
+      }),
+    );
+    const nextUnit = joinUnique(
+      printRows.map((r) => {
+        const g = generalEntries.find(
+          (ge) => (ge.packingListNo || '').trim() === (r.shipmentNo || '').trim(),
+        );
+        return r.unit || g?.unit;
+      }),
+    );
+    const nextSupplier = joinUnique(
+      printRows.map((r) => {
+        const g = generalEntries.find(
+          (ge) => (ge.packingListNo || '').trim() === (r.shipmentNo || '').trim(),
+        );
+        return r.supplier || g?.supplier;
+      }),
+    );
+    const nextInstaller =
+      joinUnique(printRows.map((r) => r.receiver)) || first?.receiver || '';
+
     setBmrMeta((prev) => ({
       ...prev,
-      system: prev.system || (first?.system || ''),
-      island: prev.island || (first?.island || ''),
-      unit: prev.unit || (first?.unit || ''),
-      supplier: prev.supplier || (first?.supplier || ''),
+      system: nextSystem || prev.system,
+      island: nextIsland || prev.island,
+      unit: nextUnit || prev.unit,
+      supplier: nextSupplier || prev.supplier,
+      installerContractor: nextInstaller || prev.installerContractor,
     }));
     setBmrModalOpen(true);
   };

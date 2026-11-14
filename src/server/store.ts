@@ -17,6 +17,7 @@ import type {
   OsdrReportRecord,
   PackingStatusMeta,
   PeriodicInspectionRecord,
+  ProjectInfo,
   SiteEntryMinutesRecord,
   SubstitutionRecord,
   TransitEntry,
@@ -52,6 +53,8 @@ export interface PersistedDatabase {
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'samaan-db.json');
+const PROJECTS_DIR = path.join(DATA_DIR, 'projects');
+const PROJECTS_REGISTRY_FILE = path.join(DATA_DIR, 'samaan-projects.json');
 
 function createEmptyCategories(): CategoryStore {
   return {
@@ -104,8 +107,10 @@ export class SamaanStore {
   public transitByPacking = new Map<string, TransitEntry[]>();
 
   private saveTimer: NodeJS.Timeout | null = null;
+  public readonly dbFile: string;
 
-  constructor() {
+  constructor(dbFile: string = DB_FILE) {
+    this.dbFile = dbFile;
     this.db = this.loadFromDisk();
     this.renumberScope('general');
     this.renumberScope('detailed');
@@ -114,15 +119,16 @@ export class SamaanStore {
 
   private loadFromDisk(): PersistedDatabase {
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
+      const dir = path.dirname(this.dbFile);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
       }
-      if (!fs.existsSync(DB_FILE)) {
+      if (!fs.existsSync(this.dbFile)) {
         const empty = createEmptyDb();
         this.writeAtomic(empty);
         return empty;
       }
-      const raw = fs.readFileSync(DB_FILE, 'utf8');
+      const raw = fs.readFileSync(this.dbFile, 'utf8');
       const parsed = JSON.parse(raw) as Partial<PersistedDatabase>;
       const empty = createEmptyDb();
       return {
@@ -156,12 +162,13 @@ export class SamaanStore {
   }
 
   private writeAtomic(data: PersistedDatabase): void {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    const dir = path.dirname(this.dbFile);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
-    const tmp = `${DB_FILE}.tmp`;
+    const tmp = `${this.dbFile}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data), 'utf8');
-    fs.renameSync(tmp, DB_FILE);
+    fs.renameSync(tmp, this.dbFile);
   }
 
   public saveImmediate(): void {
@@ -529,4 +536,168 @@ export class SamaanStore {
   }
 }
 
-export const store = new SamaanStore();
+interface ProjectRegistryData {
+  authSecret: string;
+  projects: ProjectInfo[];
+}
+
+function sanitizeProjectId(raw: string): string {
+  return (raw || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+}
+
+export class ProjectManager {
+  private registry: ProjectRegistryData;
+  private stores = new Map<string, SamaanStore>();
+
+  constructor() {
+    this.registry = this.loadRegistry();
+  }
+
+  private loadRegistry(): ProjectRegistryData {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      if (fs.existsSync(PROJECTS_REGISTRY_FILE)) {
+        const parsed = JSON.parse(fs.readFileSync(PROJECTS_REGISTRY_FILE, 'utf8')) as Partial<ProjectRegistryData>;
+        const projects = Array.isArray(parsed.projects) && parsed.projects.length > 0
+          ? parsed.projects
+          : [{ id: 'default', name: 'پروژه پیش‌فرض', code: '', createdAt: new Date().toISOString() }];
+        return {
+          authSecret: parsed.authSecret || crypto.randomBytes(32).toString('hex'),
+          projects,
+        };
+      }
+    } catch (err) {
+      console.error('Failed to load project registry, initializing default:', err);
+    }
+    const initial: ProjectRegistryData = {
+      authSecret: crypto.randomBytes(32).toString('hex'),
+      projects: [
+        {
+          id: 'default',
+          name: 'پروژه پیش‌فرض',
+          code: '',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    };
+    this.saveRegistryData(initial);
+    return initial;
+  }
+
+  private saveRegistryData(data: ProjectRegistryData): void {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const tmp = `${PROJECTS_REGISTRY_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(data), 'utf8');
+    fs.renameSync(tmp, PROJECTS_REGISTRY_FILE);
+  }
+
+  public getAuthSecret(): string {
+    return this.registry.authSecret;
+  }
+
+  public listProjects(): ProjectInfo[] {
+    return [...this.registry.projects];
+  }
+
+  public getProject(id: string): ProjectInfo | undefined {
+    const clean = sanitizeProjectId(id);
+    return this.registry.projects.find((p) => p.id === clean);
+  }
+
+  private resolveDbPath(id: string): string {
+    if (id === 'default') return DB_FILE;
+    if (!fs.existsSync(PROJECTS_DIR)) {
+      fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+    }
+    return path.join(PROJECTS_DIR, `${id}.json`);
+  }
+
+  public resolveProjectId(rawId?: string | null): string {
+    const clean = sanitizeProjectId(rawId || '');
+    if (clean && this.registry.projects.some((p) => p.id === clean)) {
+      return clean;
+    }
+    return this.registry.projects[0]?.id || 'default';
+  }
+
+  public getStore(rawProjectId?: string | null): SamaanStore {
+    const id = this.resolveProjectId(rawProjectId);
+    let existing = this.stores.get(id);
+    if (!existing) {
+      existing = new SamaanStore(this.resolveDbPath(id));
+      this.stores.set(id, existing);
+    }
+    return existing;
+  }
+
+  public createProject(params: {
+    name: string;
+    code?: string;
+    copyUsersFromStore?: SamaanStore | null;
+  }): ProjectInfo {
+    const cleanName = normKey(params.name);
+    const cleanCode = normKey(params.code);
+    const baseSlug =
+      cleanName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 20) || 'project';
+    const rand = crypto.randomBytes(3).toString('hex');
+    const id = `proj-${baseSlug}-${rand}`;
+    const info: ProjectInfo = {
+      id,
+      name: cleanName,
+      code: cleanCode,
+      createdAt: new Date().toISOString(),
+    };
+    this.registry.projects.push(info);
+    this.saveRegistryData(this.registry);
+
+    const newStore = this.getStore(id);
+    if (params.copyUsersFromStore && params.copyUsersFromStore.db.users.length > 0) {
+      newStore.db.users = JSON.parse(JSON.stringify(params.copyUsersFromStore.db.users)) as StoredUser[];
+      newStore.saveImmediate();
+    }
+    return info;
+  }
+
+  public renameProject(id: string, params: { name: string; code?: string }): ProjectInfo | null {
+    const clean = sanitizeProjectId(id);
+    const target = this.registry.projects.find((p) => p.id === clean);
+    if (!target) return null;
+    target.name = normKey(params.name);
+    if (params.code !== undefined) {
+      target.code = normKey(params.code);
+    }
+    this.saveRegistryData(this.registry);
+    return target;
+  }
+
+  public deleteProject(id: string): { ok: boolean; reason?: 'not_found' | 'cannot_delete_default' } {
+    const clean = sanitizeProjectId(id);
+    if (clean === 'default') return { ok: false, reason: 'cannot_delete_default' };
+    const idx = this.registry.projects.findIndex((p) => p.id === clean);
+    if (idx === -1) return { ok: false, reason: 'not_found' };
+
+    this.registry.projects.splice(idx, 1);
+    this.saveRegistryData(this.registry);
+
+    this.stores.delete(clean);
+    const dbPath = path.join(PROJECTS_DIR, `${clean}.json`);
+    try {
+      if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    } catch (err) {
+      console.error('Failed to delete project DB file:', err);
+    }
+    return { ok: true };
+  }
+}
+
+export const projectManager = new ProjectManager();
+export const store = projectManager.getStore('default');
+
