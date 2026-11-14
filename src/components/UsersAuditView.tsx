@@ -635,6 +635,7 @@ export const UsersAuditView: React.FC = () => {
               <option value="miv">{t.nav.miv}</option>
               <option value="smr">{t.nav.smr}</option>
               <option value="substitution">{t.nav.substitution}</option>
+              <option value="estimation">{t.nav.materialEstimation}</option>
               <option value="balance">{t.nav.balance}</option>
               <option value="stocktake">{t.nav.stocktake}</option>
               <option value="trash">{t.nav.trash}</option>

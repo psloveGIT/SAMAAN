@@ -241,7 +241,7 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
                 onClick={() => executeRestore(restoreTarget, false)}
                 className="h-9 px-4 rounded-lg border border-[var(--border-strong)] text-xs font-semibold hover:bg-[var(--bg-subtle)]"
               >
-                {isFa ? 'فقط بازیابی ثبت کلی' : 'Restore General Only'}
+                {isFa ? 'فقط بازیابی ثبت کلی تجهیزات' : 'Restore General Equipment Only'}
               </button>
               <button
                 type="button"
@@ -249,7 +249,7 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
                 className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>{isFa ? 'بازیابی کلی + جزئیات مرتبط' : 'Restore General & Linked Detailed'}</span>
+                <span>{isFa ? 'بازیابی ثبت کلی و جزئیات مرتبط' : 'Restore General & Linked Detailed'}</span>
               </button>
             </div>
           </div>

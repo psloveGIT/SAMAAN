@@ -12,6 +12,7 @@ import { GeneralView } from './components/GeneralView.tsx';
 import { GlobalSearchView } from './components/GlobalSearchView.tsx';
 import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
+import { MaterialEstimationView } from './components/MaterialEstimationView.tsx';
 import { MivView } from './components/MivView.tsx';
 import { OpiMinutesView } from './components/OpiMinutesView.tsx';
 import { OpiView } from './components/OpiView.tsx';
@@ -189,6 +190,14 @@ const SamaanWorkspace: React.FC = () => {
 
           {activeTab === 'substitution' && (
             <SubstitutionView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
+          {activeTab === 'materialEstimation' && (
+            <MaterialEstimationView
+              categories={categories}
+              refreshSignal={refreshSignal}
+              onDataChanged={bumpRefresh}
+            />
           )}
 
           {activeTab === 'balance' && (

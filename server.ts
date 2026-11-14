@@ -46,6 +46,7 @@ import type {
   GcvDocumentRecord,
   GeneralEntry,
   Language,
+  MaterialEstimateRecord,
   MivDocType,
   MivDocumentRecord,
   OpiInvitationRecord,
@@ -2154,6 +2155,143 @@ async function startServer() {
     });
     store.saveImmediate();
     res.json({ record: rec });
+  });
+
+  // ---------------- MATERIAL ESTIMATION (MTO) ----------------
+  app.get('/api/estimations', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    res.json({
+      records: store.db.materialEstimates,
+      detailedItems: store.getDetailedComputedList(),
+    });
+  });
+
+  app.post('/api/estimations', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const raw = req.body as Partial<MaterialEstimateRecord>;
+    const cleanDesc = normKey(raw.description);
+    const estQty = toNum(raw.estimatedQty) ?? 0;
+    if (!cleanDesc) {
+      res.status(400).json({ error: errMsg(req, 'شرح متریال برآورد الزامی است', 'Estimated material description is required') });
+      return;
+    }
+    if (estQty <= 0) {
+      res.status(400).json({ error: errMsg(req, 'مقدار برآورد باید بزرگتر از صفر باشد', 'Estimated quantity must be greater than zero') });
+      return;
+    }
+    const cleanGeneralDesc = normKey(raw.generalDescription)
+      ? formatGeneralDescriptionCase(normKey(raw.generalDescription))
+      : inferGeneralDescription(cleanDesc);
+    const now = new Date().toISOString();
+    const record: MaterialEstimateRecord = {
+      id: makeId(),
+      mtoCode: normKey(raw.mtoCode),
+      generalDescription: cleanGeneralDesc,
+      description: cleanDesc,
+      itemCode: normKey(raw.itemCode),
+      size: normKey(raw.size),
+      countingUnit: normKey(raw.countingUnit) || 'PC',
+      estimatedQty: roundQty(estQty),
+      island: normKey(raw.island),
+      system: normKey(raw.system),
+      subSystem: normKey(raw.subSystem),
+      unit: normKey(raw.unit),
+      priority: raw.priority === 'critical' ? 'critical' : 'normal',
+      notes: normKey(raw.notes),
+      createdAt: now,
+      updatedAt: now,
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+    store.db.materialEstimates.unshift(record);
+    store.registerCategoriesFromFields({
+      island: record.island,
+      system: record.system,
+      subSystem: record.subSystem,
+      unit: record.unit,
+    });
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'CREATE_ESTIMATION',
+      scope: 'estimation',
+      targetId: record.mtoCode || record.itemCode || record.description.slice(0, 32),
+      summary: `ثبت ردیف برآورد متریال: ${record.description} (مقدار برآورد: ${record.estimatedQty} ${record.countingUnit})`,
+    });
+    store.saveImmediate();
+    res.json({ record });
+  });
+
+  app.patch('/api/estimations/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const rec = store.db.materialEstimates.find((e) => e.id === req.params.id);
+    if (!rec) {
+      res.status(404).json({ error: errMsg(req, 'ردیف برآورد متریال یافت نشد', 'Material estimation record not found') });
+      return;
+    }
+    const raw = req.body as Partial<MaterialEstimateRecord>;
+    if (raw.description !== undefined) {
+      const cleanDesc = normKey(raw.description);
+      if (!cleanDesc) {
+        res.status(400).json({ error: errMsg(req, 'شرح متریال برآورد الزامی است', 'Estimated material description is required') });
+        return;
+      }
+      rec.description = cleanDesc;
+    }
+    if (raw.generalDescription !== undefined) {
+      const cleanGen = normKey(raw.generalDescription);
+      rec.generalDescription = cleanGen
+        ? formatGeneralDescriptionCase(cleanGen)
+        : inferGeneralDescription(rec.description);
+    }
+    if (raw.estimatedQty !== undefined) {
+      const qty = toNum(raw.estimatedQty) ?? 0;
+      if (qty <= 0) {
+        res.status(400).json({ error: errMsg(req, 'مقدار برآورد باید بزرگتر از صفر باشد', 'Estimated quantity must be greater than zero') });
+        return;
+      }
+      rec.estimatedQty = roundQty(qty);
+    }
+    if (raw.mtoCode !== undefined) rec.mtoCode = normKey(raw.mtoCode);
+    if (raw.itemCode !== undefined) rec.itemCode = normKey(raw.itemCode);
+    if (raw.size !== undefined) rec.size = normKey(raw.size);
+    if (raw.countingUnit !== undefined) rec.countingUnit = normKey(raw.countingUnit) || 'PC';
+    if (raw.island !== undefined) rec.island = normKey(raw.island);
+    if (raw.system !== undefined) rec.system = normKey(raw.system);
+    if (raw.subSystem !== undefined) rec.subSystem = normKey(raw.subSystem);
+    if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
+    if (raw.priority === 'normal' || raw.priority === 'critical') rec.priority = raw.priority;
+    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+    rec.updatedAt = new Date().toISOString();
+
+    store.registerCategoriesFromFields({
+      island: rec.island,
+      system: rec.system,
+      subSystem: rec.subSystem,
+      unit: rec.unit,
+    });
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'UPDATE_ESTIMATION',
+      scope: 'estimation',
+      targetId: rec.mtoCode || rec.itemCode || rec.description.slice(0, 32),
+      summary: `ویرایش ردیف برآورد متریال: ${rec.description} (${rec.estimatedQty} ${rec.countingUnit})`,
+    });
+    store.saveImmediate();
+    res.json({ record: rec });
+  });
+
+  app.delete('/api/estimations/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const idx = store.db.materialEstimates.findIndex((e) => e.id === req.params.id);
+    if (idx === -1) {
+      res.status(404).json({ error: errMsg(req, 'ردیف برآورد متریال یافت نشد', 'Material estimation record not found') });
+      return;
+    }
+    const [removed] = store.db.materialEstimates.splice(idx, 1);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'DELETE_ESTIMATION',
+      scope: 'estimation',
+      targetId: removed.mtoCode || removed.itemCode || removed.description.slice(0, 32),
+      summary: `حذف ردیف برآورد متریال: ${removed.description}`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true });
   });
 
   // ---------------- MATERIAL BALANCE ----------------

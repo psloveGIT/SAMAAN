@@ -330,8 +330,8 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
             <h3 className="text-base font-bold">{t.packing.wizardTitle}</h3>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">
               {isFa
-                ? 'ثبت کلی (جنرال) همراه با شماره‌گذاری خودکار ردیف (۱ تا N) و انتقال مشخصات مشترک به جزئیات'
-                : 'General registration with auto row numbering (1..N) and shared metadata sync to Detailed'}
+                ? 'ثبت کلی تجهیزات (جنرال) همراه با شماره‌گذاری خودکار ردیف (۱ تا N) و انتقال مشخصات مشترک به جزئیات تجهیزات'
+                : 'General Equipment registration with auto row numbering (1..N) and shared metadata sync to Detailed Equipment'}
             </p>
           </div>
           <button

@@ -323,6 +323,26 @@ export interface MivDocumentRecord {
   createdBy: string;
 }
 
+export interface MaterialEstimateRecord {
+  id: string;
+  mtoCode: string;
+  generalDescription: string;
+  description: string;
+  itemCode: string;
+  size: string;
+  countingUnit: string;
+  estimatedQty: number;
+  island: string;
+  system: string;
+  subSystem: string;
+  unit: string;
+  priority: 'normal' | 'critical';
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
 export type CategoryGroupKey =
   | 'island'
   | 'system'
@@ -366,6 +386,7 @@ export interface AuditLogEntry {
     | 'miv'
     | 'smr'
     | 'substitution'
+    | 'estimation'
     | 'balance'
     | 'stocktake'
     | 'trash'
@@ -416,4 +437,5 @@ export interface DatabaseSnapshot {
   substitutions?: SubstitutionRecord[];
   gcvDocuments?: GcvDocumentRecord[];
   mivDocuments?: MivDocumentRecord[];
+  materialEstimates?: MaterialEstimateRecord[];
 }

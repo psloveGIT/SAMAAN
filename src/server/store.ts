@@ -10,6 +10,7 @@ import type {
   DetailedEntry,
   GcvDocumentRecord,
   GeneralEntry,
+  MaterialEstimateRecord,
   MivDocumentRecord,
   OpiInvitationRecord,
   OpiMinutesRecord,
@@ -44,6 +45,7 @@ export interface PersistedDatabase {
   substitutions: SubstitutionRecord[];
   gcvDocuments: GcvDocumentRecord[];
   mivDocuments: MivDocumentRecord[];
+  materialEstimates: MaterialEstimateRecord[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -81,6 +83,7 @@ function createEmptyDb(): PersistedDatabase {
     substitutions: [],
     gcvDocuments: [],
     mivDocuments: [],
+    materialEstimates: [],
   };
 }
 
@@ -140,6 +143,7 @@ export class SamaanStore {
         substitutions: Array.isArray(parsed.substitutions) ? parsed.substitutions : [],
         gcvDocuments: Array.isArray(parsed.gcvDocuments) ? parsed.gcvDocuments : [],
         mivDocuments: Array.isArray(parsed.mivDocuments) ? parsed.mivDocuments : [],
+        materialEstimates: Array.isArray(parsed.materialEstimates) ? parsed.materialEstimates : [],
       };
     } catch (err) {
       console.error('Failed to load local database file, starting fresh:', err);
@@ -480,6 +484,7 @@ export class SamaanStore {
       substitutions: this.db.substitutions,
       gcvDocuments: this.db.gcvDocuments,
       mivDocuments: this.db.mivDocuments,
+      materialEstimates: this.db.materialEstimates,
     };
   }
 
@@ -503,6 +508,7 @@ export class SamaanStore {
     this.db.substitutions = Array.isArray(snapshot.substitutions) ? snapshot.substitutions : [];
     this.db.gcvDocuments = Array.isArray(snapshot.gcvDocuments) ? snapshot.gcvDocuments : [];
     this.db.mivDocuments = Array.isArray(snapshot.mivDocuments) ? snapshot.mivDocuments : [];
+    this.db.materialEstimates = Array.isArray(snapshot.materialEstimates) ? snapshot.materialEstimates : [];
     this.renumberScope('general');
     this.renumberScope('detailed');
     this.rebuildIndexes();

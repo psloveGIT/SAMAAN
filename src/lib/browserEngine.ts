@@ -27,6 +27,7 @@ import type {
   DocumentLineItem,
   GcvDocumentRecord,
   GeneralEntry,
+  MaterialEstimateRecord,
   MivDocType,
   MivDocumentRecord,
   OpiInvitationRecord,
@@ -66,6 +67,7 @@ interface StaticDatabase {
   substitutions: SubstitutionRecord[];
   gcvDocuments: GcvDocumentRecord[];
   mivDocuments: MivDocumentRecord[];
+  materialEstimates: MaterialEstimateRecord[];
 }
 
 const DB_NAME = 'samaan_static_db';
@@ -112,6 +114,7 @@ function createEmptyDb(): StaticDatabase {
     substitutions: [],
     gcvDocuments: [],
     mivDocuments: [],
+    materialEstimates: [],
   };
 }
 
@@ -176,6 +179,7 @@ async function getDb(): Promise<StaticDatabase> {
         substitutions: Array.isArray(loaded.substitutions) ? loaded.substitutions : [],
         gcvDocuments: Array.isArray(loaded.gcvDocuments) ? loaded.gcvDocuments : [],
         mivDocuments: Array.isArray(loaded.mivDocuments) ? loaded.mivDocuments : [],
+        materialEstimates: Array.isArray(loaded.materialEstimates) ? loaded.materialEstimates : [],
       }
     : empty;
   renumberScope(cachedDb, 'general');
@@ -2080,6 +2084,142 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { record: rec } as T;
   }
 
+  // ---------------- MATERIAL ESTIMATION (MTO) ----------------
+  if (pathname === '/api/estimations' && method === 'GET') {
+    requireAuth();
+    return {
+      records: db.materialEstimates,
+      detailedItems: db.detailed.map(computeDetailedEntry),
+    } as T;
+  }
+
+  if (pathname === '/api/estimations' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const raw = body as Partial<MaterialEstimateRecord>;
+    const cleanDesc = normKey(raw.description);
+    const estQty = toNum(raw.estimatedQty) ?? 0;
+    if (!cleanDesc) {
+      throw new StaticEngineError(errMsg('شرح متریال برآورد الزامی است', 'Estimated material description is required'), 400);
+    }
+    if (estQty <= 0) {
+      throw new StaticEngineError(errMsg('مقدار برآورد باید بزرگتر از صفر باشد', 'Estimated quantity must be greater than zero'), 400);
+    }
+    const cleanGeneralDesc = normKey(raw.generalDescription)
+      ? formatGeneralDescriptionCase(normKey(raw.generalDescription))
+      : inferGeneralDescription(cleanDesc);
+    const now = new Date().toISOString();
+    const record: MaterialEstimateRecord = {
+      id: makeId(),
+      mtoCode: normKey(raw.mtoCode),
+      generalDescription: cleanGeneralDesc,
+      description: cleanDesc,
+      itemCode: normKey(raw.itemCode),
+      size: normKey(raw.size),
+      countingUnit: normKey(raw.countingUnit) || 'PC',
+      estimatedQty: roundQty(estQty),
+      island: normKey(raw.island),
+      system: normKey(raw.system),
+      subSystem: normKey(raw.subSystem),
+      unit: normKey(raw.unit),
+      priority: raw.priority === 'critical' ? 'critical' : 'normal',
+      notes: normKey(raw.notes),
+      createdAt: now,
+      updatedAt: now,
+      createdBy: u.fullName || u.username,
+    };
+    db.materialEstimates.unshift(record);
+    registerCategoryValue(db, 'island', record.island);
+    registerCategoryValue(db, 'system', record.system);
+    registerCategoryValue(db, 'subSystem', record.subSystem);
+    registerCategoryValue(db, 'unit', record.unit);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'CREATE_ESTIMATION',
+      'estimation',
+      record.mtoCode || record.itemCode || record.description.slice(0, 32),
+      `ثبت ردیف برآورد متریال: ${record.description}`,
+    );
+    await saveDb(db);
+    return { record } as T;
+  }
+
+  if (pathname.startsWith('/api/estimations/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const rec = db.materialEstimates.find((e) => e.id === id);
+    if (!rec) {
+      throw new StaticEngineError(errMsg('ردیف برآورد متریال یافت نشد', 'Material estimation record not found'), 404);
+    }
+    const raw = body as Partial<MaterialEstimateRecord>;
+    if (raw.description !== undefined) {
+      const cleanDesc = normKey(raw.description);
+      if (!cleanDesc) {
+        throw new StaticEngineError(errMsg('شرح متریال برآورد الزامی است', 'Estimated material description is required'), 400);
+      }
+      rec.description = cleanDesc;
+    }
+    if (raw.generalDescription !== undefined) {
+      const cleanGen = normKey(raw.generalDescription);
+      rec.generalDescription = cleanGen
+        ? formatGeneralDescriptionCase(cleanGen)
+        : inferGeneralDescription(rec.description);
+    }
+    if (raw.estimatedQty !== undefined) {
+      const qty = toNum(raw.estimatedQty) ?? 0;
+      if (qty <= 0) {
+        throw new StaticEngineError(errMsg('مقدار برآورد باید بزرگتر از صفر باشد', 'Estimated quantity must be greater than zero'), 400);
+      }
+      rec.estimatedQty = roundQty(qty);
+    }
+    if (raw.mtoCode !== undefined) rec.mtoCode = normKey(raw.mtoCode);
+    if (raw.itemCode !== undefined) rec.itemCode = normKey(raw.itemCode);
+    if (raw.size !== undefined) rec.size = normKey(raw.size);
+    if (raw.countingUnit !== undefined) rec.countingUnit = normKey(raw.countingUnit) || 'PC';
+    if (raw.island !== undefined) rec.island = normKey(raw.island);
+    if (raw.system !== undefined) rec.system = normKey(raw.system);
+    if (raw.subSystem !== undefined) rec.subSystem = normKey(raw.subSystem);
+    if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
+    if (raw.priority === 'normal' || raw.priority === 'critical') rec.priority = raw.priority;
+    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+    rec.updatedAt = new Date().toISOString();
+
+    registerCategoryValue(db, 'island', rec.island);
+    registerCategoryValue(db, 'system', rec.system);
+    registerCategoryValue(db, 'subSystem', rec.subSystem);
+    registerCategoryValue(db, 'unit', rec.unit);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'UPDATE_ESTIMATION',
+      'estimation',
+      rec.mtoCode || rec.itemCode || rec.description.slice(0, 32),
+      `ویرایش ردیف برآورد متریال: ${rec.description}`,
+    );
+    await saveDb(db);
+    return { record: rec } as T;
+  }
+
+  if (pathname.startsWith('/api/estimations/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.materialEstimates.findIndex((e) => e.id === id);
+    if (idx === -1) {
+      throw new StaticEngineError(errMsg('ردیف برآورد متریال یافت نشد', 'Material estimation record not found'), 404);
+    }
+    const [removed] = db.materialEstimates.splice(idx, 1);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'DELETE_ESTIMATION',
+      'estimation',
+      removed.mtoCode || removed.itemCode || removed.description.slice(0, 32),
+      `حذف ردیف برآورد متریال: ${removed.description}`,
+    );
+    await saveDb(db);
+    return { ok: true } as T;
+  }
+
   // ---------------- MATERIAL BALANCE ----------------
   if (pathname === '/api/balance/assign' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
@@ -2462,6 +2602,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       substitutions: db.substitutions,
       gcvDocuments: db.gcvDocuments,
       mivDocuments: db.mivDocuments,
+      materialEstimates: db.materialEstimates,
     } as DatabaseSnapshot as T;
   }
 
@@ -2482,6 +2623,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.substitutions = Array.isArray(snap.substitutions) ? snap.substitutions : [];
     db.gcvDocuments = Array.isArray(snap.gcvDocuments) ? snap.gcvDocuments : [];
     db.mivDocuments = Array.isArray(snap.mivDocuments) ? snap.mivDocuments : [];
+    db.materialEstimates = Array.isArray(snap.materialEstimates) ? snap.materialEstimates : [];
     renumberScope(db, 'general');
     renumberScope(db, 'detailed');
     renumberScope(db, 'transit');

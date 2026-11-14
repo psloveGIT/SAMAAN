@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   BarChart3,
   Boxes,
+  Calculator,
   Calendar,
   ClipboardCheck,
   ClipboardList,
@@ -47,6 +48,7 @@ export type NavTabKey =
   | 'miv'
   | 'smr'
   | 'substitution'
+  | 'materialEstimation'
   | 'balance'
   | 'stocktake'
   | 'storageLabel'
@@ -108,6 +110,7 @@ export const Layout: React.FC<LayoutProps> = ({
         { key: 'miv', label: t.nav.miv, icon: <ClipboardList className="w-4 h-4" /> },
         { key: 'smr', label: t.nav.smr, icon: <CornerUpLeft className="w-4 h-4" /> },
         { key: 'substitution', label: t.nav.substitution, icon: <ArrowLeftRight className="w-4 h-4" /> },
+        { key: 'materialEstimation', label: t.nav.materialEstimation, icon: <Calculator className="w-4 h-4" /> },
         { key: 'balance', label: t.nav.balance, icon: <Scale className="w-4 h-4" /> },
         { key: 'stocktake', label: t.nav.stocktake, icon: <ClipboardCheck className="w-4 h-4" /> },
         { key: 'storageLabel', label: t.nav.storageLabel, icon: <Tag className="w-4 h-4" /> },
