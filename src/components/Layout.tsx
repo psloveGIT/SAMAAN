@@ -95,7 +95,6 @@ export const Layout: React.FC<LayoutProps> = ({
       groupLabel: t.navGroups.core,
       items: [
         { key: 'dashboard', label: t.nav.dashboard, icon: <BarChart3 className="w-4 h-4" /> },
-        { key: 'siteEntry', label: t.nav.siteEntry, icon: <ClipboardSignature className="w-4 h-4" /> },
         { key: 'general', label: t.nav.general, icon: <Boxes className="w-4 h-4" /> },
         { key: 'detailed', label: t.nav.detailed, icon: <ListChecks className="w-4 h-4" /> },
         { key: 'transit', label: t.nav.transit, icon: <Truck className="w-4 h-4" /> },
@@ -104,6 +103,7 @@ export const Layout: React.FC<LayoutProps> = ({
     {
       groupLabel: t.navGroups.operations,
       items: [
+        { key: 'siteEntry', label: t.nav.siteEntry, icon: <ClipboardSignature className="w-4 h-4" /> },
         { key: 'opi', label: t.nav.opi, icon: <FileText className="w-4 h-4" /> },
         { key: 'opiMinutes', label: t.nav.opiMinutes, icon: <ClipboardCheck className="w-4 h-4" /> },
         { key: 'gcv', label: t.nav.gcv, icon: <FileCheck2 className="w-4 h-4" /> },

@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit3,
+  Eye,
   EyeOff,
   Link2,
   PackagePlus,
@@ -434,70 +435,73 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'description', header: t.headers.description, get: (r: DetailedComputed) => r.description },
       { key: 'size', header: t.headers.size, isLtr: true, get: (r: DetailedComputed) => r.size },
       { key: 'itemCode', header: t.headers.itemCode, isLtr: true, get: (r: DetailedComputed) => r.itemCode },
-      { key: 'mtoRef', header: t.headers.mtoRef, isLtr: true, get: (r: DetailedComputed) => r.mtoRef },
+      { key: 'mtoRef', header: t.headers.mtoRef, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mtoRef },
       { key: 'packingQty', header: t.headers.packingQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.packingQty },
-      { key: 'actualQty', header: t.headers.actualQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.actualQty },
-      { key: 'shortage', header: t.headers.shortage, isNum: true, isLtr: true, get: (r: DetailedComputed) => (r.shortage > 0 ? r.shortage : null) },
-      { key: 'surplus', header: t.headers.surplus, isNum: true, isLtr: true, get: (r: DetailedComputed) => (r.surplus > 0 ? r.surplus : null) },
-      { key: 'damagedQty', header: t.headers.damagedQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.damagedQty },
+      { key: 'actualQty', header: t.headers.actualQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.actualQty },
+      { key: 'shortage', header: t.headers.shortage, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.shortage > 0 ? r.shortage : null) },
+      { key: 'surplus', header: t.headers.surplus, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.surplus > 0 ? r.surplus : null) },
+      { key: 'damagedQty', header: t.headers.damagedQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.damagedQty },
       { key: 'countingUnit', header: t.headers.countingUnit, isLtr: true, get: (r: DetailedComputed) => r.countingUnit },
-      { key: 'repNo', header: t.headers.repNo, isLtr: true, get: (r: DetailedComputed) => r.repNo },
-      { key: 'repStatus', header: t.headers.repStatus, get: (r: DetailedComputed) => r.repStatus },
-      { key: 'repDescription', header: t.headers.repDescription, get: (r: DetailedComputed) => r.repDescription },
+      { key: 'repNo', header: t.headers.repNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.repNo },
+      { key: 'repStatus', header: t.headers.repStatus, hideInTable: true, get: (r: DetailedComputed) => r.repStatus },
+      { key: 'repDescription', header: t.headers.repDescription, hideInTable: true, get: (r: DetailedComputed) => r.repDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: DetailedComputed) => r.supplier },
-      { key: 'origin', header: t.headers.origin, get: (r: DetailedComputed) => r.origin },
+      { key: 'origin', header: t.headers.origin, hideInTable: true, get: (r: DetailedComputed) => r.origin },
       { key: 'island', header: t.headers.island, get: (r: DetailedComputed) => r.island },
       { key: 'system', header: t.headers.system, get: (r: DetailedComputed) => r.system },
       { key: 'subSystem', header: t.headers.subSystem, get: (r: DetailedComputed) => r.subSystem },
       { key: 'unit', header: t.headers.unit, get: (r: DetailedComputed) => r.unit },
-      { key: 'opiNo', header: t.headers.opiNo, isLtr: true, get: (r: DetailedComputed) => r.opiNo },
-      { key: 'opiDate', header: t.headers.opiDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.opiDate },
-      { key: 'merNo', header: t.headers.merNo, isLtr: true, get: (r: DetailedComputed) => r.merNo },
-      { key: 'merStatus', header: t.headers.merStatus, get: (r: DetailedComputed) => r.merStatus },
+      { key: 'opiNo', header: t.headers.opiNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiNo },
+      { key: 'opiDate', header: t.headers.opiDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiDate },
+      { key: 'merNo', header: t.headers.merNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.merNo },
+      { key: 'merStatus', header: t.headers.merStatus, hideInTable: true, get: (r: DetailedComputed) => r.merStatus },
       { key: 'storageLocation', header: t.headers.storageLocation, get: (r: DetailedComputed) => r.storageLocation },
-      { key: 'gcvReceiptNo', header: t.headers.gcvReceiptNo, isLtr: true, get: (r: DetailedComputed) => r.gcvReceiptNo },
+      { key: 'gcvReceiptNo', header: t.headers.gcvReceiptNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvReceiptNo },
       { key: 'receiver', header: t.headers.receiver, get: (r: DetailedComputed) => r.receiver },
-      { key: 'gcvDeliveredQty', header: t.headers.gcvDeliveredQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.gcvDeliveredQty },
+      { key: 'gcvDeliveredQty', header: t.headers.gcvDeliveredQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvDeliveredQty },
       {
         key: 'mapnaInventory',
         header: t.headers.mapnaInventory,
         isNum: true,
         isLtr: true,
+        hideInTable: true,
         get: (r: DetailedComputed) => (r.opiPending ? null : r.mapnaInventory),
       },
-      { key: 'mivContractorNo', header: t.headers.mivContractorNo, isLtr: true, get: (r: DetailedComputed) => r.mivContractorNo },
-      { key: 'mivContractorDate', header: t.headers.mivContractorDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.mivContractorDate },
-      { key: 'mivContractorQty', header: t.headers.mivContractorQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.mivContractorQty },
+      { key: 'mivContractorNo', header: t.headers.mivContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorNo },
+      { key: 'mivContractorDate', header: t.headers.mivContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorDate },
+      { key: 'mivContractorQty', header: t.headers.mivContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorQty },
       {
         key: 'contractorInventory',
         header: t.headers.contractorInventory,
         isNum: true,
         isLtr: true,
+        hideInTable: true,
         get: (r: DetailedComputed) => (r.contractorInventory > 0 ? r.contractorInventory : null),
       },
-      { key: 'smrContractorNo', header: t.headers.smrContractorNo, isLtr: true, get: (r: DetailedComputed) => r.smrContractorNo },
-      { key: 'smrContractorDate', header: t.headers.smrContractorDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.smrContractorDate },
-      { key: 'smrContractorQty', header: t.headers.smrContractorQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.smrContractorQty },
-      { key: 'materialBalanceNo', header: t.headers.materialBalanceNo, isLtr: true, get: (r: DetailedComputed) => r.materialBalanceNo },
-      { key: 'balanceStatus', header: t.headers.balanceStatus, get: (r: DetailedComputed) => r.balanceStatus },
-      { key: 'smrMapnaNo', header: t.headers.smrMapnaNo, isLtr: true, get: (r: DetailedComputed) => r.smrMapnaNo },
-      { key: 'smrMapnaDate', header: t.headers.smrMapnaDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.smrMapnaDate },
-      { key: 'smrMapnaQty', header: t.headers.smrMapnaQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.smrMapnaQty },
-      { key: 'mivMapnaNo', header: t.headers.mivMapnaNo, isLtr: true, get: (r: DetailedComputed) => r.mivMapnaNo },
-      { key: 'mivMapnaDate', header: t.headers.mivMapnaDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.mivMapnaDate },
-      { key: 'mivMapnaQty', header: t.headers.mivMapnaQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.mivMapnaQty },
-      { key: 'stocktakeStatus', header: t.headers.stocktakeStatus, get: (r: DetailedComputed) => r.stocktakeStatus || '' },
-      { key: 'stocktakeDate', header: t.headers.stocktakeDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.stocktakeDate || '' },
-      { key: 'stocktakeInfo', header: t.headers.stocktakeInfo, get: (r: DetailedComputed) => r.stocktakeInfo },
+      { key: 'smrContractorNo', header: t.headers.smrContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorNo },
+      { key: 'smrContractorDate', header: t.headers.smrContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorDate },
+      { key: 'smrContractorQty', header: t.headers.smrContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorQty },
+      { key: 'materialBalanceNo', header: t.headers.materialBalanceNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.materialBalanceNo },
+      { key: 'balanceStatus', header: t.headers.balanceStatus, hideInTable: true, get: (r: DetailedComputed) => r.balanceStatus },
+      { key: 'smrMapnaNo', header: t.headers.smrMapnaNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaNo },
+      { key: 'smrMapnaDate', header: t.headers.smrMapnaDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaDate },
+      { key: 'smrMapnaQty', header: t.headers.smrMapnaQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaQty },
+      { key: 'mivMapnaNo', header: t.headers.mivMapnaNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivMapnaNo },
+      { key: 'mivMapnaDate', header: t.headers.mivMapnaDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivMapnaDate },
+      { key: 'mivMapnaQty', header: t.headers.mivMapnaQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivMapnaQty },
+      { key: 'stocktakeStatus', header: t.headers.stocktakeStatus, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeStatus || '' },
+      { key: 'stocktakeDate', header: t.headers.stocktakeDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeDate || '' },
+      { key: 'stocktakeInfo', header: t.headers.stocktakeInfo, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeInfo },
       { key: 'notes', header: t.headers.notes, get: (r: DetailedComputed) => r.notes },
     ],
     [t],
   );
 
-  // Strictly hide columns that have zero populated values in the displayed slice
+  // Exclude summary-only operational columns from main table and hide empty columns when hideEmptyCols=true
   const visibleColumns = useMemo(() => {
-    if (!hideEmptyCols || items.length === 0) return columns;
-    return columns.filter((col) =>
+    const tableCols = columns.filter((col) => !col.hideInTable);
+    if (!hideEmptyCols || items.length === 0) return tableCols;
+    return tableCols.filter((col) =>
       items.some((row) => {
         const val = col.get(row);
         return val !== null && val !== undefined && String(val).trim() !== '';
@@ -1006,42 +1010,52 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     })}
 
                     <td className="py-2 px-3 whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
-                      {canEdit && (
-                        <div className="inline-flex items-center gap-1">
-                          {row.hasShortage && (
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setInspected(row)}
+                          title={isFa ? 'مشاهده اطلاعات کامل سطر' : 'Inspect Row Details'}
+                          className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        {canEdit && (
+                          <>
+                            {row.hasShortage && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBackfillTarget(row);
+                                  setBackfillQty(String(row.shortage));
+                                  setBackfillShipmentNo(row.shipmentNo);
+                                  setBackfillPackageNo(row.packageNo);
+                                  setBackfillDate(getTodayIso());
+                                }}
+                                className="px-2 py-1 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] hover:opacity-90 text-[11px] font-semibold flex items-center gap-1"
+                              >
+                                <PackagePlus className="w-3 h-3" />
+                                <span>{t.shortage.backfillBtn}</span>
+                              </button>
+                            )}
                             <button
                               type="button"
-                              onClick={() => {
-                                setBackfillTarget(row);
-                                setBackfillQty(String(row.shortage));
-                                setBackfillShipmentNo(row.shipmentNo);
-                                setBackfillPackageNo(row.packageNo);
-                                setBackfillDate(getTodayIso());
-                              }}
-                              className="px-2 py-1 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] hover:opacity-90 text-[11px] font-semibold flex items-center gap-1"
+                              onClick={() => openEditModal(row)}
+                              title={t.controls.edit}
+                              className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
                             >
-                              <PackagePlus className="w-3 h-3" />
-                              <span>{t.shortage.backfillBtn}</span>
+                              <Edit3 className="w-3.5 h-3.5" />
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(row)}
-                            title={t.controls.edit}
-                            className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(row)}
-                            title={t.controls.delete}
-                            className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(row)}
+                              title={t.controls.delete}
+                              className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1142,31 +1156,80 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {columns
-                .filter((c) => {
-                  const val = c.get(inspected);
-                  return val !== null && val !== undefined && String(val).trim() !== '';
-                })
-                .map((c) => {
-                  const raw = c.get(inspected);
-                  const formatted = c.isDate
-                    ? formatDate(String(raw || ''))
-                    : typeof raw === 'number'
-                      ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                      : String(raw);
-                  return (
-                    <div
-                      key={c.key}
-                      className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
-                    >
-                      <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                      <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
-                        {c.isLtr ? <span dir="ltr">{formatted}</span> : formatted}
-                      </div>
-                    </div>
-                  );
-                })}
+            <div className="space-y-4">
+              <div>
+                <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
+                  {isFa ? 'مشخصات پایه تجهیز' : 'Primary Equipment Info'}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {columns
+                    .filter((c) => {
+                      if (c.hideInTable) return false;
+                      const val = c.get(inspected);
+                      return val !== null && val !== undefined && String(val).trim() !== '';
+                    })
+                    .map((c) => {
+                      const raw = c.get(inspected);
+                      const formatted = c.isDate
+                        ? formatDate(String(raw || ''))
+                        : typeof raw === 'number'
+                          ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                          : String(raw);
+                      return (
+                        <div
+                          key={c.key}
+                          className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
+                        >
+                          <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
+                          <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
+                            {c.isLtr ? <span dir="ltr">{formatted}</span> : formatted}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {columns.some((c) => {
+                if (!c.hideInTable) return false;
+                const val = c.get(inspected);
+                return val !== null && val !== undefined && String(val).trim() !== '';
+              }) && (
+                <div>
+                  <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
+                    {isFa
+                      ? 'وضعیت بازرسی، موجودی‌ها، حواله‌ها، موازنه و انبارگردانی'
+                      : 'Inspection, Stock, Issues, Returns, Balance & Stocktake'}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {columns
+                      .filter((c) => {
+                        if (!c.hideInTable) return false;
+                        const val = c.get(inspected);
+                        return val !== null && val !== undefined && String(val).trim() !== '';
+                      })
+                      .map((c) => {
+                        const raw = c.get(inspected);
+                        const formatted = c.isDate
+                          ? formatDate(String(raw || ''))
+                          : typeof raw === 'number'
+                            ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                            : String(raw);
+                        return (
+                          <div
+                            key={c.key}
+                            className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
+                          >
+                            <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
+                            <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
+                              {c.isLtr ? <span dir="ltr">{formatted}</span> : formatted}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {inspected.shortageBackfills && inspected.shortageBackfills.length > 0 && (

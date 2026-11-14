@@ -133,7 +133,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         >
           <div className="flex items-center gap-2 text-sm font-bold">
             <FileCheck2 className="w-4 h-4 text-[var(--accent-primary)]" />
-            <span>{isFa ? 'ثبت رسید مصرف مستقیم کالا (GCV-Rahkaran)' : 'Direct Material Consumption Receipt (GCV)'}</span>
+            <span>{isFa ? 'ثبت رسید مصرف مستقیم کالا' : 'Direct Material Consumption Receipt'}</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

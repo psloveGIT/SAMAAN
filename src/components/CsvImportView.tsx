@@ -17,7 +17,7 @@ interface CsvImportViewProps {
 }
 
 export const CsvImportView: React.FC<CsvImportViewProps> = ({ onImportDone }) => {
-  const { prefs, notify, triggerAutoSnapshot } = useApp();
+  const { prefs, t, notify, triggerAutoSnapshot } = useApp();
   const isFa = prefs.language === 'fa';
 
   const [csvText, setCsvText] = useState('');
@@ -121,7 +121,7 @@ export const CsvImportView: React.FC<CsvImportViewProps> = ({ onImportDone }) =>
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
         <div>
           <h3 className="text-base font-bold">
-            {isFa ? 'ویزارد ورود فایل‌های CSV (جنرال، دیتیل، در راه)' : 'Multi-Sheet CSV Import Wizard'}
+            {isFa ? 'ویزارد ورود فایل‌های CSV' : 'Multi-Sheet CSV Import Wizard'}
           </h3>
           <p className="text-xs text-[var(--text-secondary)] mt-1">
             {isFa
@@ -141,9 +141,9 @@ export const CsvImportView: React.FC<CsvImportViewProps> = ({ onImportDone }) =>
               className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
             >
               <option value="auto">{isFa ? 'تشخیص خودکار از سرستون' : 'Auto-detect'}</option>
-              <option value="general">{isFa ? 'جنرال (کلی)' : 'General'}</option>
-              <option value="detailed">{isFa ? 'دیتیل (جزئیات متریال)' : 'Detailed'}</option>
-              <option value="transit">{isFa ? 'در راه (در دست حمل)' : 'In-Transit'}</option>
+              <option value="general">{t.nav.general}</option>
+              <option value="detailed">{t.nav.detailed}</option>
+              <option value="transit">{t.nav.transit}</option>
             </select>
           </div>
 

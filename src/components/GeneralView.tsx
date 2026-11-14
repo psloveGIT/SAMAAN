@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit3,
+  Eye,
   EyeOff,
   Link2,
   Lock,
@@ -152,33 +153,34 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       { key: 'itemDescription', header: t.headers.itemDescription, get: (r: GeneralRowView) => r.itemDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: GeneralRowView) => r.supplier },
       { key: 'dispatchLocation', header: t.headers.dispatchLocation, get: (r: GeneralRowView) => r.dispatchLocation },
-      { key: 'employerEntryMinutesNo', header: t.headers.employerEntryMinutesNo, get: (r: GeneralRowView) => r.employerEntryMinutesNo },
-      { key: 'mapnaEntryMinutesNo', header: t.headers.mapnaEntryMinutesNo, get: (r: GeneralRowView) => r.mapnaEntryMinutesNo },
-      { key: 'releaseNo', header: t.headers.releaseNo, get: (r: GeneralRowView) => r.releaseNo },
-      { key: 'releaseDate', header: t.headers.releaseDate, isDate: true, get: (r: GeneralRowView) => r.releaseDate },
+      { key: 'employerEntryMinutesNo', header: t.headers.employerEntryMinutesNo, hideInTable: true, get: (r: GeneralRowView) => r.employerEntryMinutesNo },
+      { key: 'mapnaEntryMinutesNo', header: t.headers.mapnaEntryMinutesNo, hideInTable: true, get: (r: GeneralRowView) => r.mapnaEntryMinutesNo },
+      { key: 'releaseNo', header: t.headers.releaseNo, hideInTable: true, get: (r: GeneralRowView) => r.releaseNo },
+      { key: 'releaseDate', header: t.headers.releaseDate, isDate: true, hideInTable: true, get: (r: GeneralRowView) => r.releaseDate },
       { key: 'island', header: t.headers.island, get: (r: GeneralRowView) => r.island },
       { key: 'system', header: t.headers.system, get: (r: GeneralRowView) => r.system },
       { key: 'subSystem', header: t.headers.subSystem, get: (r: GeneralRowView) => r.subSystem },
       { key: 'unit', header: t.headers.unit, get: (r: GeneralRowView) => r.unit },
-      { key: 'grossWeight', header: t.headers.grossWeight, isNum: true, get: (r: GeneralRowView) => r.grossWeight },
-      { key: 'netWeight', header: t.headers.netWeight, isNum: true, get: (r: GeneralRowView) => r.netWeight },
-      { key: 'lengthCm', header: t.headers.lengthCm, isNum: true, get: (r: GeneralRowView) => r.lengthCm },
-      { key: 'widthCm', header: t.headers.widthCm, isNum: true, get: (r: GeneralRowView) => r.widthCm },
-      { key: 'heightCm', header: t.headers.heightCm, isNum: true, get: (r: GeneralRowView) => r.heightCm },
-      { key: 'billOfLadingNo', header: t.headers.billOfLadingNo, get: (r: GeneralRowView) => r.billOfLadingNo },
-      { key: 'vehicleNo', header: t.headers.vehicleNo, get: (r: GeneralRowView) => r.vehicleNo },
-      { key: 'weighbridgeWeight', header: t.headers.weighbridgeWeight, isNum: true, get: (r: GeneralRowView) => r.weighbridgeWeight },
-      { key: 'freightCost', header: t.headers.freightCost, isNum: true, get: (r: GeneralRowView) => r.freightCost },
-      { key: 'opiInvitationNo', header: t.headers.opiInvitationNo, get: (r: GeneralRowView) => r.opiInvitationNo },
-      { key: 'opiInvitationDate', header: t.headers.opiInvitationDate, isDate: true, get: (r: GeneralRowView) => r.opiInvitationDate },
-      { key: 'driverName', header: t.headers.driverName, get: (r: GeneralRowView) => r.driverName },
+      { key: 'grossWeight', header: t.headers.grossWeight, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.grossWeight },
+      { key: 'netWeight', header: t.headers.netWeight, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.netWeight },
+      { key: 'lengthCm', header: t.headers.lengthCm, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.lengthCm },
+      { key: 'widthCm', header: t.headers.widthCm, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.widthCm },
+      { key: 'heightCm', header: t.headers.heightCm, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.heightCm },
+      { key: 'billOfLadingNo', header: t.headers.billOfLadingNo, hideInTable: true, get: (r: GeneralRowView) => r.billOfLadingNo },
+      { key: 'vehicleNo', header: t.headers.vehicleNo, hideInTable: true, get: (r: GeneralRowView) => r.vehicleNo },
+      { key: 'weighbridgeWeight', header: t.headers.weighbridgeWeight, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.weighbridgeWeight },
+      { key: 'freightCost', header: t.headers.freightCost, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.freightCost },
+      { key: 'opiInvitationNo', header: t.headers.opiInvitationNo, hideInTable: true, get: (r: GeneralRowView) => r.opiInvitationNo },
+      { key: 'opiInvitationDate', header: t.headers.opiInvitationDate, isDate: true, hideInTable: true, get: (r: GeneralRowView) => r.opiInvitationDate },
+      { key: 'driverName', header: t.headers.driverName, hideInTable: true, get: (r: GeneralRowView) => r.driverName },
     ],
     [t],
   );
 
   const visibleColumns = useMemo(() => {
-    if (!hideEmptyCols || items.length === 0) return columns;
-    return columns.filter((col) =>
+    const tableCols = columns.filter((col) => !col.hideInTable);
+    if (!hideEmptyCols || items.length === 0) return tableCols;
+    return tableCols.filter((col) =>
       items.some((row) => {
         const val = col.get(row);
         return val !== null && val !== undefined && String(val).trim() !== '';
@@ -528,49 +530,59 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     })}
 
                     <td className="py-2 px-3 whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
-                      {canEdit && (
-                        <div className="inline-flex items-center gap-1">
-                          {row.packingListNo && (
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setInspected(row)}
+                          title={isFa ? 'مشاهده اطلاعات کامل سطر' : 'Inspect Row Details'}
+                          className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        {canEdit && (
+                          <>
+                            {row.packingListNo && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleTogglePackingClosed(row.packingListNo, Boolean(row.packingClosed))
+                                }
+                                title={
+                                  row.packingClosed
+                                    ? t.packing.reopenPackingBtn
+                                    : t.packing.closePackingBtn
+                                }
+                                className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                              >
+                                {row.packingClosed ? (
+                                  <LockOpen className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                                ) : (
+                                  <Lock className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            )}
                             <button
                               type="button"
-                              onClick={() =>
-                                handleTogglePackingClosed(row.packingListNo, Boolean(row.packingClosed))
-                              }
-                              title={
-                                row.packingClosed
-                                  ? t.packing.reopenPackingBtn
-                                  : t.packing.closePackingBtn
-                              }
+                              onClick={() => {
+                                setEditing({ ...row });
+                                setAckClosedEdit(false);
+                              }}
                               className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                              title={t.controls.edit}
                             >
-                              {row.packingClosed ? (
-                                <LockOpen className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                              ) : (
-                                <Lock className="w-3.5 h-3.5" />
-                              )}
+                              <Edit3 className="w-3.5 h-3.5" />
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditing({ ...row });
-                              setAckClosedEdit(false);
-                            }}
-                            className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                            title={t.controls.edit}
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(row)}
-                            className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                            title={t.controls.delete}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(row)}
+                              className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                              title={t.controls.delete}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -676,31 +688,78 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {columns
-                .filter((c) => {
-                  const val = c.get(inspected);
-                  return val !== null && val !== undefined && String(val).trim() !== '';
-                })
-                .map((c) => {
-                  const raw = c.get(inspected);
-                  const formatted = c.isDate
-                    ? formatDate(String(raw || ''))
-                    : typeof raw === 'number'
-                      ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                      : String(raw);
-                  return (
-                    <div
-                      key={c.key}
-                      className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
-                    >
-                      <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                      <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
-                        {formatted}
-                      </div>
-                    </div>
-                  );
-                })}
+            <div className="space-y-4">
+              <div>
+                <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
+                  {isFa ? 'مشخصات پایه محموله' : 'Primary Shipment Info'}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {columns
+                    .filter((c) => {
+                      if (c.hideInTable) return false;
+                      const val = c.get(inspected);
+                      return val !== null && val !== undefined && String(val).trim() !== '';
+                    })
+                    .map((c) => {
+                      const raw = c.get(inspected);
+                      const formatted = c.isDate
+                        ? formatDate(String(raw || ''))
+                        : typeof raw === 'number'
+                          ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                          : String(raw);
+                      return (
+                        <div
+                          key={c.key}
+                          className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
+                        >
+                          <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
+                          <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
+                            {formatted}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {columns.some((c) => {
+                if (!c.hideInTable) return false;
+                const val = c.get(inspected);
+                return val !== null && val !== undefined && String(val).trim() !== '';
+              }) && (
+                <div>
+                  <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
+                    {isFa ? 'اطلاعات حمل، ابعاد، صورتجلسات و OPI' : 'Minutes, Weights, Dimensions & Logistics'}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {columns
+                      .filter((c) => {
+                        if (!c.hideInTable) return false;
+                        const val = c.get(inspected);
+                        return val !== null && val !== undefined && String(val).trim() !== '';
+                      })
+                      .map((c) => {
+                        const raw = c.get(inspected);
+                        const formatted = c.isDate
+                          ? formatDate(String(raw || ''))
+                          : typeof raw === 'number'
+                            ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                            : String(raw);
+                        return (
+                          <div
+                            key={c.key}
+                            className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
+                          >
+                            <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
+                            <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
+                              {formatted}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
