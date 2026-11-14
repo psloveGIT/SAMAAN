@@ -160,6 +160,7 @@ async function startServer() {
       res.status(401).json({ error: 'نام کاربری یا رمز عبور اشتباه است / Invalid credentials' });
       return;
     }
+    found.lastLoginAt = new Date().toISOString();
     store.addAudit({
       user: sanitizeUser(found),
       action: 'LOGIN',
@@ -202,17 +203,46 @@ async function startServer() {
     res.json({ user: sanitizeUser(user) });
   });
 
+  app.post('/api/auth/change-password', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
+    const user = req.currentUser!;
+    const { currentPassword, newPassword } = req.body as {
+      currentPassword?: string;
+      newPassword?: string;
+    };
+    if (!currentPassword || !verifyPassword(currentPassword, user.passwordHash)) {
+      res.status(401).json({ error: 'رمز عبور فعلی صحیح نیست / Current password is incorrect' });
+      return;
+    }
+    if (!newPassword || newPassword.length < 4) {
+      res.status(400).json({ error: 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد / New password must be at least 4 characters' });
+      return;
+    }
+    user.passwordHash = hashPassword(newPassword);
+    user.mustChangePassword = false;
+    store.addAudit({
+      user: sanitizeUser(user),
+      action: 'CHANGE_OWN_PASSWORD',
+      scope: 'auth',
+      targetId: user.id,
+      summary: `تغییر رمز عبور توسط کاربر ${user.fullName} (${user.username})`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true, user: sanitizeUser(user) });
+  });
+
   // ---------------- USERS (ADMIN ONLY) ----------------
   app.get('/api/users', requireRole(['admin']), (_req: AuthedRequest, res: Response) => {
     res.json({ users: store.db.users.map(sanitizeUser) });
   });
 
   app.post('/api/users', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
-    const { username, password, fullName, role } = req.body as {
+    const { username, password, fullName, role, active, mustChangePassword } = req.body as {
       username?: string;
       password?: string;
       fullName?: string;
       role?: UserRole;
+      active?: boolean;
+      mustChangePassword?: boolean;
     };
     const cleanUser = (username || '').trim().toLowerCase();
     if (!cleanUser || !password || password.length < 4) {
@@ -228,7 +258,8 @@ async function startServer() {
       username: cleanUser,
       fullName: (fullName || cleanUser).trim(),
       role: role || 'operator',
-      active: true,
+      active: typeof active === 'boolean' ? active : true,
+      mustChangePassword: Boolean(mustChangePassword),
       passwordHash: hashPassword(password),
       preferences: { ...DEFAULT_PREFERENCES },
       createdAt: new Date().toISOString(),
@@ -251,25 +282,110 @@ async function startServer() {
       res.status(404).json({ error: 'User not found' });
       return;
     }
-    const { fullName, role, active, password } = req.body as {
+    const { username, fullName, role, active, password, mustChangePassword } = req.body as {
+      username?: string;
       fullName?: string;
       role?: UserRole;
       active?: boolean;
       password?: string;
+      mustChangePassword?: boolean;
     };
-    if (fullName !== undefined) target.fullName = fullName.trim();
+
+    const nextRole = role ?? target.role;
+    const nextActive = typeof active === 'boolean' ? active : target.active;
+    if (target.id === req.currentUser!.id && (nextRole !== 'admin' || !nextActive)) {
+      res.status(400).json({
+        error: 'امکان غیرفعال‌سازی یا تغییر نقش حساب کاربری خودتان وجود ندارد / Cannot deactivate or demote your own account',
+      });
+      return;
+    }
+    if (target.role === 'admin' && target.active && (nextRole !== 'admin' || !nextActive)) {
+      const otherActiveAdmins = store.db.users.filter(
+        (u) => u.id !== target.id && u.role === 'admin' && u.active,
+      );
+      if (otherActiveAdmins.length === 0) {
+        res.status(400).json({
+          error: 'حداقل یک مدیر کل فعال باید در سامانه باقی بماند / At least one active admin must remain',
+        });
+        return;
+      }
+    }
+
+    if (username !== undefined) {
+      const cleanUsername = username.trim().toLowerCase();
+      if (!cleanUsername) {
+        res.status(400).json({ error: 'نام کاربری نمی‌تواند خالی باشد / Username cannot be empty' });
+        return;
+      }
+      if (store.db.users.some((u) => u.id !== target.id && u.username.toLowerCase() === cleanUsername)) {
+        res.status(409).json({ error: 'نام کاربری تکراری است / Username already exists' });
+        return;
+      }
+      target.username = cleanUsername;
+    }
+    if (fullName !== undefined) target.fullName = fullName.trim() || target.username;
     if (role !== undefined) target.role = role;
     if (typeof active === 'boolean') target.active = active;
-    if (password && password.length >= 4) target.passwordHash = hashPassword(password);
+    if (typeof mustChangePassword === 'boolean') target.mustChangePassword = mustChangePassword;
+
+    let passwordReset = false;
+    if (password !== undefined && password !== '') {
+      if (password.length < 4) {
+        res.status(400).json({ error: 'رمز عبور باید حداقل ۴ کاراکتر باشد / Password must be at least 4 characters' });
+        return;
+      }
+      target.passwordHash = hashPassword(password);
+      passwordReset = true;
+    }
+
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
-      action: 'UPDATE_USER',
+      action: passwordReset ? 'ADMIN_RESET_PASSWORD' : 'UPDATE_USER',
       scope: 'user',
       targetId: target.id,
-      summary: `ویرایش حساب کاربری ${target.username} (نقش: ${target.role}، فعال: ${target.active ? 'بله' : 'خیر'})`,
+      summary: passwordReset
+        ? `تغییر رمز عبور کاربر ${target.username} توسط مدیر`
+        : `ویرایش حساب کاربری ${target.username} (نقش: ${target.role}، فعال: ${target.active ? 'بله' : 'خیر'})`,
     });
     store.saveImmediate();
     res.json({ user: sanitizeUser(target) });
+  });
+
+  app.delete('/api/users/:id', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
+    const idx = store.db.users.findIndex((u) => u.id === req.params.id);
+    if (idx === -1) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    const target = store.db.users[idx];
+    if (target.id === req.currentUser!.id) {
+      res.status(400).json({
+        error: 'امکان حذف حساب کاربری خودتان وجود ندارد / Cannot delete your own account',
+      });
+      return;
+    }
+    if (target.role === 'admin' && target.active) {
+      const otherActiveAdmins = store.db.users.filter(
+        (u) => u.id !== target.id && u.role === 'admin' && u.active,
+      );
+      if (otherActiveAdmins.length === 0) {
+        res.status(400).json({
+          error: 'حداقل یک مدیر کل فعال باید در سامانه باقی بماند / Cannot delete the last active admin',
+        });
+        return;
+      }
+    }
+
+    store.db.users.splice(idx, 1);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'DELETE_USER',
+      scope: 'user',
+      targetId: target.id,
+      summary: `حذف حساب کاربری ${target.fullName} (${target.username})`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true });
   });
 
   // ---------------- PACKING CHECK, LOOKUP & CLOSURE ----------------

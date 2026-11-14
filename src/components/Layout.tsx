@@ -12,6 +12,7 @@ import {
   FolderTree,
   Globe,
   HardDriveDownload,
+  KeyRound,
   ListChecks,
   LogOut,
   Menu,
@@ -27,6 +28,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { getTodayIso } from '../shared/jalali.ts';
+import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { SamaanLogo } from './SamaanLogo.tsx';
 
 export type NavTabKey =
@@ -72,6 +74,7 @@ export const Layout: React.FC<LayoutProps> = ({
   } = useApp();
 
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  const [changePwOpen, setChangePwOpen] = React.useState(false);
 
   const navGroups: {
     groupLabel: string;
@@ -241,14 +244,24 @@ export const Layout: React.FC<LayoutProps> = ({
                       : t.auth.roleViewer}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={logout}
-                title={t.controls.logout}
-                className="p-2 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--status-danger)] shrink-0"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setChangePwOpen(true)}
+                  title={t.auth.changePassword}
+                  className="p-2 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]"
+                >
+                  <KeyRound className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={logout}
+                  title={t.controls.logout}
+                  className="p-2 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--status-danger)]"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -294,6 +307,12 @@ export const Layout: React.FC<LayoutProps> = ({
 
         <main className="flex-1 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">{children}</main>
       </div>
+
+      <ChangePasswordModal
+        open={changePwOpen || Boolean(user?.mustChangePassword)}
+        forced={Boolean(user?.mustChangePassword)}
+        onClose={() => setChangePwOpen(false)}
+      />
     </div>
   );
 };

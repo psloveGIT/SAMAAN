@@ -179,6 +179,8 @@ function sanitizeUser(u: StaticUser): UserAccount {
     active: u.active,
     preferences: u.preferences,
     createdAt: u.createdAt,
+    lastLoginAt: u.lastLoginAt,
+    mustChangePassword: Boolean(u.mustChangePassword),
   };
 }
 
@@ -478,6 +480,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (!found || !found.active || !(await verifyBrowserPassword(password, found.passwordHash))) {
       throw new StaticEngineError('نام کاربری یا رمز عبور اشتباه است / Invalid credentials', 401);
     }
+    found.lastLoginAt = new Date().toISOString();
     db.currentUserId = found.id;
     addAudit(db, sanitizeUser(found), 'LOGIN', 'auth', found.id, `ورود کاربر ${found.fullName} (${found.username})`);
     await saveDb(db);
@@ -500,6 +503,23 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { user: sanitizeUser(u) } as T;
   }
 
+  if (pathname === '/api/auth/change-password' && method === 'POST') {
+    const u = requireAuth();
+    const currentPassword = String(body.currentPassword || '');
+    const newPassword = String(body.newPassword || '');
+    if (!currentPassword || !(await verifyBrowserPassword(currentPassword, u.passwordHash))) {
+      throw new StaticEngineError('رمز عبور فعلی صحیح نیست / Current password is incorrect', 401);
+    }
+    if (newPassword.length < 4) {
+      throw new StaticEngineError('رمز عبور جدید باید حداقل ۴ کاراکتر باشد / New password must be at least 4 characters', 400);
+    }
+    u.passwordHash = await hashBrowserPassword(newPassword);
+    u.mustChangePassword = false;
+    addAudit(db, sanitizeUser(u), 'CHANGE_OWN_PASSWORD', 'auth', u.id, `تغییر رمز عبور توسط کاربر ${u.fullName} (${u.username})`);
+    await saveDb(db);
+    return { ok: true, user: sanitizeUser(u) } as T;
+  }
+
   // ---------------- USERS ----------------
   if (pathname === '/api/users' && method === 'GET') {
     requireAuth(['admin']);
@@ -512,6 +532,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const password = String(body.password || '');
     const fullName = String(body.fullName || username).trim();
     const role = (body.role as UserRole) || 'operator';
+    const active = typeof body.active === 'boolean' ? body.active : true;
+    const mustChangePassword = Boolean(body.mustChangePassword);
     if (!username || password.length < 4) {
       throw new StaticEngineError('Username and password (min 4 chars) are required', 400);
     }
@@ -523,7 +545,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       username,
       fullName,
       role,
-      active: true,
+      active,
+      mustChangePassword,
       passwordHash: await hashBrowserPassword(password),
       preferences: { ...DEFAULT_PREFERENCES },
       createdAt: new Date().toISOString(),
@@ -539,15 +562,76 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const targetId = pathname.split('/').pop()!;
     const target = db.users.find((u) => u.id === targetId);
     if (!target) throw new StaticEngineError('User not found', 404);
-    if (body.fullName !== undefined) target.fullName = String(body.fullName).trim();
+
+    const nextRole = (body.role as UserRole) ?? target.role;
+    const nextActive = typeof body.active === 'boolean' ? body.active : target.active;
+    if (target.id === admin.id && (nextRole !== 'admin' || !nextActive)) {
+      throw new StaticEngineError('امکان غیرفعال‌سازی یا تغییر نقش حساب کاربری خودتان وجود ندارد / Cannot deactivate or demote your own account', 400);
+    }
+    if (target.role === 'admin' && target.active && (nextRole !== 'admin' || !nextActive)) {
+      const otherActiveAdmins = db.users.filter((u) => u.id !== target.id && u.role === 'admin' && u.active);
+      if (otherActiveAdmins.length === 0) {
+        throw new StaticEngineError('حداقل یک مدیر کل فعال باید در سامانه باقی بماند / At least one active admin must remain', 400);
+      }
+    }
+
+    if (body.username !== undefined) {
+      const cleanUsername = String(body.username).trim().toLowerCase();
+      if (!cleanUsername) {
+        throw new StaticEngineError('نام کاربری نمی‌تواند خالی باشد / Username cannot be empty', 400);
+      }
+      if (db.users.some((u) => u.id !== target.id && u.username.toLowerCase() === cleanUsername)) {
+        throw new StaticEngineError('نام کاربری تکراری است / Username already exists', 409);
+      }
+      target.username = cleanUsername;
+    }
+    if (body.fullName !== undefined) target.fullName = String(body.fullName).trim() || target.username;
     if (body.role !== undefined) target.role = body.role as UserRole;
     if (typeof body.active === 'boolean') target.active = body.active;
-    if (typeof body.password === 'string' && body.password.length >= 4) {
+    if (typeof body.mustChangePassword === 'boolean') target.mustChangePassword = body.mustChangePassword;
+
+    let passwordReset = false;
+    if (typeof body.password === 'string' && body.password !== '') {
+      if (body.password.length < 4) {
+        throw new StaticEngineError('رمز عبور باید حداقل ۴ کاراکتر باشد / Password must be at least 4 characters', 400);
+      }
       target.passwordHash = await hashBrowserPassword(body.password);
+      passwordReset = true;
     }
-    addAudit(db, sanitizeUser(admin), 'UPDATE_USER', 'user', target.id, `ویرایش حساب کاربری ${target.username}`);
+
+    addAudit(
+      db,
+      sanitizeUser(admin),
+      passwordReset ? 'ADMIN_RESET_PASSWORD' : 'UPDATE_USER',
+      'user',
+      target.id,
+      passwordReset
+        ? `تغییر رمز عبور کاربر ${target.username} توسط مدیر`
+        : `ویرایش حساب کاربری ${target.username}`,
+    );
     await saveDb(db);
     return { user: sanitizeUser(target) } as T;
+  }
+
+  if (pathname.startsWith('/api/users/') && method === 'DELETE') {
+    const admin = requireAuth(['admin']);
+    const targetId = pathname.split('/').pop()!;
+    const idx = db.users.findIndex((u) => u.id === targetId);
+    if (idx === -1) throw new StaticEngineError('User not found', 404);
+    const target = db.users[idx];
+    if (target.id === admin.id) {
+      throw new StaticEngineError('امکان حذف حساب کاربری خودتان وجود ندارد / Cannot delete your own account', 400);
+    }
+    if (target.role === 'admin' && target.active) {
+      const otherActiveAdmins = db.users.filter((u) => u.id !== target.id && u.role === 'admin' && u.active);
+      if (otherActiveAdmins.length === 0) {
+        throw new StaticEngineError('حداقل یک مدیر کل فعال باید در سامانه باقی بماند / Cannot delete the last active admin', 400);
+      }
+    }
+    db.users.splice(idx, 1);
+    addAudit(db, sanitizeUser(admin), 'DELETE_USER', 'user', target.id, `حذف حساب کاربری ${target.fullName} (${target.username})`);
+    await saveDb(db);
+    return { ok: true } as T;
   }
 
   // ---------------- PACKING CHECK, LOOKUP & CLOSURE ----------------

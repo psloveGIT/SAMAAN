@@ -101,6 +101,8 @@ export function sanitizeUser(user: StoredUser): UserAccount {
     active: user.active,
     preferences: user.preferences,
     createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    mustChangePassword: Boolean(user.mustChangePassword),
   };
 }
 

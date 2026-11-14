@@ -18,6 +18,8 @@ export interface UserAccount {
   active: boolean;
   preferences: UserPreferences;
   createdAt: string;
+  lastLoginAt?: string;
+  mustChangePassword?: boolean;
 }
 
 export interface PackingStatusMeta {
