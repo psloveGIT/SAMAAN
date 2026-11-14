@@ -674,7 +674,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
                         <div className={`text-[11px] font-semibold ${statusColor}`}>
                           {statusLabel(r.supplyStatus)} ({fmtNum(r.coveragePct)}%)
                         </div>
-                        <div className="mt-1 h-1.5 w-24 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
+                        <div className="mt-1 mx-auto h-1.5 w-24 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
                           <div
                             className={`h-full rounded-full ${barColor}`}
                             style={{ width: `${r.coveragePct}%` }}

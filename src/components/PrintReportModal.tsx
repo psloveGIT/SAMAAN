@@ -115,8 +115,8 @@ export function PrintReportModal<T>({
           #samaan-print-root td {
             border: 1px solid #cbd5e1;
             padding: 4px 6px;
-            text-align: ${isFa ? 'right' : 'left'};
-            vertical-align: top;
+            text-align: center;
+            vertical-align: middle;
             word-break: break-word;
           }
           #samaan-print-root th {
@@ -300,7 +300,7 @@ export function PrintReportModal<T>({
                     <thead>
                       <tr className="border-b border-[var(--border-subtle)] text-[var(--text-muted)]">
                         {activeColumns.map((col) => (
-                          <th key={col.key} className="px-2 py-1.5 text-start font-semibold whitespace-nowrap">
+                          <th key={col.key} className="px-2 py-1.5 text-center font-semibold whitespace-nowrap">
                             {col.header}
                           </th>
                         ))}

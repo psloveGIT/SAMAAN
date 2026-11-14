@@ -128,6 +128,22 @@ html[dir="rtl"] textarea::placeholder {
   unicode-bidi: plaintext;
 }
 
+/* Center all table headers and cell items across the application */
+table th,
+table td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+table td > .flex:not(.flex-col),
+table th > .flex:not(.flex-col) {
+  justify-content: center;
+}
+
+table td input:not([type="checkbox"]):not([type="radio"]) {
+  text-align: center;
+}
+
 /* Custom warm/neutral scrollbars */
 ::-webkit-scrollbar {
   width: 8px;
