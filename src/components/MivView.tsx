@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, ClipboardList, Download, Printer, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
@@ -14,8 +15,6 @@ import type {
 } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
-
-const MD1_STACKED_LOGO = '/assets/aistudio/______________________________65f1164c.png';
 
 interface MivApiResponse {
   documents: MivDocumentRecord[];

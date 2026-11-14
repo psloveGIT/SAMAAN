@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
@@ -32,8 +33,6 @@ interface SiteEntryMinutesViewProps {
   refreshSignal: number;
   onDataChanged: () => void;
 }
-
-const MD1_STACKED_LOGO = '/assets/aistudio/______________________________65f1164c.png';
 
 const buildItemsFromGeneral = (
   packings: string[],

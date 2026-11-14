@@ -3,11 +3,10 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, ClipboardList, Printer, RotateCcw, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { PeriodicInspectionAnswer, PeriodicInspectionRecord } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
-
-const MD1_STACKED_LOGO = '/assets/aistudio/______________________________65f1164c.png';
 
 interface ChecklistQuestionDef {
   key: string;

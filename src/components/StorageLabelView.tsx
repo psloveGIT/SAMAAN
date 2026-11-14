@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom';
 import { CheckSquare, Eye, Printer, Search, Square, Tag, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import type { DetailedComputed } from '../shared/types.ts';
 
-const MD1_STACKED_LOGO = '/assets/aistudio/______________________________65f1164c.png';
 const LABEL_META_STORAGE_KEY = 'samaan_storage_label_meta_v1';
 
 interface StorageLabelViewProps {

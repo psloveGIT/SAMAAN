@@ -3,12 +3,11 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, FileSpreadsheet, Printer, Scale, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { roundQty, toNum } from '../shared/formulas.ts';
 import type { DetailedComputed, MaterialEstimateRecord } from '../shared/types.ts';
 import { PrintReportModal } from './PrintReportModal.tsx';
-
-const MD1_STACKED_LOGO = '/assets/aistudio/______________________________65f1164c.png';
 
 interface BalanceViewProps {
   refreshSignal: number;
