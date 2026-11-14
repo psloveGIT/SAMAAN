@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calculator, Download, X } from 'lucide-react';
+import { Calculator, Download, Printer, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import type { SelectionFormulaSummary } from '../shared/types.ts';
 
@@ -10,6 +10,7 @@ interface SelectionSummaryBarProps {
   isFilteredFallback: boolean;
   onClearSelection: () => void;
   onExportSelected: () => void;
+  onPrintSelected?: () => void;
 }
 
 function fmtNum(n: number, lang: 'fa' | 'en'): string {
@@ -23,6 +24,7 @@ export const SelectionSummaryBar: React.FC<SelectionSummaryBarProps> = ({
   isFilteredFallback,
   onClearSelection,
   onExportSelected,
+  onPrintSelected,
 }) => {
   const { prefs, t } = useApp();
   const isFa = prefs.language === 'fa';
@@ -105,6 +107,16 @@ export const SelectionSummaryBar: React.FC<SelectionSummaryBarProps> = ({
           >
             <X className="w-3.5 h-3.5" />
             <span>{t.controls.clearSelection}</span>
+          </button>
+        )}
+        {onPrintSelected && (
+          <button
+            type="button"
+            onClick={onPrintSelected}
+            className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors"
+          >
+            <Printer className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+            <span>{t.controls.printReport}</span>
           </button>
         )}
         <button

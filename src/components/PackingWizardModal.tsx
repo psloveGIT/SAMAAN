@@ -19,6 +19,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 interface PackageLineDraft {
   id: string;
   packageNo: string;
+  itemCount: string;
   itemDescription: string;
   island: string;
   system: string;
@@ -59,6 +60,7 @@ function createEmptyLine(prefill?: TransitEntry | null): PackageLineDraft {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     packageNo: prefill?.packageNo || '',
+    itemCount: '',
     itemDescription: prefill?.itemDescription || '',
     island: '',
     system: prefill?.system || '',
@@ -262,6 +264,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
         mapnaEntryMinutesNo: mapnaEntryMinutesNo.trim(),
         packingListNo: pk,
         packageNo: l.packageNo.trim(),
+        itemCount: toOptionalNum(l.itemCount),
         itemDescription: l.itemDescription.trim(),
         island: l.island.trim(),
         system: l.system.trim(),
@@ -747,7 +750,25 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           />
                         </div>
 
-                        <div className="sm:col-span-3">
+                        <div>
+                          <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                            {t.headers.itemCount}
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            dir={isFa && !line.itemCount ? 'rtl' : 'ltr'}
+                            value={line.itemCount}
+                            onChange={(e) => updateLine(line.id, { itemCount: e.target.value })}
+                            placeholder={isFa ? 'مثلاً ۵' : 'e.g. 5'}
+                            className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                              isFa && !line.itemCount ? 'text-right' : 'text-left'
+                            }`}
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
                             {t.headers.itemDescription} *
                           </label>

@@ -25,6 +25,7 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { PrintReportModal } from './PrintReportModal.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 
 interface GeneralRowView extends GeneralEntry {
@@ -80,6 +81,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [editing, setEditing] = useState<GeneralRowView | null>(null);
   const [ackClosedEdit, setAckClosedEdit] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<GeneralRowView | null>(null);
+  const [printOpen, setPrintOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -146,6 +148,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, get: (r: GeneralRowView) => r.arrivalDate },
       { key: 'packingListNo', header: t.headers.packingListNo, get: (r: GeneralRowView) => r.packingListNo },
       { key: 'packageNo', header: t.headers.packageNo, get: (r: GeneralRowView) => r.packageNo },
+      { key: 'itemCount', header: t.headers.itemCount, isNum: true, get: (r: GeneralRowView) => r.itemCount },
       { key: 'itemDescription', header: t.headers.itemDescription, get: (r: GeneralRowView) => r.itemDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: GeneralRowView) => r.supplier },
       { key: 'dispatchLocation', header: t.headers.dispatchLocation, get: (r: GeneralRowView) => r.dispatchLocation },
@@ -411,6 +414,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           isFilteredFallback={selectedRows.length === 0}
           onClearSelection={() => setSelectedMap({})}
           onExportSelected={handleExport}
+          onPrintSelected={() => setPrintOpen(true)}
         />
       )}
 
@@ -761,6 +765,27 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.itemCount}
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    dir={isFa && (editing.itemCount === null || editing.itemCount === undefined) ? 'rtl' : 'ltr'}
+                    value={editing.itemCount ?? ''}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        itemCount: e.target.value === '' ? null : Math.floor(Number(e.target.value)),
+                      })
+                    }
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && (editing.itemCount === null || editing.itemCount === undefined) ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.mapnaEntryMinutesNo}
                   </label>
                   <input
@@ -981,6 +1006,20 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           </div>
         </div>
       )}
+
+      <PrintReportModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        title={t.nav.general}
+        rows={selectedRows.length > 0 ? selectedRows : items}
+        columns={columns.map((c) => ({
+          key: c.key,
+          header: c.header,
+          isDate: c.isDate,
+          getValue: c.get,
+        }))}
+        defaultSelectedKeys={visibleColumns.map((c) => c.key)}
+      />
     </div>
   );
 };

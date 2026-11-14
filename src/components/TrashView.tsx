@@ -19,6 +19,7 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
   const [items, setItems] = useState<TrashRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [purgeTarget, setPurgeTarget] = useState<TrashRecord | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<TrashRecord | null>(null);
 
   const loadTrash = useCallback(async () => {
     setLoading(true);
@@ -40,21 +41,39 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
     loadTrash();
   }, [loadTrash, refreshSignal]);
 
-  const handleRestore = async (item: TrashRecord) => {
+  const executeRestore = async (item: TrashRecord, restoreDetailed: boolean) => {
     try {
-      await apiRequest(`/api/trash/${item.id}/restore`, { method: 'POST' });
+      const qs = restoreDetailed ? '?restoreDetailed=true' : '?restoreDetailed=false';
+      const res = await apiRequest<{ restoredDetailedCount?: number }>(
+        `/api/trash/${item.id}/restore${qs}`,
+        { method: 'POST' },
+      );
+      const restoredDetailedCount = res.restoredDetailedCount || 0;
       notify(
         'success',
         isFa
-          ? `ردیف «${item.targetLabel}» با موفقیت بازیابی شد.`
-          : `Restored "${item.targetLabel}".`,
+          ? restoredDetailedCount > 0
+            ? `ردیف «${item.targetLabel}» و ${restoredDetailedCount.toLocaleString('fa-IR')} ردیف جزئیات مرتبط بازیابی شدند.`
+            : `ردیف «${item.targetLabel}» با موفقیت بازیابی شد.`
+          : restoredDetailedCount > 0
+            ? `Restored "${item.targetLabel}" along with ${restoredDetailedCount} linked Detailed rows.`
+            : `Restored "${item.targetLabel}".`,
       );
+      setRestoreTarget(null);
       triggerAutoSnapshot(`Restore ${item.targetLabel}`);
       onDataChanged();
       loadTrash();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     }
+  };
+
+  const handleRestoreClick = (item: TrashRecord) => {
+    if (item.scope === 'general' && (item.linkedTrashDetailedCount || 0) > 0) {
+      setRestoreTarget(item);
+      return;
+    }
+    executeRestore(item, false);
   };
 
   const handleConfirmPurge = async () => {
@@ -132,49 +151,110 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
                   </td>
                 </tr>
               ) : (
-                items.map((item) => (
-                  <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
-                    <td className="py-2.5 px-4">
-                      <span className="px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[11px] font-semibold">
-                        {scopeLabel(item.scope)}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-4 font-semibold tabular-nums bidi-plaintext">
-                      {item.targetLabel}
-                    </td>
-                    <td className="py-2.5 px-4">{item.deletedBy}</td>
-                    <td className="py-2.5 px-4 tabular-nums text-[var(--text-muted)]">
-                      {formatTimestamp(item.deletedAt)}
-                    </td>
-                    <td className="py-2.5 px-4 text-end">
-                      {canEdit && (
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleRestore(item)}
-                            className="h-7 px-2.5 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-90 text-[11px] font-semibold inline-flex items-center gap-1"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            <span>{t.controls.restore}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPurgeTarget(item)}
-                            className="h-7 px-2.5 rounded-lg hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[11px] font-medium inline-flex items-center gap-1"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>{t.controls.purge}</span>
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                items.map((item) => {
+                  const linkedCount = item.linkedTrashDetailedCount || 0;
+                  return (
+                    <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
+                      <td className="py-2.5 px-4">
+                        <span className="px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[11px] font-semibold">
+                          {scopeLabel(item.scope)}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <div className="font-semibold tabular-nums bidi-plaintext">{item.targetLabel}</div>
+                        {item.scope === 'general' && linkedCount > 0 && (
+                          <div className="text-[11px] text-[var(--accent-primary)] mt-0.5 tabular-nums">
+                            {isFa
+                              ? `دارای ${linkedCount.toLocaleString('fa-IR')} ردیف جزئیات حذف‌شده مرتبط`
+                              : `${linkedCount} linked Detailed row(s) in Recycle Bin`}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-4">{item.deletedBy}</td>
+                      <td className="py-2.5 px-4 tabular-nums text-[var(--text-muted)]">
+                        {formatTimestamp(item.deletedAt)}
+                      </td>
+                      <td className="py-2.5 px-4 text-end">
+                        {canEdit && (
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreClick(item)}
+                              className="h-7 px-2.5 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-90 text-[11px] font-semibold inline-flex items-center gap-1"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>{t.controls.restore}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPurgeTarget(item)}
+                              className="h-7 px-2.5 rounded-lg hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[11px] font-medium inline-flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>{t.controls.purge}</span>
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Cascade Restore Confirmation Modal */}
+      {restoreTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setRestoreTarget(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-[var(--text-primary)]">
+                {isFa ? 'بازیابی ردیف‌های جزئیات مرتبط' : 'Restore Linked Detailed Rows?'}
+              </h3>
+              <button type="button" onClick={() => setRestoreTarget(null)}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {isFa
+                ? `برای ردیف «${restoreTarget.targetLabel}»، تعداد ${(restoreTarget.linkedTrashDetailedCount || 0).toLocaleString('fa-IR')} ردیف جزئیات (دیتیل) مرتبط نیز در سطل بازیافت وجود دارد. آیا ردیف‌های جزئیات مرتبط هم هم‌زمان بازیابی شوند؟`
+                : `Record "${restoreTarget.targetLabel}" has ${restoreTarget.linkedTrashDetailedCount || 0} linked Detailed row(s) in the Recycle Bin. Do you want to restore those linked Detailed rows as well?`}
+            </p>
+            <div className="flex flex-wrap justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRestoreTarget(null)}
+                className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium hover:bg-[var(--bg-subtle)]"
+              >
+                {t.controls.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={() => executeRestore(restoreTarget, false)}
+                className="h-9 px-4 rounded-lg border border-[var(--border-strong)] text-xs font-semibold hover:bg-[var(--bg-subtle)]"
+              >
+                {isFa ? 'فقط بازیابی ثبت کلی' : 'Restore General Only'}
+              </button>
+              <button
+                type="button"
+                onClick={() => executeRestore(restoreTarget, true)}
+                className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{isFa ? 'بازیابی کلی + جزئیات مرتبط' : 'Restore General & Linked Detailed'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Permanent Purge Confirmation */}
       {purgeTarget && (

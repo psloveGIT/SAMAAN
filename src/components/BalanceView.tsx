@@ -1,23 +1,35 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Printer, Scale, Search } from 'lucide-react';
+import { CheckCircle2, Download, Printer, Scale, Search } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import type { DetailedComputed } from '../shared/types.ts';
+import { PrintReportModal } from './PrintReportModal.tsx';
 
 interface BalanceViewProps {
   refreshSignal: number;
   onDataChanged: () => void;
 }
 
-const BALANCE_STATUS_OPTIONS = [
-  'Balanced',
-  'Open / Pending',
-  'Shortage Claim',
-  'Closed',
-  'تایید شده',
-  'در دست بررسی',
-  'مغایرت',
+const BALANCE_STATUS_PAIRS: { fa: string; en: string }[] = [
+  { fa: 'تایید شده', en: 'Balanced' },
+  { fa: 'در دست بررسی', en: 'Open / Pending' },
+  { fa: 'مغایرت / کسری', en: 'Shortage Claim' },
+  { fa: 'مختومه', en: 'Closed' },
 ];
+
+export function localizeBalanceStatus(raw: string | undefined, isFa: boolean): string {
+  const val = (raw || '').trim();
+  if (!val) return '';
+  const lower = val.toLowerCase();
+  if (val === 'مغایرت') return isFa ? 'مغایرت / کسری' : 'Shortage Claim';
+  for (const pair of BALANCE_STATUS_PAIRS) {
+    if (pair.fa === val || pair.en.toLowerCase() === lower) {
+      return isFa ? pair.fa : pair.en;
+    }
+  }
+  return val;
+}
 
 export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataChanged }) => {
   const { prefs, t, user, notify, triggerAutoSnapshot } = useApp();
@@ -30,6 +42,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
   const [items, setItems] = useState<DetailedComputed[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [printOpen, setPrintOpen] = useState(false);
 
   const [materialBalanceNo, setMaterialBalanceNo] = useState('');
   const [balanceStatus, setBalanceStatus] = useState('');
@@ -58,15 +71,27 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
     loadItems();
   }, [loadItems, refreshSignal]);
 
+  const statusPresets = useMemo(
+    () => BALANCE_STATUS_PAIRS.map((p) => (isFa ? p.fa : p.en)),
+    [isFa],
+  );
+
   const filtered = useMemo(() => {
     if (!statusFilter) return items;
     if (statusFilter === '__EMPTY__') return items.filter((i) => !i.balanceStatus);
-    return items.filter((i) => i.balanceStatus === statusFilter);
-  }, [items, statusFilter]);
+    return items.filter((i) => localizeBalanceStatus(i.balanceStatus, isFa) === statusFilter);
+  }, [items, statusFilter, isFa]);
 
   const knownStatuses = useMemo(
-    () => Array.from(new Set(items.map((i) => i.balanceStatus).filter(Boolean))),
-    [items],
+    () =>
+      Array.from(
+        new Set(
+          items
+            .map((i) => localizeBalanceStatus(i.balanceStatus, isFa))
+            .filter(Boolean),
+        ),
+      ),
+    [items, isFa],
   );
 
   const toggleAll = () => {
@@ -93,28 +118,29 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
     if (!materialBalanceNo.trim() && !balanceStatus.trim()) {
       notify(
         'warning',
-        isFa ? 'شماره بالانس یا وضعیت بالانس را وارد کنید.' : 'Enter Balance No. or Status.',
+        isFa ? 'شماره موازنه یا وضعیت را وارد کنید.' : 'Enter Balance No. or Status.',
       );
       return;
     }
 
     try {
+      const normalizedStatus = localizeBalanceStatus(balanceStatus, isFa);
       const res = await apiRequest<{ updatedCount: number }>('/api/balance/assign', {
         method: 'POST',
         body: JSON.stringify({
           detailedIds: selectedIds,
           materialBalanceNo,
-          balanceStatus,
+          balanceStatus: normalizedStatus,
         }),
       });
       notify(
         'success',
         isFa
-          ? `بالانس متریال برای ${res.updatedCount} قلم ثبت شد.`
-          : `Material Balance assigned to ${res.updatedCount} items.`,
+          ? `گزارش موازنه و کنترل مصرف مواد برای ${res.updatedCount.toLocaleString('fa-IR')} قلم ثبت شد.`
+          : `Material balance assigned to ${res.updatedCount} items.`,
       );
       setSelectedIds([]);
-      triggerAutoSnapshot(`Balance ${materialBalanceNo || balanceStatus}`);
+      triggerAutoSnapshot(`Balance ${materialBalanceNo || normalizedStatus}`);
       onDataChanged();
       loadItems();
     } catch (err) {
@@ -122,26 +148,58 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
     }
   };
 
+  const reportColumns = useMemo<CsvColumnDef<DetailedComputed>[]>(
+    () => [
+      { key: 'rowNo', header: t.headers.rowNo, getValue: (r) => r.rowNo },
+      { key: 'shipmentNo', header: t.headers.shipmentNo, getValue: (r) => r.shipmentNo },
+      { key: 'packageNo', header: t.headers.packageNo, getValue: (r) => r.packageNo },
+      { key: 'itemNo', header: t.headers.itemNo, getValue: (r) => r.itemNo },
+      { key: 'description', header: t.headers.description, getValue: (r) => r.description || r.generalDescription },
+      { key: 'itemCode', header: t.headers.itemCode, getValue: (r) => r.itemCode },
+      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => r.countingUnit },
+      { key: 'packingQty', header: t.headers.packingQty, getValue: (r) => r.packingQty },
+      { key: 'actualQty', header: t.headers.actualQty, getValue: (r) => r.actualQty },
+      { key: 'shortage', header: t.headers.shortage, getValue: (r) => (r.shortage > 0 ? r.shortage : 0) },
+      { key: 'damagedQty', header: t.headers.damagedQty, getValue: (r) => r.damagedQty },
+      { key: 'mapnaInventory', header: t.headers.mapnaInventory, getValue: (r) => (r.opiPending ? '' : r.mapnaInventory) },
+      { key: 'contractorInventory', header: t.headers.contractorInventory, getValue: (r) => (r.opiPending ? '' : r.contractorInventory) },
+      { key: 'materialBalanceNo', header: t.headers.materialBalanceNo, getValue: (r) => r.materialBalanceNo },
+      {
+        key: 'balanceStatus',
+        header: t.headers.balanceStatus,
+        getValue: (r) => localizeBalanceStatus(r.balanceStatus, isFa),
+      },
+    ],
+    [t, isFa],
+  );
+
+  const printRows = useMemo(
+    () => (selectedIds.length > 0 ? filtered.filter((r) => selectedIds.includes(r.id)) : filtered),
+    [filtered, selectedIds],
+  );
+
+  const handleExportCsv = () => {
+    exportRowsToCsv({
+      rows: printRows,
+      columns: reportColumns,
+      filename: 'samaan-material-balance',
+      calendar: prefs.calendar,
+      hideEmptyColumns: true,
+    });
+  };
+
   return (
     <div className="space-y-6">
       {canEdit && (
         <form
           onSubmit={handleAssign}
-          className="print:hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
+          className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
         >
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm font-bold">
               <Scale className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{isFa ? 'تخصیص شماره و وضعیت بالانس متریال' : 'Assign Material Balance'}</span>
+              <span>{t.nav.balance}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>{t.controls.print}</span>
-            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
@@ -175,7 +233,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
                 className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
               <datalist id="balance-status-datalist">
-                {BALANCE_STATUS_OPTIONS.map((opt) => (
+                {statusPresets.map((opt) => (
                   <option key={opt} value={opt} />
                 ))}
               </datalist>
@@ -197,9 +255,9 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
       )}
 
       {/* Filters & Selection Table */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden print-sheet">
-        <div className="p-4 border-b border-[var(--border-subtle)] grid grid-cols-1 sm:grid-cols-3 gap-2.5 print:hidden">
-          <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+        <div className="p-4 border-b border-[var(--border-subtle)] flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center flex-1 min-w-[200px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
             <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
             <input
               type="text"
@@ -217,7 +275,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
             value={shipmentFilter}
             onChange={(e) => setShipmentFilter(e.target.value)}
             placeholder={t.headers.shipmentNo}
-            className={`h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+            className={`h-9 w-44 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
               isFa && !shipmentFilter ? 'text-right' : 'text-left'
             }`}
           />
@@ -228,11 +286,29 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
             className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
             <option value="">{t.headers.balanceStatus}: {t.controls.all}</option>
-            <option value="__EMPTY__">{isFa ? 'بدون وضعیت بالانس' : 'Unassigned'}</option>
+            <option value="__EMPTY__">{isFa ? 'بدون وضعیت موازنه' : 'Unassigned'}</option>
             {knownStatuses.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
+
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>{t.controls.exportCsv}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setPrintOpen(true)}
+            className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>{t.controls.printReport}</span>
+          </button>
         </div>
 
         <div className="overflow-x-auto">
@@ -240,7 +316,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
                 {canEdit && (
-                  <th className="py-2.5 px-3 w-9 print:hidden">
+                  <th className="py-2.5 px-3 w-9">
                     <input
                       type="checkbox"
                       checked={filtered.length > 0 && filtered.every((i) => selectedIds.includes(i.id))}
@@ -273,45 +349,56 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
                   </td>
                 </tr>
               ) : (
-                filtered.map((item) => (
-                  <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
-                    {canEdit && (
-                      <td className="py-2 px-3 print:hidden">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(item.id)}
-                          onChange={() => toggleOne(item.id)}
-                        />
+                filtered.map((item) => {
+                  const localizedStatus = localizeBalanceStatus(item.balanceStatus, isFa);
+                  return (
+                    <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
+                      {canEdit && (
+                        <td className="py-2 px-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(item.id)}
+                            onChange={() => toggleOne(item.id)}
+                          />
+                        </td>
+                      )}
+                      <td className="py-2 px-3 tabular-nums" dir="ltr">{item.shipmentNo}</td>
+                      <td className="py-2 px-3 tabular-nums" dir="ltr">{item.packageNo}</td>
+                      <td className="py-2 px-3 tabular-nums" dir="ltr">{item.itemNo}</td>
+                      <td className="py-2 px-3 max-w-[220px] truncate bidi-plaintext">
+                        {item.description || item.generalDescription}
                       </td>
-                    )}
-                    <td className="py-2 px-3 tabular-nums" dir="ltr">{item.shipmentNo}</td>
-                    <td className="py-2 px-3 tabular-nums" dir="ltr">{item.packageNo}</td>
-                    <td className="py-2 px-3 tabular-nums" dir="ltr">{item.itemNo}</td>
-                    <td className="py-2 px-3 max-w-[220px] truncate bidi-plaintext">
-                      {item.description || item.generalDescription}
-                    </td>
-                    <td className="py-2 px-3 text-end tabular-nums">{item.packingQty ?? '-'}</td>
-                    <td className="py-2 px-3 text-end tabular-nums">
-                      {item.actualQty ?? '-'}
-                    </td>
-                    <td
-                      className={`py-2 px-3 text-end tabular-nums ${
-                        item.hasShortage ? 'font-bold text-[var(--status-danger)]' : ''
-                      }`}
-                    >
-                      {item.shortage > 0 ? item.shortage : '-'}
-                    </td>
-                    <td className="py-2 px-3 tabular-nums font-medium" dir="ltr">
-                      {item.materialBalanceNo || '-'}
-                    </td>
-                    <td className="py-2 px-3 bidi-plaintext">{item.balanceStatus || '-'}</td>
-                  </tr>
-                ))
+                      <td className="py-2 px-3 text-end tabular-nums">{item.packingQty ?? '-'}</td>
+                      <td className="py-2 px-3 text-end tabular-nums">
+                        {item.actualQty ?? '-'}
+                      </td>
+                      <td
+                        className={`py-2 px-3 text-end tabular-nums ${
+                          item.hasShortage ? 'font-bold text-[var(--status-danger)]' : ''
+                        }`}
+                      >
+                        {item.shortage > 0 ? item.shortage : '-'}
+                      </td>
+                      <td className="py-2 px-3 tabular-nums font-medium" dir="ltr">
+                        {item.materialBalanceNo || '-'}
+                      </td>
+                      <td className="py-2 px-3 bidi-plaintext">{localizedStatus || '-'}</td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      <PrintReportModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        title={t.nav.balance}
+        columns={reportColumns}
+        rows={printRows}
+      />
     </div>
   );
 };

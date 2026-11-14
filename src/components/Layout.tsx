@@ -1,10 +1,13 @@
 import React from 'react';
 import {
+  ArrowLeftRight,
   BarChart3,
   Boxes,
   Calendar,
   ClipboardCheck,
   ClipboardList,
+  ClipboardSignature,
+  CornerUpLeft,
   Eye,
   FileCheck2,
   FileSpreadsheet,
@@ -22,6 +25,7 @@ import {
   Search,
   Shield,
   Sun,
+  Tag,
   Trash2,
   Truck,
   X,
@@ -33,14 +37,19 @@ import { SamaanLogo } from './SamaanLogo.tsx';
 
 export type NavTabKey =
   | 'dashboard'
+  | 'siteEntry'
   | 'general'
   | 'detailed'
   | 'transit'
   | 'opi'
+  | 'opiMinutes'
   | 'gcv'
   | 'miv'
+  | 'smr'
+  | 'substitution'
   | 'balance'
   | 'stocktake'
+  | 'storageLabel'
   | 'search'
   | 'categories'
   | 'trash'
@@ -84,6 +93,7 @@ export const Layout: React.FC<LayoutProps> = ({
       groupLabel: t.navGroups.core,
       items: [
         { key: 'dashboard', label: t.nav.dashboard, icon: <BarChart3 className="w-4 h-4" /> },
+        { key: 'siteEntry', label: t.nav.siteEntry, icon: <ClipboardSignature className="w-4 h-4" /> },
         { key: 'general', label: t.nav.general, icon: <Boxes className="w-4 h-4" /> },
         { key: 'detailed', label: t.nav.detailed, icon: <ListChecks className="w-4 h-4" /> },
         { key: 'transit', label: t.nav.transit, icon: <Truck className="w-4 h-4" /> },
@@ -93,10 +103,14 @@ export const Layout: React.FC<LayoutProps> = ({
       groupLabel: t.navGroups.operations,
       items: [
         { key: 'opi', label: t.nav.opi, icon: <FileText className="w-4 h-4" /> },
+        { key: 'opiMinutes', label: t.nav.opiMinutes, icon: <ClipboardCheck className="w-4 h-4" /> },
         { key: 'gcv', label: t.nav.gcv, icon: <FileCheck2 className="w-4 h-4" /> },
         { key: 'miv', label: t.nav.miv, icon: <ClipboardList className="w-4 h-4" /> },
+        { key: 'smr', label: t.nav.smr, icon: <CornerUpLeft className="w-4 h-4" /> },
+        { key: 'substitution', label: t.nav.substitution, icon: <ArrowLeftRight className="w-4 h-4" /> },
         { key: 'balance', label: t.nav.balance, icon: <Scale className="w-4 h-4" /> },
         { key: 'stocktake', label: t.nav.stocktake, icon: <ClipboardCheck className="w-4 h-4" /> },
+        { key: 'storageLabel', label: t.nav.storageLabel, icon: <Tag className="w-4 h-4" /> },
       ],
     },
     {

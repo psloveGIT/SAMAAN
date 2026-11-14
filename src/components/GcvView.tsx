@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, FileCheck2, Printer, Search, X } from 'lucide-react';
+import { CheckCircle2, Download, FileCheck2, Printer, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { DetailedComputed, GcvDocumentRecord } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { PrintReportModal } from './PrintReportModal.tsx';
 
 interface GcvApiResponse {
   documents: GcvDocumentRecord[];
@@ -31,6 +33,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   const [itemSearch, setItemSearch] = useState('');
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({});
   const [printDoc, setPrintDoc] = useState<GcvDocumentRecord | null>(null);
+  const [printReportOpen, setPrintReportOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -87,8 +90,8 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
       notify(
         'success',
         isFa
-          ? `رسید GCV شماره ${res.document.receiptNo} ثبت و موجودی‌ها به‌روزرسانی شد.`
-          : `GCV Receipt ${res.document.receiptNo} created.`,
+          ? `رسید مصرف مستقیم کالا شماره ${res.document.receiptNo} ثبت و موجودی‌ها به‌روزرسانی شد.`
+          : `Direct Material Consumption Receipt ${res.document.receiptNo} created.`,
       );
       setReceiptNo('');
       setReceiver('');
@@ -103,6 +106,24 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
     }
   };
 
+  const historyColumns = useMemo<CsvColumnDef<GcvDocumentRecord>[]>(
+    () => [
+      { key: 'receiptNo', header: t.headers.gcvReceiptNo, getValue: (r) => r.receiptNo },
+      { key: 'date', header: isFa ? 'تاریخ' : 'Date', isDate: true, getValue: (r) => r.date },
+      { key: 'receiver', header: t.headers.receiver, getValue: (r) => r.receiver },
+      { key: 'itemCount', header: isFa ? 'تعداد اقلام' : 'Items', getValue: (r) => r.items.length },
+      {
+        key: 'itemsSummary',
+        header: isFa ? 'شرح اقلام' : 'Items Summary',
+        getValue: (r) =>
+          r.items.map((i) => `${i.shipmentNo}/${i.packageNo}#${i.itemNo} (${i.qty})`).join(' | '),
+      },
+      { key: 'createdBy', header: isFa ? 'ثبت‌کننده' : 'Created By', getValue: (r) => r.createdBy },
+      { key: 'notes', header: t.headers.notes, getValue: (r) => r.notes || '' },
+    ],
+    [t, isFa],
+  );
+
   return (
     <div className="space-y-6">
       {canEdit && (
@@ -112,7 +133,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         >
           <div className="flex items-center gap-2 text-sm font-bold">
             <FileCheck2 className="w-4 h-4 text-[var(--accent-primary)]" />
-            <span>{isFa ? 'ثبت فرم رسید تحویل کالا (GCV-Rahkaran)' : 'Issue GCV Delivery Receipt'}</span>
+            <span>{isFa ? 'ثبت رسید مصرف مستقیم کالا (GCV-Rahkaran)' : 'Direct Material Consumption Receipt (GCV)'}</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -133,7 +154,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
             </div>
 
             <JalaliDateInput
-              label={`${isFa ? 'تاریخ رسید GCV' : 'GCV Date'} *`}
+              label={`${isFa ? 'تاریخ رسید' : 'Receipt Date'} *`}
               value={date}
               onChange={setDate}
             />
@@ -170,7 +191,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-semibold text-[var(--text-secondary)]">
                 {isFa
-                  ? 'اقلام آماده تحویل از موجودی مپنا (دارای OPI ثبت‌شده)'
+                  ? 'اقلام آماده تحویل از موجودی مپنا (دارای بازرسی ثبت‌شده)'
                   : 'Deliverable Items from MAPNA Stock (OPI Recorded)'}
               </div>
               <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
@@ -203,7 +224,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-[var(--text-muted)]">
                         {isFa
-                          ? 'موردی با موجودی مپنا و OPI ثبت‌شده یافت نشد.'
+                          ? 'موردی با موجودی مپنا و بازرسی ثبت‌شده یافت نشد.'
                           : 'No items with available MAPNA inventory found.'}
                       </td>
                     </tr>
@@ -266,7 +287,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isFa ? 'ثبت رسید GCV و صدور فرم چاپی' : 'Save GCV Receipt & Print'}</span>
+              <span>{isFa ? 'ثبت رسید مصرف مستقیم کالا و صدور فرم' : 'Save Receipt & Print'}</span>
             </button>
           </div>
         </form>
@@ -274,8 +295,36 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
 
       {/* GCV Document History */}
       <div className={`${printDoc ? 'print:hidden' : ''} rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden`}>
-        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)]">
-          <h3 className="text-sm font-bold">{isFa ? 'رسیدهای GCV ثبت‌شده' : 'Recorded GCV Receipts'}</h3>
+        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-bold">
+            {isFa ? 'سوابق رسید مصرف مستقیم کالا' : 'Recorded Direct Consumption Receipts'}
+          </h3>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                exportRowsToCsv({
+                  rows: data?.documents || [],
+                  columns: historyColumns,
+                  filename: 'samaan-gcv-receipts',
+                  calendar: prefs.calendar,
+                  hideEmptyColumns: true,
+                })
+              }
+              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{t.controls.exportCsv}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPrintReportOpen(true)}
+              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>{t.controls.printReport}</span>
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -333,7 +382,9 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 print:static print:bg-transparent print:p-0">
           <div className="w-full max-w-3xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5 max-h-[92vh] overflow-y-auto print-sheet">
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 print:hidden">
-              <h3 className="text-sm font-bold">{isFa ? 'فرم چاپی رسید GCV' : 'Printable GCV Receipt'}</h3>
+              <h3 className="text-sm font-bold">
+                {isFa ? 'فرم چاپی رسید مصرف مستقیم کالا' : 'Printable Direct Material Consumption Receipt'}
+              </h3>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -358,7 +409,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                 <div>
                   <div className="text-base font-bold">{t.brandFull}</div>
                   <div className="text-[11px] opacity-80">
-                    {isFa ? 'رسید تحویل کالا از انبار مپنا (GCV)' : 'Goods Control Voucher (GCV)'}
+                    {isFa ? 'رسید مصرف مستقیم کالا از انبار مپنا (GCV)' : 'Direct Material Consumption Receipt (GCV)'}
                   </div>
                 </div>
                 <div className="text-end tabular-nums">
@@ -425,6 +476,14 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
           </div>
         </div>
       )}
+
+      <PrintReportModal
+        open={printReportOpen}
+        onClose={() => setPrintReportOpen(false)}
+        title={t.nav.gcv}
+        columns={historyColumns}
+        rows={data?.documents || []}
+      />
     </div>
   );
 };

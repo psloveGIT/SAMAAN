@@ -13,7 +13,9 @@ import {
   roundQty,
   toNum,
 } from '../shared/formulas.ts';
+import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
+import { sortDetailedEntries, sortGeneralEntries } from '../shared/sorting.ts';
 import type {
   AuditLogEntry,
   CalendarMode,
@@ -28,8 +30,13 @@ import type {
   MivDocType,
   MivDocumentRecord,
   OpiInvitationRecord,
+  OpiMinutesRecord,
+  OsdrReportItem,
+  OsdrReportRecord,
   PackingStatusMeta,
   ShortageBackfillRecord,
+  SiteEntryMinutesRecord,
+  SubstitutionRecord,
   TransitEntry,
   TrashRecord,
   UserAccount,
@@ -53,6 +60,10 @@ interface StaticDatabase {
   auditLogs: AuditLogEntry[];
   trash: TrashRecord[];
   opiInvitations: OpiInvitationRecord[];
+  siteEntryMinutes: SiteEntryMinutesRecord[];
+  opiMinutes: OpiMinutesRecord[];
+  osdrReports: OsdrReportRecord[];
+  substitutions: SubstitutionRecord[];
   gcvDocuments: GcvDocumentRecord[];
   mivDocuments: MivDocumentRecord[];
 }
@@ -84,7 +95,7 @@ function createEmptyCategories(): CategoryStore {
 
 function createEmptyDb(): StaticDatabase {
   return {
-    version: 2,
+    version: 3,
     currentUserId: null,
     users: [],
     general: [],
@@ -95,6 +106,10 @@ function createEmptyDb(): StaticDatabase {
     auditLogs: [],
     trash: [],
     opiInvitations: [],
+    siteEntryMinutes: [],
+    opiMinutes: [],
+    osdrReports: [],
+    substitutions: [],
     gcvDocuments: [],
     mivDocuments: [],
   };
@@ -116,6 +131,27 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
+function renumberScope(db: StaticDatabase, scope: 'general' | 'detailed' | 'transit') {
+  if (scope === 'general') {
+    db.general = sortGeneralEntries(db.general);
+    for (let i = 0; i < db.general.length; i += 1) {
+      db.general[i].rowNo = String(i + 1);
+    }
+    return;
+  }
+  if (scope === 'detailed') {
+    db.detailed = sortDetailedEntries(db.detailed);
+    for (let i = 0; i < db.detailed.length; i += 1) {
+      db.detailed[i].rowNo = String(i + 1);
+    }
+    return;
+  }
+  const total = db.transit.length;
+  for (let i = 0; i < total; i += 1) {
+    db.transit[i].rowNo = String(i + 1);
+  }
+}
+
 async function getDb(): Promise<StaticDatabase> {
   if (cachedDb) return cachedDb;
   const idb = await openDb();
@@ -134,10 +170,17 @@ async function getDb(): Promise<StaticDatabase> {
         categories: { ...createEmptyCategories(), ...(loaded.categories || {}) },
         trash: Array.isArray(loaded.trash) ? loaded.trash : [],
         opiInvitations: Array.isArray(loaded.opiInvitations) ? loaded.opiInvitations : [],
+        siteEntryMinutes: Array.isArray(loaded.siteEntryMinutes) ? loaded.siteEntryMinutes : [],
+        opiMinutes: Array.isArray(loaded.opiMinutes) ? loaded.opiMinutes : [],
+        osdrReports: Array.isArray(loaded.osdrReports) ? loaded.osdrReports : [],
+        substitutions: Array.isArray(loaded.substitutions) ? loaded.substitutions : [],
         gcvDocuments: Array.isArray(loaded.gcvDocuments) ? loaded.gcvDocuments : [],
         mivDocuments: Array.isArray(loaded.mivDocuments) ? loaded.mivDocuments : [],
       }
     : empty;
+  renumberScope(cachedDb, 'general');
+  renumberScope(cachedDb, 'detailed');
+  renumberScope(cachedDb, 'transit');
   return cachedDb;
 }
 
@@ -233,14 +276,6 @@ function rebuildCategories(db: StaticDatabase) {
     registerCategoryValue(db, 'supplier', t.supplier);
     registerCategoryValue(db, 'dispatchLocation', t.dispatchLocation);
     registerCategoryValue(db, 'carrierContractor', t.carrierContractor);
-  }
-}
-
-function renumberScope(db: StaticDatabase, scope: 'general' | 'detailed' | 'transit') {
-  const arr = scope === 'general' ? db.general : scope === 'detailed' ? db.detailed : db.transit;
-  const total = arr.length;
-  for (let i = 0; i < total; i += 1) {
-    arr[i].rowNo = String(total - i);
   }
 }
 
@@ -367,6 +402,15 @@ function getGeneralSharedInfo(db: StaticDatabase, packingNo: string, packageNo?:
   const pkg = normKey(packageNo);
   const exact = pkg ? list.find((g) => normKey(g.packageNo) === pkg) : undefined;
   const match = exact || list[0];
+  const packageCounts: Record<string, number | null> = {};
+  for (const g of list) {
+    const p = normKey(g.packageNo);
+    if (p) packageCounts[p] = g.itemCount ?? null;
+  }
+  const existingDetailedCount = db.detailed.filter(
+    (d) => normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg),
+  ).length;
+
   return {
     arrivalDate: match.arrivalDate,
     supplier: match.supplier,
@@ -375,14 +419,21 @@ function getGeneralSharedInfo(db: StaticDatabase, packingNo: string, packageNo?:
     system: match.system,
     subSystem: match.subSystem,
     unit: match.unit,
-    itemDescription: match.itemDescription,
     packageNo: match.packageNo,
+    expectedItemCount: match.itemCount ?? null,
+    existingDetailedCount,
+    packageCounts,
     packagesForPacking: Array.from(new Set(list.map((g) => normKey(g.packageNo)).filter(Boolean))),
   };
 }
 
 function getLastDetailedDefaults(db: StaticDatabase) {
-  const latest = db.detailed[0];
+  let latest: DetailedEntry | undefined = db.detailed[0];
+  for (const d of db.detailed) {
+    if (!latest || (d.createdAt || '') > (latest.createdAt || '')) {
+      latest = d;
+    }
+  }
   if (!latest) return { shipmentNo: '', packageNo: '', countingUnit: 'PC' };
   return {
     shipmentNo: normKey(latest.shipmentNo),
@@ -427,15 +478,24 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   const query = parsedUrl.searchParams;
   const method = (options.method || 'GET').toUpperCase();
   const body = options.body ? (JSON.parse(String(options.body)) as Record<string, unknown>) : {};
+  const headers = (options.headers as Record<string, string>) || {};
+  const langHeader = String(headers['X-Samaan-Lang'] || headers['x-samaan-lang'] || '').toLowerCase();
 
   const currentUserObj = db.currentUserId
     ? db.users.find((u) => u.id === db.currentUserId && u.active) || null
     : null;
 
+  const isEn = langHeader
+    ? langHeader === 'en'
+    : currentUserObj?.preferences?.language === 'en';
+  const errMsg = (fa: string, en: string) => (isEn ? en : fa);
+
   const requireAuth = (allowed?: UserRole[]): StaticUser => {
-    if (!currentUserObj) throw new StaticEngineError('Authentication required', 401);
+    if (!currentUserObj) {
+      throw new StaticEngineError(errMsg('احراز هویت الزامی است', 'Authentication required'), 401);
+    }
     if (allowed && !allowed.includes(currentUserObj.role)) {
-      throw new StaticEngineError('Insufficient permissions', 403);
+      throw new StaticEngineError(errMsg('سطح دسترسی کافی نیست', 'Insufficient permissions'), 403);
     }
     return currentUserObj;
   };
@@ -449,12 +509,17 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   }
 
   if (pathname === '/api/auth/setup' && method === 'POST') {
-    if (db.users.length > 0) throw new StaticEngineError('System is already initialized', 400);
+    if (db.users.length > 0) {
+      throw new StaticEngineError(errMsg('سامانه قبلاً راه‌اندازی شده است', 'System is already initialized'), 400);
+    }
     const username = String(body.username || '').trim().toLowerCase();
     const password = String(body.password || '');
     const fullName = String(body.fullName || username).trim();
     if (!username || password.length < 4) {
-      throw new StaticEngineError('Username and password (min 4 chars) are required', 400);
+      throw new StaticEngineError(
+        errMsg('نام کاربری و رمز عبور (حداقل ۴ کاراکتر) الزامی است', 'Username and password (min 4 chars) are required'),
+        400,
+      );
     }
     const newUser: StaticUser = {
       id: makeId(),
@@ -478,7 +543,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const password = String(body.password || '');
     const found = db.users.find((u) => u.username.toLowerCase() === username);
     if (!found || !found.active || !(await verifyBrowserPassword(password, found.passwordHash))) {
-      throw new StaticEngineError('نام کاربری یا رمز عبور اشتباه است / Invalid credentials', 401);
+      throw new StaticEngineError(
+        errMsg('نام کاربری یا رمز عبور اشتباه است یا حساب غیرفعال است', 'Invalid credentials or inactive account'),
+        401,
+      );
     }
     found.lastLoginAt = new Date().toISOString();
     db.currentUserId = found.id;
@@ -508,10 +576,13 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const currentPassword = String(body.currentPassword || '');
     const newPassword = String(body.newPassword || '');
     if (!currentPassword || !(await verifyBrowserPassword(currentPassword, u.passwordHash))) {
-      throw new StaticEngineError('رمز عبور فعلی صحیح نیست / Current password is incorrect', 401);
+      throw new StaticEngineError(errMsg('رمز عبور فعلی صحیح نیست', 'Current password is incorrect'), 401);
     }
     if (newPassword.length < 4) {
-      throw new StaticEngineError('رمز عبور جدید باید حداقل ۴ کاراکتر باشد / New password must be at least 4 characters', 400);
+      throw new StaticEngineError(
+        errMsg('رمز عبور جدید باید حداقل ۴ کاراکتر باشد', 'New password must be at least 4 characters'),
+        400,
+      );
     }
     u.passwordHash = await hashBrowserPassword(newPassword);
     u.mustChangePassword = false;
@@ -535,10 +606,13 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const active = typeof body.active === 'boolean' ? body.active : true;
     const mustChangePassword = Boolean(body.mustChangePassword);
     if (!username || password.length < 4) {
-      throw new StaticEngineError('Username and password (min 4 chars) are required', 400);
+      throw new StaticEngineError(
+        errMsg('نام کاربری و رمز عبور (حداقل ۴ کاراکتر) الزامی است', 'Username and password (min 4 chars) are required'),
+        400,
+      );
     }
     if (db.users.some((u) => u.username.toLowerCase() === username)) {
-      throw new StaticEngineError('نام کاربری تکراری است / Username already exists', 409);
+      throw new StaticEngineError(errMsg('نام کاربری تکراری است', 'Username already exists'), 409);
     }
     const created: StaticUser = {
       id: makeId(),
@@ -561,27 +635,33 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const admin = requireAuth(['admin']);
     const targetId = pathname.split('/').pop()!;
     const target = db.users.find((u) => u.id === targetId);
-    if (!target) throw new StaticEngineError('User not found', 404);
+    if (!target) throw new StaticEngineError(errMsg('کاربر یافت نشد', 'User not found'), 404);
 
     const nextRole = (body.role as UserRole) ?? target.role;
     const nextActive = typeof body.active === 'boolean' ? body.active : target.active;
     if (target.id === admin.id && (nextRole !== 'admin' || !nextActive)) {
-      throw new StaticEngineError('امکان غیرفعال‌سازی یا تغییر نقش حساب کاربری خودتان وجود ندارد / Cannot deactivate or demote your own account', 400);
+      throw new StaticEngineError(
+        errMsg('امکان غیرفعال‌سازی یا تغییر نقش حساب کاربری خودتان وجود ندارد', 'Cannot deactivate or demote your own account'),
+        400,
+      );
     }
     if (target.role === 'admin' && target.active && (nextRole !== 'admin' || !nextActive)) {
       const otherActiveAdmins = db.users.filter((u) => u.id !== target.id && u.role === 'admin' && u.active);
       if (otherActiveAdmins.length === 0) {
-        throw new StaticEngineError('حداقل یک مدیر کل فعال باید در سامانه باقی بماند / At least one active admin must remain', 400);
+        throw new StaticEngineError(
+          errMsg('حداقل یک مدیر کل فعال باید در سامانه باقی بماند', 'At least one active admin must remain'),
+          400,
+        );
       }
     }
 
     if (body.username !== undefined) {
       const cleanUsername = String(body.username).trim().toLowerCase();
       if (!cleanUsername) {
-        throw new StaticEngineError('نام کاربری نمی‌تواند خالی باشد / Username cannot be empty', 400);
+        throw new StaticEngineError(errMsg('نام کاربری نمی‌تواند خالی باشد', 'Username cannot be empty'), 400);
       }
       if (db.users.some((u) => u.id !== target.id && u.username.toLowerCase() === cleanUsername)) {
-        throw new StaticEngineError('نام کاربری تکراری است / Username already exists', 409);
+        throw new StaticEngineError(errMsg('نام کاربری تکراری است', 'Username already exists'), 409);
       }
       target.username = cleanUsername;
     }
@@ -593,7 +673,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     let passwordReset = false;
     if (typeof body.password === 'string' && body.password !== '') {
       if (body.password.length < 4) {
-        throw new StaticEngineError('رمز عبور باید حداقل ۴ کاراکتر باشد / Password must be at least 4 characters', 400);
+        throw new StaticEngineError(errMsg('رمز عبور باید حداقل ۴ کاراکتر باشد', 'Password must be at least 4 characters'), 400);
       }
       target.passwordHash = await hashBrowserPassword(body.password);
       passwordReset = true;
@@ -617,15 +697,21 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const admin = requireAuth(['admin']);
     const targetId = pathname.split('/').pop()!;
     const idx = db.users.findIndex((u) => u.id === targetId);
-    if (idx === -1) throw new StaticEngineError('User not found', 404);
+    if (idx === -1) throw new StaticEngineError(errMsg('کاربر یافت نشد', 'User not found'), 404);
     const target = db.users[idx];
     if (target.id === admin.id) {
-      throw new StaticEngineError('امکان حذف حساب کاربری خودتان وجود ندارد / Cannot delete your own account', 400);
+      throw new StaticEngineError(
+        errMsg('امکان حذف حساب کاربری خودتان وجود ندارد', 'Cannot delete your own account'),
+        400,
+      );
     }
     if (target.role === 'admin' && target.active) {
       const otherActiveAdmins = db.users.filter((u) => u.id !== target.id && u.role === 'admin' && u.active);
       if (otherActiveAdmins.length === 0) {
-        throw new StaticEngineError('حداقل یک مدیر کل فعال باید در سامانه باقی بماند / Cannot delete the last active admin', 400);
+        throw new StaticEngineError(
+          errMsg('حداقل یک مدیر کل فعال باید در سامانه باقی بماند', 'Cannot delete the last active admin'),
+          400,
+        );
       }
     }
     db.users.splice(idx, 1);
@@ -788,15 +874,25 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const acknowledgeClosed = Boolean(body.acknowledgeClosed);
     const entries = (body.entries as Partial<GeneralEntry>[]) || [];
 
-    if (!pk) throw new StaticEngineError('شماره پکینگ لیست الزامی است / Packing List No. is required', 400);
-    if (!entries.length) throw new StaticEngineError('حداقل یک نگله/آیتم باید ثبت شود', 400);
+    if (!pk) throw new StaticEngineError(errMsg('شماره پکینگ لیست الزامی است', 'Packing List No. is required'), 400);
+    if (!entries.length) {
+      throw new StaticEngineError(errMsg('حداقل یک نگله/آیتم باید ثبت شود', 'At least one package/item must be provided'), 400);
+    }
 
     const existingGen = db.general.filter((g) => normKey(g.packingListNo) === pk);
     if (db.packingMeta[pk]?.isClosed && !acknowledgeClosed) {
-      throw new StaticEngineError('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 409, 'CLOSED_PACKING_WARNING');
+      throw new StaticEngineError(
+        errMsg('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 'This Packing List is already marked closed.'),
+        409,
+        'CLOSED_PACKING_WARNING',
+      );
     }
     if (existingGen.length > 0 && !isContinuation) {
-      throw new StaticEngineError('شماره پکینگ لیست تکراری است. آیا ادامه همان پکینگ لیست قبلی است؟', 409, 'DUPLICATE_PACKING_PROMPT');
+      throw new StaticEngineError(
+        errMsg('شماره پکینگ لیست تکراری است. آیا ادامه همان پکینگ لیست قبلی است؟', 'Packing List No. already exists. Continue under the existing packing list?'),
+        409,
+        'DUPLICATE_PACKING_PROMPT',
+      );
     }
 
     const existingPackages = new Set(existingGen.map((g) => normKey(g.packageNo)).filter(Boolean));
@@ -807,14 +903,28 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     for (const raw of entries) {
       const pkgNo = normKey(raw.packageNo);
       if (isContinuation && existingGen.length > 0 && (!pkgNo || existingPackages.has(pkgNo))) {
-        throw new StaticEngineError(`برای ادامه پکینگ لیست ${pk}، باید شماره نگله جدید و متفاوت وارد کنید.`, 409, 'DUPLICATE_PACKAGE_ON_CONTINUATION');
+        throw new StaticEngineError(
+          errMsg(
+            `برای ادامه پکینگ لیست ${pk}، باید شماره نگله جدید و متفاوت وارد کنید.`,
+            `To continue Packing List ${pk}, please enter a new distinct Package No.`,
+          ),
+          409,
+          'DUPLICATE_PACKAGE_ON_CONTINUATION',
+        );
       }
 
       const cleanMapnaMinutes = normalizeDigits(normKey(raw.mapnaEntryMinutesNo));
       if (cleanMapnaMinutes) {
         const lowerKey = cleanMapnaMinutes.toLowerCase();
         if (isMapnaMinutesTaken(db, cleanMapnaMinutes) || batchMapnaMinutes.has(lowerKey)) {
-          throw new StaticEngineError(`شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است.`, 409, 'DUPLICATE_MAPNA_MINUTES');
+          throw new StaticEngineError(
+            errMsg(
+              `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است.`,
+              `MAPNA Entry Minutes No. "${cleanMapnaMinutes}" already exists.`,
+            ),
+            409,
+            'DUPLICATE_MAPNA_MINUTES',
+          );
         }
         batchMapnaMinutes.add(lowerKey);
       }
@@ -822,6 +932,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       const cleanArrival = normKey(raw.arrivalDate);
       const cleanReleaseNo = normKey(raw.releaseNo);
       const cleanReleaseDate = cleanReleaseNo ? (normKey(raw.releaseDate) || cleanArrival) : cleanArrival;
+      const parsedItemCount =
+        raw.itemCount !== undefined && raw.itemCount !== null && Number.isFinite(Number(raw.itemCount)) && Number(raw.itemCount) > 0
+          ? Math.floor(Number(raw.itemCount))
+          : null;
 
       preparedGeneral.push({
         id: makeId(),
@@ -835,6 +949,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
+        itemCount: parsedItemCount,
         itemDescription: normKey(raw.itemDescription),
         island: normKey(raw.island),
         system: normKey(raw.system),
@@ -878,18 +993,36 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const item = db.general.find((g) => g.id === id);
-    if (!item) throw new StaticEngineError('Record not found', 404);
+    if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const pk = normKey((body.packingListNo as string) ?? item.packingListNo);
     if (db.packingMeta[pk]?.isClosed && !body.acknowledgeClosed) {
-      throw new StaticEngineError('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 409, 'CLOSED_PACKING_WARNING');
+      throw new StaticEngineError(
+        errMsg('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 'This Packing List is already marked closed.'),
+        409,
+        'CLOSED_PACKING_WARNING',
+      );
     }
     const { acknowledgeClosed: _ack, rowNo: _ignoredRow, ...patch } = body as Partial<GeneralEntry> & { acknowledgeClosed?: boolean };
     if (patch.mapnaEntryMinutesNo !== undefined) {
       const cleanMin = normalizeDigits(normKey(patch.mapnaEntryMinutesNo));
       if (cleanMin && isMapnaMinutesTaken(db, cleanMin, item.id)) {
-        throw new StaticEngineError(`شماره صورتجلسه ورود مپنا «${cleanMin}» تکراری است.`, 409, 'DUPLICATE_MAPNA_MINUTES');
+        throw new StaticEngineError(
+          errMsg(
+            `شماره صورتجلسه ورود مپنا «${cleanMin}» تکراری است.`,
+            `MAPNA Entry Minutes No. "${cleanMin}" already exists.`,
+          ),
+          409,
+          'DUPLICATE_MAPNA_MINUTES',
+        );
       }
       patch.mapnaEntryMinutesNo = cleanMin;
+    }
+
+    if (patch.itemCount !== undefined) {
+      patch.itemCount =
+        patch.itemCount !== null && Number.isFinite(Number(patch.itemCount)) && Number(patch.itemCount) > 0
+          ? Math.floor(Number(patch.itemCount))
+          : null;
     }
 
     const finalArrival = normKey(patch.arrivalDate ?? item.arrivalDate);
@@ -903,6 +1036,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
+    renumberScope(db, 'general');
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, item.packingListNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'UPDATE_GENERAL', 'general', `${item.packingListNo} (#${item.rowNo})`, `ویرایش ردیف جنرال ${item.rowNo}`);
@@ -914,7 +1048,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const idx = db.general.findIndex((g) => g.id === id);
-    if (idx === -1) throw new StaticEngineError('Record not found', 404);
+    if (idx === -1) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const cascadeDetailed = query.get('cascadeDetailed') === 'true';
     const [removed] = db.general.splice(idx, 1);
     const now = new Date().toISOString();
@@ -1019,21 +1153,38 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   if (pathname === '/api/detailed' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
     const pk = normKey(String(body.shipmentNo || ''));
-    if (!pk) throw new StaticEngineError('شماره محموله / پکینگ لیست الزامی است', 400);
+    if (!pk) throw new StaticEngineError(errMsg('شماره محموله / پکینگ لیست الزامی است', 'Shipment / Packing List No. is required'), 400);
     if (db.packingMeta[pk]?.isClosed && !body.acknowledgeClosed) {
-      throw new StaticEngineError('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 409, 'CLOSED_PACKING_WARNING');
+      throw new StaticEngineError(
+        errMsg('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 'This Packing List is already marked closed.'),
+        409,
+        'CLOSED_PACKING_WARNING',
+      );
     }
 
     const pkgNo = normKey(String(body.packageNo || ''));
     const itemNo = normalizeDigits(normKey(String(body.itemNo || ''))) || getNextSuggestedItemNo(db, pk, pkgNo);
     if (isDetailedItemNoTaken(db, pk, pkgNo, itemNo)) {
-      throw new StaticEngineError(`شماره آیتم ${itemNo} برای پکینگ «${pk}» و نگله «${pkgNo || '-'}» تکراری است.`, 409, 'DUPLICATE_ITEM_NO');
+      throw new StaticEngineError(
+        errMsg(
+          `شماره آیتم ${itemNo} برای پکینگ «${pk}» و نگله «${pkgNo || '-'}» تکراری است.`,
+          `Item No. ${itemNo} already exists for Packing "${pk}" and Package "${pkgNo || '-'}".`,
+        ),
+        409,
+        'DUPLICATE_ITEM_NO',
+      );
     }
 
     const shared = getGeneralSharedInfo(db, pk, pkgNo);
     const now = new Date().toISOString();
     const { acknowledgeClosed: _ack, rowNo: _ignoredRow, ...raw } = body;
     const rawDet = raw as Partial<DetailedEntry>;
+    const cleanDescription = normKey(rawDet.description);
+    const rawGenDesc = normKey(rawDet.generalDescription);
+    const resolvedGeneralDesc = rawGenDesc
+      ? formatGeneralDescriptionCase(rawGenDesc)
+      : inferGeneralDescription(cleanDescription);
+
     const created: DetailedEntry = {
       id: makeId(),
       rowNo: '0',
@@ -1043,8 +1194,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       shipmentNo: pk,
       packageNo: pkgNo,
       itemNo,
-      generalDescription: normKey(rawDet.generalDescription) || shared?.itemDescription || '',
-      description: normKey(rawDet.description),
+      generalDescription: resolvedGeneralDesc,
+      description: cleanDescription,
       size: normKey(rawDet.size),
       itemCode: normKey(rawDet.itemCode),
       packingQty: rawDet.packingQty ?? null,
@@ -1105,9 +1256,11 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.slice('/api/detailed/'.length, -'/backfill'.length);
     const item = db.detailed.find((d) => d.id === id);
-    if (!item) throw new StaticEngineError('Record not found', 404);
+    if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const qty = Number(body.qty);
-    if (!qty || qty <= 0) throw new StaticEngineError('تعداد جبران کسری باید بزرگتر از صفر باشد', 400);
+    if (!qty || qty <= 0) {
+      throw new StaticEngineError(errMsg('تعداد جبران کسری باید بزرگتر از صفر باشد', 'Fulfilled quantity must be greater than zero'), 400);
+    }
     const rec: ShortageBackfillRecord = {
       id: makeId(),
       qty,
@@ -1131,16 +1284,31 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const item = db.detailed.find((d) => d.id === id);
-    if (!item) throw new StaticEngineError('Record not found', 404);
+    if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const pk = normKey((body.shipmentNo as string) ?? item.shipmentNo);
     if (db.packingMeta[pk]?.isClosed && !body.acknowledgeClosed) {
-      throw new StaticEngineError('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 409, 'CLOSED_PACKING_WARNING');
+      throw new StaticEngineError(
+        errMsg('این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 'This Packing List is already marked closed.'),
+        409,
+        'CLOSED_PACKING_WARNING',
+      );
     }
     const { acknowledgeClosed: _ack, rowNo: _ignoredRow, ...patch } = body as Partial<DetailedEntry> & { acknowledgeClosed?: boolean };
     const nextPkg = normKey(patch.packageNo ?? item.packageNo);
     const nextItemNo = normalizeDigits(normKey(patch.itemNo ?? item.itemNo));
     if (nextItemNo && isDetailedItemNoTaken(db, pk, nextPkg, nextItemNo, item.id)) {
-      throw new StaticEngineError(`شماره آیتم ${nextItemNo} برای پکینگ «${pk}» و نگله «${nextPkg || '-'}» تکراری است.`, 409, 'DUPLICATE_ITEM_NO');
+      throw new StaticEngineError(
+        errMsg(
+          `شماره آیتم ${nextItemNo} برای پکینگ «${pk}» و نگله «${nextPkg || '-'}» تکراری است.`,
+          `Item No. ${nextItemNo} already exists for Packing "${pk}" and Package "${nextPkg || '-'}".`,
+        ),
+        409,
+        'DUPLICATE_ITEM_NO',
+      );
+    }
+
+    if (patch.generalDescription !== undefined) {
+      patch.generalDescription = formatGeneralDescriptionCase(patch.generalDescription);
     }
 
     Object.assign(item, {
@@ -1151,6 +1319,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
+    renumberScope(db, 'detailed');
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, item.shipmentNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'UPDATE_DETAILED', 'detailed', `${item.shipmentNo} (#${item.rowNo})`, `ویرایش آیتم جزئیات ${item.rowNo}`);
@@ -1162,7 +1331,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const idx = db.detailed.findIndex((d) => d.id === id);
-    if (idx === -1) throw new StaticEngineError('Record not found', 404);
+    if (idx === -1) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const [removed] = db.detailed.splice(idx, 1);
     db.trash.unshift({
       id: makeId(),
@@ -1244,7 +1413,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const item = db.transit.find((t) => t.id === id);
-    if (!item) throw new StaticEngineError('Record not found', 404);
+    if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const { rowNo: _ignoredRow, ...patch } = body;
     Object.assign(item, { ...patch, rowNo: item.rowNo, updatedAt: new Date().toISOString() });
     rebuildCategories(db);
@@ -1257,7 +1426,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const idx = db.transit.findIndex((t) => t.id === id);
-    if (idx === -1) throw new StaticEngineError('Record not found', 404);
+    if (idx === -1) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const [removed] = db.transit.splice(idx, 1);
     db.trash.unshift({
       id: makeId(),
@@ -1278,10 +1447,25 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     requireAuth();
     const scope = query.get('scope') || '';
     const q = query.get('q') || '';
-    const items = db.trash.filter((item) => {
-      if (scope && item.scope !== scope) return false;
-      return matchSearch([item.targetLabel, item.deletedBy, item.scope], q);
-    });
+    const detailedTrash = db.trash.filter((t) => t.scope === 'detailed');
+    const items = db.trash
+      .filter((item) => {
+        if (scope && item.scope !== scope) return false;
+        return matchSearch([item.targetLabel, item.deletedBy, item.scope], q);
+      })
+      .map((item) => {
+        if (item.scope !== 'general') return item;
+        const g = item.data as GeneralEntry;
+        const pk = normKey(g.packingListNo);
+        const pkg = normKey(g.packageNo);
+        const linkedTrashDetailedCount = pk
+          ? detailedTrash.filter((dt) => {
+              const d = dt.data as DetailedEntry;
+              return normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
+            }).length
+          : 0;
+        return { ...item, linkedTrashDetailedCount };
+      });
     return { items } as T;
   }
 
@@ -1289,20 +1473,57 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.slice('/api/trash/'.length, -'/restore'.length);
     const idx = db.trash.findIndex((t) => t.id === id);
-    if (idx === -1) throw new StaticEngineError('Trash item not found', 404);
+    if (idx === -1) throw new StaticEngineError(errMsg('آیتم در سطل بازیافت یافت نشد', 'Trash item not found'), 404);
+    const restoreDetailed = query.get('restoreDetailed') === 'true';
     const entry = db.trash[idx];
+    let restoredDetailedCount = 0;
+
     if (entry.scope === 'general') {
       const g = entry.data as GeneralEntry;
       if (g.mapnaEntryMinutesNo && isMapnaMinutesTaken(db, g.mapnaEntryMinutesNo)) {
-        throw new StaticEngineError(`شماره صورتجلسه ورود مپنا «${g.mapnaEntryMinutesNo}» در حال حاضر فعال است.`, 409);
+        throw new StaticEngineError(
+          errMsg(
+            `شماره صورتجلسه ورود مپنا «${g.mapnaEntryMinutesNo}» در حال حاضر در سیستم فعال است و امکان بازیابی مستقیم وجود ندارد.`,
+            `MAPNA Entry Minutes No. "${g.mapnaEntryMinutesNo}" is already active and cannot be restored directly.`,
+          ),
+          409,
+        );
       }
       db.trash.splice(idx, 1);
       db.general.unshift({ ...g, updatedAt: new Date().toISOString() });
       renumberScope(db, 'general');
+
+      if (restoreDetailed) {
+        const pk = normKey(g.packingListNo);
+        const pkg = normKey(g.packageNo);
+        const remainingTrash: TrashRecord[] = [];
+        for (const tr of db.trash) {
+          if (tr.scope === 'detailed') {
+            const d = tr.data as DetailedEntry;
+            const matches = normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
+            if (matches && !(d.itemNo && isDetailedItemNoTaken(db, d.shipmentNo, d.packageNo, d.itemNo))) {
+              db.detailed.unshift({ ...d, updatedAt: new Date().toISOString() });
+              restoredDetailedCount += 1;
+              continue;
+            }
+          }
+          remainingTrash.push(tr);
+        }
+        db.trash = remainingTrash;
+        if (restoredDetailedCount > 0) {
+          renumberScope(db, 'detailed');
+        }
+      }
     } else if (entry.scope === 'detailed') {
       const d = entry.data as DetailedEntry;
       if (d.itemNo && isDetailedItemNoTaken(db, d.shipmentNo, d.packageNo, d.itemNo)) {
-        throw new StaticEngineError(`شماره آیتم ${d.itemNo} در محموله ${d.shipmentNo} / نگله ${d.packageNo || '-'} قبلاً وجود دارد.`, 409);
+        throw new StaticEngineError(
+          errMsg(
+            `شماره آیتم ${d.itemNo} در محموله ${d.shipmentNo} / نگله ${d.packageNo || '-'} قبلاً وجود دارد.`,
+            `Item No. ${d.itemNo} already exists under Shipment ${d.shipmentNo} / Package ${d.packageNo || '-'}.`,
+          ),
+          409,
+        );
       }
       db.trash.splice(idx, 1);
       db.detailed.unshift({ ...d, updatedAt: new Date().toISOString() });
@@ -1314,20 +1535,82 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       renumberScope(db, 'transit');
     }
     rebuildCategories(db);
-    addAudit(db, sanitizeUser(u), 'RESTORE_TRASH', 'trash', entry.targetLabel, `بازیابی ردیف ${entry.scope} (${entry.targetLabel})`);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'RESTORE_TRASH',
+      'trash',
+      entry.targetLabel,
+      `بازیابی ردیف ${entry.scope} (${entry.targetLabel})${
+        restoredDetailedCount > 0 ? ` همراه با ${restoredDetailedCount} ردیف جزئیات` : ''
+      }`,
+    );
     await saveDb(db);
-    return { ok: true } as T;
+    return { ok: true, restoredDetailedCount } as T;
   }
 
   if (pathname.startsWith('/api/trash/') && method === 'DELETE') {
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const idx = db.trash.findIndex((t) => t.id === id);
-    if (idx === -1) throw new StaticEngineError('Trash item not found', 404);
+    if (idx === -1) throw new StaticEngineError(errMsg('آیتم در سطل بازیافت یافت نشد', 'Trash item not found'), 404);
     const [purged] = db.trash.splice(idx, 1);
     addAudit(db, sanitizeUser(u), 'PURGE_TRASH', 'trash', purged.targetLabel, `حذف دائمی ${purged.targetLabel}`);
     await saveDb(db);
     return { ok: true } as T;
+  }
+
+  // ---------------- SITE ENTRY MINUTES ----------------
+  if (pathname === '/api/site-entry' && method === 'GET') {
+    requireAuth();
+    const packingsSet = new Set<string>();
+    for (const g of db.general) {
+      const pk = normKey(g.packingListNo);
+      if (pk) packingsSet.add(pk);
+    }
+    return {
+      minutes: db.siteEntryMinutes,
+      generalEntries: db.general,
+      packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
+    } as T;
+  }
+
+  if (pathname === '/api/site-entry' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const raw = body as Partial<SiteEntryMinutesRecord>;
+    const cleanNo = normKey(raw.minutesNo);
+    const cleanDate = normKey(raw.date);
+    const cleanPackings = Array.from(new Set((raw.packingListNos || []).map(normKey).filter(Boolean)));
+    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+      throw new StaticEngineError(
+        errMsg(
+          'شماره صورتجلسه، تاریخ و حداقل یک پکینگ لیست الزامی است',
+          'Minutes No., date, and at least one Packing List are required',
+        ),
+        400,
+      );
+    }
+    const record: SiteEntryMinutesRecord = {
+      id: makeId(),
+      minutesNo: cleanNo,
+      date: cleanDate,
+      packingListNos: cleanPackings,
+      supplier: normKey(raw.supplier),
+      driverName: normKey(raw.driverName),
+      vehicleNo: normKey(raw.vehicleNo),
+      waybillNo: normKey(raw.waybillNo),
+      warehouseKeeper: normKey(raw.warehouseKeeper),
+      employerRep: normKey(raw.employerRep),
+      mapnaRep: normKey(raw.mapnaRep),
+      conditionStatus: raw.conditionStatus || 'healthy',
+      notes: normKey(raw.notes),
+      createdAt: new Date().toISOString(),
+      createdBy: u.fullName || u.username,
+    };
+    db.siteEntryMinutes.unshift(record);
+    addAudit(db, sanitizeUser(u), 'CREATE_SITE_ENTRY_MINUTES', 'siteEntry', cleanNo, `ثبت صورتجلسه ورود کالا به کارگاه شماره ${cleanNo}`);
+    await saveDb(db);
+    return { record } as T;
   }
 
   // ---------------- OPI ----------------
@@ -1355,7 +1638,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const cleanDate = normKey(String(body.date || ''));
     const cleanPackings = Array.from(new Set(((body.packingNos as string[]) || []).map(normKey).filter(Boolean)));
     if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
-      throw new StaticEngineError('شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است', 400);
+      throw new StaticEngineError(
+        errMsg('شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است', 'Invitation No., date, and at least one Packing List are required'),
+        400,
+      );
     }
     const record: OpiInvitationRecord = {
       id: makeId(),
@@ -1401,7 +1687,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       repDescription?: string;
       notes?: string;
     }>) || [];
-    if (!results.length) throw new StaticEngineError('حداقل یک قلم انتخاب کنید', 400);
+    if (!results.length) {
+      throw new StaticEngineError(errMsg('حداقل یک قلم انتخاب کنید', 'Select at least one item'), 400);
+    }
     const now = new Date().toISOString();
     const cleanOpiNo = normKey(String(body.opiNo || ''));
     const cleanOpiDate = normKey(String(body.opiDate || ''));
@@ -1435,6 +1723,99 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { ok: true, updatedCount } as T;
   }
 
+  // ---------------- OPI MINUTES & OSDR ----------------
+  if (pathname === '/api/opi-minutes' && method === 'GET') {
+    requireAuth();
+    const packingsSet = new Set<string>();
+    for (const g of db.general) {
+      const pk = normKey(g.packingListNo);
+      if (pk) packingsSet.add(pk);
+    }
+    for (const d of db.detailed) {
+      const pk = normKey(d.shipmentNo);
+      if (pk) packingsSet.add(pk);
+    }
+    return {
+      minutes: db.opiMinutes,
+      osdrReports: db.osdrReports,
+      invitations: db.opiInvitations,
+      detailedItems: db.detailed.map(computeDetailedEntry),
+      packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
+    } as T;
+  }
+
+  if (pathname === '/api/opi-minutes' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const raw = body as Partial<OpiMinutesRecord>;
+    const cleanNo = normKey(raw.minutesNo);
+    const cleanDate = normKey(raw.date);
+    const cleanPacking = normKey(raw.packingListNo);
+    if (!cleanNo || !cleanDate || !cleanPacking) {
+      throw new StaticEngineError(
+        errMsg('شماره صورتجلسه، تاریخ و شماره پکینگ لیست الزامی است', 'Minutes No., date, and Packing List No. are required'),
+        400,
+      );
+    }
+    const record: OpiMinutesRecord = {
+      id: makeId(),
+      minutesNo: cleanNo,
+      invitationNo: normKey(raw.invitationNo),
+      date: cleanDate,
+      packingListNo: cleanPacking,
+      packageNos: Array.from(new Set((raw.packageNos || []).map(normKey).filter(Boolean))),
+      location: normKey(raw.location),
+      mapnaInspector: normKey(raw.mapnaInspector),
+      employerInspector: normKey(raw.employerInspector),
+      contractorInspector: normKey(raw.contractorInspector),
+      qcInspector: normKey(raw.qcInspector),
+      resultStatus: raw.resultStatus || 'compliant',
+      notes: normKey(raw.notes),
+      createdAt: new Date().toISOString(),
+      createdBy: u.fullName || u.username,
+    };
+    if (record.invitationNo) {
+      const inv = db.opiInvitations.find((x) => normKey(x.invitationNo) === record.invitationNo);
+      if (inv) inv.status = 'completed';
+    }
+    db.opiMinutes.unshift(record);
+    addAudit(db, sanitizeUser(u), 'CREATE_OPI_MINUTES', 'opiMinutes', cleanNo, `ثبت صورتجلسه گشایش و بازرسی بسته‌ها شماره ${cleanNo}`);
+    await saveDb(db);
+    return { record } as T;
+  }
+
+  if (pathname === '/api/osdr' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const cleanNo = normKey(String(body.reportNo || ''));
+    const cleanDate = normKey(String(body.date || ''));
+    const cleanPacking = normKey(String(body.packingListNo || ''));
+    const items = (body.items as OsdrReportItem[]) || [];
+    if (!cleanNo || !cleanDate || !cleanPacking || items.length === 0) {
+      throw new StaticEngineError(
+        errMsg(
+          'شماره گزارش مغایرت، تاریخ، شماره پکینگ و حداقل یک قلم مغایرت الزامی است',
+          'Report No., date, Packing List No., and at least one discrepancy item are required',
+        ),
+        400,
+      );
+    }
+    const record: OsdrReportRecord = {
+      id: makeId(),
+      reportNo: cleanNo,
+      date: cleanDate,
+      opiMinutesNo: normKey(String(body.opiMinutesNo || '')),
+      packingListNo: cleanPacking,
+      supplier: normKey(String(body.supplier || '')),
+      items,
+      notes: normKey(String(body.notes || '')),
+      createdAt: new Date().toISOString(),
+      createdBy: u.fullName || u.username,
+    };
+    db.osdrReports.unshift(record);
+    addAudit(db, sanitizeUser(u), 'CREATE_OSDR_REPORT', 'osdr', cleanNo, `ثبت گزارش مغایرت، کسری و آسیب‌دیدگی شماره ${cleanNo}`);
+    await saveDb(db);
+    return { report: record } as T;
+  }
+
   // ---------------- GCV ----------------
   if (pathname === '/api/gcv' && method === 'GET') {
     requireAuth();
@@ -1450,21 +1831,38 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const cleanReceiver = normKey(String(body.receiver || ''));
     const items = (body.items as Array<{ detailedId: string; qty: number }>) || [];
     if (!cleanNo || !cleanReceiver || !items.length) {
-      throw new StaticEngineError('شماره رسید GCV، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است', 400);
+      throw new StaticEngineError(
+        errMsg('شماره رسید، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است', 'Receipt No., receiver, and at least one item are required'),
+        400,
+      );
     }
 
     const lineItems: DocumentLineItem[] = [];
     for (const reqItem of items) {
       const qty = Number(reqItem.qty);
-      if (!Number.isFinite(qty) || qty <= 0) throw new StaticEngineError('تعداد تحویلی باید بزرگتر از صفر باشد', 400);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new StaticEngineError(errMsg('تعداد تحویلی باید بزرگتر از صفر باشد', 'Delivered quantity must be greater than zero'), 400);
+      }
       const d = db.detailed.find((x) => x.id === reqItem.detailedId);
-      if (!d) throw new StaticEngineError('آیتم یافت نشد', 404);
+      if (!d) throw new StaticEngineError(errMsg('آیتم یافت نشد', 'Item not found'), 404);
       const comp = computeDetailedEntry(d);
       if (comp.opiPending) {
-        throw new StaticEngineError(`برای آیتم ${d.itemNo || d.rowNo} هنوز OPI ثبت نشده است.`, 400);
+        throw new StaticEngineError(
+          errMsg(
+            `برای آیتم ${d.itemNo || d.rowNo} هنوز OPI ثبت نشده است.`,
+            `Item ${d.itemNo || d.rowNo} is pending OPI / Actual Qty.`,
+          ),
+          400,
+        );
       }
       if (qty > comp.mapnaInventory) {
-        throw new StaticEngineError(`مقدار تحویلی (${qty}) بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`, 400);
+        throw new StaticEngineError(
+          errMsg(
+            `مقدار تحویلی (${qty}) بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`,
+            `Delivered qty (${qty}) exceeds MAPNA stock (${comp.mapnaInventory}).`,
+          ),
+          400,
+        );
       }
       lineItems.push({
         detailedId: d.id,
@@ -1496,7 +1894,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       createdBy: u.fullName || u.username,
     };
     db.gcvDocuments.unshift(doc);
-    addAudit(db, sanitizeUser(u), 'CREATE_GCV_RECEIPT', 'gcv', cleanNo, `ثبت رسید GCV شماره ${cleanNo}`);
+    addAudit(db, sanitizeUser(u), 'CREATE_GCV_RECEIPT', 'gcv', cleanNo, `ثبت رسید مصرف مستقیم کالا شماره ${cleanNo}`);
     await saveDb(db);
     return { document: doc } as T;
   }
@@ -1514,24 +1912,42 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const docType = body.docType as MivDocType;
     const validTypes: MivDocType[] = ['miv_contractor', 'smr_contractor', 'smr_mapna', 'miv_mapna'];
-    if (!validTypes.includes(docType)) throw new StaticEngineError('نوع فرم معتبر نیست', 400);
+    if (!validTypes.includes(docType)) {
+      throw new StaticEngineError(errMsg('نوع فرم معتبر نیست', 'Invalid document type'), 400);
+    }
     const cleanNo = normKey(String(body.docNo || ''));
     const cleanDate = normKey(String(body.date || ''));
     const items = (body.items as Array<{ detailedId: string; qty: number }>) || [];
-    if (!cleanNo || !items.length) throw new StaticEngineError('شماره سند و حداقل یک قلم کالا الزامی است', 400);
+    if (!cleanNo || !items.length) {
+      throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
+    }
 
     const lineItems: DocumentLineItem[] = [];
     for (const reqItem of items) {
       const qty = Number(reqItem.qty);
-      if (!Number.isFinite(qty) || qty <= 0) throw new StaticEngineError('تعداد باید بزرگتر از صفر باشد', 400);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new StaticEngineError(errMsg('تعداد باید بزرگتر از صفر باشد', 'Quantity must be greater than zero'), 400);
+      }
       const d = db.detailed.find((x) => x.id === reqItem.detailedId);
-      if (!d) throw new StaticEngineError('آیتم یافت نشد', 404);
+      if (!d) throw new StaticEngineError(errMsg('آیتم یافت نشد', 'Item not found'), 404);
       const comp = computeDetailedEntry(d);
       if ((docType === 'miv_contractor' || docType === 'smr_mapna') && qty > comp.contractorInventory) {
-        throw new StaticEngineError(`تعداد (${qty}) از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`, 400);
+        throw new StaticEngineError(
+          errMsg(
+            `تعداد (${qty}) از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`,
+            `Qty (${qty}) exceeds Contractor stock (${comp.contractorInventory}).`,
+          ),
+          400,
+        );
       }
       if (docType === 'miv_mapna' && qty > comp.mapnaInventory) {
-        throw new StaticEngineError(`تعداد (${qty}) از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`, 400);
+        throw new StaticEngineError(
+          errMsg(
+            `تعداد (${qty}) از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
+            `Qty (${qty}) exceeds MAPNA stock (${comp.mapnaInventory}).`,
+          ),
+          400,
+        );
       }
       lineItems.push({
         detailedId: d.id,
@@ -1581,9 +1997,87 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       createdBy: u.fullName || u.username,
     };
     db.mivDocuments.unshift(doc);
-    addAudit(db, sanitizeUser(u), `CREATE_${docType.toUpperCase()}`, 'miv', cleanNo, `ثبت فرم ${docType} شماره ${cleanNo}`);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      `CREATE_${docType.toUpperCase()}`,
+      docType.startsWith('smr') ? 'smr' : 'miv',
+      cleanNo,
+      `ثبت فرم ${docType} شماره ${cleanNo}`,
+    );
     await saveDb(db);
     return { document: doc } as T;
+  }
+
+  // ---------------- SUBSTITUTION ----------------
+  if (pathname === '/api/substitutions' && method === 'GET') {
+    requireAuth();
+    return {
+      records: db.substitutions,
+      detailedItems: db.detailed.map(computeDetailedEntry),
+    } as T;
+  }
+
+  if (pathname === '/api/substitutions' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const raw = body as Partial<SubstitutionRecord>;
+    const cleanNo = normKey(raw.docNo);
+    const cleanDate = normKey(raw.date);
+    const cleanSubDesc = normKey(raw.substituteDescription);
+    const cleanReason = normKey(raw.reason);
+    const d = db.detailed.find((x) => x.id === raw.detailedId);
+    if (!cleanNo || !cleanDate || !d || !cleanSubDesc || !cleanReason) {
+      throw new StaticEngineError(
+        errMsg(
+          'شماره سند جایگزینی، تاریخ، کالای اصلی، مشخصات کالای جایگزین و دلیل جایگزینی الزامی است',
+          'Document No., date, original item, substitute description, and reason are required',
+        ),
+        400,
+      );
+    }
+    const numQty = Number(raw.qty);
+    if (!Number.isFinite(numQty) || numQty <= 0) {
+      throw new StaticEngineError(errMsg('تعداد جایگزینی باید بزرگتر از صفر باشد', 'Substitution quantity must be greater than zero'), 400);
+    }
+    const record: SubstitutionRecord = {
+      id: makeId(),
+      docNo: cleanNo,
+      date: cleanDate,
+      detailedId: d.id,
+      shipmentNo: d.shipmentNo,
+      packageNo: d.packageNo,
+      itemNo: d.itemNo,
+      originalDescription: d.description || d.generalDescription,
+      originalItemCode: d.itemCode,
+      substituteDescription: cleanSubDesc,
+      substituteItemCode: normKey(raw.substituteItemCode),
+      substituteSize: normKey(raw.substituteSize),
+      qty: numQty,
+      countingUnit: d.countingUnit || 'PC',
+      reason: cleanReason,
+      approvedBy: normKey(raw.approvedBy),
+      status: raw.status || 'pending',
+      notes: normKey(raw.notes),
+      createdAt: new Date().toISOString(),
+      createdBy: u.fullName || u.username,
+    };
+    db.substitutions.unshift(record);
+    addAudit(db, sanitizeUser(u), 'CREATE_SUBSTITUTION', 'substitution', cleanNo, `ثبت فرم جایگزینی شماره ${cleanNo}`);
+    await saveDb(db);
+    return { record } as T;
+  }
+
+  if (pathname.startsWith('/api/substitutions/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const rec = db.substitutions.find((s) => s.id === id);
+    if (!rec) throw new StaticEngineError(errMsg('سند جایگزینی یافت نشد', 'Substitution record not found'), 404);
+    if (body.status) rec.status = body.status as SubstitutionRecord['status'];
+    if (body.approvedBy !== undefined) rec.approvedBy = normKey(String(body.approvedBy));
+    if (body.notes !== undefined) rec.notes = normKey(String(body.notes));
+    addAudit(db, sanitizeUser(u), 'UPDATE_SUBSTITUTION', 'substitution', rec.docNo, `تغییر وضعیت جایگزینی شماره ${rec.docNo}`);
+    await saveDb(db);
+    return { record: rec } as T;
   }
 
   // ---------------- MATERIAL BALANCE ----------------
@@ -1592,8 +2086,11 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const detailedIds = (body.detailedIds as string[]) || [];
     const cleanNo = normKey(String(body.materialBalanceNo || ''));
     const cleanStatus = normKey(String(body.balanceStatus || ''));
-    if (!detailedIds.length || (!cleanNo && !cleanStatus)) {
-      throw new StaticEngineError('انتخاب اقلام و شماره یا وضعیت بالانس الزامی است', 400);
+    if (!detailedIds.length) {
+      throw new StaticEngineError(errMsg('حداقل یک آیتم انتخاب کنید', 'Select at least one item'), 400);
+    }
+    if (!cleanNo && !cleanStatus) {
+      throw new StaticEngineError(errMsg('شماره موازنه یا وضعیت موازنه الزامی است', 'Balance No. or Balance Status is required'), 400);
     }
     const now = new Date().toISOString();
     let updatedCount = 0;
@@ -1605,7 +2102,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       d.updatedAt = now;
       updatedCount += 1;
     }
-    addAudit(db, sanitizeUser(u), 'ASSIGN_MATERIAL_BALANCE', 'balance', cleanNo || cleanStatus, `ثبت بالانس متریال برای ${updatedCount} ردیف`);
+    addAudit(db, sanitizeUser(u), 'ASSIGN_MATERIAL_BALANCE', 'balance', cleanNo || cleanStatus, `ثبت موازنه مواد برای ${updatedCount} ردیف`);
     await saveDb(db);
     return { ok: true, updatedCount } as T;
   }
@@ -1618,7 +2115,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const cleanDate = normKey(String(body.stocktakeDate || ''));
     const cleanInfo = normKey(String(body.stocktakeInfo || ''));
     if (!detailedIds.length || !cleanStatus) {
-      throw new StaticEngineError('انتخاب اقلام و وضعیت انبارگردانی الزامی است', 400);
+      throw new StaticEngineError(errMsg('انتخاب اقلام و وضعیت انبارگردانی الزامی است', 'Items and stocktake status are required'), 400);
     }
     const now = new Date().toISOString();
     let updatedCount = 0;
@@ -1693,7 +2190,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const group = pathname.split('/').pop() as CategoryGroupKey;
     const val = normKey(String(body.value || ''));
-    if (!db.categories[group] || !val) throw new StaticEngineError('Invalid category', 400);
+    if (!db.categories[group] || !val) throw new StaticEngineError(errMsg('گروه یا مقدار نامعتبر است', 'Invalid category group or value'), 400);
     registerCategoryValue(db, group, val);
     addAudit(db, sanitizeUser(u), 'ADD_CATEGORY', 'category', `${group}:${val}`, `افزودن دسته‌بندی «${val}»`);
     await saveDb(db);
@@ -1705,7 +2202,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const group = pathname.split('/').pop() as CategoryGroupKey;
     const from = normKey(String(body.oldValue || ''));
     const to = normKey(String(body.newValue || ''));
-    if (!db.categories[group] || !from || !to) throw new StaticEngineError('Invalid rename', 400);
+    if (!db.categories[group] || !from || !to) throw new StaticEngineError(errMsg('مقادیر تغییر نام نامعتبر است', 'Invalid rename request'), 400);
     let updatedCount = 0;
     for (const g of db.general) {
       if (group === 'island' && g.island === from) { g.island = to; updatedCount += 1; }
@@ -1884,7 +2381,13 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       const parsed = parseDetailedCsv(matrix, cal, u.username);
       for (const r of parsed.rows) {
         if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
-        db.detailed.push({ ...r, id: makeId() });
+        db.detailed.push({
+          ...r,
+          id: makeId(),
+          generalDescription: r.generalDescription
+            ? formatGeneralDescriptionCase(r.generalDescription)
+            : inferGeneralDescription(r.description),
+        });
         imported += 1;
       }
       renumberScope(db, 'detailed');
@@ -1953,6 +2456,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       auditLogs: db.auditLogs,
       trash: db.trash,
       opiInvitations: db.opiInvitations,
+      siteEntryMinutes: db.siteEntryMinutes,
+      opiMinutes: db.opiMinutes,
+      osdrReports: db.osdrReports,
+      substitutions: db.substitutions,
       gcvDocuments: db.gcvDocuments,
       mivDocuments: db.mivDocuments,
     } as DatabaseSnapshot as T;
@@ -1969,8 +2476,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (Array.isArray(snap.auditLogs)) db.auditLogs = snap.auditLogs;
     db.trash = Array.isArray(snap.trash) ? snap.trash : [];
     db.opiInvitations = Array.isArray(snap.opiInvitations) ? snap.opiInvitations : [];
+    db.siteEntryMinutes = Array.isArray(snap.siteEntryMinutes) ? snap.siteEntryMinutes : [];
+    db.opiMinutes = Array.isArray(snap.opiMinutes) ? snap.opiMinutes : [];
+    db.osdrReports = Array.isArray(snap.osdrReports) ? snap.osdrReports : [];
+    db.substitutions = Array.isArray(snap.substitutions) ? snap.substitutions : [];
     db.gcvDocuments = Array.isArray(snap.gcvDocuments) ? snap.gcvDocuments : [];
     db.mivDocuments = Array.isArray(snap.mivDocuments) ? snap.mivDocuments : [];
+    renumberScope(db, 'general');
+    renumberScope(db, 'detailed');
+    renumberScope(db, 'transit');
     rebuildCategories(db);
     addAudit(db, sanitizeUser(u), 'RESTORE_SNAPSHOT', 'backup', 'database', `بازیابی نسخه پشتیبان در مرورگر`);
     await saveDb(db);
@@ -1980,5 +2494,5 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     } as T;
   }
 
-  throw new StaticEngineError(`Unsupported endpoint: ${pathname}`, 404);
+  throw new StaticEngineError(errMsg(`مسیر پشتیبانی نمی‌شود: ${pathname}`, `Unsupported endpoint: ${pathname}`), 404);
 }

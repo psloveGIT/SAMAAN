@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ClipboardList, Printer, Search, X } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Download, Printer, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { DetailedComputed, MivDocType, MivDocumentRecord } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { PrintReportModal } from './PrintReportModal.tsx';
 
 interface MivApiResponse {
   documents: MivDocumentRecord[];
@@ -16,6 +18,8 @@ interface MivViewProps {
   onDataChanged: () => void;
 }
 
+type MivOnlyType = 'miv_contractor' | 'miv_mapna';
+
 export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }) => {
   const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
   const isFa = prefs.language === 'fa';
@@ -24,7 +28,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [data, setData] = useState<MivApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [docType, setDocType] = useState<MivDocType>('miv_contractor');
+  const [docType, setDocType] = useState<MivOnlyType>('miv_contractor');
   const [docNo, setDocNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
   const [party, setParty] = useState('');
@@ -32,6 +36,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [itemSearch, setItemSearch] = useState('');
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({});
   const [printDoc, setPrintDoc] = useState<MivDocumentRecord | null>(null);
+  const [printReportOpen, setPrintReportOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -49,34 +54,30 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     loadData();
   }, [loadData, refreshSignal]);
 
-  const docTypeLabel = (type: MivDocType) => {
-    if (type === 'miv_contractor') {
-      return isFa ? 'حواله مصرف پیمانکار (MIV Contractor)' : 'MIV Contractor Issue';
-    }
-    if (type === 'smr_contractor') {
-      return isFa ? 'برگشت به انبار پیمانکار (SMR Contractor)' : 'SMR Contractor Return';
-    }
-    if (type === 'smr_mapna') {
-      return isFa ? 'برگشت از پیمانکار به مپنا (SMR MAPNA)' : 'SMR Return to MAPNA';
-    }
-    return isFa ? 'تحویل/مصرف مپنا (MIV MAPNA)' : 'MIV MAPNA Issue';
-  };
+  const docTypeLabel = useCallback(
+    (type: MivDocType) => {
+      if (type === 'miv_contractor') {
+        return isFa ? 'درخواست و حواله مصرف پیمانکار (MIV Contractor)' : 'MIV Contractor Issue';
+      }
+      return isFa ? 'درخواست و حواله تحویل/مصرف مپنا (MIV MAPNA)' : 'MIV MAPNA Issue';
+    },
+    [isFa],
+  );
 
-  const getAvailableQty = (item: DetailedComputed, type: MivDocType) => {
-    if (type === 'miv_contractor' || type === 'smr_mapna') {
-      return item.contractorInventory;
-    }
-    if (type === 'miv_mapna') {
-      return item.mapnaInventory;
-    }
-    return item.mivContractorQty || 0;
+  const mivDocuments = useMemo(
+    () => (data?.documents || []).filter((d) => d.docType.startsWith('miv_')),
+    [data],
+  );
+
+  const getAvailableQty = (item: DetailedComputed, type: MivOnlyType) => {
+    if (type === 'miv_contractor') return item.contractorInventory;
+    return item.mapnaInventory;
   };
 
   const eligibleItems = useMemo(() => {
     const all = (data?.detailedItems || []).filter((d) => {
-      if (docType === 'miv_contractor' || docType === 'smr_mapna') return d.contractorInventory > 0;
-      if (docType === 'miv_mapna') return !d.opiPending && d.mapnaInventory > 0;
-      return !d.opiPending;
+      if (docType === 'miv_contractor') return d.contractorInventory > 0;
+      return !d.opiPending && d.mapnaInventory > 0;
     });
     const q = itemSearch.trim().toLowerCase();
     if (!q) return all;
@@ -116,8 +117,8 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
       notify(
         'success',
         isFa
-          ? `فرم ${res.document.docNo} ثبت و موجودی اقلام به‌روزرسانی شد.`
-          : `Document ${res.document.docNo} saved.`,
+          ? `حواله انبار شماره ${res.document.docNo} ثبت و موجودی اقلام به‌روزرسانی شد.`
+          : `MIV Document ${res.document.docNo} saved.`,
       );
       setDocNo('');
       setParty('');
@@ -132,6 +133,25 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     }
   };
 
+  const historyColumns = useMemo<CsvColumnDef<MivDocumentRecord>[]>(
+    () => [
+      { key: 'docType', header: isFa ? 'نوع حواله' : 'Type', getValue: (r) => docTypeLabel(r.docType) },
+      { key: 'docNo', header: isFa ? 'شماره حواله' : 'Doc No.', getValue: (r) => r.docNo },
+      { key: 'date', header: isFa ? 'تاریخ' : 'Date', isDate: true, getValue: (r) => r.date },
+      { key: 'party', header: isFa ? 'طرف مقابل / پیمانکار' : 'Party', getValue: (r) => r.party || '' },
+      { key: 'itemCount', header: isFa ? 'تعداد اقلام' : 'Items', getValue: (r) => r.items.length },
+      {
+        key: 'itemsSummary',
+        header: isFa ? 'شرح اقلام' : 'Items Summary',
+        getValue: (r) =>
+          r.items.map((i) => `${i.shipmentNo}/${i.packageNo}#${i.itemNo} (${i.qty})`).join(' | '),
+      },
+      { key: 'createdBy', header: isFa ? 'تنظیم‌کننده' : 'Created By', getValue: (r) => r.createdBy },
+      { key: 'notes', header: t.headers.notes, getValue: (r) => r.notes || '' },
+    ],
+    [t, isFa, docTypeLabel],
+  );
+
   return (
     <div className="space-y-6">
       {canEdit && (
@@ -141,32 +161,30 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         >
           <div className="flex items-center gap-2 text-sm font-bold">
             <ClipboardList className="w-4 h-4 text-[var(--accent-primary)]" />
-            <span>{isFa ? 'ثبت حواله MIV و فرم برگشت SMR' : 'Issue MIV / SMR Document'}</span>
+            <span>{t.nav.miv}</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <div className="lg:col-span-2">
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'نوع فرم' : 'Document Type'} *
+                {isFa ? 'نوع درخواست / حواله انبار' : 'Requisition / Issue Type'} *
               </label>
               <select
                 value={docType}
                 onChange={(e) => {
-                  setDocType(e.target.value as MivDocType);
+                  setDocType(e.target.value as MivOnlyType);
                   setQtyMap({});
                 }}
                 className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
               >
                 <option value="miv_contractor">{docTypeLabel('miv_contractor')}</option>
-                <option value="smr_contractor">{docTypeLabel('smr_contractor')}</option>
-                <option value="smr_mapna">{docTypeLabel('smr_mapna')}</option>
                 <option value="miv_mapna">{docTypeLabel('miv_mapna')}</option>
               </select>
             </div>
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره فرم / حواله' : 'Document No.'} *
+                {isFa ? 'شماره حواله انبار' : 'MIV Doc No.'} *
               </label>
               <input
                 type="text"
@@ -181,7 +199,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             </div>
 
             <JalaliDateInput
-              label={`${isFa ? 'تاریخ فرم' : 'Document Date'} *`}
+              label={`${isFa ? 'تاریخ حواله' : 'Issue Date'} *`}
               value={date}
               onChange={setDate}
             />
@@ -216,7 +234,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-semibold text-[var(--text-secondary)]">
-                {isFa ? 'انتخاب اقلام و تعداد' : 'Select Items & Quantities'}
+                {isFa ? 'انتخاب اقلام و تعداد تحویل' : 'Select Items & Issue Quantities'}
               </div>
               <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
                 <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
@@ -240,11 +258,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                     <th className="py-2 px-3 text-start">{t.headers.itemNo}</th>
                     <th className="py-2 px-3 text-start">{t.headers.description}</th>
                     <th className="py-2 px-3 text-end">
-                      {docType === 'miv_mapna'
-                        ? t.headers.mapnaInventory
-                        : docType === 'smr_contractor'
-                          ? t.headers.mivContractorQty
-                          : t.headers.contractorInventory}
+                      {docType === 'miv_mapna' ? t.headers.mapnaInventory : t.headers.contractorInventory}
                     </th>
                     <th className="py-2 px-3 text-start">{isFa ? 'تعداد' : 'Qty'}</th>
                   </tr>
@@ -276,7 +290,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                                 type="number"
                                 step="any"
                                 min="0"
-                                max={docType !== 'smr_contractor' ? avail : undefined}
+                                max={avail}
                                 dir={isFa && !qtyMap[item.id] ? 'rtl' : 'ltr'}
                                 value={qtyMap[item.id] || ''}
                                 onChange={(e) =>
@@ -320,7 +334,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
               className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isFa ? 'ثبت سند و چاپ فرم' : 'Save & Print Document'}</span>
+              <span>{isFa ? 'ثبت حواله انبار و چاپ فرم' : 'Save & Print MIV'}</span>
             </button>
           </div>
         </form>
@@ -328,8 +342,36 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
 
       {/* Document History */}
       <div className={`${printDoc ? 'print:hidden' : ''} rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden`}>
-        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)]">
-          <h3 className="text-sm font-bold">{isFa ? 'سوابق حواله‌های MIV و SMR' : 'MIV & SMR History'}</h3>
+        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-bold">
+            {isFa ? 'سوابق درخواست کالا و حواله انبار (MIV)' : 'MIV Issue History'}
+          </h3>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                exportRowsToCsv({
+                  rows: mivDocuments,
+                  columns: historyColumns,
+                  filename: 'samaan-miv-history',
+                  calendar: prefs.calendar,
+                  hideEmptyColumns: true,
+                })
+              }
+              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{t.controls.exportCsv}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPrintReportOpen(true)}
+              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>{t.controls.printReport}</span>
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -350,14 +392,14 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                     {t.controls.loading}
                   </td>
                 </tr>
-              ) : (data?.documents || []).length === 0 ? (
+              ) : mivDocuments.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
               ) : (
-                (data?.documents || []).map((doc) => (
+                mivDocuments.map((doc) => (
                   <tr key={doc.id} className="hover:bg-[var(--bg-subtle)]/50">
                     <td className="py-2.5 px-4 font-medium">{docTypeLabel(doc.docType)}</td>
                     <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{doc.docNo}</td>
@@ -382,12 +424,12 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         </div>
       </div>
 
-      {/* Printable MIV / SMR Sheet */}
+      {/* Printable MIV Sheet */}
       {printDoc && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 print:static print:bg-transparent print:p-0">
           <div className="w-full max-w-3xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5 max-h-[92vh] overflow-y-auto print-sheet">
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 print:hidden">
-              <h3 className="text-sm font-bold">{isFa ? 'پیش‌نمایش فرم چاپی' : 'Printable Form'}</h3>
+              <h3 className="text-sm font-bold">{isFa ? 'پیش‌نمایش فرم حواله انبار' : 'Printable MIV Form'}</h3>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -477,6 +519,14 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
           </div>
         </div>
       )}
+
+      <PrintReportModal
+        open={printReportOpen}
+        onClose={() => setPrintReportOpen(false)}
+        title={t.nav.miv}
+        columns={historyColumns}
+        rows={mivDocuments}
+      />
     </div>
   );
 };

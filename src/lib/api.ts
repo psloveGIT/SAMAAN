@@ -19,10 +19,35 @@ export function isStaticFallbackMode(): boolean {
   return staticFallbackActive;
 }
 
+function getActiveLang(): 'fa' | 'en' {
+  try {
+    if (typeof document !== 'undefined' && document.documentElement.lang === 'en') {
+      return 'en';
+    }
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('samaan_user_preferences_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw) as { language?: string };
+        if (parsed.language === 'en') return 'en';
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 'fa';
+}
+
 async function runFallback<T>(url: string, options: RequestInit): Promise<T> {
   staticFallbackActive = true;
+  const lang = getActiveLang();
   try {
-    return await handleStaticApiRequest<T>(url, options);
+    return await handleStaticApiRequest<T>(url, {
+      ...options,
+      headers: {
+        'X-Samaan-Lang': lang,
+        ...((options.headers as Record<string, string>) || {}),
+      },
+    });
   } catch (err) {
     if (err instanceof StaticEngineError) {
       throw new ApiError(err.message, err.status, err.code);
@@ -41,6 +66,7 @@ export async function apiRequest<T>(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'X-Samaan-Lang': getActiveLang(),
     ...((options.headers as Record<string, string>) || {}),
   };
 

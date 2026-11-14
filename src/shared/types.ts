@@ -42,6 +42,7 @@ export interface GeneralEntry {
   mapnaEntryMinutesNo: string; // شماره صورتجلسه ورود مپنا (Unique)
   packingListNo: string; // شماره پکینگ لیست
   packageNo: string; // شماره نگله
+  itemCount?: number | null; // تعداد اقلام نگله
   itemDescription: string; // شرح کالا
   island: string; // جزیره
   system: string; // سیستم
@@ -183,6 +184,7 @@ export interface TrashRecord {
   deletedBy: string;
   targetLabel: string;
   data: GeneralEntry | DetailedEntry | TransitEntry;
+  linkedTrashDetailedCount?: number;
 }
 
 export interface OpiInvitationRecord {
@@ -194,6 +196,95 @@ export interface OpiInvitationRecord {
   location?: string;
   notes?: string;
   status: 'issued' | 'completed';
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface SiteEntryMinutesRecord {
+  id: string;
+  minutesNo: string;
+  date: string; // ISO YYYY-MM-DD
+  packingListNos: string[];
+  supplier?: string;
+  driverName?: string;
+  vehicleNo?: string;
+  waybillNo?: string;
+  warehouseKeeper?: string;
+  employerRep?: string;
+  mapnaRep?: string;
+  conditionStatus: 'healthy' | 'shortage_suspected' | 'damaged_apparent';
+  notes?: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface OpiMinutesRecord {
+  id: string;
+  minutesNo: string;
+  invitationNo?: string;
+  date: string; // ISO YYYY-MM-DD
+  packingListNo: string;
+  packageNos: string[];
+  location?: string;
+  mapnaInspector?: string;
+  employerInspector?: string;
+  contractorInspector?: string;
+  qcInspector?: string;
+  resultStatus: 'compliant' | 'has_discrepancy';
+  notes?: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface OsdrReportItem {
+  detailedId: string;
+  shipmentNo: string;
+  packageNo: string;
+  itemNo: string;
+  description: string;
+  itemCode: string;
+  countingUnit: string;
+  packingQty: number;
+  actualQty: number;
+  shortage: number;
+  surplus: number;
+  damagedQty: number;
+  discrepancyType: 'shortage' | 'damaged' | 'surplus' | 'shortage_and_damaged';
+  remarks?: string;
+}
+
+export interface OsdrReportRecord {
+  id: string;
+  reportNo: string;
+  date: string; // ISO YYYY-MM-DD
+  opiMinutesNo?: string;
+  packingListNo: string;
+  supplier?: string;
+  items: OsdrReportItem[];
+  notes?: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface SubstitutionRecord {
+  id: string;
+  docNo: string;
+  date: string; // ISO YYYY-MM-DD
+  detailedId: string;
+  shipmentNo: string;
+  packageNo: string;
+  itemNo: string;
+  originalDescription: string;
+  originalItemCode: string;
+  substituteDescription: string;
+  substituteItemCode: string;
+  substituteSize?: string;
+  qty: number;
+  countingUnit: string;
+  reason: string;
+  approvedBy?: string;
+  status: 'pending' | 'approved' | 'executed';
+  notes?: string;
   createdAt: string;
   createdBy: string;
 }
@@ -267,9 +358,14 @@ export interface AuditLogEntry {
     | 'detailed'
     | 'transit'
     | 'packing'
+    | 'siteEntry'
     | 'opi'
+    | 'opiMinutes'
+    | 'osdr'
     | 'gcv'
     | 'miv'
+    | 'smr'
+    | 'substitution'
     | 'balance'
     | 'stocktake'
     | 'trash'
@@ -314,6 +410,10 @@ export interface DatabaseSnapshot {
   auditLogs: AuditLogEntry[];
   trash?: TrashRecord[];
   opiInvitations?: OpiInvitationRecord[];
+  siteEntryMinutes?: SiteEntryMinutesRecord[];
+  opiMinutes?: OpiMinutesRecord[];
+  osdrReports?: OsdrReportRecord[];
+  substitutions?: SubstitutionRecord[];
   gcvDocuments?: GcvDocumentRecord[];
   mivDocuments?: MivDocumentRecord[];
 }

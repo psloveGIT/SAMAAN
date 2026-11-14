@@ -12,13 +12,18 @@ import type {
   GeneralEntry,
   MivDocumentRecord,
   OpiInvitationRecord,
+  OpiMinutesRecord,
+  OsdrReportRecord,
   PackingStatusMeta,
+  SiteEntryMinutesRecord,
+  SubstitutionRecord,
   TransitEntry,
   TrashRecord,
   UserAccount,
 } from '../shared/types.ts';
 import { computeDetailedEntry } from '../shared/formulas.ts';
 import { normalizeDigits } from '../shared/jalali.ts';
+import { sortDetailedEntries, sortGeneralEntries } from '../shared/sorting.ts';
 import type { StoredUser } from './auth.ts';
 
 export interface PersistedDatabase {
@@ -33,6 +38,10 @@ export interface PersistedDatabase {
   auditLogs: AuditLogEntry[];
   trash: TrashRecord[];
   opiInvitations: OpiInvitationRecord[];
+  siteEntryMinutes: SiteEntryMinutesRecord[];
+  opiMinutes: OpiMinutesRecord[];
+  osdrReports: OsdrReportRecord[];
+  substitutions: SubstitutionRecord[];
   gcvDocuments: GcvDocumentRecord[];
   mivDocuments: MivDocumentRecord[];
 }
@@ -66,6 +75,10 @@ function createEmptyDb(): PersistedDatabase {
     auditLogs: [],
     trash: [],
     opiInvitations: [],
+    siteEntryMinutes: [],
+    opiMinutes: [],
+    osdrReports: [],
+    substitutions: [],
     gcvDocuments: [],
     mivDocuments: [],
   };
@@ -88,6 +101,8 @@ export class SamaanStore {
 
   constructor() {
     this.db = this.loadFromDisk();
+    this.renumberScope('general');
+    this.renumberScope('detailed');
     this.rebuildIndexes();
   }
 
@@ -119,6 +134,10 @@ export class SamaanStore {
         auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
         trash: Array.isArray(parsed.trash) ? parsed.trash : [],
         opiInvitations: Array.isArray(parsed.opiInvitations) ? parsed.opiInvitations : [],
+        siteEntryMinutes: Array.isArray(parsed.siteEntryMinutes) ? parsed.siteEntryMinutes : [],
+        opiMinutes: Array.isArray(parsed.opiMinutes) ? parsed.opiMinutes : [],
+        osdrReports: Array.isArray(parsed.osdrReports) ? parsed.osdrReports : [],
+        substitutions: Array.isArray(parsed.substitutions) ? parsed.substitutions : [],
         gcvDocuments: Array.isArray(parsed.gcvDocuments) ? parsed.gcvDocuments : [],
         mivDocuments: Array.isArray(parsed.mivDocuments) ? parsed.mivDocuments : [],
       };
@@ -154,18 +173,26 @@ export class SamaanStore {
   }
 
   /**
-   * Automatically numbers rows 1..N sequentially (newest at index 0 = N, oldest at bottom = 1).
+   * Sorts General / Detailed deterministically and numbers rows 1..N sequentially.
    */
   public renumberScope(scope: 'general' | 'detailed' | 'transit'): void {
-    const arr =
-      scope === 'general'
-        ? this.db.general
-        : scope === 'detailed'
-          ? this.db.detailed
-          : this.db.transit;
-    const total = arr.length;
+    if (scope === 'general') {
+      sortGeneralEntries(this.db.general);
+      for (let i = 0; i < this.db.general.length; i += 1) {
+        this.db.general[i].rowNo = String(i + 1);
+      }
+      return;
+    }
+    if (scope === 'detailed') {
+      sortDetailedEntries(this.db.detailed);
+      for (let i = 0; i < this.db.detailed.length; i += 1) {
+        this.db.detailed[i].rowNo = String(i + 1);
+      }
+      return;
+    }
+    const total = this.db.transit.length;
     for (let i = 0; i < total; i += 1) {
-      arr[i].rowNo = String(total - i);
+      this.db.transit[i].rowNo = String(total - i);
     }
   }
 
@@ -333,6 +360,9 @@ export class SamaanStore {
     const pkg = normKey(packageNo);
     const exact = pkg ? list.find((g) => normKey(g.packageNo) === pkg) : undefined;
     const match = exact || list[0];
+    const detMatches = (this.detailedByPacking.get(pk) || []).filter(
+      (d) => !pkg || normKey(d.packageNo) === pkg,
+    );
     return {
       arrivalDate: match.arrivalDate,
       supplier: match.supplier,
@@ -341,15 +371,28 @@ export class SamaanStore {
       system: match.system,
       subSystem: match.subSystem,
       unit: match.unit,
-      itemDescription: match.itemDescription,
       packageNo: match.packageNo,
+      expectedItemCount: exact?.itemCount ?? match.itemCount ?? null,
+      existingDetailedCount: detMatches.length,
       packagesForPacking: Array.from(new Set(list.map((g) => normKey(g.packageNo)).filter(Boolean))),
+      packageCounts: list
+        .filter((g) => normKey(g.packageNo))
+        .map((g) => ({
+          packageNo: normKey(g.packageNo),
+          itemCount: g.itemCount ?? null,
+        })),
     };
   }
 
   public getLastDetailedDefaults() {
-    const latest = this.db.detailed[0];
-    if (!latest) return { shipmentNo: '', packageNo: '', countingUnit: 'PC' };
+    if (this.db.detailed.length === 0) return { shipmentNo: '', packageNo: '', countingUnit: 'PC' };
+    // Pick most recently created/updated detailed item rather than sorted index 0
+    let latest = this.db.detailed[0];
+    for (const d of this.db.detailed) {
+      if ((d.createdAt || '') > (latest.createdAt || '')) {
+        latest = d;
+      }
+    }
     return {
       shipmentNo: normKey(latest.shipmentNo),
       packageNo: normKey(latest.packageNo),
@@ -431,6 +474,10 @@ export class SamaanStore {
       auditLogs: this.db.auditLogs,
       trash: this.db.trash,
       opiInvitations: this.db.opiInvitations,
+      siteEntryMinutes: this.db.siteEntryMinutes,
+      opiMinutes: this.db.opiMinutes,
+      osdrReports: this.db.osdrReports,
+      substitutions: this.db.substitutions,
       gcvDocuments: this.db.gcvDocuments,
       mivDocuments: this.db.mivDocuments,
     };
@@ -450,8 +497,14 @@ export class SamaanStore {
     }
     this.db.trash = Array.isArray(snapshot.trash) ? snapshot.trash : [];
     this.db.opiInvitations = Array.isArray(snapshot.opiInvitations) ? snapshot.opiInvitations : [];
+    this.db.siteEntryMinutes = Array.isArray(snapshot.siteEntryMinutes) ? snapshot.siteEntryMinutes : [];
+    this.db.opiMinutes = Array.isArray(snapshot.opiMinutes) ? snapshot.opiMinutes : [];
+    this.db.osdrReports = Array.isArray(snapshot.osdrReports) ? snapshot.osdrReports : [];
+    this.db.substitutions = Array.isArray(snapshot.substitutions) ? snapshot.substitutions : [];
     this.db.gcvDocuments = Array.isArray(snapshot.gcvDocuments) ? snapshot.gcvDocuments : [];
     this.db.mivDocuments = Array.isArray(snapshot.mivDocuments) ? snapshot.mivDocuments : [];
+    this.renumberScope('general');
+    this.renumberScope('detailed');
     this.rebuildIndexes();
     this.addAudit({
       user,

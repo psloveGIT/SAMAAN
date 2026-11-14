@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Edit3,
@@ -17,6 +16,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { exportRowsToCsv } from '../lib/csvExport.ts';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
+import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
   CategoryStore,
@@ -26,6 +26,7 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { PrintReportModal } from './PrintReportModal.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 
 interface DetailedListResponse {
@@ -45,8 +46,10 @@ interface GeneralSharedInfo {
   system: string;
   subSystem: string;
   unit: string;
-  itemDescription: string;
   packageNo: string;
+  expectedItemCount?: number | null;
+  existingDetailedCount?: number;
+  packageCounts?: Record<string, number | null>;
   packagesForPacking?: string[];
 }
 
@@ -81,6 +84,7 @@ interface DetailedViewProps {
   initialShipmentFilter?: string;
   initialPackageFilter?: string;
   autoOpenToken?: number;
+  onConsumeAutoOpen?: () => void;
   onDataChanged: () => void;
 }
 
@@ -148,6 +152,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   initialShipmentFilter = '',
   initialPackageFilter = '',
   autoOpenToken = 0,
+  onConsumeAutoOpen,
   onDataChanged,
 }) => {
   const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
@@ -171,6 +176,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [selectedMap, setSelectedMap] = useState<Record<string, DetailedComputed>>({});
   const [inspected, setInspected] = useState<DetailedComputed | null>(null);
+  const [printOpen, setPrintOpen] = useState(false);
 
   // Add/Edit Modal
   const [formModalOpen, setFormModalOpen] = useState(false);
@@ -181,6 +187,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [rowError, setRowError] = useState('');
   const [itemNoTaken, setItemNoTaken] = useState(false);
   const [itemNoManual, setItemNoManual] = useState(false);
+  const [genDescManual, setGenDescManual] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [knownPackings, setKnownPackings] = useState<string[]>([]);
   const [knownPackages, setKnownPackages] = useState<string[]>([]);
   const [linkedGeneral, setLinkedGeneral] = useState<GeneralSharedInfo | null>(null);
@@ -255,6 +263,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       setRowError('');
       setItemNoTaken(false);
       setItemNoManual(false);
+      setGenDescManual(false);
 
       const base = emptyDetailedDraft();
       const targetShipment = (overrideShipment ?? shipmentFilter).trim();
@@ -296,7 +305,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           system: shared?.system || '',
           subSystem: shared?.subSystem || '',
           unit: shared?.unit || '',
-          generalDescription: shared?.itemDescription || '',
+          generalDescription: '',
         });
       } catch {
         setLinkedGeneral(null);
@@ -317,11 +326,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   useEffect(() => {
     if (autoOpenToken > 0 && autoOpenToken !== lastAutoOpenTokenRef.current) {
       lastAutoOpenTokenRef.current = autoOpenToken;
+      onConsumeAutoOpen?.();
       if (canEdit) {
         openCreateModal(initialShipmentFilter, initialPackageFilter);
       }
     }
-  }, [autoOpenToken, initialShipmentFilter, initialPackageFilter, canEdit, openCreateModal]);
+  }, [autoOpenToken, initialShipmentFilter, initialPackageFilter, canEdit, openCreateModal, onConsumeAutoOpen]);
 
   // Live check when Shipment No, Package No, or Item No changes inside the modal
   useEffect(() => {
@@ -370,7 +380,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               if (shared.system) next.system = shared.system;
               if (shared.subSystem) next.subSystem = shared.subSystem;
               if (shared.unit) next.unit = shared.unit;
-              if (shared.itemDescription) next.generalDescription = shared.itemDescription;
             }
             return next;
           });
@@ -503,6 +512,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     setAckClosed(false);
     setItemNoTaken(false);
     setItemNoManual(true);
+    setGenDescManual(Boolean(row.generalDescription));
     try {
       const [check, lookup] = await Promise.all([
         apiRequest<PackingDetailedCheckResponse>(
@@ -538,9 +548,20 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     });
   };
 
-  const handleSaveForm = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitDetailedForm = async (mode: 'close' | 'next') => {
     setRowError('');
+    if (!draft.shipmentNo?.trim()) {
+      setRowError(isFa ? 'شماره پکینگ لیست / محموله الزامی است.' : 'Shipment / Packing List No. is required.');
+      return;
+    }
+    if (!draft.description?.trim()) {
+      setRowError(isFa ? 'شرح کالا الزامی است.' : 'Description is required.');
+      return;
+    }
+    if (draft.packingQty === null || draft.packingQty === undefined) {
+      setRowError(isFa ? 'مقدار پکینگ الزامی است.' : 'Packing Qty is required.');
+      return;
+    }
     if (itemNoTaken) {
       setRowError(
         isFa
@@ -550,17 +571,22 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       return;
     }
 
+    const finalGenDesc = draft.generalDescription?.trim()
+      ? formatGeneralDescriptionCase(draft.generalDescription)
+      : inferGeneralDescription(draft.description || '');
+
+    setSaving(true);
     try {
       if (editingId) {
-        const payload = { ...draft, acknowledgeClosed: ackClosed };
+        const payload = { ...draft, generalDescription: finalGenDesc, acknowledgeClosed: ackClosed };
         delete payload.rowNo;
         await apiRequest(`/api/detailed/${editingId}`, {
           method: 'PATCH',
           body: JSON.stringify(payload),
         });
         notify('success', isFa ? 'آیتم جزئیات ویرایش شد.' : 'Detailed item updated.');
+        setFormModalOpen(false);
       } else {
-        // Initial Detailed entry excludes OPI / GCV / MIV / MTO / Balance / Stocktake
         const payload: Partial<DetailedEntry> & { acknowledgeClosed: boolean } = {
           arrivalDate: draft.arrivalDate,
           supplier: draft.supplier,
@@ -568,7 +594,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           shipmentNo: draft.shipmentNo,
           packageNo: draft.packageNo,
           itemNo: draft.itemNo,
-          generalDescription: draft.generalDescription,
+          generalDescription: finalGenDesc,
           description: draft.description,
           size: draft.size,
           itemCode: draft.itemCode,
@@ -581,6 +607,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           subSystem: draft.subSystem,
           unit: draft.unit,
           storageLocation: draft.storageLocation,
+          receiver: draft.receiver,
           notes: draft.notes,
           acknowledgeClosed: ackClosed,
         };
@@ -588,12 +615,56 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           method: 'POST',
           body: JSON.stringify(payload),
         });
-        notify('success', isFa ? 'آیتم جزئیات ثبت شد.' : 'Detailed item created.');
+
+        triggerAutoSnapshot(`Detailed ${draft.shipmentNo}`);
+        onDataChanged();
+        loadData();
+
+        if (mode === 'next') {
+          const pk = (draft.shipmentNo || '').trim();
+          const pkg = (draft.packageNo || '').trim();
+          const check = await apiRequest<PackingDetailedCheckResponse>(
+            `/api/packing/check?scope=detailed&packingNo=${encodeURIComponent(pk)}&packageNo=${encodeURIComponent(pkg)}`,
+          ).catch(() => null);
+
+          notify(
+            'success',
+            isFa
+              ? `آیتم ${draft.itemNo} ثبت شد — آماده ثبت آیتم ${check?.nextSuggestedItemNo || 'بعدی'}`
+              : `Item ${draft.itemNo} saved — ready for item ${check?.nextSuggestedItemNo || 'next'}`,
+          );
+
+          setLinkedGeneral(check?.linkedGeneral || linkedGeneral);
+          setGenDescManual(false);
+          setItemNoManual(false);
+          setItemNoTaken(false);
+          setDraft((prev) => ({
+            ...emptyDetailedDraft(),
+            shipmentNo: prev.shipmentNo,
+            packageNo: prev.packageNo,
+            itemNo: check?.nextSuggestedItemNo || String((Number(prev.itemNo) || 0) + 1),
+            arrivalDate: prev.arrivalDate,
+            supplier: prev.supplier,
+            origin: prev.origin,
+            island: prev.island,
+            system: prev.system,
+            subSystem: prev.subSystem,
+            unit: prev.unit,
+            countingUnit: prev.countingUnit || 'PC',
+          }));
+          setSaving(false);
+          return;
+        } else {
+          notify('success', isFa ? 'آیتم جزئیات ثبت و فرم بسته شد.' : 'Detailed item saved and closed.');
+          setFormModalOpen(false);
+        }
       }
-      setFormModalOpen(false);
-      triggerAutoSnapshot(`Detailed ${draft.shipmentNo}`);
-      onDataChanged();
-      loadData();
+
+      if (editingId) {
+        triggerAutoSnapshot(`Detailed ${draft.shipmentNo}`);
+        onDataChanged();
+        loadData();
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.code === 'CLOSED_PACKING_WARNING') {
@@ -601,7 +672,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         }
         setRowError(err.message);
       }
+    } finally {
+      setSaving(false);
     }
+  };
+
+  const handleSaveForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitDetailedForm('close');
   };
 
   const handleSubmitBackfill = async (e: React.FormEvent) => {
@@ -831,6 +909,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           isFilteredFallback={selectedRows.length === 0}
           onClearSelection={() => setSelectedMap({})}
           onExportSelected={handleExport}
+          onPrintSelected={() => setPrintOpen(true)}
         />
       )}
 
@@ -1036,8 +1115,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             {inspected.opiPending && (
               <div className="p-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-subtle)] text-xs text-[var(--text-secondary)]">
                 {isFa
-                  ? 'نتیجه بازرسی OPI (مقدار واقعی) برای این قلم هنوز ثبت نشده است. برای ثبت مقدار واقعی به بخش «مدیریت OPI» مراجعه کنید.'
-                  : 'OPI inspection (Actual Qty) has not been recorded yet. Use OPI Management to record inspection results.'}
+                  ? 'نتیجه بازرسی (مقدار واقعی) برای این قلم هنوز ثبت نشده است. برای ثبت مقدار واقعی به بخش «دعوتنامه گشایش و بازرسی بسته‌ها» مراجعه کنید.'
+                  : 'Inspection results (Actual Qty) have not been recorded yet. Use Package Opening & Inspection Invitation to record inspection results.'}
               </div>
             )}
 
@@ -1259,6 +1338,22 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </div>
               )}
 
+              {/* Package Item Count Progress Strip (when package itemCount is defined in General) */}
+              {!editingId && linkedGeneral?.expectedItemCount ? (
+                <div className="p-3 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-xs flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-semibold text-[var(--accent-primary)] tabular-nums">
+                    {isFa
+                      ? `پیشرفت ثبت اقلام نگله «${draft.packageNo || '-'}»: در حال ثبت آیتم ${(linkedGeneral.existingDetailedCount || 0) + 1} از ${linkedGeneral.expectedItemCount}`
+                      : `Package "${draft.packageNo || '-'}" progress: Entering item ${(linkedGeneral.existingDetailedCount || 0) + 1} of ${linkedGeneral.expectedItemCount}`}
+                  </div>
+                  <span className="text-[11px] text-[var(--text-secondary)] tabular-nums">
+                    {isFa
+                      ? `ثبت‌شده فعلی: ${linkedGeneral.existingDetailedCount || 0} قلم`
+                      : `Recorded so far: ${linkedGeneral.existingDetailedCount || 0}`}
+                  </span>
+                </div>
+              ) : null}
+
               {/* General Auto-Sync Status Banner */}
               {linkedGeneral ? (
                 <div className="p-3 rounded-xl border border-[var(--status-success)] bg-[var(--status-success-bg)] text-xs flex flex-wrap items-center justify-between gap-2">
@@ -1381,7 +1476,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     required
                     dir={!draft.description ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.description || ''}
-                    onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                    onChange={(e) => {
+                      const nextDesc = e.target.value;
+                      setDraft((prev) => ({
+                        ...prev,
+                        description: nextDesc,
+                        ...(genDescManual ? {} : { generalDescription: inferGeneralDescription(nextDesc) }),
+                      }));
+                    }}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
@@ -1394,7 +1496,19 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     type="text"
                     dir={!draft.generalDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.generalDescription || ''}
-                    onChange={(e) => setDraft({ ...draft, generalDescription: e.target.value })}
+                    onChange={(e) => {
+                      setGenDescManual(e.target.value.trim().length > 0);
+                      setDraft({ ...draft, generalDescription: e.target.value });
+                    }}
+                    onBlur={() => {
+                      if (draft.generalDescription?.trim()) {
+                        setDraft((prev) => ({
+                          ...prev,
+                          generalDescription: formatGeneralDescriptionCase(prev.generalDescription || ''),
+                        }));
+                      }
+                    }}
+                    placeholder={isFa ? 'تشخیص خودکار از شرح کالا (مثلاً Pipe یا IPE Beam)' : 'Auto-inferred from description (e.g., Pipe, IPE Beam)'}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
@@ -1582,6 +1696,19 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.receiver}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!draft.receiver ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={draft.receiver || ''}
+                    onChange={(e) => setDraft({ ...draft, receiver: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                </div>
+
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.notes}
                   </label>
                   <input
@@ -1594,16 +1721,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </div>
               </div>
 
-              {!editingId ? (
-                <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-[11px] text-[var(--text-secondary)] flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-                  <span>
-                    {isFa
-                      ? 'مقدار واقعی، آسیب‌دیده، GCV، حواله‌های MIV/SMR، بالانس و انبارگردانی از طریق بخش‌های اختصاصی مربوطه ثبت و به‌صورت خودکار محاسبه می‌شوند.'
-                      : 'Actual Qty, Damaged Qty, GCV, MIV/SMR, Material Balance, and Stocktake are updated automatically via their dedicated workflow modules.'}
-                  </span>
-                </div>
-              ) : (
+              {editingId ? (
                 <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] text-[var(--text-secondary)] space-y-1">
                   <div className="font-semibold text-[var(--text-primary)]">
                     {isFa ? 'خلاصه وضعیت عملیاتی (تغییر از بخش‌های اختصاصی):' : 'Operational Summary (managed via dedicated modules):'}
@@ -1617,9 +1735,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     <span>{t.headers.stocktakeStatus}: {draft.stocktakeStatus || '-'}</span>
                   </div>
                 </div>
-              )}
+              ) : null}
 
-              <div className="pt-3 border-t border-[var(--border-subtle)] flex justify-end gap-2">
+              <div className="pt-3 border-t border-[var(--border-subtle)] flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setFormModalOpen(false)}
@@ -1627,11 +1745,22 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 >
                   {t.controls.cancel}
                 </button>
+                {!editingId && (
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => submitDetailedForm('next')}
+                    className="h-9 px-4 rounded-lg border border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-90 text-xs font-semibold disabled:opacity-50"
+                  >
+                    {t.controls.saveAndNext}
+                  </button>
+                )}
                 <button
                   type="submit"
-                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold"
+                  disabled={saving}
+                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
                 >
-                  {t.controls.save}
+                  {editingId ? t.controls.save : t.controls.saveAndClose}
                 </button>
               </div>
             </form>
@@ -1652,6 +1781,20 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         }
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <PrintReportModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        title={t.nav.detailed}
+        rows={selectedRows.length > 0 ? selectedRows : items}
+        columns={columns.map((c) => ({
+          key: c.key,
+          header: c.header,
+          isDate: c.isDate,
+          getValue: c.get,
+        }))}
+        defaultSelectedKeys={visibleColumns.map((c) => c.key)}
       />
     </div>
   );

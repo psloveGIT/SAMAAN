@@ -115,12 +115,14 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
 
 export function requireRole(allowedRoles: UserRole[]) {
   return (req: AuthedRequest, res: Response, next: NextFunction) => {
+    const langHeader = String(req.headers['x-samaan-lang'] || '').toLowerCase();
+    const isEn = langHeader === 'en';
     if (!req.currentUser) {
-      res.status(401).json({ error: 'Authentication required' });
+      res.status(401).json({ error: isEn ? 'Authentication required' : 'احراز هویت الزامی است' });
       return;
     }
     if (!allowedRoles.includes(req.currentUser.role)) {
-      res.status(403).json({ error: 'Insufficient permissions' });
+      res.status(403).json({ error: isEn ? 'Insufficient permissions' : 'سطح دسترسی کافی نیست' });
       return;
     }
     next();

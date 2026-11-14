@@ -13,9 +13,14 @@ import { GlobalSearchView } from './components/GlobalSearchView.tsx';
 import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
 import { MivView } from './components/MivView.tsx';
+import { OpiMinutesView } from './components/OpiMinutesView.tsx';
 import { OpiView } from './components/OpiView.tsx';
 import { PackingWizardModal } from './components/PackingWizardModal.tsx';
+import { SiteEntryMinutesView } from './components/SiteEntryMinutesView.tsx';
+import { SmrView } from './components/SmrView.tsx';
 import { StocktakeView } from './components/StocktakeView.tsx';
+import { StorageLabelView } from './components/StorageLabelView.tsx';
+import { SubstitutionView } from './components/SubstitutionView.tsx';
 import { TransitView } from './components/TransitView.tsx';
 import { TrashView } from './components/TrashView.tsx';
 import { UsersAuditView } from './components/UsersAuditView.tsx';
@@ -127,6 +132,10 @@ const SamaanWorkspace: React.FC = () => {
             />
           )}
 
+          {activeTab === 'siteEntry' && (
+            <SiteEntryMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
           {activeTab === 'general' && (
             <GeneralView
               categories={categories}
@@ -144,6 +153,7 @@ const SamaanWorkspace: React.FC = () => {
               initialShipmentFilter={detailedShipmentFilter}
               initialPackageFilter={detailedPackageFilter}
               autoOpenToken={detailedAutoOpenToken}
+              onConsumeAutoOpen={() => setDetailedAutoOpenToken(0)}
               onDataChanged={bumpRefresh}
             />
           )}
@@ -161,6 +171,10 @@ const SamaanWorkspace: React.FC = () => {
             <OpiView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
           )}
 
+          {activeTab === 'opiMinutes' && (
+            <OpiMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
           {activeTab === 'gcv' && (
             <GcvView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
           )}
@@ -169,12 +183,24 @@ const SamaanWorkspace: React.FC = () => {
             <MivView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
           )}
 
+          {activeTab === 'smr' && (
+            <SmrView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
+          {activeTab === 'substitution' && (
+            <SubstitutionView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
           {activeTab === 'balance' && (
             <BalanceView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
           )}
 
           {activeTab === 'stocktake' && (
             <StocktakeView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+          )}
+
+          {activeTab === 'storageLabel' && (
+            <StorageLabelView refreshSignal={refreshSignal} />
           )}
 
           {activeTab === 'search' && (

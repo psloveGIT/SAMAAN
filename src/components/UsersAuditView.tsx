@@ -624,12 +624,17 @@ export const UsersAuditView: React.FC = () => {
               className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
             >
               <option value="">{isFa ? 'همه بخش‌ها' : 'All Scopes'}</option>
+              <option value="siteEntry">{t.nav.siteEntry}</option>
               <option value="general">{t.nav.general}</option>
               <option value="detailed">{t.nav.detailed}</option>
               <option value="transit">{t.nav.transit}</option>
               <option value="opi">{t.nav.opi}</option>
+              <option value="opiMinutes">{t.nav.opiMinutes}</option>
+              <option value="osdr">{isFa ? 'گزارش مغایرت (OSDR)' : 'OSDR Reports'}</option>
               <option value="gcv">{t.nav.gcv}</option>
               <option value="miv">{t.nav.miv}</option>
+              <option value="smr">{t.nav.smr}</option>
+              <option value="substitution">{t.nav.substitution}</option>
               <option value="balance">{t.nav.balance}</option>
               <option value="stocktake">{t.nav.stocktake}</option>
               <option value="trash">{t.nav.trash}</option>

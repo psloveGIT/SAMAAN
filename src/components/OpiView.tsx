@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ClipboardCheck, FileText, Printer, Search, X } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, Download, FileText, Printer, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { DetailedComputed, OpiInvitationRecord } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { PrintReportModal } from './PrintReportModal.tsx';
 
 interface OpiApiResponse {
   invitations: OpiInvitationRecord[];
@@ -45,8 +47,10 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const [packingSearch, setPackingSearch] = useState('');
   const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
 
-  // Print Invitation Preview
+  // Print Invitation Preview & Report Modals
   const [printInvitation, setPrintInvitation] = useState<OpiInvitationRecord | null>(null);
+  const [printInvTableOpen, setPrintInvTableOpen] = useState(false);
+  const [printItemsTableOpen, setPrintItemsTableOpen] = useState(false);
 
   // OPI Results Recording State
   const [resultInvitationId, setResultInvitationId] = useState('');
@@ -105,8 +109,8 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       notify(
         'success',
         isFa
-          ? `دعوتنامه OPI شماره ${res.invitation.invitationNo} صادر شد.`
-          : `OPI Invitation ${res.invitation.invitationNo} issued.`,
+          ? `دعوتنامه گشایش و بازرسی شماره ${res.invitation.invitationNo} صادر شد.`
+          : `Inspection Invitation ${res.invitation.invitationNo} issued.`,
       );
       setInvitationNo('');
       setLocation('');
@@ -211,8 +215,8 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       notify(
         'success',
         isFa
-          ? `نتیجه OPI برای ${res.updatedCount} قلم ثبت و موجودی محاسبه شد.`
-          : `OPI results saved for ${res.updatedCount} items.`,
+          ? `نتیجه بازرسی برای ${res.updatedCount.toLocaleString('fa-IR')} قلم ثبت و موجودی محاسبه شد.`
+          : `Inspection results saved for ${res.updatedCount} items.`,
       );
       setRowDrafts({});
       triggerAutoSnapshot(`OPI Results ${resultOpiNo}`);
@@ -222,6 +226,45 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       if (err instanceof ApiError) notify('error', err.message);
     }
   };
+
+  const invReportColumns = useMemo<CsvColumnDef<OpiInvitationRecord>[]>(
+    () => [
+      { key: 'invitationNo', header: t.headers.opiInvitationNo, getValue: (r) => r.invitationNo },
+      { key: 'date', header: t.headers.opiInvitationDate, isDate: true, getValue: (r) => r.date },
+      { key: 'time', header: isFa ? 'ساعت' : 'Time', getValue: (r) => r.time },
+      { key: 'packingNos', header: t.headers.packingListNo, getValue: (r) => r.packingNos.join(', ') },
+      { key: 'location', header: isFa ? 'محل' : 'Location', getValue: (r) => r.location || '' },
+      {
+        key: 'status',
+        header: isFa ? 'وضعیت' : 'Status',
+        getValue: (r) =>
+          r.status === 'completed' ? (isFa ? 'ثبت نتیجه شده' : 'Completed') : (isFa ? 'صادرشده' : 'Issued'),
+      },
+      { key: 'createdBy', header: isFa ? 'صادرکننده' : 'Issued By', getValue: (r) => r.createdBy },
+      { key: 'notes', header: t.headers.notes, getValue: (r) => r.notes || '' },
+    ],
+    [t, isFa],
+  );
+
+  const itemReportColumns = useMemo<CsvColumnDef<DetailedComputed>[]>(
+    () => [
+      { key: 'rowNo', header: t.headers.rowNo, getValue: (r) => r.rowNo },
+      { key: 'shipmentNo', header: t.headers.shipmentNo, getValue: (r) => r.shipmentNo },
+      { key: 'packageNo', header: t.headers.packageNo, getValue: (r) => r.packageNo },
+      { key: 'itemNo', header: t.headers.itemNo, getValue: (r) => r.itemNo },
+      { key: 'description', header: t.headers.description, getValue: (r) => r.description || r.generalDescription },
+      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => r.countingUnit },
+      { key: 'packingQty', header: t.headers.packingQty, getValue: (r) => r.packingQty },
+      { key: 'actualQty', header: t.headers.actualQty, getValue: (r) => r.actualQty },
+      { key: 'damagedQty', header: t.headers.damagedQty, getValue: (r) => r.damagedQty },
+      { key: 'shortage', header: t.headers.shortage, getValue: (r) => r.shortage },
+      { key: 'opiNo', header: t.headers.opiNo, getValue: (r) => r.opiNo },
+      { key: 'opiDate', header: t.headers.opiDate, isDate: true, getValue: (r) => r.opiDate },
+      { key: 'repNo', header: t.headers.repNo, getValue: (r) => r.repNo },
+      { key: 'repStatus', header: t.headers.repStatus, getValue: (r) => r.repStatus },
+    ],
+    [t],
+  );
 
   return (
     <div className="space-y-6">
@@ -237,7 +280,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
           }`}
         >
           <FileText className="w-4 h-4" />
-          <span>{isFa ? 'صدور دعوتنامه OPI و فرم چاپی' : 'Issue OPI Invitation'}</span>
+          <span>{isFa ? 'دعوتنامه گشایش و بازرسی بسته‌ها' : 'Package Opening & Inspection Invitation'}</span>
         </button>
 
         <button
@@ -250,7 +293,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
           }`}
         >
           <ClipboardCheck className="w-4 h-4" />
-          <span>{isFa ? 'ثبت نتایج بازرسی (مقدار واقعی و آسیب‌دیده)' : 'Record OPI Inspection Results'}</span>
+          <span>{isFa ? 'ثبت نتایج بازرسی (مقدار واقعی و آسیب‌دیده)' : 'Record Inspection Results'}</span>
         </button>
       </div>
 
@@ -263,7 +306,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
             >
               <h3 className="text-sm font-bold">
-                {isFa ? 'صدور دعوتنامه جدید بازرسی بازگشایی (OPI)' : 'Issue New OPI Invitation'}
+                {isFa ? 'صدور دعوتنامه جدید گشایش و بازرسی بسته‌ها' : 'Issue New Package Opening & Inspection Invitation'}
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -401,10 +444,36 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
 
           {/* Issued Invitations History */}
           <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold">
-                {isFa ? 'دعوتنامه‌های OPI صادرشده' : 'Issued OPI Invitations'}
+                {isFa ? 'دعوتنامه‌های گشایش و بازرسی صادرشده' : 'Issued Invitations'}
               </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportRowsToCsv({
+                      rows: data?.invitations || [],
+                      columns: invReportColumns,
+                      filename: 'samaan-opi-invitations',
+                      calendar: prefs.calendar,
+                      hideEmptyColumns: true,
+                    })
+                  }
+                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{t.controls.exportCsv}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintInvTableOpen(true)}
+                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>{t.controls.printReport}</span>
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
@@ -506,7 +575,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
           <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'فیلتر بر اساس دعوتنامه OPI' : 'Filter by OPI Invitation'}
+                {isFa ? 'فیلتر بر اساس دعوتنامه' : 'Filter by Invitation'}
               </label>
               <select
                 value={resultInvitationId}
@@ -563,6 +632,38 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
           </div>
 
           <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+            <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-[var(--text-secondary)]">
+                {isFa ? 'اقلام مشمول بازرسی گشایش' : 'Items for Opening Inspection'}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportRowsToCsv({
+                      rows: itemsForResults,
+                      columns: itemReportColumns,
+                      filename: 'samaan-opi-inspection-items',
+                      calendar: prefs.calendar,
+                      hideEmptyColumns: true,
+                    })
+                  }
+                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{t.controls.exportCsv}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintItemsTableOpen(true)}
+                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>{t.controls.printReport}</span>
+                </button>
+              </div>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
@@ -691,7 +792,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                   className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>{isFa ? 'ثبت نتایج OPI و محاسبه کسری/موجودی' : 'Save OPI Results & Compute Balances'}</span>
+                  <span>{isFa ? 'ثبت نتایج بازرسی و محاسبه کسری/موجودی' : 'Save Inspection Results & Compute Balances'}</span>
                 </button>
               </div>
             )}
@@ -704,7 +805,9 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 print:static print:bg-transparent print:p-0">
           <div className="w-full max-w-3xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5 max-h-[92vh] overflow-y-auto print-sheet">
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 print:hidden">
-              <h3 className="text-sm font-bold">{isFa ? 'پیش‌نمایش فرم دعوتنامه OPI' : 'OPI Invitation Form Preview'}</h3>
+              <h3 className="text-sm font-bold">
+                {isFa ? 'پیش‌نمایش فرم دعوتنامه گشایش و بازرسی بسته‌ها' : 'Invitation Form Preview'}
+              </h3>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -730,7 +833,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 <div>
                   <div className="text-base font-bold">{t.brandFull}</div>
                   <div className="text-[11px] opacity-80">
-                    {isFa ? 'فرم رسمی دعوتنامه بازرسی بازگشایی کالا (OPI)' : 'Official Open Package Inspection (OPI) Invitation'}
+                    {isFa ? 'فرم رسمی دعوتنامه گشایش و بازرسی بسته‌ها (OPI)' : 'Official Package Opening & Inspection Invitation (OPI)'}
                   </div>
                 </div>
                 <div className="text-end tabular-nums">
@@ -804,6 +907,22 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
           </div>
         </div>
       )}
+
+      <PrintReportModal
+        open={printInvTableOpen}
+        onClose={() => setPrintInvTableOpen(false)}
+        title={isFa ? 'فهرست دعوتنامه‌های گشایش و بازرسی بسته‌ها' : 'Issued OPI Invitations'}
+        columns={invReportColumns}
+        rows={data?.invitations || []}
+      />
+
+      <PrintReportModal
+        open={printItemsTableOpen}
+        onClose={() => setPrintItemsTableOpen(false)}
+        title={isFa ? 'گزارش اقلام و نتایج بازرسی گشایش بسته‌ها' : 'OPI Inspection Items Report'}
+        columns={itemReportColumns}
+        rows={itemsForResults}
+      />
     </div>
   );
 };

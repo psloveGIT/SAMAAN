@@ -18,6 +18,7 @@ import { getTodayIso } from '../shared/jalali.ts';
 import type { CategoryStore, SelectionFormulaSummary, TransitEntry } from '../shared/types.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { PrintReportModal } from './PrintReportModal.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 
 interface TransitListResponse {
@@ -62,6 +63,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<TransitEntry>>({});
   const [deleteTarget, setDeleteTarget] = useState<TransitEntry | null>(null);
+  const [printOpen, setPrintOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -333,6 +335,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
           isFilteredFallback={selectedRows.length === 0}
           onClearSelection={() => setSelectedMap({})}
           onExportSelected={handleExport}
+          onPrintSelected={() => setPrintOpen(true)}
         />
       )}
 
@@ -667,6 +670,20 @@ export const TransitView: React.FC<TransitViewProps> = ({
           </div>
         </div>
       )}
+
+      <PrintReportModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        title={t.nav.transit}
+        rows={selectedRows.length > 0 ? selectedRows : items}
+        columns={columns.map((c) => ({
+          key: c.key,
+          header: c.header,
+          isDate: c.isDate,
+          getValue: c.get,
+        }))}
+        defaultSelectedKeys={visibleColumns.map((c) => c.key)}
+      />
     </div>
   );
 };

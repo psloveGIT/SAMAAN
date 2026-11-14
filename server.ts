@@ -35,6 +35,7 @@ import {
   toNum,
 } from './src/shared/formulas.ts';
 import { getMonthKeyFromIso, normalizeDigits } from './src/shared/jalali.ts';
+import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
 import type {
   CalendarMode,
   CategoryGroupKey,
@@ -44,10 +45,16 @@ import type {
   DocumentLineItem,
   GcvDocumentRecord,
   GeneralEntry,
+  Language,
   MivDocType,
   MivDocumentRecord,
   OpiInvitationRecord,
+  OpiMinutesRecord,
+  OsdrReportItem,
+  OsdrReportRecord,
   ShortageBackfillRecord,
+  SiteEntryMinutesRecord,
+  SubstitutionRecord,
   TransitEntry,
   TrashRecord,
   UserPreferences,
@@ -57,6 +64,15 @@ import type {
 dotenv.config();
 
 const PORT = Number(process.env.PORT || 3000);
+
+function reqLang(req: Request): Language {
+  const h = String(req.headers['x-samaan-lang'] || '').toLowerCase();
+  return h === 'en' ? 'en' : 'fa';
+}
+
+function errMsg(req: Request, fa: string, en: string): string {
+  return reqLang(req) === 'en' ? en : fa;
+}
 
 function matchSearch(haystackParts: (string | number | null | undefined)[], q: string): boolean {
   if (!q) return true;
@@ -114,7 +130,7 @@ async function startServer() {
 
   app.post('/api/auth/setup', (req: Request, res: Response) => {
     if (store.db.users.length > 0) {
-      res.status(400).json({ error: 'System is already initialized' });
+      res.status(400).json({ error: errMsg(req, 'سامانه قبلاً راه‌اندازی شده است', 'System is already initialized') });
       return;
     }
     const { username, password, fullName, preferences } = req.body as {
@@ -125,7 +141,9 @@ async function startServer() {
     };
     const cleanUser = (username || '').trim().toLowerCase();
     if (!cleanUser || !password || password.length < 4) {
-      res.status(400).json({ error: 'Username and password (min 4 chars) are required' });
+      res.status(400).json({
+        error: errMsg(req, 'نام کاربری و رمز عبور (حداقل ۴ کاراکتر) الزامی است', 'Username and password (min 4 chars) are required'),
+      });
       return;
     }
     const newUser: StoredUser = {
@@ -157,7 +175,7 @@ async function startServer() {
     const cleanUser = (username || '').trim().toLowerCase();
     const found = store.db.users.find((u) => u.username.toLowerCase() === cleanUser);
     if (!found || !found.active || !password || !verifyPassword(password, found.passwordHash)) {
-      res.status(401).json({ error: 'نام کاربری یا رمز عبور اشتباه است / Invalid credentials' });
+      res.status(401).json({ error: errMsg(req, 'نام کاربری یا رمز عبور اشتباه است', 'Invalid username or password') });
       return;
     }
     found.lastLoginAt = new Date().toISOString();
@@ -210,11 +228,11 @@ async function startServer() {
       newPassword?: string;
     };
     if (!currentPassword || !verifyPassword(currentPassword, user.passwordHash)) {
-      res.status(401).json({ error: 'رمز عبور فعلی صحیح نیست / Current password is incorrect' });
+      res.status(401).json({ error: errMsg(req, 'رمز عبور فعلی صحیح نیست', 'Current password is incorrect') });
       return;
     }
     if (!newPassword || newPassword.length < 4) {
-      res.status(400).json({ error: 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد / New password must be at least 4 characters' });
+      res.status(400).json({ error: errMsg(req, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد', 'New password must be at least 4 characters') });
       return;
     }
     user.passwordHash = hashPassword(newPassword);
@@ -246,11 +264,13 @@ async function startServer() {
     };
     const cleanUser = (username || '').trim().toLowerCase();
     if (!cleanUser || !password || password.length < 4) {
-      res.status(400).json({ error: 'Username and password (min 4 chars) are required' });
+      res.status(400).json({
+        error: errMsg(req, 'نام کاربری و رمز عبور (حداقل ۴ کاراکتر) الزامی است', 'Username and password (min 4 chars) are required'),
+      });
       return;
     }
     if (store.db.users.some((u) => u.username.toLowerCase() === cleanUser)) {
-      res.status(409).json({ error: 'نام کاربری تکراری است / Username already exists' });
+      res.status(409).json({ error: errMsg(req, 'نام کاربری تکراری است', 'Username already exists') });
       return;
     }
     const created: StoredUser = {
@@ -279,7 +299,7 @@ async function startServer() {
   app.patch('/api/users/:id', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
     const target = store.db.users.find((u) => u.id === req.params.id);
     if (!target) {
-      res.status(404).json({ error: 'User not found' });
+      res.status(404).json({ error: errMsg(req, 'کاربر یافت نشد', 'User not found') });
       return;
     }
     const { username, fullName, role, active, password, mustChangePassword } = req.body as {
@@ -295,7 +315,11 @@ async function startServer() {
     const nextActive = typeof active === 'boolean' ? active : target.active;
     if (target.id === req.currentUser!.id && (nextRole !== 'admin' || !nextActive)) {
       res.status(400).json({
-        error: 'امکان غیرفعال‌سازی یا تغییر نقش حساب کاربری خودتان وجود ندارد / Cannot deactivate or demote your own account',
+        error: errMsg(
+          req,
+          'امکان غیرفعال‌سازی یا تغییر نقش حساب کاربری خودتان وجود ندارد',
+          'Cannot deactivate or demote your own account',
+        ),
       });
       return;
     }
@@ -305,7 +329,11 @@ async function startServer() {
       );
       if (otherActiveAdmins.length === 0) {
         res.status(400).json({
-          error: 'حداقل یک مدیر کل فعال باید در سامانه باقی بماند / At least one active admin must remain',
+          error: errMsg(
+            req,
+            'حداقل یک مدیر کل فعال باید در سامانه باقی بماند',
+            'At least one active admin must remain',
+          ),
         });
         return;
       }
@@ -314,11 +342,11 @@ async function startServer() {
     if (username !== undefined) {
       const cleanUsername = username.trim().toLowerCase();
       if (!cleanUsername) {
-        res.status(400).json({ error: 'نام کاربری نمی‌تواند خالی باشد / Username cannot be empty' });
+        res.status(400).json({ error: errMsg(req, 'نام کاربری نمی‌تواند خالی باشد', 'Username cannot be empty') });
         return;
       }
       if (store.db.users.some((u) => u.id !== target.id && u.username.toLowerCase() === cleanUsername)) {
-        res.status(409).json({ error: 'نام کاربری تکراری است / Username already exists' });
+        res.status(409).json({ error: errMsg(req, 'نام کاربری تکراری است', 'Username already exists') });
         return;
       }
       target.username = cleanUsername;
@@ -331,7 +359,9 @@ async function startServer() {
     let passwordReset = false;
     if (password !== undefined && password !== '') {
       if (password.length < 4) {
-        res.status(400).json({ error: 'رمز عبور باید حداقل ۴ کاراکتر باشد / Password must be at least 4 characters' });
+        res.status(400).json({
+          error: errMsg(req, 'رمز عبور باید حداقل ۴ کاراکتر باشد', 'Password must be at least 4 characters'),
+        });
         return;
       }
       target.passwordHash = hashPassword(password);
@@ -354,13 +384,13 @@ async function startServer() {
   app.delete('/api/users/:id', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
     const idx = store.db.users.findIndex((u) => u.id === req.params.id);
     if (idx === -1) {
-      res.status(404).json({ error: 'User not found' });
+      res.status(404).json({ error: errMsg(req, 'کاربر یافت نشد', 'User not found') });
       return;
     }
     const target = store.db.users[idx];
     if (target.id === req.currentUser!.id) {
       res.status(400).json({
-        error: 'امکان حذف حساب کاربری خودتان وجود ندارد / Cannot delete your own account',
+        error: errMsg(req, 'امکان حذف حساب کاربری خودتان وجود ندارد', 'Cannot delete your own account'),
       });
       return;
     }
@@ -370,7 +400,11 @@ async function startServer() {
       );
       if (otherActiveAdmins.length === 0) {
         res.status(400).json({
-          error: 'حداقل یک مدیر کل فعال باید در سامانه باقی بماند / Cannot delete the last active admin',
+          error: errMsg(
+            req,
+            'حداقل یک مدیر کل فعال باید در سامانه باقی بماند',
+            'Cannot delete the last active admin',
+          ),
         });
         return;
       }
@@ -577,11 +611,11 @@ async function startServer() {
 
     const pk = normKey(packingListNo);
     if (!pk) {
-      res.status(400).json({ error: 'شماره پکینگ لیست الزامی است / Packing List No. is required' });
+      res.status(400).json({ error: errMsg(req, 'شماره پکینگ لیست الزامی است', 'Packing List No. is required') });
       return;
     }
     if (!Array.isArray(entries) || entries.length === 0) {
-      res.status(400).json({ error: 'حداقل یک نگله/آیتم باید ثبت شود / At least one package item is required' });
+      res.status(400).json({ error: errMsg(req, 'حداقل یک نگله باید ثبت شود', 'At least one package entry is required') });
       return;
     }
 
@@ -592,7 +626,7 @@ async function startServer() {
     if (meta?.isClosed && !acknowledgeClosed) {
       res.status(409).json({
         code: 'CLOSED_PACKING_WARNING',
-        error: 'این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.',
+        error: errMsg(req, 'این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 'This Packing List is already marked closed.'),
       });
       return;
     }
@@ -600,7 +634,11 @@ async function startServer() {
     if (existingGen.length > 0 && !isContinuation) {
       res.status(409).json({
         code: 'DUPLICATE_PACKING_PROMPT',
-        error: 'شماره پکینگ لیست تکراری است. آیا ادامه همان پکینگ لیست قبلی است؟',
+        error: errMsg(
+          req,
+          'شماره پکینگ لیست تکراری است. آیا ادامه همان پکینگ لیست قبلی است؟',
+          'Duplicate Packing List No. Is this a continuation of the existing Packing List?',
+        ),
       });
       return;
     }
@@ -615,7 +653,11 @@ async function startServer() {
       if (isContinuation && existingGen.length > 0 && (!pkgNo || existingPackages.has(pkgNo))) {
         res.status(409).json({
           code: 'DUPLICATE_PACKAGE_ON_CONTINUATION',
-          error: `برای ادامه پکینگ لیست ${pk}، باید شماره نگله جدید و متفاوت وارد کنید (نگله «${pkgNo || '-'}» قبلاً ثبت شده است).`,
+          error: errMsg(
+            req,
+            `برای ادامه پکینگ لیست ${pk}، باید شماره نگله جدید و متفاوت وارد کنید (نگله «${pkgNo || '-'}» قبلاً ثبت شده است).`,
+            `Continuation under Packing List ${pk} requires a new Package No. ("${pkgNo || '-'}" already exists).`,
+          ),
         });
         return;
       }
@@ -626,7 +668,11 @@ async function startServer() {
         if (store.isMapnaMinutesTaken(cleanMapnaMinutes) || batchMapnaMinutes.has(lowerKey)) {
           res.status(409).json({
             code: 'DUPLICATE_MAPNA_MINUTES',
-            error: `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است و قبلاً ثبت شده است.`,
+            error: errMsg(
+              req,
+              `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است و قبلاً ثبت شده است.`,
+              `MAPNA Entry Minutes No. "${cleanMapnaMinutes}" already exists and must be unique.`,
+            ),
           });
           return;
         }
@@ -636,6 +682,10 @@ async function startServer() {
       const cleanArrival = normKey(raw.arrivalDate);
       const cleanReleaseNo = normKey(raw.releaseNo);
       const cleanReleaseDate = cleanReleaseNo ? (normKey(raw.releaseDate) || cleanArrival) : cleanArrival;
+      const parsedItemCount =
+        raw.itemCount !== undefined && raw.itemCount !== null && Number.isFinite(Number(raw.itemCount)) && Number(raw.itemCount) > 0
+          ? Math.floor(Number(raw.itemCount))
+          : null;
 
       preparedGeneral.push({
         id: makeId(),
@@ -649,6 +699,7 @@ async function startServer() {
         mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
+        itemCount: parsedItemCount,
         itemDescription: normKey(raw.itemDescription),
         island: normKey(raw.island),
         system: normKey(raw.system),
@@ -696,7 +747,7 @@ async function startServer() {
   app.patch('/api/general/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const item = store.db.general.find((g) => g.id === req.params.id);
     if (!item) {
-      res.status(404).json({ error: 'Record not found' });
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
       return;
     }
     const { acknowledgeClosed, rowNo: _ignoredRowNo, ...patch } = req.body as Partial<GeneralEntry> & {
@@ -706,7 +757,7 @@ async function startServer() {
     if (store.db.packingMeta[pk]?.isClosed && !acknowledgeClosed) {
       res.status(409).json({
         code: 'CLOSED_PACKING_WARNING',
-        error: 'این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.',
+        error: errMsg(req, 'این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 'This Packing List is already marked closed.'),
       });
       return;
     }
@@ -716,7 +767,11 @@ async function startServer() {
       if (cleanMapnaMinutes && store.isMapnaMinutesTaken(cleanMapnaMinutes, item.id)) {
         res.status(409).json({
           code: 'DUPLICATE_MAPNA_MINUTES',
-          error: `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است.`,
+          error: errMsg(
+            req,
+            `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است.`,
+            `MAPNA Entry Minutes No. "${cleanMapnaMinutes}" already exists.`,
+          ),
         });
         return;
       }
@@ -729,6 +784,13 @@ async function startServer() {
       ? (normKey(patch.releaseDate ?? item.releaseDate) || finalArrival)
       : finalArrival;
 
+    if (patch.itemCount !== undefined) {
+      patch.itemCount =
+        patch.itemCount !== null && Number.isFinite(Number(patch.itemCount)) && Number(patch.itemCount) > 0
+          ? Math.floor(Number(patch.itemCount))
+          : null;
+    }
+
     Object.assign(item, {
       ...patch,
       releaseNo: finalReleaseNo,
@@ -736,6 +798,7 @@ async function startServer() {
       rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
+    store.renumberScope('general');
     store.rebuildIndexes();
     const transitUpdated = store.syncTransitArrival(item.packingListNo, sanitizeUser(req.currentUser!));
     store.addAudit({
@@ -752,7 +815,7 @@ async function startServer() {
   app.delete('/api/general/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const idx = store.db.general.findIndex((g) => g.id === req.params.id);
     if (idx === -1) {
-      res.status(404).json({ error: 'Record not found' });
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
       return;
     }
     const cascadeDetailed = String(req.query.cascadeDetailed || '') === 'true';
@@ -904,13 +967,13 @@ async function startServer() {
     };
     const pk = normKey(raw.shipmentNo);
     if (!pk) {
-      res.status(400).json({ error: 'شماره محموله / پکینگ لیست الزامی است' });
+      res.status(400).json({ error: errMsg(req, 'شماره محموله / پکینگ لیست الزامی است', 'Shipment / Packing List No. is required') });
       return;
     }
     if (store.db.packingMeta[pk]?.isClosed && !acknowledgeClosed) {
       res.status(409).json({
         code: 'CLOSED_PACKING_WARNING',
-        error: 'این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.',
+        error: errMsg(req, 'این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 'This Packing List is already marked closed.'),
       });
       return;
     }
@@ -920,13 +983,23 @@ async function startServer() {
     if (store.isDetailedItemNoTaken(pk, pkgNo, itemNo)) {
       res.status(409).json({
         code: 'DUPLICATE_ITEM_NO',
-        error: `شماره آیتم ${itemNo} برای پکینگ «${pk}» و نگله «${pkgNo || '-'}» تکراری است.`,
+        error: errMsg(
+          req,
+          `شماره آیتم ${itemNo} برای پکینگ «${pk}» و نگله «${pkgNo || '-'}» تکراری است.`,
+          `Item No. ${itemNo} already exists for Packing "${pk}" and Package "${pkgNo || '-'}".`,
+        ),
       });
       return;
     }
 
     const shared = store.getGeneralSharedInfo(pk, pkgNo);
     const now = new Date().toISOString();
+    const cleanDescription = normKey(raw.description);
+    const rawGenDesc = normKey(raw.generalDescription);
+    const resolvedGeneralDesc = rawGenDesc
+      ? formatGeneralDescriptionCase(rawGenDesc)
+      : inferGeneralDescription(cleanDescription);
+
     const created: DetailedEntry = {
       id: makeId(),
       rowNo: '0',
@@ -936,8 +1009,8 @@ async function startServer() {
       shipmentNo: pk,
       packageNo: pkgNo,
       itemNo,
-      generalDescription: normKey(raw.generalDescription) || shared?.itemDescription || '',
-      description: normKey(raw.description),
+      generalDescription: resolvedGeneralDesc,
+      description: cleanDescription,
       size: normKey(raw.size),
       itemCode: normKey(raw.itemCode),
       packingQty: raw.packingQty ?? null,
@@ -1004,7 +1077,7 @@ async function startServer() {
   app.patch('/api/detailed/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const item = store.db.detailed.find((d) => d.id === req.params.id);
     if (!item) {
-      res.status(404).json({ error: 'Record not found' });
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
       return;
     }
     const { acknowledgeClosed, rowNo: _ignoredRowNo, ...patch } = req.body as Partial<DetailedEntry> & {
@@ -1014,7 +1087,7 @@ async function startServer() {
     if (store.db.packingMeta[pk]?.isClosed && !acknowledgeClosed) {
       res.status(409).json({
         code: 'CLOSED_PACKING_WARNING',
-        error: 'این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.',
+        error: errMsg(req, 'این پکینگ لیست قبلاً بسته/تکمیل اعلام شده است.', 'This Packing List is already marked closed.'),
       });
       return;
     }
@@ -1024,9 +1097,17 @@ async function startServer() {
     if (nextItemNo && store.isDetailedItemNoTaken(pk, nextPkg, nextItemNo, item.id)) {
       res.status(409).json({
         code: 'DUPLICATE_ITEM_NO',
-        error: `شماره آیتم ${nextItemNo} برای پکینگ «${pk}» و نگله «${nextPkg || '-'}» تکراری است.`,
+        error: errMsg(
+          req,
+          `شماره آیتم ${nextItemNo} برای پکینگ «${pk}» و نگله «${nextPkg || '-'}» تکراری است.`,
+          `Item No. ${nextItemNo} already exists for Packing "${pk}" and Package "${nextPkg || '-'}".`,
+        ),
       });
       return;
+    }
+
+    if (patch.generalDescription !== undefined) {
+      patch.generalDescription = formatGeneralDescriptionCase(patch.generalDescription);
     }
 
     Object.assign(item, {
@@ -1037,6 +1118,7 @@ async function startServer() {
       rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
+    store.renumberScope('detailed');
     store.rebuildIndexes();
     const transitUpdated = store.syncTransitArrival(item.shipmentNo, sanitizeUser(req.currentUser!));
     store.addAudit({
@@ -1054,7 +1136,7 @@ async function startServer() {
   app.post('/api/detailed/:id/backfill', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const item = store.db.detailed.find((d) => d.id === req.params.id);
     if (!item) {
-      res.status(404).json({ error: 'Record not found' });
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
       return;
     }
     const { qty, arrivalDate, shipmentNo, packageNo, note } = req.body as {
@@ -1065,7 +1147,7 @@ async function startServer() {
       note?: string;
     };
     if (!qty || !Number.isFinite(qty) || qty <= 0) {
-      res.status(400).json({ error: 'تعداد جبران کسری باید بزرگتر از صفر باشد' });
+      res.status(400).json({ error: errMsg(req, 'تعداد جبران کسری باید بزرگتر از صفر باشد', 'Fulfilled quantity must be greater than zero') });
       return;
     }
     const record: ShortageBackfillRecord = {
@@ -1097,7 +1179,7 @@ async function startServer() {
   app.delete('/api/detailed/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const idx = store.db.detailed.findIndex((d) => d.id === req.params.id);
     if (idx === -1) {
-      res.status(404).json({ error: 'Record not found' });
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
       return;
     }
     const [removed] = store.db.detailed.splice(idx, 1);
@@ -1228,7 +1310,7 @@ async function startServer() {
   app.patch('/api/transit/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const item = store.db.transit.find((t) => t.id === req.params.id);
     if (!item) {
-      res.status(404).json({ error: 'Record not found' });
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
       return;
     }
     const { rowNo: _ignoredRowNo, ...patch } = req.body as Partial<TransitEntry>;
@@ -1252,7 +1334,7 @@ async function startServer() {
   app.delete('/api/transit/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const idx = store.db.transit.findIndex((t) => t.id === req.params.id);
     if (idx === -1) {
-      res.status(404).json({ error: 'Record not found' });
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
       return;
     }
     const [removed] = store.db.transit.splice(idx, 1);
@@ -1281,36 +1363,84 @@ async function startServer() {
   app.get('/api/trash', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
     const scope = String(req.query.scope || '');
     const q = String(req.query.q || '');
-    const items = store.db.trash.filter((item) => {
-      if (scope && item.scope !== scope) return false;
-      return matchSearch([item.targetLabel, item.deletedBy, item.scope], q);
-    });
+    const detailedTrash = store.db.trash.filter((t) => t.scope === 'detailed');
+    const items = store.db.trash
+      .filter((item) => {
+        if (scope && item.scope !== scope) return false;
+        return matchSearch([item.targetLabel, item.deletedBy, item.scope], q);
+      })
+      .map((item) => {
+        if (item.scope !== 'general') return item;
+        const g = item.data as GeneralEntry;
+        const pk = normKey(g.packingListNo);
+        const pkg = normKey(g.packageNo);
+        const linkedTrashDetailedCount = pk
+          ? detailedTrash.filter((dt) => {
+              const d = dt.data as DetailedEntry;
+              return normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
+            }).length
+          : 0;
+        return { ...item, linkedTrashDetailedCount };
+      });
     res.json({ items });
   });
 
   app.post('/api/trash/:id/restore', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const idx = store.db.trash.findIndex((t) => t.id === req.params.id);
     if (idx === -1) {
-      res.status(404).json({ error: 'Trash item not found' });
+      res.status(404).json({ error: errMsg(req, 'آیتم در سطل بازیافت یافت نشد', 'Trash item not found') });
       return;
     }
+    const restoreDetailed = String(req.query.restoreDetailed || '') === 'true';
     const entry = store.db.trash[idx];
+    let restoredDetailedCount = 0;
+
     if (entry.scope === 'general') {
       const g = entry.data as GeneralEntry;
       if (g.mapnaEntryMinutesNo && store.isMapnaMinutesTaken(g.mapnaEntryMinutesNo)) {
         res.status(409).json({
-          error: `شماره صورتجلسه ورود مپنا «${g.mapnaEntryMinutesNo}» در حال حاضر در سیستم فعال است و امکان بازیابی مستقیم وجود ندارد.`,
+          error: errMsg(
+            req,
+            `شماره صورتجلسه ورود مپنا «${g.mapnaEntryMinutesNo}» در حال حاضر در سیستم فعال است و امکان بازیابی مستقیم وجود ندارد.`,
+            `MAPNA Entry Minutes No. "${g.mapnaEntryMinutesNo}" is already active and cannot be restored directly.`,
+          ),
         });
         return;
       }
       store.db.trash.splice(idx, 1);
       store.db.general.unshift({ ...g, updatedAt: new Date().toISOString() });
       store.renumberScope('general');
+
+      if (restoreDetailed) {
+        const pk = normKey(g.packingListNo);
+        const pkg = normKey(g.packageNo);
+        const remainingTrash: TrashRecord[] = [];
+        for (const tr of store.db.trash) {
+          if (tr.scope === 'detailed') {
+            const d = tr.data as DetailedEntry;
+            const matches = normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
+            if (matches && !(d.itemNo && store.isDetailedItemNoTaken(d.shipmentNo, d.packageNo, d.itemNo))) {
+              store.db.detailed.unshift({ ...d, updatedAt: new Date().toISOString() });
+              restoredDetailedCount += 1;
+              continue;
+            }
+          }
+          remainingTrash.push(tr);
+        }
+        store.db.trash = remainingTrash;
+        if (restoredDetailedCount > 0) {
+          store.renumberScope('detailed');
+        }
+      }
     } else if (entry.scope === 'detailed') {
       const d = entry.data as DetailedEntry;
       if (d.itemNo && store.isDetailedItemNoTaken(d.shipmentNo, d.packageNo, d.itemNo)) {
         res.status(409).json({
-          error: `شماره آیتم ${d.itemNo} در محموله ${d.shipmentNo} / نگله ${d.packageNo || '-'} قبلاً وجود دارد.`,
+          error: errMsg(
+            req,
+            `شماره آیتم ${d.itemNo} در محموله ${d.shipmentNo} / نگله ${d.packageNo || '-'} قبلاً وجود دارد.`,
+            `Item No. ${d.itemNo} already exists under Shipment ${d.shipmentNo} / Package ${d.packageNo || '-'}.`,
+          ),
         });
         return;
       }
@@ -1330,16 +1460,18 @@ async function startServer() {
       action: 'RESTORE_TRASH',
       scope: 'trash',
       targetId: entry.targetLabel,
-      summary: `بازیابی ردیف ${entry.scope} (${entry.targetLabel}) از سطل بازیافت`,
+      summary: `بازیابی ردیف ${entry.scope} (${entry.targetLabel}) از سطل بازیافت${
+        restoredDetailedCount > 0 ? ` همراه با ${restoredDetailedCount} ردیف جزئیات` : ''
+      }`,
     });
     store.saveImmediate();
-    res.json({ ok: true });
+    res.json({ ok: true, restoredDetailedCount });
   });
 
   app.delete('/api/trash/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const idx = store.db.trash.findIndex((t) => t.id === req.params.id);
     if (idx === -1) {
-      res.status(404).json({ error: 'Trash item not found' });
+      res.status(404).json({ error: errMsg(req, 'آیتم در سطل بازیافت یافت نشد', 'Trash item not found') });
       return;
     }
     const [purged] = store.db.trash.splice(idx, 1);
@@ -1352,6 +1484,77 @@ async function startServer() {
     });
     store.saveImmediate();
     res.json({ ok: true });
+  });
+
+  // ---------------- SITE ENTRY MINUTES ----------------
+  app.get('/api/site-entry', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    const packingsSet = new Set<string>();
+    for (const g of store.db.general) {
+      const pk = normKey(g.packingListNo);
+      if (pk) packingsSet.add(pk);
+    }
+    res.json({
+      minutes: store.db.siteEntryMinutes,
+      generalEntries: store.db.general,
+      packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
+    });
+  });
+
+  app.post('/api/site-entry', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const {
+      minutesNo,
+      date,
+      packingListNos,
+      supplier,
+      driverName,
+      vehicleNo,
+      waybillNo,
+      warehouseKeeper,
+      employerRep,
+      mapnaRep,
+      conditionStatus,
+      notes,
+    } = req.body as Partial<SiteEntryMinutesRecord>;
+    const cleanNo = normKey(minutesNo);
+    const cleanDate = normKey(date);
+    const cleanPackings = Array.from(new Set((packingListNos || []).map(normKey).filter(Boolean)));
+    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره صورتجلسه، تاریخ و حداقل یک پکینگ لیست الزامی است',
+          'Minutes No., date, and at least one Packing List are required',
+        ),
+      });
+      return;
+    }
+    const record: SiteEntryMinutesRecord = {
+      id: makeId(),
+      minutesNo: cleanNo,
+      date: cleanDate,
+      packingListNos: cleanPackings,
+      supplier: normKey(supplier),
+      driverName: normKey(driverName),
+      vehicleNo: normKey(vehicleNo),
+      waybillNo: normKey(waybillNo),
+      warehouseKeeper: normKey(warehouseKeeper),
+      employerRep: normKey(employerRep),
+      mapnaRep: normKey(mapnaRep),
+      conditionStatus: conditionStatus || 'healthy',
+      notes: normKey(notes),
+      createdAt: new Date().toISOString(),
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+    store.db.siteEntryMinutes.unshift(record);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'CREATE_SITE_ENTRY_MINUTES',
+      scope: 'siteEntry',
+      targetId: cleanNo,
+      summary: `ثبت صورتجلسه ورود کالا به کارگاه شماره ${cleanNo} (${cleanPackings.join('، ')})`,
+    });
+    store.saveImmediate();
+    res.json({ record });
   });
 
   // ---------------- OPI MANAGEMENT ----------------
@@ -1385,7 +1588,13 @@ async function startServer() {
     const cleanDate = normKey(date);
     const cleanPackings = Array.from(new Set((packingNos || []).map(normKey).filter(Boolean)));
     if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
-      res.status(400).json({ error: 'شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است' });
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است',
+          'Invitation No., date, and at least one Packing List are required',
+        ),
+      });
       return;
     }
 
@@ -1446,7 +1655,7 @@ async function startServer() {
       }>;
     };
     if (!Array.isArray(results) || results.length === 0) {
-      res.status(400).json({ error: 'حداقل یک قلم جهت ثبت نتیجه OPI انتخاب کنید' });
+      res.status(400).json({ error: errMsg(req, 'حداقل یک قلم جهت ثبت نتیجه OPI انتخاب کنید', 'Select at least one item to record OPI results') });
       return;
     }
 
@@ -1490,6 +1699,139 @@ async function startServer() {
     res.json({ ok: true, updatedCount });
   });
 
+  // ---------------- OPI MINUTES & OSDR DISCREPANCY REPORTS ----------------
+  app.get('/api/opi-minutes', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    const packingsSet = new Set<string>();
+    for (const g of store.db.general) {
+      const pk = normKey(g.packingListNo);
+      if (pk) packingsSet.add(pk);
+    }
+    for (const d of store.db.detailed) {
+      const pk = normKey(d.shipmentNo);
+      if (pk) packingsSet.add(pk);
+    }
+    res.json({
+      minutes: store.db.opiMinutes,
+      osdrReports: store.db.osdrReports,
+      invitations: store.db.opiInvitations,
+      detailedItems: store.getDetailedComputedList(),
+      packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
+    });
+  });
+
+  app.post('/api/opi-minutes', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const {
+      minutesNo,
+      invitationNo,
+      date,
+      packingListNo,
+      packageNos,
+      location,
+      mapnaInspector,
+      employerInspector,
+      contractorInspector,
+      qcInspector,
+      resultStatus,
+      notes,
+    } = req.body as Partial<OpiMinutesRecord>;
+
+    const cleanNo = normKey(minutesNo);
+    const cleanDate = normKey(date);
+    const cleanPacking = normKey(packingListNo);
+    if (!cleanNo || !cleanDate || !cleanPacking) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره صورتجلسه، تاریخ و شماره پکینگ لیست الزامی است',
+          'Minutes No., date, and Packing List No. are required',
+        ),
+      });
+      return;
+    }
+
+    const record: OpiMinutesRecord = {
+      id: makeId(),
+      minutesNo: cleanNo,
+      invitationNo: normKey(invitationNo),
+      date: cleanDate,
+      packingListNo: cleanPacking,
+      packageNos: Array.from(new Set((packageNos || []).map(normKey).filter(Boolean))),
+      location: normKey(location),
+      mapnaInspector: normKey(mapnaInspector),
+      employerInspector: normKey(employerInspector),
+      contractorInspector: normKey(contractorInspector),
+      qcInspector: normKey(qcInspector),
+      resultStatus: resultStatus || 'compliant',
+      notes: normKey(notes),
+      createdAt: new Date().toISOString(),
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+
+    if (record.invitationNo) {
+      const inv = store.db.opiInvitations.find((x) => normKey(x.invitationNo) === record.invitationNo);
+      if (inv) inv.status = 'completed';
+    }
+
+    store.db.opiMinutes.unshift(record);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'CREATE_OPI_MINUTES',
+      scope: 'opiMinutes',
+      targetId: cleanNo,
+      summary: `ثبت صورتجلسه گشایش و بازرسی بسته‌ها شماره ${cleanNo} (پکینگ ${cleanPacking})`,
+    });
+    store.saveImmediate();
+    res.json({ record });
+  });
+
+  app.post('/api/osdr', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { reportNo, date, opiMinutesNo, packingListNo, supplier, items, notes } = req.body as {
+      reportNo?: string;
+      date?: string;
+      opiMinutesNo?: string;
+      packingListNo?: string;
+      supplier?: string;
+      items?: OsdrReportItem[];
+      notes?: string;
+    };
+    const cleanNo = normKey(reportNo);
+    const cleanDate = normKey(date);
+    const cleanPacking = normKey(packingListNo);
+    if (!cleanNo || !cleanDate || !cleanPacking || !Array.isArray(items) || items.length === 0) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره گزارش مغایرت، تاریخ، شماره پکینگ و حداقل یک قلم مغایرت الزامی است',
+          'Report No., date, Packing List No., and at least one discrepancy item are required',
+        ),
+      });
+      return;
+    }
+
+    const record: OsdrReportRecord = {
+      id: makeId(),
+      reportNo: cleanNo,
+      date: cleanDate,
+      opiMinutesNo: normKey(opiMinutesNo),
+      packingListNo: cleanPacking,
+      supplier: normKey(supplier),
+      items,
+      notes: normKey(notes),
+      createdAt: new Date().toISOString(),
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+    store.db.osdrReports.unshift(record);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'CREATE_OSDR_REPORT',
+      scope: 'osdr',
+      targetId: cleanNo,
+      summary: `ثبت گزارش مغایرت، کسری و آسیب‌دیدگی شماره ${cleanNo} برای پکینگ ${cleanPacking} (${items.length} قلم)`,
+    });
+    store.saveImmediate();
+    res.json({ report: record });
+  });
+
   // ---------------- GCV RECEIPTS ----------------
   app.get('/api/gcv', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
     res.json({
@@ -1509,7 +1851,13 @@ async function startServer() {
     const cleanNo = normKey(receiptNo);
     const cleanReceiver = normKey(receiver);
     if (!cleanNo || !cleanReceiver || !Array.isArray(items) || items.length === 0) {
-      res.status(400).json({ error: 'شماره رسید GCV، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است' });
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره رسید، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است',
+          'Receipt No., receiver, and at least one item are required',
+        ),
+      });
       return;
     }
 
@@ -1517,21 +1865,33 @@ async function startServer() {
     for (const reqItem of items) {
       const qty = Number(reqItem.qty);
       if (!Number.isFinite(qty) || qty <= 0) {
-        res.status(400).json({ error: 'تعداد تحویلی باید بزرگتر از صفر باشد' });
+        res.status(400).json({ error: errMsg(req, 'تعداد تحویلی باید بزرگتر از صفر باشد', 'Delivered quantity must be greater than zero') });
         return;
       }
       const d = store.db.detailed.find((x) => x.id === reqItem.detailedId);
       if (!d) {
-        res.status(404).json({ error: 'آیتم دیتیل یافت نشد' });
+        res.status(404).json({ error: errMsg(req, 'آیتم جزئیات یافت نشد', 'Detailed item not found') });
         return;
       }
       const comp = computeDetailedEntry(d);
       if (comp.opiPending) {
-        res.status(400).json({ error: `برای آیتم ${d.itemNo || d.rowNo} (${d.description}) هنوز OPI و مقدار واقعی ثبت نشده است.` });
+        res.status(400).json({
+          error: errMsg(
+            req,
+            `برای آیتم ${d.itemNo || d.rowNo} (${d.description}) هنوز OPI و مقدار واقعی ثبت نشده است.`,
+            `Item ${d.itemNo || d.rowNo} (${d.description}) is pending OPI / Actual Qty.`,
+          ),
+        });
         return;
       }
       if (qty > comp.mapnaInventory) {
-        res.status(400).json({ error: `مقدار تحویلی (${qty}) برای آیتم ${d.description || d.itemNo} بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.` });
+        res.status(400).json({
+          error: errMsg(
+            req,
+            `مقدار تحویلی (${qty}) برای آیتم ${d.description || d.itemNo} بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`,
+            `Delivered qty (${qty}) for item ${d.description || d.itemNo} exceeds MAPNA stock (${comp.mapnaInventory}).`,
+          ),
+        });
         return;
       }
       lineItems.push({
@@ -1569,7 +1929,7 @@ async function startServer() {
       action: 'CREATE_GCV_RECEIPT',
       scope: 'gcv',
       targetId: cleanNo,
-      summary: `ثبت رسید GCV شماره ${cleanNo} برای ${cleanReceiver} (${lineItems.length} قلم کالا)`,
+      summary: `ثبت رسید مصرف مستقیم کالا شماره ${cleanNo} برای ${cleanReceiver} (${lineItems.length} قلم کالا)`,
     });
     store.saveImmediate();
     res.json({ document: doc });
@@ -1594,13 +1954,13 @@ async function startServer() {
     };
     const validTypes: MivDocType[] = ['miv_contractor', 'smr_contractor', 'smr_mapna', 'miv_mapna'];
     if (!docType || !validTypes.includes(docType)) {
-      res.status(400).json({ error: 'نوع فرم معتبر نیست' });
+      res.status(400).json({ error: errMsg(req, 'نوع فرم معتبر نیست', 'Invalid document type') });
       return;
     }
     const cleanNo = normKey(docNo);
     const cleanDate = normKey(date);
     if (!cleanNo || !Array.isArray(items) || items.length === 0) {
-      res.status(400).json({ error: 'شماره سند و حداقل یک قلم کالا الزامی است' });
+      res.status(400).json({ error: errMsg(req, 'شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required') });
       return;
     }
 
@@ -1608,24 +1968,32 @@ async function startServer() {
     for (const reqItem of items) {
       const qty = Number(reqItem.qty);
       if (!Number.isFinite(qty) || qty <= 0) {
-        res.status(400).json({ error: 'تعداد باید بزرگتر از صفر باشد' });
+        res.status(400).json({ error: errMsg(req, 'تعداد باید بزرگتر از صفر باشد', 'Quantity must be greater than zero') });
         return;
       }
       const d = store.db.detailed.find((x) => x.id === reqItem.detailedId);
       if (!d) {
-        res.status(404).json({ error: 'آیتم دیتیل یافت نشد' });
+        res.status(404).json({ error: errMsg(req, 'آیتم جزئیات یافت نشد', 'Detailed item not found') });
         return;
       }
       const comp = computeDetailedEntry(d);
       if ((docType === 'miv_contractor' || docType === 'smr_mapna') && qty > comp.contractorInventory) {
         res.status(400).json({
-          error: `تعداد (${qty}) برای ${d.description || d.itemNo} از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`,
+          error: errMsg(
+            req,
+            `تعداد (${qty}) برای ${d.description || d.itemNo} از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`,
+            `Qty (${qty}) for ${d.description || d.itemNo} exceeds Contractor stock (${comp.contractorInventory}).`,
+          ),
         });
         return;
       }
       if (docType === 'miv_mapna' && qty > comp.mapnaInventory) {
         res.status(400).json({
-          error: `تعداد (${qty}) برای ${d.description || d.itemNo} از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
+          error: errMsg(
+            req,
+            `تعداد (${qty}) برای ${d.description || d.itemNo} از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
+            `Qty (${qty}) for ${d.description || d.itemNo} exceeds MAPNA stock (${comp.mapnaInventory}).`,
+          ),
         });
         return;
       }
@@ -1680,12 +2048,112 @@ async function startServer() {
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: `CREATE_${docType.toUpperCase()}`,
-      scope: 'miv',
+      scope: docType.startsWith('smr') ? 'smr' : 'miv',
       targetId: cleanNo,
       summary: `ثبت فرم ${docType} شماره ${cleanNo} برای ${lineItems.length} قلم کالا`,
     });
     store.saveImmediate();
     res.json({ document: doc });
+  });
+
+  // ---------------- SUBSTITUTION (جایگزینی) ----------------
+  app.get('/api/substitutions', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    res.json({
+      records: store.db.substitutions,
+      detailedItems: store.getDetailedComputedList(),
+    });
+  });
+
+  app.post('/api/substitutions', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const {
+      docNo,
+      date,
+      detailedId,
+      substituteDescription,
+      substituteItemCode,
+      substituteSize,
+      qty,
+      reason,
+      approvedBy,
+      status,
+      notes,
+    } = req.body as Partial<SubstitutionRecord>;
+
+    const cleanNo = normKey(docNo);
+    const cleanDate = normKey(date);
+    const cleanSubDesc = normKey(substituteDescription);
+    const cleanReason = normKey(reason);
+    const d = store.db.detailed.find((x) => x.id === detailedId);
+    if (!cleanNo || !cleanDate || !d || !cleanSubDesc || !cleanReason) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره سند جایگزینی، تاریخ، کالای اصلی، مشخصات کالای جایگزین و دلیل جایگزینی الزامی است',
+          'Document No., date, original item, substitute description, and reason are required',
+        ),
+      });
+      return;
+    }
+
+    const numQty = Number(qty);
+    if (!Number.isFinite(numQty) || numQty <= 0) {
+      res.status(400).json({ error: errMsg(req, 'تعداد جایگزینی باید بزرگتر از صفر باشد', 'Substitution quantity must be greater than zero') });
+      return;
+    }
+
+    const record: SubstitutionRecord = {
+      id: makeId(),
+      docNo: cleanNo,
+      date: cleanDate,
+      detailedId: d.id,
+      shipmentNo: d.shipmentNo,
+      packageNo: d.packageNo,
+      itemNo: d.itemNo,
+      originalDescription: d.description || d.generalDescription,
+      originalItemCode: d.itemCode,
+      substituteDescription: cleanSubDesc,
+      substituteItemCode: normKey(substituteItemCode),
+      substituteSize: normKey(substituteSize),
+      qty: numQty,
+      countingUnit: d.countingUnit || 'PC',
+      reason: cleanReason,
+      approvedBy: normKey(approvedBy),
+      status: status || 'pending',
+      notes: normKey(notes),
+      createdAt: new Date().toISOString(),
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+    store.db.substitutions.unshift(record);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'CREATE_SUBSTITUTION',
+      scope: 'substitution',
+      targetId: cleanNo,
+      summary: `ثبت فرم جایگزینی شماره ${cleanNo} برای آیتم ${d.itemNo || d.rowNo} (${d.shipmentNo})`,
+    });
+    store.saveImmediate();
+    res.json({ record });
+  });
+
+  app.patch('/api/substitutions/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const rec = store.db.substitutions.find((s) => s.id === req.params.id);
+    if (!rec) {
+      res.status(404).json({ error: errMsg(req, 'سند جایگزینی یافت نشد', 'Substitution record not found') });
+      return;
+    }
+    const { status, approvedBy, notes } = req.body as Partial<SubstitutionRecord>;
+    if (status) rec.status = status;
+    if (approvedBy !== undefined) rec.approvedBy = normKey(approvedBy);
+    if (notes !== undefined) rec.notes = normKey(notes);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'UPDATE_SUBSTITUTION',
+      scope: 'substitution',
+      targetId: rec.docNo,
+      summary: `تغییر وضعیت جایگزینی شماره ${rec.docNo} به ${rec.status}`,
+    });
+    store.saveImmediate();
+    res.json({ record: rec });
   });
 
   // ---------------- MATERIAL BALANCE ----------------
@@ -1696,13 +2164,13 @@ async function startServer() {
       balanceStatus?: string;
     };
     if (!Array.isArray(detailedIds) || detailedIds.length === 0) {
-      res.status(400).json({ error: 'حداقل یک آیتم انتخاب کنید' });
+      res.status(400).json({ error: errMsg(req, 'حداقل یک آیتم انتخاب کنید', 'Select at least one item') });
       return;
     }
     const cleanNo = normKey(materialBalanceNo);
     const cleanStatus = normKey(balanceStatus);
     if (!cleanNo && !cleanStatus) {
-      res.status(400).json({ error: 'شماره بالانس یا وضعیت بالانس الزامی است' });
+      res.status(400).json({ error: errMsg(req, 'شماره موازنه یا وضعیت موازنه الزامی است', 'Balance No. or Balance Status is required') });
       return;
     }
     const now = new Date().toISOString();
@@ -1720,7 +2188,7 @@ async function startServer() {
       action: 'ASSIGN_MATERIAL_BALANCE',
       scope: 'balance',
       targetId: cleanNo || cleanStatus,
-      summary: `ثبت وضعیت بالانس متریال (${cleanNo || '-'} / ${cleanStatus || '-'}) برای ${updatedCount} ردیف`,
+      summary: `ثبت وضعیت موازنه مواد (${cleanNo || '-'} / ${cleanStatus || '-'}) برای ${updatedCount} ردیف`,
     });
     store.saveImmediate();
     res.json({ ok: true, updatedCount });
@@ -1735,14 +2203,14 @@ async function startServer() {
       stocktakeInfo?: string;
     };
     if (!Array.isArray(detailedIds) || detailedIds.length === 0) {
-      res.status(400).json({ error: 'حداقل یک آیتم انتخاب کنید' });
+      res.status(400).json({ error: errMsg(req, 'حداقل یک آیتم انتخاب کنید', 'Select at least one item') });
       return;
     }
     const cleanStatus = normKey(stocktakeStatus);
     const cleanDate = normKey(stocktakeDate);
     const cleanInfo = normKey(stocktakeInfo);
     if (!cleanStatus) {
-      res.status(400).json({ error: 'وضعیت انبارگردانی الزامی است' });
+      res.status(400).json({ error: errMsg(req, 'وضعیت انبارگردانی الزامی است', 'Stocktake status is required') });
       return;
     }
     const now = new Date().toISOString();
@@ -1900,7 +2368,7 @@ async function startServer() {
     const group = req.params.group as CategoryGroupKey;
     const { value } = req.body as { value?: string };
     if (!store.db.categories[group] || !normKey(value)) {
-      res.status(400).json({ error: 'Invalid category group or empty value' });
+      res.status(400).json({ error: errMsg(req, 'گروه دسته‌بندی نامعتبر یا مقدار خالی است', 'Invalid category group or empty value') });
       return;
     }
     store.registerCategoryValue(group, value);
@@ -1921,7 +2389,7 @@ async function startServer() {
     const from = normKey(oldValue);
     const to = normKey(newValue);
     if (!store.db.categories[group] || !from || !to) {
-      res.status(400).json({ error: 'Invalid rename parameters' });
+      res.status(400).json({ error: errMsg(req, 'پارامترهای تغییر نام نامعتبر است', 'Invalid rename parameters') });
       return;
     }
 
@@ -1969,7 +2437,7 @@ async function startServer() {
     const group = req.params.group as CategoryGroupKey;
     const value = normKey(String(req.query.value || ''));
     if (!store.db.categories[group] || !value) {
-      res.status(400).json({ error: 'Invalid delete request' });
+      res.status(400).json({ error: errMsg(req, 'درخواست حذف نامعتبر است', 'Invalid delete request') });
       return;
     }
     store.db.categories[group] = store.db.categories[group].filter((v) => v !== value);
@@ -2093,7 +2561,7 @@ async function startServer() {
       assumedCalendar?: CalendarMode;
     };
     if (!csvText) {
-      res.status(400).json({ error: 'CSV content is empty' });
+      res.status(400).json({ error: errMsg(req, 'محتوای فایل CSV خالی است', 'CSV content is empty') });
       return;
     }
     const matrix = parseCsvMatrix(csvText);
@@ -2143,7 +2611,7 @@ async function startServer() {
       duplicateRowPolicy?: 'auto_reassign' | 'skip';
     };
     if (!csvText) {
-      res.status(400).json({ error: 'CSV content is empty' });
+      res.status(400).json({ error: errMsg(req, 'محتوای فایل CSV خالی است', 'CSV content is empty') });
       return;
     }
     const matrix = parseCsvMatrix(csvText);
@@ -2259,7 +2727,7 @@ async function startServer() {
   app.post('/api/backup/restore', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
     const snapshot = req.body as DatabaseSnapshot;
     if (!snapshot || (!Array.isArray(snapshot.general) && !Array.isArray(snapshot.detailed))) {
-      res.status(400).json({ error: 'Invalid backup snapshot format' });
+      res.status(400).json({ error: errMsg(req, 'فرمت فایل پشتیبان نامعتبر است', 'Invalid backup snapshot format') });
       return;
     }
     store.restoreSnapshot(snapshot, sanitizeUser(req.currentUser!));
