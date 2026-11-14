@@ -19,6 +19,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 interface PackageLineDraft {
   id: string;
   packageNo: string;
+  packageType: string;
   itemCount: string;
   itemDescription: string;
   island: string;
@@ -60,6 +61,7 @@ function createEmptyLine(prefill?: TransitEntry | null): PackageLineDraft {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     packageNo: prefill?.packageNo || '',
+    packageType: '',
     itemCount: '',
     itemDescription: prefill?.itemDescription || '',
     island: '',
@@ -264,6 +266,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
         mapnaEntryMinutesNo: mapnaEntryMinutesNo.trim(),
         packingListNo: pk,
         packageNo: l.packageNo.trim(),
+        packageType: l.packageType.trim(),
         itemCount: toOptionalNum(l.itemCount),
         itemDescription: l.itemDescription.trim(),
         island: l.island.trim(),
@@ -752,6 +755,21 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                         <div>
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                            {t.headers.packageType}
+                          </label>
+                          <input
+                            type="text"
+                            list="samaan-package-types"
+                            dir={!line.packageType ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                            value={line.packageType}
+                            onChange={(e) => updateLine(line.id, { packageType: e.target.value })}
+                            placeholder={isFa ? 'صندوق چوبی / پالت / کارتن...' : 'Box / Pallet / Crate...'}
+                            className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
                             {t.headers.itemCount}
                           </label>
                           <input
@@ -768,7 +786,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           />
                         </div>
 
-                        <div className="sm:col-span-2">
+                        <div>
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
                             {t.headers.itemDescription} *
                           </label>
@@ -936,6 +954,17 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
               </datalist>
               <datalist id="samaan-dispatch">
                 {categories.dispatchLocation.map((v) => <option key={v} value={v} />)}
+              </datalist>
+              <datalist id="samaan-package-types">
+                <option value="صندوق چوبی (Wooden Box)" />
+                <option value="جعبه مشبک (Crate)" />
+                <option value="پالت (Pallet)" />
+                <option value="باندل (Bundle)" />
+                <option value="کارتن (Carton)" />
+                <option value="قرقره / درام (Drum)" />
+                <option value="اسکید (Skid)" />
+                <option value="کانتینر (Container)" />
+                <option value="فله (Loose)" />
               </datalist>
             </form>
 

@@ -149,6 +149,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, get: (r: GeneralRowView) => r.arrivalDate },
       { key: 'packingListNo', header: t.headers.packingListNo, get: (r: GeneralRowView) => r.packingListNo },
       { key: 'packageNo', header: t.headers.packageNo, get: (r: GeneralRowView) => r.packageNo },
+      { key: 'packageType', header: t.headers.packageType, get: (r: GeneralRowView) => r.packageType },
       { key: 'itemCount', header: t.headers.itemCount, isNum: true, get: (r: GeneralRowView) => r.itemCount },
       { key: 'itemDescription', header: t.headers.itemDescription, get: (r: GeneralRowView) => r.itemDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: GeneralRowView) => r.supplier },
@@ -821,6 +822,31 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       isFa && !editing.packageNo ? 'text-right' : 'text-left'
                     }`}
                   />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.packageType}
+                  </label>
+                  <input
+                    type="text"
+                    list="samaan-general-package-types"
+                    dir={!editing.packageType ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={editing.packageType || ''}
+                    onChange={(e) => setEditing({ ...editing, packageType: e.target.value })}
+                    placeholder={isFa ? 'صندوق چوبی / پالت / کارتن...' : 'Box / Pallet / Crate...'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                  <datalist id="samaan-general-package-types">
+                    <option value="صندوق چوبی (Wooden Box)" />
+                    <option value="جعبه مشبک (Crate)" />
+                    <option value="پالت (Pallet)" />
+                    <option value="باندل (Bundle)" />
+                    <option value="کارتن (Carton)" />
+                    <option value="قرقره / درام (Drum)" />
+                    <option value="اسکید (Skid)" />
+                    <option value="کانتینر (Container)" />
+                    <option value="فله (Loose)" />
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">

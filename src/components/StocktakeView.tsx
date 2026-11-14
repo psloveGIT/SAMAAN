@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ClipboardCheck, Download, Printer, Search } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, ClipboardList, Download, Printer, Search } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { DetailedComputed } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { PeriodicInspectionPanel } from './PeriodicInspectionPanel.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
 interface StocktakeViewProps {
@@ -38,6 +39,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
 
+  const [activeSection, setActiveSection] = useState<'stocktake' | 'periodic'>('stocktake');
   const [q, setQ] = useState('');
   const [shipmentFilter, setShipmentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -115,7 +117,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
       return;
     }
     if (!stocktakeStatus.trim()) {
-      notify('warning', isFa ? 'وضعیت انبارگردانی را مشخص کنید.' : 'Stocktake status is required.');
+      notify('warning', isFa ? 'وضعیت انبارگردانی و بازدید ادواری را مشخص کنید.' : 'Stocktake & periodic inspection status is required.');
       return;
     }
 
@@ -133,8 +135,8 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
       notify(
         'success',
         isFa
-          ? `وضعیت انبارگردانی برای ${res.updatedCount.toLocaleString('fa-IR')} قلم ثبت شد.`
-          : `Stocktake status recorded for ${res.updatedCount} items.`,
+          ? `وضعیت انبارگردانی و بازدید ادواری برای ${res.updatedCount.toLocaleString('fa-IR')} قلم ثبت شد.`
+          : `Stocktake & periodic inspection status recorded for ${res.updatedCount} items.`,
       );
       setSelectedIds([]);
       setStocktakeInfo('');
@@ -191,15 +193,51 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
 
   return (
     <div className="space-y-6">
-      {canEdit && (
-        <form
-          onSubmit={handleAssign}
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveSection('stocktake')}
+          className={`h-9 px-4 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors ${
+            activeSection === 'stocktake'
+              ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] shadow-sm'
+              : 'border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+          }`}
+        >
+          <ClipboardCheck className="w-4 h-4" />
+          <span>{isFa ? 'انبارگردانی اقلام' : 'Items Stocktake'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSection('periodic')}
+          className={`h-9 px-4 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors ${
+            activeSection === 'periodic'
+              ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] shadow-sm'
+              : 'border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+          }`}
+        >
+          <ClipboardList className="w-4 h-4" />
+          <span>
+            {isFa
+              ? 'بازدید ادواری انبار (چک‌لیست MD1EX-FQP02/07-03)'
+              : 'Periodic Warehouse Inspection (MD1EX-FQP02/07-03)'}
+          </span>
+        </button>
+      </div>
+
+      {activeSection === 'periodic' ? (
+        <PeriodicInspectionPanel refreshSignal={refreshSignal} onDataChanged={onDataChanged} />
+      ) : (
+        <>
+          {canEdit && (
+            <form
+              onSubmit={handleAssign}
           className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-bold">
               <ClipboardCheck className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{isFa ? 'ثبت وضعیت و تاریخ انبارگردانی' : 'Assign Stocktake Status & Date'}</span>
+              <span>{isFa ? 'ثبت وضعیت و تاریخ انبارگردانی و بازدید ادواری' : 'Assign Stocktake & Periodic Inspection Status'}</span>
             </div>
             <span className="text-xs text-[var(--text-muted)] tabular-nums">
               {isFa
@@ -238,7 +276,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'یادداشت انبارگردانی (اختیاری)' : 'Stocktake Note (optional)'}
+                {isFa ? 'یادداشت انبارگردانی و بازدید ادواری (اختیاری)' : 'Stocktake & Periodic Inspection Note (optional)'}
               </label>
               <input
                 type="text"
@@ -403,6 +441,8 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
         columns={reportColumns}
         rows={printRows}
       />
+        </>
+      )}
     </div>
   );
 };

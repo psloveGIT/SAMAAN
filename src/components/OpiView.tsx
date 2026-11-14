@@ -1,16 +1,643 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ClipboardCheck, Download, FileText, Printer, Search, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import {
+  CheckCircle2,
+  ClipboardCheck,
+  Download,
+  FileText,
+  Plus,
+  Printer,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import type { DetailedComputed, OpiInvitationRecord } from '../shared/types.ts';
+import type {
+  DetailedComputed,
+  GeneralEntry,
+  OpiInvitationLineItem,
+  OpiInvitationRecord,
+} from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+
+const MD1_STACKED_LOGO = '/assets/aistudio/______________________________65f1164c.png';
+
+const buildOpiItemsForPackings = (
+  packings: string[],
+  detailedItems: DetailedComputed[],
+  generalEntries: GeneralEntry[],
+): OpiInvitationLineItem[] => {
+  const rows: OpiInvitationLineItem[] = [];
+  for (const pk of packings) {
+    const detMatches = detailedItems.filter((d) => (d.shipmentNo || '').trim() === pk);
+    if (detMatches.length > 0) {
+      for (const d of detMatches) {
+        rows.push({
+          itemNo: d.itemNo || '',
+          packingListNo: d.shipmentNo || pk,
+          packageNo: d.packageNo || '',
+          description: d.description || d.generalDescription || '',
+          uom: d.countingUnit || '',
+          remarks: d.notes || '',
+        });
+      }
+    } else {
+      const genMatches = generalEntries.filter((g) => (g.packingListNo || '').trim() === pk);
+      if (genMatches.length > 0) {
+        genMatches.forEach((g, idx) => {
+          rows.push({
+            itemNo: String(idx + 1),
+            packingListNo: g.packingListNo || pk,
+            packageNo: g.packageNo || '',
+            description: g.itemDescription || '',
+            uom: 'بسته',
+            remarks: '',
+          });
+        });
+      } else {
+        rows.push({
+          itemNo: '',
+          packingListNo: pk,
+          packageNo: '',
+          description: '',
+          uom: '',
+          remarks: '',
+        });
+      }
+    }
+  }
+  return rows;
+};
+
+interface OfficialOpiSheetProps {
+  record: OpiInvitationRecord;
+  detailedItems: DetailedComputed[];
+  generalEntries: GeneralEntry[];
+  formatDate: (iso: string) => string;
+}
+
+const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
+  record,
+  detailedItems,
+  generalEntries,
+  formatDate,
+}) => {
+  const resolvedItems = useMemo(() => {
+    if (record.items && record.items.length > 0) return record.items;
+    return buildOpiItemsForPackings(record.packingNos || [], detailedItems, generalEntries);
+  }, [record, detailedItems, generalEntries]);
+
+  const minRows = 11;
+  const totalDisplayRows = Math.max(minRows, resolvedItems.length);
+  const paddedRows: (OpiInvitationLineItem | null)[] = [
+    ...resolvedItems,
+    ...Array.from({ length: Math.max(0, totalDisplayRows - resolvedItems.length) }, () => null),
+  ];
+
+  return (
+    <div
+      dir="rtl"
+      style={{
+        backgroundColor: '#ffffff',
+        color: '#000000',
+        fontFamily: '"Vazirmatn", "Plus Jakarta Sans", Tahoma, sans-serif',
+        width: '100%',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* Main Upper Frame */}
+      <div style={{ border: '1.8px solid #000000' }}>
+        {/* Header Row */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 190px',
+            borderBottom: '1.5px solid #000000',
+          }}
+        >
+          {/* Right + Center: Logo + Centered Title */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '118px 1fr',
+              alignItems: 'center',
+              padding: '6px 8px',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textAlign: 'center',
+              }}
+            >
+              <img
+                src={MD1_STACKED_LOGO}
+                alt="گروه مپنا - توسعه یک"
+                style={{ height: '56px', width: 'auto', objectFit: 'contain', display: 'block' }}
+              />
+              <div
+                style={{
+                  fontSize: '7.5px',
+                  fontWeight: 700,
+                  marginTop: '3px',
+                  color: '#334155',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                مستندات سیستم مدیریت یکپارچه
+              </div>
+            </div>
+
+            <div
+              style={{
+                textAlign: 'center',
+                lineHeight: 1.55,
+                padding: '2px 8px',
+              }}
+            >
+              <div style={{ fontSize: '12px', fontWeight: 700 }}>
+                شرکت احداث و توسعه نیروگاه های مپنا – توسعه یک (MD1)
+              </div>
+              <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
+                پروژه {record.projectName?.trim() || '..................'}
+              </div>
+              <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '2px' }}>
+                دعوتنامه گشایش و بازرسی بسته ها
+              </div>
+              <div dir="ltr" style={{ fontSize: '12px', fontWeight: 700 }}>
+                OPI Invitation
+              </div>
+            </div>
+          </div>
+
+          {/* Left Box: Invitation No & Issue Date */}
+          <div
+            style={{
+              borderRight: '1.5px solid #000000',
+              padding: '8px 10px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              fontSize: '10px',
+              fontWeight: 700,
+              textAlign: 'right',
+            }}
+          >
+            <div>
+              <div>شماره دعوتنامه:</div>
+              <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                {record.invitationNo}
+              </div>
+            </div>
+            <div>
+              <div>تاریخ:</div>
+              <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                {formatDate(record.issueDate || record.date)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Metadata Strip Row 1 */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr 1fr 1.25fr',
+            backgroundColor: '#e5e7eb',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.8px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>پروژه: </strong>
+            <span className="bidi-plaintext">{record.projectName || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>سیستم: </strong>
+            <span className="bidi-plaintext">{record.system || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>جزیره: </strong>
+            <span className="bidi-plaintext">{record.island || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>واحد: </strong>
+            <span className="bidi-plaintext">{record.unit || ''}</span>
+          </div>
+          <div style={{ padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>تامین کننده: </strong>
+            <span className="bidi-plaintext">{record.supplier || ''}</span>
+          </div>
+        </div>
+
+        {/* Metadata Strip Row 2 */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.2fr 1.8fr',
+            backgroundColor: '#e5e7eb',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.8px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>شماره قرارداد : </strong>
+            <span dir="ltr" className="tabular-nums">
+              {record.contractNo || ''}
+            </span>
+          </div>
+          <div style={{ padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>شماره بسته خرید: </strong>
+            <span dir="ltr" className="tabular-nums">
+              {record.purchasePackageNo || ''}
+            </span>
+          </div>
+        </div>
+
+        {/* Formal Request Text */}
+        <div
+          style={{
+            borderBottom: '1px solid #000000',
+            padding: '7px 10px',
+            fontSize: '10.3px',
+            fontWeight: 600,
+            lineHeight: 1.85,
+            textAlign: 'right',
+          }}
+        >
+          بدینوسیله از نمایندگان محترم کارفرما، مشاور، تامین کننده و پیمانکار نصاب صمیمانه تقاضا میشود در بازگشایی (OPI) اقلام مشروحه ذیل در مکان و زمان قید شده همکاری نمایند.
+        </div>
+
+        {/* Items Table (LTR column order matching PDF: Item No., Packing List No., Package No., شرح کالا, واحد (UOM), توضیحات) */}
+        <table
+          dir="ltr"
+          style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            fontSize: '9.5px',
+            tableLayout: 'fixed',
+          }}
+        >
+          <thead>
+            <tr>
+              <th
+                style={{
+                  width: '7%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 3px',
+                  fontWeight: 700,
+                  lineHeight: 1.35,
+                }}
+              >
+                Item
+                <br />
+                No.
+              </th>
+              <th
+                style={{
+                  width: '15%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  fontWeight: 700,
+                  lineHeight: 1.35,
+                }}
+              >
+                Packing List
+                <br />
+                No.
+              </th>
+              <th
+                style={{
+                  width: '13%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  fontWeight: 700,
+                  lineHeight: 1.35,
+                }}
+              >
+                Package
+                <br />
+                No.
+              </th>
+              <th
+                dir="rtl"
+                style={{
+                  width: '35%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 6px',
+                  fontWeight: 700,
+                }}
+              >
+                شرح کالا
+              </th>
+              <th
+                dir="rtl"
+                style={{
+                  width: '9%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 3px',
+                  fontWeight: 700,
+                  lineHeight: 1.35,
+                }}
+              >
+                واحد
+                <br />
+                <span dir="ltr">(UOM)</span>
+              </th>
+              <th
+                dir="rtl"
+                style={{
+                  width: '21%',
+                  borderBottom: '1px solid #000000',
+                  padding: '5px 6px',
+                  fontWeight: 700,
+                }}
+              >
+                توضیحات
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {paddedRows.map((row, idx) => (
+              <tr key={idx} style={{ height: '27px' }}>
+                <td
+                  className="tabular-nums"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 3px',
+                  }}
+                >
+                  {row?.itemNo || ''}
+                </td>
+                <td
+                  className="tabular-nums"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 4px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {row?.packingListNo || ''}
+                </td>
+                <td
+                  className="tabular-nums"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 4px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {row?.packageNo || ''}
+                </td>
+                <td
+                  dir="auto"
+                  className="bidi-plaintext"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 5px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {row?.description || ''}
+                </td>
+                <td
+                  dir="auto"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 3px',
+                  }}
+                >
+                  {row?.uom || ''}
+                </td>
+                <td
+                  dir="auto"
+                  className="bidi-plaintext"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    padding: '3px 5px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {row?.remarks || ''}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {/* Time / Date / Location Footer Table (RTL: زمان | تاریخ | مکان) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            backgroundColor: '#e5e7eb',
+            borderBottom: '1px solid #000000',
+            fontSize: '10.5px',
+            fontWeight: 700,
+            textAlign: 'center',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 6px' }}>زمان</div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 6px' }}>تاریخ</div>
+          <div style={{ padding: '5px 6px' }}>مکان</div>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            minHeight: '52px',
+            fontSize: '10.5px',
+            fontWeight: 600,
+            textAlign: 'center',
+            alignItems: 'center',
+          }}
+        >
+          <div
+            dir="ltr"
+            className="tabular-nums"
+            style={{
+              borderLeft: '1px solid #000000',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '6px',
+            }}
+          >
+            {record.time}
+          </div>
+          <div
+            dir="ltr"
+            className="tabular-nums"
+            style={{
+              borderLeft: '1px solid #000000',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '6px',
+            }}
+          >
+            {formatDate(record.date)}
+          </div>
+          <div
+            className="bidi-plaintext"
+            style={{
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '6px',
+            }}
+          >
+            {record.location || ''}
+          </div>
+        </div>
+      </div>
+
+      {/* Separate Lower Approval Frame */}
+      <div style={{ border: '1.8px solid #000000', marginTop: '14px' }}>
+        <div
+          style={{
+            backgroundColor: '#e5e7eb',
+            borderBottom: '1px solid #000000',
+            padding: '5px 8px',
+            fontSize: '10.5px',
+            fontWeight: 700,
+            textAlign: 'center',
+          }}
+        >
+          تایید کنندگان:
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr 1fr',
+            minHeight: '86px',
+            fontSize: '9.5px',
+            textAlign: 'right',
+          }}
+        >
+          <div
+            style={{
+              borderLeft: '1px solid #000000',
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>پیمانکار(نصاب):</div>
+              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+            </div>
+            <div style={{ fontSize: '9px' }}>{record.installerContractor || ''}</div>
+          </div>
+
+          <div
+            style={{
+              borderLeft: '1px solid #000000',
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>تامین کننده:</div>
+              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+            </div>
+            <div style={{ fontSize: '9px' }}>{record.supplierRep || ''}</div>
+          </div>
+
+          <div
+            style={{
+              borderLeft: '1px solid #000000',
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>تامین تجهیزات توسعه یک:</div>
+              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+            </div>
+            <div style={{ fontSize: '9px' }}>{record.equipmentSupply || ''}</div>
+          </div>
+
+          <div
+            style={{
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>دستگاه نظارت یا کارفرما:</div>
+              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+            </div>
+            <div style={{ fontSize: '9px' }}>{record.employerRep || ''}</div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            padding: '2px 8px 4px',
+            fontSize: '8.3px',
+            fontWeight: 600,
+            textAlign: 'left',
+          }}
+        >
+          توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
+        </div>
+
+        <div
+          style={{
+            borderTop: '1px solid #000000',
+            padding: '4px 8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: '8.8px',
+            fontWeight: 700,
+          }}
+        >
+          <div>رونوشت : معاونت تأمین تجهیزات ؛ کارفرما، مشاور، تامین کننده</div>
+          <div dir="ltr" className="tabular-nums">
+            MD1EX-FQP02/02-03
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface OpiApiResponse {
   invitations: OpiInvitationRecord[];
   detailedItems: DetailedComputed[];
+  generalEntries?: GeneralEntry[];
   packings: string[];
 }
 
@@ -40,9 +667,22 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
 
   // Invitation Form State
   const [invitationNo, setInvitationNo] = useState('');
+  const [issueDate, setIssueDate] = useState(getTodayIso());
   const [date, setDate] = useState(getTodayIso());
   const [time, setTime] = useState('09:00');
   const [location, setLocation] = useState('');
+  const [projectName, setProjectName] = useState('');
+  const [system, setSystem] = useState('');
+  const [island, setIsland] = useState('');
+  const [unit, setUnit] = useState('');
+  const [supplier, setSupplier] = useState('');
+  const [contractNo, setContractNo] = useState('');
+  const [purchasePackageNo, setPurchasePackageNo] = useState('');
+  const [items, setItems] = useState<OpiInvitationLineItem[]>([]);
+  const [installerContractor, setInstallerContractor] = useState('');
+  const [supplierRep, setSupplierRep] = useState('');
+  const [equipmentSupply, setEquipmentSupply] = useState('');
+  const [employerRep, setEmployerRep] = useState('');
   const [notes, setNotes] = useState('');
   const [packingSearch, setPackingSearch] = useState('');
   const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
@@ -83,9 +723,57 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   }, [data, packingSearch]);
 
   const togglePacking = (pk: string) => {
-    setSelectedPackings((prev) =>
-      prev.includes(pk) ? prev.filter((x) => x !== pk) : [...prev, pk],
-    );
+    const isRemoving = selectedPackings.includes(pk);
+    const nextPackings = isRemoving
+      ? selectedPackings.filter((x) => x !== pk)
+      : [...selectedPackings, pk];
+
+    setSelectedPackings(nextPackings);
+
+    const detItems = data?.detailedItems || [];
+    const genEntries = data?.generalEntries || [];
+    if (!isRemoving) {
+      const genMatch = genEntries.find((g) => (g.packingListNo || '').trim() === pk);
+      const detMatch = detItems.find((d) => (d.shipmentNo || '').trim() === pk);
+      if (!system && (genMatch?.system || detMatch?.system)) {
+        setSystem(genMatch?.system || detMatch?.system || '');
+      }
+      if (!island && (genMatch?.island || detMatch?.island)) {
+        setIsland(genMatch?.island || detMatch?.island || '');
+      }
+      if (!unit && (genMatch?.unit || detMatch?.unit)) {
+        setUnit(genMatch?.unit || detMatch?.unit || '');
+      }
+      if (!supplier && (genMatch?.supplier || detMatch?.supplier)) {
+        setSupplier(genMatch?.supplier || detMatch?.supplier || '');
+      }
+      const addedRows = buildOpiItemsForPackings([pk], detItems, genEntries);
+      setItems((prev) => [...prev, ...addedRows]);
+    } else {
+      setItems((prev) => prev.filter((it) => it.packingListNo !== pk));
+    }
+  };
+
+  const updateItemField = (index: number, key: keyof OpiInvitationLineItem, value: string) => {
+    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [key]: value } : it)));
+  };
+
+  const addBlankItemRow = () => {
+    setItems((prev) => [
+      ...prev,
+      {
+        itemNo: '',
+        packingListNo: selectedPackings[0] || '',
+        packageNo: '',
+        description: '',
+        uom: '',
+        remarks: '',
+      },
+    ]);
+  };
+
+  const removeItemRow = (index: number) => {
+    setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleIssueInvitation = async (e: React.FormEvent) => {
@@ -99,10 +787,23 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
         method: 'POST',
         body: JSON.stringify({
           invitationNo,
+          issueDate,
           date,
           time,
           packingNos: selectedPackings,
           location,
+          projectName,
+          system,
+          island,
+          unit,
+          supplier,
+          contractNo,
+          purchasePackageNo,
+          items,
+          installerContractor,
+          supplierRep,
+          equipmentSupply,
+          employerRep,
           notes,
         }),
       });
@@ -114,6 +815,17 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       );
       setInvitationNo('');
       setLocation('');
+      setContractNo('');
+      setPurchasePackageNo('');
+      setSystem('');
+      setIsland('');
+      setUnit('');
+      setSupplier('');
+      setItems([]);
+      setInstallerContractor('');
+      setSupplierRep('');
+      setEquipmentSupply('');
+      setEmployerRep('');
       setNotes('');
       setSelectedPackings([]);
       setPrintInvitation(res.invitation);
@@ -266,10 +978,54 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     [t],
   );
 
+  const opiPrintPortal =
+    printInvitation && !printInvTableOpen && !printItemsTableOpen
+      ? createPortal(
+          <div id="samaan-opi-print-root">
+            <style>{`
+              @media screen {
+                #samaan-opi-print-root { display: none !important; }
+              }
+              @media print {
+                @page {
+                  size: A4 portrait;
+                  margin: 7mm;
+                }
+                body > *:not(#samaan-opi-print-root) {
+                  display: none !important;
+                }
+                #samaan-opi-print-root {
+                  display: block !important;
+                  background: #ffffff !important;
+                  color: #000000 !important;
+                  width: 100%;
+                  -webkit-print-color-adjust: exact;
+                  print-color-adjust: exact;
+                }
+                #samaan-opi-print-root table th,
+                #samaan-opi-print-root table td {
+                  text-align: center;
+                  vertical-align: middle;
+                }
+              }
+            `}</style>
+            <OfficialOpiInvitationSheet
+              record={printInvitation}
+              detailedItems={data?.detailedItems || []}
+              generalEntries={data?.generalEntries || []}
+              formatDate={formatDate}
+            />
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <div className="space-y-6">
+      {opiPrintPortal}
+
       {/* Sub-navigation Tabs */}
-      <div className={`${printInvitation ? 'print:hidden' : ''} flex flex-wrap items-center gap-2`}>
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => setTab('invitation')}
@@ -299,17 +1055,22 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
 
       {/* TAB 1: Issue OPI Invitation */}
       {tab === 'invitation' && (
-        <div className={`space-y-6 ${printInvitation ? 'print:hidden' : ''}`}>
+        <div className="space-y-6">
           {canEdit && (
             <form
               onSubmit={handleIssueInvitation}
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
             >
-              <h3 className="text-sm font-bold">
-                {isFa ? 'صدور دعوتنامه جدید گشایش و بازرسی بسته‌ها' : 'Issue New Package Opening & Inspection Invitation'}
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-bold">
+                  {isFa ? 'صدور دعوتنامه جدید گشایش و بازرسی بسته‌ها' : 'Issue New Package Opening & Inspection Invitation'}
+                </h3>
+                <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
+                  MD1EX-FQP02/02-03
+                </span>
+              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.opiInvitationNo} *
@@ -328,7 +1089,13 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 </div>
 
                 <JalaliDateInput
-                  label={`${t.headers.opiInvitationDate} *`}
+                  label={isFa ? 'تاریخ صدور دعوتنامه' : 'Issue Date'}
+                  value={issueDate}
+                  onChange={setIssueDate}
+                />
+
+                <JalaliDateInput
+                  label={`${isFa ? 'تاریخ بازرسی' : 'Inspection Date'} *`}
                   value={date}
                   onChange={setDate}
                 />
@@ -349,7 +1116,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
 
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'محل بازرسی' : 'Inspection Location'}
+                    {isFa ? 'مکان بازرسی' : 'Inspection Location'}
                   </label>
                   <input
                     type="text"
@@ -357,6 +1124,104 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder={isFa ? 'انبار مرکزی سایت...' : 'Site Warehouse...'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+              </div>
+
+              {/* Project, System, Island, Unit, Supplier, Contract, Purchase Package */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'پروژه' : 'Project'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.supplier}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={supplier}
+                    onChange={(e) => setSupplier(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'شماره قرارداد' : 'Contract No.'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={isFa && !contractNo ? 'rtl' : 'ltr'}
+                    value={contractNo}
+                    onChange={(e) => setContractNo(e.target.value)}
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !contractNo ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'شماره بسته خرید' : 'Purchase Package No.'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={isFa && !purchasePackageNo ? 'rtl' : 'ltr'}
+                    value={purchasePackageNo}
+                    onChange={(e) => setPurchasePackageNo(e.target.value)}
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !purchasePackageNo ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.system}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={system}
+                    onChange={(e) => setSystem(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.island}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={island}
+                    onChange={(e) => setIsland(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.unit}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>
@@ -414,6 +1279,160 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                       );
                     })
                   )}
+                </div>
+              </div>
+
+              {/* Editable Line Items for OPI Invitation Table */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-[var(--text-secondary)]">
+                    {isFa ? 'اقلام جدول دعوتنامه (قابل ویرایش پیش از چاپ)' : 'Invitation Table Items'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={addBlankItemRow}
+                    className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'افزودن ردیف' : 'Add Row'}</span>
+                  </button>
+                </div>
+
+                {items.length > 0 && (
+                  <div className="overflow-x-auto rounded-lg border border-[var(--border-subtle)]">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
+                        <tr>
+                          <th className="py-2 px-2 w-20">Item No.</th>
+                          <th className="py-2 px-2 min-w-[110px]">Packing List No.</th>
+                          <th className="py-2 px-2 min-w-[90px]">Package No.</th>
+                          <th className="py-2 px-2 min-w-[180px]">{isFa ? 'شرح کالا' : 'Description'}</th>
+                          <th className="py-2 px-2 w-24">{isFa ? 'واحد (UOM)' : 'UOM'}</th>
+                          <th className="py-2 px-2 min-w-[120px]">{isFa ? 'توضیحات' : 'Remarks'}</th>
+                          <th className="py-2 px-2 w-10" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border-subtle)]">
+                        {items.map((it, idx) => (
+                          <tr key={idx}>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                dir="ltr"
+                                value={it.itemNo}
+                                onChange={(e) => updateItemField(idx, 'itemNo', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                dir="ltr"
+                                value={it.packingListNo}
+                                onChange={(e) => updateItemField(idx, 'packingListNo', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                dir="ltr"
+                                value={it.packageNo}
+                                onChange={(e) => updateItemField(idx, 'packageNo', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                value={it.description}
+                                onChange={(e) => updateItemField(idx, 'description', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                value={it.uom}
+                                onChange={(e) => updateItemField(idx, 'uom', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                value={it.remarks}
+                                onChange={(e) => updateItemField(idx, 'remarks', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <button
+                                type="button"
+                                onClick={() => removeItemRow(idx)}
+                                className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                                aria-label="Remove row"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Approvers */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'پیمانکار (نصاب)' : 'Installer Contractor'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!installerContractor ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={installerContractor}
+                    onChange={(e) => setInstallerContractor(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'نماینده تامین کننده' : 'Supplier Rep.'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!supplierRep ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={supplierRep}
+                    onChange={(e) => setSupplierRep(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'تامین تجهیزات توسعه یک' : 'MD1 Equipment Supply'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!equipmentSupply ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={equipmentSupply}
+                    onChange={(e) => setEquipmentSupply(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'دستگاه نظارت یا کارفرما' : 'Supervision / Employer'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!employerRep ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={employerRep}
+                    onChange={(e) => setEmployerRep(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
                 </div>
               </div>
 
@@ -800,108 +1819,46 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
         </form>
       )}
 
-      {/* Printable OPI Invitation Sheet Modal */}
+      {/* Printable Official MD1EX-FQP02/02-03 OPI Invitation Modal */}
       {printInvitation && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 print:static print:bg-transparent print:p-0">
-          <div className="w-full max-w-3xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5 max-h-[92vh] overflow-y-auto print-sheet">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 print:hidden">
-              <h3 className="text-sm font-bold">
-                {isFa ? 'پیش‌نمایش فرم دعوتنامه گشایش و بازرسی بسته‌ها' : 'Invitation Form Preview'}
-              </h3>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
+              <div>
+                <h3 className="text-sm font-bold">
+                  {isFa ? 'دعوتنامه گشایش و بازرسی بسته‌ها (OPI Invitation)' : 'OPI Invitation Preview'}
+                </h3>
+                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
+                  MD1EX-FQP02/02-03 · {printInvitation.invitationNo}
+                </p>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+                  className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>{t.controls.print}</span>
+                  <span>{isFa ? 'چاپ فرم (A4)' : 'Print Form (A4)'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPrintInvitation(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)]"
+                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* Formal Printable Header */}
-            <div className="border-2 border-current rounded-lg p-5 space-y-5 text-xs">
-              <div className="flex items-center justify-between border-b border-current pb-3">
-                <div>
-                  <div className="text-base font-bold">{t.brandFull}</div>
-                  <div className="text-[11px] opacity-80">
-                    {isFa ? 'فرم رسمی دعوتنامه گشایش و بازرسی بسته‌ها (OPI)' : 'Official Package Opening & Inspection Invitation (OPI)'}
-                  </div>
-                </div>
-                <div className="text-end tabular-nums">
-                  <div>
-                    <span className="font-semibold">{t.headers.opiInvitationNo}: </span>
-                    <span dir="ltr">{printInvitation.invitationNo}</span>
-                  </div>
-                  <div>
-                    <span className="font-semibold">{t.headers.opiInvitationDate}: </span>
-                    <span dir="ltr">{formatDate(printInvitation.date)}</span>
-                  </div>
-                  <div>
-                    <span className="font-semibold">{isFa ? 'ساعت' : 'Time'}: </span>
-                    <span dir="ltr">{printInvitation.time}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="font-semibold">{isFa ? 'محل بازرسی:' : 'Location:'} </span>
-                  <span className="bidi-plaintext">{printInvitation.location || (isFa ? 'انبار سایت' : 'Site Warehouse')}</span>
-                </div>
-                <div>
-                  <span className="font-semibold">{isFa ? 'صادرکننده:' : 'Issued By:'} </span>
-                  <span>{printInvitation.createdBy}</span>
-                </div>
-              </div>
-
-              <div>
-                <div className="font-bold mb-2">
-                  {isFa ? 'فهرست پکینگ لیست‌های مشمول بازرسی:' : 'Included Packing Lists:'}
-                </div>
-                <table className="w-full border-collapse border border-current text-xs">
-                  <thead>
-                    <tr>
-                      <th className="border border-current py-1.5 px-2 w-12 text-center">#</th>
-                      <th className="border border-current py-1.5 px-3 text-start">{t.headers.packingListNo}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {printInvitation.packingNos.map((pk, idx) => (
-                      <tr key={pk}>
-                        <td className="border border-current py-1.5 px-2 text-center tabular-nums">{idx + 1}</td>
-                        <td className="border border-current py-1.5 px-3 tabular-nums" dir="ltr">{pk}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {printInvitation.notes && (
-                <div>
-                  <span className="font-semibold">{t.headers.notes}: </span>
-                  <span className="bidi-plaintext">{printInvitation.notes}</span>
-                </div>
-              )}
-
-              <div className="grid grid-cols-3 gap-6 pt-8 text-center">
-                <div className="border-t border-current pt-2">
-                  {isFa ? 'امضاء مسئول انبار' : 'Warehouse Supervisor'}
-                </div>
-                <div className="border-t border-current pt-2">
-                  {isFa ? 'امضاء کنترل کیفیت / بازرسی' : 'QA / QC Inspector'}
-                </div>
-                <div className="border-t border-current pt-2">
-                  {isFa ? 'امضاء نماینده کارفرما / مپنا' : 'Client / MAPNA Representative'}
-                </div>
+            <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
+              <div className="mx-auto max-w-[790px] bg-white p-5 shadow-lg rounded-sm">
+                <OfficialOpiInvitationSheet
+                  record={printInvitation}
+                  detailedItems={data?.detailedItems || []}
+                  generalEntries={data?.generalEntries || []}
+                  formatDate={formatDate}
+                />
               </div>
             </div>
           </div>

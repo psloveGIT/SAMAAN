@@ -200,6 +200,7 @@ export function parseGeneralCsv(
   const idxMapnaMin = findCol(combinedCols, ['مپنا'], 7);
   const idxPackingList = findCol(combinedCols, ['شماره پکینگ لیست'], 8);
   const idxPackageNo = findCol(combinedCols, ['شماره نگله'], 9);
+  const idxPackageType = findCol(combinedCols, ['نوع بسته‌بندی', 'نوع بسته بندی', 'package type'], -1);
   const idxDesc = findCol(combinedCols, ['شرح کالا'], 10);
   const idxIsland = findCol(combinedCols, ['جزیره'], 11);
   const idxSystem = findCol(combinedCols, ['سیستم'], 12);
@@ -244,6 +245,7 @@ export function parseGeneralCsv(
       mapnaEntryMinutesNo: cleanStr(line[idxMapnaMin]),
       packingListNo,
       packageNo,
+      packageType: idxPackageType >= 0 ? cleanStr(line[idxPackageType]) : '',
       itemDescription,
       island: cleanStr(line[idxIsland]),
       system: cleanStr(line[idxSystem]),

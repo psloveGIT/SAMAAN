@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   CheckCircle2,
   ClipboardCheck,
   Download,
   FileWarning,
+  Plus,
   Printer,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
@@ -14,6 +17,8 @@ import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
   DetailedComputed,
+  GeneralEntry,
+  OpiInvitationLineItem,
   OpiInvitationRecord,
   OpiMinutesRecord,
   OsdrReportItem,
@@ -22,11 +27,695 @@ import type {
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
+const MD1_STACKED_LOGO = '/assets/aistudio/______________________________65f1164c.png';
+
+const buildMomItemsForPacking = (
+  packingListNo: string,
+  selectedPackages: string[],
+  detailedItems: DetailedComputed[],
+  generalEntries: GeneralEntry[],
+): OpiInvitationLineItem[] => {
+  if (!packingListNo) return [];
+  const detMatches = detailedItems.filter((d) => {
+    if ((d.shipmentNo || '').trim() !== packingListNo) return false;
+    if (selectedPackages.length > 0 && !selectedPackages.includes(d.packageNo)) return false;
+    return true;
+  });
+  if (detMatches.length > 0) {
+    return detMatches.map((d) => ({
+      itemNo: d.itemNo || '',
+      packingListNo: d.shipmentNo || packingListNo,
+      packageNo: d.packageNo || '',
+      description: d.description || d.generalDescription || '',
+      uom: d.countingUnit || '',
+      remarks: d.notes || '',
+    }));
+  }
+  const genMatches = generalEntries.filter((g) => {
+    if ((g.packingListNo || '').trim() !== packingListNo) return false;
+    if (selectedPackages.length > 0 && !selectedPackages.includes(g.packageNo)) return false;
+    return true;
+  });
+  return genMatches.map((g, idx) => ({
+    itemNo: String(idx + 1),
+    packingListNo: g.packingListNo || packingListNo,
+    packageNo: g.packageNo || '',
+    description: g.itemDescription || '',
+    uom: 'بسته',
+    remarks: '',
+  }));
+};
+
+const MomCheckSquare: React.FC<{ checked?: boolean }> = ({ checked }) => (
+  <span
+    style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '12px',
+      height: '12px',
+      border: '1.3px solid #000000',
+      backgroundColor: '#ffffff',
+      flexShrink: 0,
+    }}
+  >
+    {checked && (
+      <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+        <path
+          d="M1.5 5.2L4 7.7L8.5 2.3"
+          stroke="#000000"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    )}
+  </span>
+);
+
+interface OfficialOpiMinutesSheetProps {
+  record: OpiMinutesRecord;
+  detailedItems: DetailedComputed[];
+  generalEntries: GeneralEntry[];
+  formatDate: (iso: string) => string;
+}
+
+const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
+  record,
+  detailedItems,
+  generalEntries,
+  formatDate,
+}) => {
+  const resolvedItems = useMemo(() => {
+    if (record.items && record.items.length > 0) return record.items;
+    return buildMomItemsForPacking(
+      record.packingListNo,
+      record.packageNos || [],
+      detailedItems,
+      generalEntries,
+    );
+  }, [record, detailedItems, generalEntries]);
+
+  const minRows = 8;
+  const totalDisplayRows = Math.max(minRows, resolvedItems.length);
+  const paddedRows: (OpiInvitationLineItem | null)[] = [
+    ...resolvedItems,
+    ...Array.from({ length: Math.max(0, totalDisplayRows - resolvedItems.length) }, () => null),
+  ];
+
+  const sellerName = record.sellerRep || record.contractorInspector || '';
+
+  return (
+    <div
+      dir="rtl"
+      style={{
+        backgroundColor: '#ffffff',
+        color: '#000000',
+        fontFamily: '"Vazirmatn", "Plus Jakarta Sans", Tahoma, sans-serif',
+        width: '100%',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* Upper Main Frame */}
+      <div style={{ border: '1.8px solid #000000' }}>
+        {/* Header Row */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 190px',
+            borderBottom: '1.5px solid #000000',
+          }}
+        >
+          {/* Right + Center: Logo + Title */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '118px 1fr',
+              alignItems: 'center',
+              padding: '6px 8px',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textAlign: 'center',
+              }}
+            >
+              <img
+                src={MD1_STACKED_LOGO}
+                alt="گروه مپنا - توسعه یک"
+                style={{ height: '56px', width: 'auto', objectFit: 'contain', display: 'block' }}
+              />
+              <div
+                style={{
+                  fontSize: '7.5px',
+                  fontWeight: 700,
+                  marginTop: '3px',
+                  color: '#334155',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                مستندات سیستم مدیریت یکپارچه
+              </div>
+            </div>
+
+            <div
+              style={{
+                textAlign: 'center',
+                lineHeight: 1.55,
+                padding: '2px 8px',
+              }}
+            >
+              <div style={{ fontSize: '12px', fontWeight: 700 }}>
+                شرکت احداث و توسعه نیروگاه های مپنا – توسعه یک (MD1)
+              </div>
+              <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
+                پروژه {record.projectName?.trim() || '..................'}
+              </div>
+              <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '2px' }}>
+                صورتجلسه گشایش و بازرسی بسته ها
+              </div>
+              <div dir="ltr" style={{ fontSize: '12px', fontWeight: 700 }}>
+                OPI – Minutes Of Meeting
+              </div>
+            </div>
+          </div>
+
+          {/* Left Box: OPI No & OPI Date */}
+          <div
+            style={{
+              borderRight: '1.5px solid #000000',
+              padding: '8px 10px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              fontSize: '10px',
+              fontWeight: 700,
+              textAlign: 'right',
+            }}
+          >
+            <div>
+              <div>شماره OPI :</div>
+              <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                {record.minutesNo}
+              </div>
+            </div>
+            <div>
+              <div>تاریخ OPI :</div>
+              <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                {formatDate(record.date)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Metadata Strip Row 1 (Exact PDF RTL order: تامین کننده | سیستم | جزیره | واحد | پروژه) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.2fr 1fr 1fr 1fr 1fr',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.8px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>تامین کننده: </strong>
+            <span className="bidi-plaintext">{record.supplier || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>سیستم: </strong>
+            <span className="bidi-plaintext">{record.system || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>جزیره: </strong>
+            <span className="bidi-plaintext">{record.island || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>واحد: </strong>
+            <span className="bidi-plaintext">{record.unit || ''}</span>
+          </div>
+          <div style={{ padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>پروژه: </strong>
+            <span className="bidi-plaintext">{record.projectName || ''}</span>
+          </div>
+        </div>
+
+        {/* Metadata Strip Row 2 (RTL: شماره قرارداد/درخواست خرید | شماره دعوتنامه OPI | شماره بسته خرید) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.2fr 1fr 1fr',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.8px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>شماره قرارداد/درخواست خرید: </strong>
+            <span dir="ltr" className="tabular-nums">
+              {record.contractNo || ''}
+            </span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>شماره دعوتنامه OPI: </strong>
+            <span dir="ltr" className="tabular-nums">
+              {record.invitationNo || ''}
+            </span>
+          </div>
+          <div style={{ padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>شماره بسته خرید: </strong>
+            <span dir="ltr" className="tabular-nums">
+              {record.purchasePackageNo || ''}
+            </span>
+          </div>
+        </div>
+
+        {/* Items Table (LTR column order matching PDF: Item No., Packing List No., Package No., شرح (کالا/تجهیز), واحد (UOM), توضیحات) */}
+        <table
+          dir="ltr"
+          style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            fontSize: '9.5px',
+            tableLayout: 'fixed',
+          }}
+        >
+          <thead>
+            <tr style={{ backgroundColor: '#e5e7eb' }}>
+              <th
+                style={{
+                  width: '7%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 3px',
+                  fontWeight: 700,
+                  lineHeight: 1.35,
+                }}
+              >
+                Item
+                <br />
+                No.
+              </th>
+              <th
+                style={{
+                  width: '14%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  fontWeight: 700,
+                  lineHeight: 1.35,
+                }}
+              >
+                Packing List
+                <br />
+                No.
+              </th>
+              <th
+                style={{
+                  width: '13%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  fontWeight: 700,
+                  lineHeight: 1.35,
+                }}
+              >
+                Package
+                <br />
+                No.
+              </th>
+              <th
+                dir="rtl"
+                style={{
+                  width: '36%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 6px',
+                  fontWeight: 700,
+                }}
+              >
+                شرح (کالا/تجهیز)
+              </th>
+              <th
+                dir="rtl"
+                style={{
+                  width: '9%',
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 3px',
+                  fontWeight: 700,
+                  lineHeight: 1.35,
+                }}
+              >
+                واحد
+                <br />
+                <span dir="ltr">(UOM)</span>
+              </th>
+              <th
+                dir="rtl"
+                style={{
+                  width: '21%',
+                  borderBottom: '1px solid #000000',
+                  padding: '5px 6px',
+                  fontWeight: 700,
+                }}
+              >
+                توضیحات
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {paddedRows.map((row, idx) => (
+              <tr key={idx} style={{ height: '27px' }}>
+                <td
+                  className="tabular-nums"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 3px',
+                  }}
+                >
+                  {row?.itemNo || ''}
+                </td>
+                <td
+                  className="tabular-nums"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 4px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {row?.packingListNo || ''}
+                </td>
+                <td
+                  className="tabular-nums"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 4px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {row?.packageNo || ''}
+                </td>
+                <td
+                  dir="auto"
+                  className="bidi-plaintext"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 5px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {row?.description || ''}
+                </td>
+                <td
+                  dir="auto"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    borderRight: '1px solid #000000',
+                    padding: '3px 3px',
+                  }}
+                >
+                  {row?.uom || ''}
+                </td>
+                <td
+                  dir="auto"
+                  className="bidi-plaintext"
+                  style={{
+                    borderBottom: '1px solid #000000',
+                    padding: '3px 5px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {row?.remarks || ''}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {/* Time / Date / Location Strip (RTL: ساعت | تاریخ | محل انجام OPI) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            backgroundColor: '#e5e7eb',
+            borderBottom: '1px solid #000000',
+            fontSize: '10.2px',
+            fontWeight: 700,
+            textAlign: 'center',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 6px' }}>ساعت</div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 6px' }}>تاریخ</div>
+          <div style={{ padding: '5px 6px' }}>محل انجام OPI</div>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            minHeight: '30px',
+            borderBottom: '1px solid #000000',
+            fontSize: '10px',
+            fontWeight: 600,
+            textAlign: 'center',
+            alignItems: 'center',
+          }}
+        >
+          <div
+            dir="ltr"
+            className="tabular-nums"
+            style={{
+              borderLeft: '1px solid #000000',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '4px 6px',
+            }}
+          >
+            {record.time || ''}
+          </div>
+          <div
+            dir="ltr"
+            className="tabular-nums"
+            style={{
+              borderLeft: '1px solid #000000',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '4px 6px',
+            }}
+          >
+            {formatDate(record.date)}
+          </div>
+          <div
+            className="bidi-plaintext"
+            style={{
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '4px 6px',
+            }}
+          >
+            {record.location || ''}
+          </div>
+        </div>
+
+        {/* Statement, Discrepancy Checkboxes & Other Notes */}
+        <div
+          style={{
+            padding: '10px 14px 16px',
+            fontSize: '10px',
+            lineHeight: 2,
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>
+            بسته (Package) های بالا در حضور نمایندگان کارفرما، مشاور، مپنا و انباردار OPI شد و اقلام موجود برابر با Packing List های پیوست، تحویل انبارگردید.
+          </div>
+
+          <div
+            style={{
+              marginTop: '10px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+              paddingRight: '8px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+              <span>محموله ی بالا فاقد هرگونه مغایرت و آسیب دیدگی می باشد.</span>
+              <MomCheckSquare checked={record.resultStatus === 'compliant'} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+              <span>
+                محموله ی بالا دارای مغایرت، برابر فرم{' '}
+                <span
+                  dir="ltr"
+                  className="tabular-nums"
+                  style={{
+                    fontWeight: 700,
+                    display: 'inline-block',
+                    minWidth: '100px',
+                    textAlign: 'center',
+                    borderBottom: record.merNo ? '1px dotted #000' : 'none',
+                  }}
+                >
+                  {record.merNo?.trim() || '........................'}
+                </span>{' '}
+                <span dir="ltr">MER No.</span> می باشد.
+              </span>
+              <MomCheckSquare checked={record.resultStatus === 'has_discrepancy'} />
+            </div>
+          </div>
+
+          <div style={{ marginTop: '12px', minHeight: '72px' }}>
+            <div style={{ fontWeight: 700 }}>سایر توضیحات:</div>
+            {record.notes && (
+              <div className="bidi-plaintext" style={{ marginTop: '4px', fontSize: '9.8px' }}>
+                {record.notes}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Separate Lower Signature Frame */}
+      <div style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
+        <div
+          style={{
+            backgroundColor: '#e5e7eb',
+            borderBottom: '1px solid #000000',
+            padding: '5px 8px',
+            fontSize: '10.5px',
+            fontWeight: 700,
+            textAlign: 'center',
+          }}
+        >
+          امضا
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr 1fr',
+            minHeight: '80px',
+            fontSize: '9.5px',
+            textAlign: 'right',
+          }}
+        >
+          <div
+            style={{
+              borderLeft: '1px solid #000000',
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>انباردار:</div>
+              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+            </div>
+            <div style={{ fontSize: '9px' }}>{record.storekeeper || ''}</div>
+          </div>
+
+          <div
+            style={{
+              borderLeft: '1px solid #000000',
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>تأمین تجهیزات توسعه یک :</div>
+              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+            </div>
+            <div style={{ fontSize: '9px' }}>{record.mapnaInspector || ''}</div>
+          </div>
+
+          <div
+            style={{
+              borderLeft: '1px solid #000000',
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>فروشنده:</div>
+              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+            </div>
+            <div style={{ fontSize: '9px' }}>{sellerName}</div>
+          </div>
+
+          <div
+            style={{
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>دستگاه نظارت یا کارفرما:</div>
+              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+            </div>
+            <div style={{ fontSize: '9px' }}>{record.employerInspector || ''}</div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            padding: '2px 8px 4px',
+            fontSize: '8.3px',
+            fontWeight: 600,
+            textAlign: 'left',
+          }}
+        >
+          توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
+        </div>
+
+        <div
+          style={{
+            borderTop: '1px solid #000000',
+            padding: '4px 8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: '8.8px',
+            fontWeight: 700,
+          }}
+        >
+          <div>رونوشت: معاونت تأمین تجهیزات، فروشنده، دستگاه نظارت، کارفرما</div>
+          <div dir="ltr" className="tabular-nums">
+            MD1EX-FQP02/06-03
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface OpiMinutesApiResponse {
   minutes: OpiMinutesRecord[];
   osdrReports: OsdrReportRecord[];
   invitations: OpiInvitationRecord[];
   detailedItems: DetailedComputed[];
+  generalEntries?: GeneralEntry[];
   packings: string[];
 }
 
@@ -51,12 +740,23 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const [minutesNo, setMinutesNo] = useState('');
   const [invitationNo, setInvitationNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
+  const [time, setTime] = useState('09:00');
   const [packingListNo, setPackingListNo] = useState('');
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
+  const [projectName, setProjectName] = useState('');
+  const [supplier, setSupplier] = useState('');
+  const [system, setSystem] = useState('');
+  const [island, setIsland] = useState('');
+  const [unit, setUnit] = useState('');
+  const [contractNo, setContractNo] = useState('');
+  const [purchasePackageNo, setPurchasePackageNo] = useState('');
+  const [merNo, setMerNo] = useState('');
+  const [items, setItems] = useState<OpiInvitationLineItem[]>([]);
   const [location, setLocation] = useState('');
+  const [storekeeper, setStorekeeper] = useState('');
   const [mapnaInspector, setMapnaInspector] = useState('');
+  const [sellerRep, setSellerRep] = useState('');
   const [employerInspector, setEmployerInspector] = useState('');
-  const [contractorInspector, setContractorInspector] = useState('');
   const [qcInspector, setQcInspector] = useState('');
   const [resultStatus, setResultStatus] = useState<'compliant' | 'has_discrepancy'>('compliant');
   const [notes, setNotes] = useState('');
@@ -91,17 +791,60 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     loadData();
   }, [loadData, refreshSignal]);
 
-  // Auto-fill packingListNo / location / date when linking an invitation
+  const syncFromPacking = useCallback(
+    (pk: string, pkgs: string[]) => {
+      if (!pk) {
+        setItems([]);
+        return;
+      }
+      const detItems = data?.detailedItems || [];
+      const genEntries = data?.generalEntries || [];
+      const genMatch = genEntries.find((g) => (g.packingListNo || '').trim() === pk);
+      const detMatch = detItems.find((d) => (d.shipmentNo || '').trim() === pk);
+      if (!supplier && (genMatch?.supplier || detMatch?.supplier)) {
+        setSupplier(genMatch?.supplier || detMatch?.supplier || '');
+      }
+      if (!system && (genMatch?.system || detMatch?.system)) {
+        setSystem(genMatch?.system || detMatch?.system || '');
+      }
+      if (!island && (genMatch?.island || detMatch?.island)) {
+        setIsland(genMatch?.island || detMatch?.island || '');
+      }
+      if (!unit && (genMatch?.unit || detMatch?.unit)) {
+        setUnit(genMatch?.unit || detMatch?.unit || '');
+      }
+      setItems(buildMomItemsForPacking(pk, pkgs, detItems, genEntries));
+    },
+    [data, supplier, system, island, unit],
+  );
+
+  // Auto-fill packingListNo / location / date / metadata when linking an invitation
   const handleInvitationChange = (invNo: string) => {
     setInvitationNo(invNo);
     if (!invNo) return;
     const inv = (data?.invitations || []).find((i) => i.invitationNo === invNo);
     if (inv) {
-      if (inv.packingNos.length > 0 && !packingListNo) {
-        setPackingListNo(inv.packingNos[0]);
-      }
       if (inv.location && !location) setLocation(inv.location);
       if (inv.date) setDate(inv.date);
+      if (inv.time) setTime(inv.time);
+      if (inv.projectName && !projectName) setProjectName(inv.projectName);
+      if (inv.supplier && !supplier) setSupplier(inv.supplier);
+      if (inv.system && !system) setSystem(inv.system);
+      if (inv.island && !island) setIsland(inv.island);
+      if (inv.unit && !unit) setUnit(inv.unit);
+      if (inv.contractNo && !contractNo) setContractNo(inv.contractNo);
+      if (inv.purchasePackageNo && !purchasePackageNo) setPurchasePackageNo(inv.purchasePackageNo);
+      if (inv.packingNos.length > 0 && !packingListNo) {
+        const pk = inv.packingNos[0];
+        setPackingListNo(pk);
+        if (inv.items && inv.items.length > 0) {
+          setItems(inv.items);
+        } else {
+          syncFromPacking(pk, []);
+        }
+      } else if (inv.items && inv.items.length > 0 && items.length === 0) {
+        setItems(inv.items);
+      }
     }
   };
 
@@ -115,9 +858,35 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   }, [data, packingListNo]);
 
   const togglePackage = (pkg: string) => {
-    setSelectedPackages((prev) =>
-      prev.includes(pkg) ? prev.filter((x) => x !== pkg) : [...prev, pkg],
-    );
+    const next = selectedPackages.includes(pkg)
+      ? selectedPackages.filter((x) => x !== pkg)
+      : [...selectedPackages, pkg];
+    setSelectedPackages(next);
+    if (packingListNo) {
+      syncFromPacking(packingListNo, next);
+    }
+  };
+
+  const updateItemField = (index: number, key: keyof OpiInvitationLineItem, value: string) => {
+    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [key]: value } : it)));
+  };
+
+  const addBlankItemRow = () => {
+    setItems((prev) => [
+      ...prev,
+      {
+        itemNo: '',
+        packingListNo: packingListNo || '',
+        packageNo: '',
+        description: '',
+        uom: '',
+        remarks: '',
+      },
+    ]);
+  };
+
+  const removeItemRow = (index: number) => {
+    setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSaveMinutes = async (e: React.FormEvent) => {
@@ -129,12 +898,24 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
           minutesNo,
           invitationNo,
           date,
+          time,
           packingListNo,
           packageNos: selectedPackages.length > 0 ? selectedPackages : packagesForSelectedPacking,
+          projectName,
+          supplier,
+          system,
+          island,
+          unit,
+          contractNo,
+          purchasePackageNo,
+          items,
+          merNo,
           location,
+          storekeeper,
           mapnaInspector,
+          sellerRep,
           employerInspector,
-          contractorInspector,
+          contractorInspector: sellerRep,
           qcInspector,
           resultStatus,
           notes,
@@ -149,6 +930,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       setMinutesNo('');
       setInvitationNo('');
       setSelectedPackages([]);
+      setItems([]);
+      setMerNo('');
       setLocation('');
       setNotes('');
       setPrintMinutes(res.record);
@@ -297,10 +1080,54 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
   const anyPrintModalOpen = Boolean(printMinutes || printOsdr);
 
+  const minutesPrintPortal =
+    printMinutes && !printMinutesTableOpen && !printOsdrTableOpen
+      ? createPortal(
+          <div id="samaan-mom-print-root">
+            <style>{`
+              @media screen {
+                #samaan-mom-print-root { display: none !important; }
+              }
+              @media print {
+                @page {
+                  size: A4 portrait;
+                  margin: 7mm;
+                }
+                body > *:not(#samaan-mom-print-root) {
+                  display: none !important;
+                }
+                #samaan-mom-print-root {
+                  display: block !important;
+                  background: #ffffff !important;
+                  color: #000000 !important;
+                  width: 100%;
+                  -webkit-print-color-adjust: exact;
+                  print-color-adjust: exact;
+                }
+                #samaan-mom-print-root table th,
+                #samaan-mom-print-root table td {
+                  text-align: center;
+                  vertical-align: middle;
+                }
+              }
+            `}</style>
+            <OfficialOpiMinutesSheet
+              record={printMinutes}
+              detailedItems={data?.detailedItems || []}
+              generalEntries={data?.generalEntries || []}
+              formatDate={formatDate}
+            />
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <div className="space-y-6">
+      {minutesPrintPortal}
+
       {/* Sub-navigation Tabs */}
-      <div className={`${anyPrintModalOpen ? 'print:hidden' : ''} flex flex-wrap items-center gap-2`}>
+      <div className={`${printOsdr ? 'print:hidden' : ''} flex flex-wrap items-center gap-2`}>
         <button
           type="button"
           onClick={() => setSubTab('minutes')}
@@ -330,20 +1157,25 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
       {/* SUB-TAB 1: OPI MINUTES */}
       {subTab === 'minutes' && (
-        <div className={`space-y-6 ${anyPrintModalOpen ? 'print:hidden' : ''}`}>
+        <div className="space-y-6">
           {canEdit && (
             <form
               onSubmit={handleSaveMinutes}
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
             >
-              <h3 className="text-sm font-bold">
-                {isFa ? 'ثبت صورتجلسه گشایش و بازرسی بسته‌ها' : 'Record Package Opening & Inspection Minutes'}
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-bold">
+                  {isFa ? 'ثبت صورتجلسه گشایش و بازرسی بسته‌ها' : 'Record Package Opening & Inspection Minutes'}
+                </h3>
+                <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
+                  MD1EX-FQP02/06-03
+                </span>
+              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره صورتجلسه' : 'Minutes No.'} *
+                    {isFa ? 'شماره OPI / صورتجلسه' : 'OPI Minutes No.'} *
                   </label>
                   <input
                     type="text"
@@ -359,14 +1191,27 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 </div>
 
                 <JalaliDateInput
-                  label={`${isFa ? 'تاریخ بازرسی' : 'Inspection Date'} *`}
+                  label={`${isFa ? 'تاریخ OPI' : 'OPI Date'} *`}
                   value={date}
                   onChange={setDate}
                 />
 
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره دعوتنامه مرتبط' : 'Related Invitation No.'}
+                    {isFa ? 'ساعت' : 'Time'}
+                  </label>
+                  <input
+                    type="time"
+                    dir="ltr"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'شماره دعوتنامه OPI' : 'OPI Invitation No.'}
                   </label>
                   <select
                     value={invitationNo}
@@ -390,8 +1235,10 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     required
                     value={packingListNo}
                     onChange={(e) => {
-                      setPackingListNo(e.target.value);
+                      const nextPk = e.target.value;
+                      setPackingListNo(nextPk);
                       setSelectedPackages([]);
+                      syncFromPacking(nextPk, []);
                     }}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
                   >
@@ -402,6 +1249,117 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* Project, Supplier, System, Island, Unit, Contract, Purchase Package */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'پروژه' : 'Project'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.supplier}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={supplier}
+                    onChange={(e) => setSupplier(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'شماره قرارداد / درخواست خرید' : 'Contract / PR No.'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={isFa && !contractNo ? 'rtl' : 'ltr'}
+                    value={contractNo}
+                    onChange={(e) => setContractNo(e.target.value)}
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !contractNo ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'شماره بسته خرید' : 'Purchase Package No.'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={isFa && !purchasePackageNo ? 'rtl' : 'ltr'}
+                    value={purchasePackageNo}
+                    onChange={(e) => setPurchasePackageNo(e.target.value)}
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !purchasePackageNo ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.system}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={system}
+                    onChange={(e) => setSystem(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.island}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={island}
+                    onChange={(e) => setIsland(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.unit}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'محل انجام OPI' : 'OPI Location'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!location ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
                 </div>
               </div>
 
@@ -435,6 +1393,108 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 </div>
               )}
 
+              {/* Editable Line Items Table */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-[var(--text-secondary)]">
+                    {isFa ? 'اقلام جدول صورتجلسه (قابل ویرایش پیش از چاپ)' : 'Minutes Table Items'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={addBlankItemRow}
+                    className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'افزودن ردیف' : 'Add Row'}</span>
+                  </button>
+                </div>
+
+                {items.length > 0 && (
+                  <div className="overflow-x-auto rounded-lg border border-[var(--border-subtle)]">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
+                        <tr>
+                          <th className="py-2 px-2 w-20">Item No.</th>
+                          <th className="py-2 px-2 min-w-[110px]">Packing List No.</th>
+                          <th className="py-2 px-2 min-w-[90px]">Package No.</th>
+                          <th className="py-2 px-2 min-w-[180px]">{isFa ? 'شرح (کالا/تجهیز)' : 'Description'}</th>
+                          <th className="py-2 px-2 w-24">{isFa ? 'واحد (UOM)' : 'UOM'}</th>
+                          <th className="py-2 px-2 min-w-[120px]">{isFa ? 'توضیحات' : 'Remarks'}</th>
+                          <th className="py-2 px-2 w-10" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border-subtle)]">
+                        {items.map((it, idx) => (
+                          <tr key={idx}>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                dir="ltr"
+                                value={it.itemNo}
+                                onChange={(e) => updateItemField(idx, 'itemNo', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                dir="ltr"
+                                value={it.packingListNo}
+                                onChange={(e) => updateItemField(idx, 'packingListNo', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                dir="ltr"
+                                value={it.packageNo}
+                                onChange={(e) => updateItemField(idx, 'packageNo', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                value={it.description}
+                                onChange={(e) => updateItemField(idx, 'description', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                value={it.uom}
+                                onChange={(e) => updateItemField(idx, 'uom', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <input
+                                type="text"
+                                value={it.remarks}
+                                onChange={(e) => updateItemField(idx, 'remarks', e.target.value)}
+                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
+                              />
+                            </td>
+                            <td className="p-1">
+                              <button
+                                type="button"
+                                onClick={() => removeItemRow(idx)}
+                                className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                                aria-label="Remove row"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
@@ -446,30 +1506,46 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
                   >
                     <option value="compliant">
-                      {isFa ? 'منطبق با اسناد و بدون مغایرت' : 'Compliant / No Discrepancy'}
+                      {isFa ? 'فاقد هرگونه مغایرت و آسیب‌دیدگی' : 'Compliant / No Discrepancy'}
                     </option>
                     <option value="has_discrepancy">
-                      {isFa ? 'دارای مغایرت، کسری یا آسیب‌دیدگی (نیازمند OSDR)' : 'Discrepancy / Damage Found (Requires OSDR)'}
+                      {isFa ? 'دارای مغایرت (مطابق فرم MER)' : 'Has Discrepancy (Per MER Form)'}
                     </option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'محل بازرسی' : 'Inspection Location'}
+                    {isFa ? 'شماره فرم MER (در صورت مغایرت)' : 'MER No. (if discrepancy)'}
                   </label>
                   <input
                     type="text"
-                    dir={!location ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
+                    dir={isFa && !merNo ? 'rtl' : 'ltr'}
+                    value={merNo}
+                    onChange={(e) => setMerNo(e.target.value)}
+                    placeholder="MER-..."
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !merNo ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'انباردار' : 'Storekeeper'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!storekeeper ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={storekeeper}
+                    onChange={(e) => setStorekeeper(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>
 
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'بازرس / نماینده مپنا' : 'MAPNA Inspector'}
+                    {isFa ? 'تأمین تجهیزات توسعه یک' : 'MD1 Equipment Supply'}
                   </label>
                   <input
                     type="text"
@@ -482,7 +1558,20 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'نماینده کارفرما' : 'Employer Inspector'}
+                    {isFa ? 'فروشنده' : 'Seller / Vendor'}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!sellerRep ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={sellerRep}
+                    onChange={(e) => setSellerRep(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'دستگاه نظارت یا کارفرما' : 'Supervision / Employer'}
                   </label>
                   <input
                     type="text"
@@ -492,37 +1581,11 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'نماینده پیمانکار' : 'Contractor Inspector'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!contractorInspector ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={contractorInspector}
-                    onChange={(e) => setContractorInspector(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'بازرس کنترل کیفیت (QC)' : 'QC Inspector'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!qcInspector ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={qcInspector}
-                    onChange={(e) => setQcInspector(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
               </div>
 
               <div>
                 <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                  {t.headers.notes}
+                  {isFa ? 'سایر توضیحات' : t.headers.notes}
                 </label>
                 <input
                   type="text"
@@ -944,102 +2007,44 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         </div>
       )}
 
-      {/* Printable OPI Minutes Modal */}
+      {/* Printable Official MD1EX-FQP02/06-03 OPI Minutes Modal */}
       {printMinutes && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 print:static print:bg-transparent print:p-0">
-          <div className="w-full max-w-3xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5 max-h-[92vh] overflow-y-auto print-sheet">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 print:hidden">
-              <h3 className="text-sm font-bold">{t.nav.opiMinutes}</h3>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
+              <div>
+                <h3 className="text-sm font-bold">{t.nav.opiMinutes}</h3>
+                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
+                  MD1EX-FQP02/06-03 · {printMinutes.minutesNo}
+                </p>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+                  className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>{t.controls.print}</span>
+                  <span>{isFa ? 'چاپ فرم (A4)' : 'Print Form (A4)'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPrintMinutes(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)]"
+                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="border-2 border-current rounded-lg p-5 space-y-4 text-xs">
-              <div className="flex items-center justify-between border-b border-current pb-3">
-                <div>
-                  <div className="text-base font-bold">{t.brandFull}</div>
-                  <div className="text-[11px] opacity-80">{t.nav.opiMinutes}</div>
-                </div>
-                <div className="text-end tabular-nums">
-                  <div>
-                    <span className="font-semibold">{isFa ? 'شماره صورتجلسه:' : 'Minutes No.:'} </span>
-                    <span dir="ltr">{printMinutes.minutesNo}</span>
-                  </div>
-                  <div>
-                    <span className="font-semibold">{isFa ? 'تاریخ:' : 'Date:'} </span>
-                    <span dir="ltr">{formatDate(printMinutes.date)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="font-semibold">{t.headers.packingListNo}: </span>
-                  <span dir="ltr" className="tabular-nums">{printMinutes.packingListNo}</span>
-                </div>
-                <div>
-                  <span className="font-semibold">{t.headers.opiInvitationNo}: </span>
-                  <span dir="ltr" className="tabular-nums">{printMinutes.invitationNo || '-'}</span>
-                </div>
-                <div>
-                  <span className="font-semibold">{t.headers.packageNo}: </span>
-                  <span dir="ltr" className="tabular-nums">
-                    {printMinutes.packageNos.join(', ') || '-'}
-                  </span>
-                </div>
-                <div>
-                  <span className="font-semibold">{isFa ? 'محل بازرسی:' : 'Location:'} </span>
-                  <span className="bidi-plaintext">{printMinutes.location || '-'}</span>
-                </div>
-                <div className="col-span-2">
-                  <span className="font-semibold">{isFa ? 'نتیجه بازرسی:' : 'Result:'} </span>
-                  <span>
-                    {printMinutes.resultStatus === 'compliant'
-                      ? isFa ? 'منطبق با پکینگ لیست و بدون مغایرت' : 'Compliant / No Discrepancy'
-                      : isFa ? 'دارای مغایرت / کسری / آسیب‌دیدگی' : 'Has Discrepancy'}
-                  </span>
-                </div>
-              </div>
-
-              {printMinutes.notes && (
-                <div>
-                  <span className="font-semibold">{t.headers.notes}: </span>
-                  <span className="bidi-plaintext">{printMinutes.notes}</span>
-                </div>
-              )}
-
-              <div className="grid grid-cols-4 gap-4 pt-8 text-center">
-                <div className="border-t border-current pt-2">
-                  <div>{isFa ? 'نماینده مپنا' : 'MAPNA'}</div>
-                  <div className="text-[10px] opacity-80 mt-1">{printMinutes.mapnaInspector || ''}</div>
-                </div>
-                <div className="border-t border-current pt-2">
-                  <div>{isFa ? 'نماینده کارفرما' : 'Employer'}</div>
-                  <div className="text-[10px] opacity-80 mt-1">{printMinutes.employerInspector || ''}</div>
-                </div>
-                <div className="border-t border-current pt-2">
-                  <div>{isFa ? 'نماینده پیمانکار' : 'Contractor'}</div>
-                  <div className="text-[10px] opacity-80 mt-1">{printMinutes.contractorInspector || ''}</div>
-                </div>
-                <div className="border-t border-current pt-2">
-                  <div>{isFa ? 'کنترل کیفیت (QC)' : 'QC Inspector'}</div>
-                  <div className="text-[10px] opacity-80 mt-1">{printMinutes.qcInspector || ''}</div>
-                </div>
+            <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
+              <div className="mx-auto max-w-[790px] bg-white p-5 shadow-lg rounded-sm">
+                <OfficialOpiMinutesSheet
+                  record={printMinutes}
+                  detailedItems={data?.detailedItems || []}
+                  generalEntries={data?.generalEntries || []}
+                  formatDate={formatDate}
+                />
               </div>
             </div>
           </div>

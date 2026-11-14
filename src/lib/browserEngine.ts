@@ -35,6 +35,7 @@ import type {
   OsdrReportItem,
   OsdrReportRecord,
   PackingStatusMeta,
+  PeriodicInspectionRecord,
   ShortageBackfillRecord,
   SiteEntryMinutesRecord,
   SubstitutionRecord,
@@ -68,6 +69,7 @@ interface StaticDatabase {
   gcvDocuments: GcvDocumentRecord[];
   mivDocuments: MivDocumentRecord[];
   materialEstimates: MaterialEstimateRecord[];
+  periodicInspections: PeriodicInspectionRecord[];
 }
 
 const DB_NAME = 'samaan_static_db';
@@ -115,6 +117,7 @@ function createEmptyDb(): StaticDatabase {
     gcvDocuments: [],
     mivDocuments: [],
     materialEstimates: [],
+    periodicInspections: [],
   };
 }
 
@@ -180,6 +183,7 @@ async function getDb(): Promise<StaticDatabase> {
         gcvDocuments: Array.isArray(loaded.gcvDocuments) ? loaded.gcvDocuments : [],
         mivDocuments: Array.isArray(loaded.mivDocuments) ? loaded.mivDocuments : [],
         materialEstimates: Array.isArray(loaded.materialEstimates) ? loaded.materialEstimates : [],
+        periodicInspections: Array.isArray(loaded.periodicInspections) ? loaded.periodicInspections : [],
       }
     : empty;
   renumberScope(cachedDb, 'general');
@@ -835,7 +839,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
       return matchSearch(
         [
-          g.rowNo, g.packingListNo, g.packageNo, g.itemDescription, g.supplier,
+          g.rowNo, g.packingListNo, g.packageNo, g.packageType || '', g.itemDescription, g.supplier,
           g.dispatchLocation, g.employerEntryMinutesNo, g.mapnaEntryMinutesNo,
           g.releaseNo, g.billOfLadingNo, g.vehicleNo, g.driverName,
           g.opiInvitationNo, g.island, g.system, g.subSystem, g.unit,
@@ -953,6 +957,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
+        packageType: normKey(raw.packageType),
         itemCount: parsedItemCount,
         itemDescription: normKey(raw.itemDescription),
         island: normKey(raw.island),
@@ -1022,6 +1027,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       patch.mapnaEntryMinutesNo = cleanMin;
     }
 
+    if (patch.packageType !== undefined) {
+      patch.packageType = normKey(patch.packageType);
+    }
     if (patch.itemCount !== undefined) {
       patch.itemCount =
         patch.itemCount !== null && Number.isFinite(Number(patch.itemCount)) && Number(patch.itemCount) > 0
@@ -1594,18 +1602,67 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         400,
       );
     }
+    const cleanItems = Array.isArray(raw.items)
+      ? raw.items
+          .map((it) => ({
+            description: normKey(it?.description),
+            packingListNo: normKey(it?.packingListNo),
+            packageNo: normKey(it?.packageNo),
+            dimensions: normKey(it?.dimensions),
+            qty: normKey(it?.qty),
+            unit: normKey(it?.unit),
+            netWeight: normKey(it?.netWeight),
+            grossWeight: normKey(it?.grossWeight),
+            remarks: normKey(it?.remarks),
+          }))
+          .filter(
+            (it) =>
+              it.description ||
+              it.packingListNo ||
+              it.packageNo ||
+              it.dimensions ||
+              it.qty ||
+              it.unit ||
+              it.netWeight ||
+              it.grossWeight ||
+              it.remarks,
+          )
+      : undefined;
+
     const record: SiteEntryMinutesRecord = {
       id: makeId(),
       minutesNo: cleanNo,
+      releaseNoteNo: normKey(raw.releaseNoteNo),
+      projectName: normKey(raw.projectName),
+      entryType: raw.entryType === 'temporary' ? 'temporary' : 'permanent',
+      goodsUsage:
+        raw.goodsUsage === 'site_equip' || raw.goodsUsage === 'general' ? raw.goodsUsage : 'project',
+      contractNo: normKey(raw.contractNo),
       date: cleanDate,
+      arrivalDate: normKey(raw.arrivalDate) || cleanDate,
       packingListNos: cleanPackings,
       supplier: normKey(raw.supplier),
+      unit: normKey(raw.unit),
+      system: normKey(raw.system),
+      island: normKey(raw.island),
+      origin: normKey(raw.origin),
+      carrierCompany: normKey(raw.carrierCompany),
+      trafficLocation: normKey(raw.trafficLocation),
+      vehicleType: normKey(raw.vehicleType),
       driverName: normKey(raw.driverName),
       vehicleNo: normKey(raw.vehicleNo),
       waybillNo: normKey(raw.waybillNo),
+      items: cleanItems,
       warehouseKeeper: normKey(raw.warehouseKeeper),
+      contractorManager: normKey(raw.contractorManager),
+      mapnaSecurity: normKey(raw.mapnaSecurity),
+      qcChecked: Boolean(raw.qcChecked),
+      qcTechOffice: normKey(raw.qcTechOffice),
+      hseChecked: Boolean(raw.hseChecked),
+      hseOfficer: normKey(raw.hseOfficer),
+      equipmentSupply: normKey(raw.equipmentSupply) || normKey(raw.mapnaRep),
       employerRep: normKey(raw.employerRep),
-      mapnaRep: normKey(raw.mapnaRep),
+      mapnaRep: normKey(raw.mapnaRep) || normKey(raw.equipmentSupply),
       conditionStatus: raw.conditionStatus || 'healthy',
       notes: normKey(raw.notes),
       createdAt: new Date().toISOString(),
@@ -1632,29 +1689,65 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return {
       invitations: db.opiInvitations,
       detailedItems: db.detailed.map(computeDetailedEntry),
+      generalEntries: db.general,
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     } as T;
   }
 
   if (pathname === '/api/opi' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
-    const cleanNo = normKey(String(body.invitationNo || ''));
-    const cleanDate = normKey(String(body.date || ''));
-    const cleanPackings = Array.from(new Set(((body.packingNos as string[]) || []).map(normKey).filter(Boolean)));
+    const raw = body as Partial<OpiInvitationRecord>;
+    const cleanNo = normKey(raw.invitationNo);
+    const cleanDate = normKey(raw.date);
+    const cleanPackings = Array.from(new Set((raw.packingNos || []).map(normKey).filter(Boolean)));
     if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
       throw new StaticEngineError(
         errMsg('شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است', 'Invitation No., date, and at least one Packing List are required'),
         400,
       );
     }
+    const cleanItems = Array.isArray(raw.items)
+      ? raw.items
+          .map((it) => ({
+            itemNo: normKey(it?.itemNo),
+            packingListNo: normKey(it?.packingListNo),
+            packageNo: normKey(it?.packageNo),
+            description: normKey(it?.description),
+            uom: normKey(it?.uom),
+            remarks: normKey(it?.remarks),
+          }))
+          .filter(
+            (it) =>
+              it.itemNo ||
+              it.packingListNo ||
+              it.packageNo ||
+              it.description ||
+              it.uom ||
+              it.remarks,
+          )
+      : undefined;
+
     const record: OpiInvitationRecord = {
       id: makeId(),
       invitationNo: cleanNo,
+      issueDate: normKey(raw.issueDate) || cleanDate,
       date: cleanDate,
-      time: normKey(String(body.time || '')) || '09:00',
+      time: normKey(raw.time) || '09:00',
       packingNos: cleanPackings,
-      location: normKey(String(body.location || '')),
-      notes: normKey(String(body.notes || '')),
+      location: normKey(raw.location),
+      projectName: normKey(raw.projectName),
+      system: normKey(raw.system),
+      island: normKey(raw.island),
+      unit: normKey(raw.unit),
+      supplier: normKey(raw.supplier),
+      contractNo: normKey(raw.contractNo),
+      purchasePackageNo: normKey(raw.purchasePackageNo),
+      items: cleanItems,
+      installerContractor: normKey(raw.installerContractor),
+      supplierRep: normKey(raw.supplierRep),
+      equipmentSupply: normKey(raw.equipmentSupply),
+      employerRep: normKey(raw.employerRep),
+      notes: normKey(raw.notes),
       status: 'issued',
       createdAt: new Date().toISOString(),
       createdBy: u.fullName || u.username,
@@ -1744,6 +1837,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       osdrReports: db.osdrReports,
       invitations: db.opiInvitations,
       detailedItems: db.detailed.map(computeDetailedEntry),
+      generalEntries: db.general,
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     } as T;
   }
@@ -1760,17 +1854,50 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         400,
       );
     }
+    const cleanItems = Array.isArray(raw.items)
+      ? raw.items
+          .map((it) => ({
+            itemNo: normKey(it?.itemNo),
+            packingListNo: normKey(it?.packingListNo),
+            packageNo: normKey(it?.packageNo),
+            description: normKey(it?.description),
+            uom: normKey(it?.uom),
+            remarks: normKey(it?.remarks),
+          }))
+          .filter(
+            (it) =>
+              it.itemNo ||
+              it.packingListNo ||
+              it.packageNo ||
+              it.description ||
+              it.uom ||
+              it.remarks,
+          )
+      : undefined;
+
     const record: OpiMinutesRecord = {
       id: makeId(),
       minutesNo: cleanNo,
       invitationNo: normKey(raw.invitationNo),
       date: cleanDate,
+      time: normKey(raw.time),
       packingListNo: cleanPacking,
       packageNos: Array.from(new Set((raw.packageNos || []).map(normKey).filter(Boolean))),
+      projectName: normKey(raw.projectName),
+      supplier: normKey(raw.supplier),
+      system: normKey(raw.system),
+      island: normKey(raw.island),
+      unit: normKey(raw.unit),
+      contractNo: normKey(raw.contractNo),
+      purchasePackageNo: normKey(raw.purchasePackageNo),
+      items: cleanItems,
+      merNo: normKey(raw.merNo),
       location: normKey(raw.location),
+      storekeeper: normKey(raw.storekeeper),
       mapnaInspector: normKey(raw.mapnaInspector),
+      sellerRep: normKey(raw.sellerRep) || normKey(raw.contractorInspector),
       employerInspector: normKey(raw.employerInspector),
-      contractorInspector: normKey(raw.contractorInspector),
+      contractorInspector: normKey(raw.contractorInspector) || normKey(raw.sellerRep),
       qcInspector: normKey(raw.qcInspector),
       resultStatus: raw.resultStatus || 'compliant',
       notes: normKey(raw.notes),
@@ -1826,14 +1953,25 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return {
       documents: db.gcvDocuments,
       detailedItems: db.detailed.map(computeDetailedEntry),
+      generalEntries: db.general,
     } as T;
   }
 
   if (pathname === '/api/gcv' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
-    const cleanNo = normKey(String(body.receiptNo || ''));
-    const cleanReceiver = normKey(String(body.receiver || ''));
-    const items = (body.items as Array<{ detailedId: string; qty: number }>) || [];
+    const raw = body as Partial<GcvDocumentRecord> & {
+      items?: Array<{
+        detailedId: string;
+        qty: number;
+        technicalInfo?: string;
+        tagNo?: string;
+        uom?: string;
+        remark?: string;
+      }>;
+    };
+    const cleanNo = normKey(raw.receiptNo);
+    const cleanReceiver = normKey(raw.receiver);
+    const items = raw.items || [];
     if (!cleanNo || !cleanReceiver || !items.length) {
       throw new StaticEngineError(
         errMsg('شماره رسید، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است', 'Receipt No., receiver, and at least one item are required'),
@@ -1875,6 +2013,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         itemNo: d.itemNo,
         description: d.description || d.generalDescription,
         qty,
+        technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        uom: normKey(reqItem.uom) || d.countingUnit || '',
+        remark: normKey(reqItem.remark) || '',
       });
     }
 
@@ -1890,9 +2032,27 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const doc: GcvDocumentRecord = {
       id: makeId(),
       receiptNo: cleanNo,
-      date: normKey(String(body.date || '')),
+      date: normKey(raw.date),
       receiver: cleanReceiver,
-      notes: normKey(String(body.notes || '')),
+      projectName: normKey(raw.projectName),
+      purchaseRequestNo: normKey(raw.purchaseRequestNo),
+      supplier: normKey(raw.supplier),
+      buyerName: normKey(raw.buyerName),
+      purchasePackageNo: normKey(raw.purchasePackageNo),
+      releaseNoteNo: normKey(raw.releaseNoteNo),
+      purchaseBy:
+        raw.purchaseBy === 'site_admin' || raw.purchaseBy === 'contractor_supplier'
+          ? raw.purchaseBy
+          : raw.purchaseBy === 'tehran_proc'
+            ? 'tehran_proc'
+            : undefined,
+      islandSystem: normKey(raw.islandSystem),
+      waybillNo: normKey(raw.waybillNo),
+      storekeeper: normKey(raw.storekeeper),
+      receiverManager: normKey(raw.receiverManager) || cleanReceiver,
+      equipmentSupply: normKey(raw.equipmentSupply),
+      mapnaSiteManager: normKey(raw.mapnaSiteManager),
+      notes: normKey(raw.notes),
       items: lineItems,
       createdAt: now,
       createdBy: u.fullName || u.username,
@@ -1909,19 +2069,35 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return {
       documents: db.mivDocuments,
       detailedItems: db.detailed.map(computeDetailedEntry),
+      generalEntries: db.general,
     } as T;
   }
 
   if (pathname === '/api/miv' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
-    const docType = body.docType as MivDocType;
+    const raw = body as Partial<MivDocumentRecord> & {
+      items?: Array<{
+        detailedId: string;
+        qty: number;
+        requestedQty?: number;
+        technicalInfo?: string;
+        tagNo?: string;
+        codeNo?: string;
+        location?: string;
+        uom?: string;
+        opiNo?: string;
+        returnReason?: string;
+        remark?: string;
+      }>;
+    };
+    const docType = raw.docType as MivDocType;
     const validTypes: MivDocType[] = ['miv_contractor', 'smr_contractor', 'smr_mapna', 'miv_mapna'];
     if (!validTypes.includes(docType)) {
       throw new StaticEngineError(errMsg('نوع فرم معتبر نیست', 'Invalid document type'), 400);
     }
-    const cleanNo = normKey(String(body.docNo || ''));
-    const cleanDate = normKey(String(body.date || ''));
-    const items = (body.items as Array<{ detailedId: string; qty: number }>) || [];
+    const cleanNo = normKey(String(raw.docNo || ''));
+    const cleanDate = normKey(String(raw.date || ''));
+    const items = raw.items || [];
     if (!cleanNo || !items.length) {
       throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
     }
@@ -1953,6 +2129,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           400,
         );
       }
+      const reqQtyNum = Number(reqItem.requestedQty);
       lineItems.push({
         detailedId: d.id,
         shipmentNo: d.shipmentNo,
@@ -1960,11 +2137,20 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         itemNo: d.itemNo,
         description: d.description || d.generalDescription,
         qty,
+        requestedQty: Number.isFinite(reqQtyNum) && reqQtyNum > 0 ? reqQtyNum : qty,
+        technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        codeNo: normKey(reqItem.codeNo) || d.itemCode || '',
+        location: normKey(reqItem.location) || d.storageLocation || '',
+        uom: normKey(reqItem.uom) || d.countingUnit || '',
+        opiNo: normKey(reqItem.opiNo) || d.opiNo || '',
+        returnReason: normKey(reqItem.returnReason) || '',
+        remark: normKey(reqItem.remark) || '',
       });
     }
 
     const now = new Date().toISOString();
-    const cleanNotes = normKey(String(body.notes || ''));
+    const cleanNotes = normKey(String(raw.notes || ''));
     for (const line of lineItems) {
       const d = db.detailed.find((x) => x.id === line.detailedId)!;
       if (docType === 'miv_contractor') {
@@ -1994,7 +2180,23 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       docType,
       docNo: cleanNo,
       date: cleanDate,
-      party: normKey(String(body.party || '')),
+      party: normKey(String(raw.party || '')),
+      projectName: normKey(raw.projectName),
+      contractNo: normKey(raw.contractNo),
+      purchasePackageNo: normKey(raw.purchasePackageNo),
+      supplier: normKey(raw.supplier),
+      releaseNoteNo: normKey(raw.releaseNoteNo),
+      islandSystem: normKey(raw.islandSystem),
+      unit: normKey(raw.unit),
+      receiptNo: normKey(raw.receiptNo),
+      storekeeper: normKey(raw.storekeeper),
+      equipmentSupply: normKey(raw.equipmentSupply),
+      techOffice: normKey(raw.techOffice),
+      installationDept: normKey(raw.installationDept),
+      qcInspector: normKey(raw.qcInspector),
+      installerRep: normKey(raw.installerRep),
+      requester: normKey(raw.requester),
+      receiver: normKey(raw.receiver),
       notes: cleanNotes,
       items: lineItems,
       createdAt: now,
@@ -2019,6 +2221,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return {
       records: db.substitutions,
       detailedItems: db.detailed.map(computeDetailedEntry),
+      generalEntries: db.general,
     } as T;
   }
 
@@ -2051,15 +2254,36 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       shipmentNo: d.shipmentNo,
       packageNo: d.packageNo,
       itemNo: d.itemNo,
+      projectName: normKey(raw.projectName),
+      contractNo: normKey(raw.contractNo),
+      system: normKey(raw.system) || d.system || '',
+      island: normKey(raw.island) || d.island || '',
+      unit: normKey(raw.unit) || d.unit || '',
+      supplier: normKey(raw.supplier) || d.supplier || '',
+      supplyUrgency: normKey(raw.supplyUrgency),
+      installerContractor: normKey(raw.installerContractor),
+      mivNo: normKey(raw.mivNo) || d.mivContractorNo || d.mivMapnaNo || '',
+      merNcrNo: normKey(raw.merNcrNo) || d.merNo || d.repNo || '',
       originalDescription: d.description || d.generalDescription,
       originalItemCode: d.itemCode,
+      originalDrawingNo: normKey(raw.originalDrawingNo),
+      originalRemarks: normKey(raw.originalRemarks),
+      substitutePackageNo: normKey(raw.substitutePackageNo),
       substituteDescription: cleanSubDesc,
       substituteItemCode: normKey(raw.substituteItemCode),
       substituteSize: normKey(raw.substituteSize),
+      substituteDrawingNo: normKey(raw.substituteDrawingNo),
+      substituteRemarks: normKey(raw.substituteRemarks),
       qty: numQty,
       countingUnit: d.countingUnit || 'PC',
       reason: cleanReason,
+      supplierNotes: normKey(raw.supplierNotes),
+      reprocureBy: normKey(raw.reprocureBy),
+      costBorneBy: normKey(raw.costBorneBy),
       approvedBy: normKey(raw.approvedBy),
+      mapnaRep: normKey(raw.mapnaRep) || normKey(raw.approvedBy),
+      installerSignatory: normKey(raw.installerSignatory),
+      supplierSignatory: normKey(raw.supplierSignatory),
       status: raw.status || 'pending',
       notes: normKey(raw.notes),
       createdAt: new Date().toISOString(),
@@ -2099,7 +2323,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const cleanDesc = normKey(raw.description);
     const estQty = toNum(raw.estimatedQty) ?? 0;
     if (!cleanDesc) {
-      throw new StaticEngineError(errMsg('شرح متریال برآورد الزامی است', 'Estimated material description is required'), 400);
+      throw new StaticEngineError(errMsg('شرح تجهیزات برآورد الزامی است', 'Estimated equipment description is required'), 400);
     }
     if (estQty <= 0) {
       throw new StaticEngineError(errMsg('مقدار برآورد باید بزرگتر از صفر باشد', 'Estimated quantity must be greater than zero'), 400);
@@ -2138,7 +2362,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       'CREATE_ESTIMATION',
       'estimation',
       record.mtoCode || record.itemCode || record.description.slice(0, 32),
-      `ثبت ردیف برآورد متریال: ${record.description}`,
+      `ثبت ردیف برآورد تجهیزات: ${record.description}`,
     );
     await saveDb(db);
     return { record } as T;
@@ -2149,13 +2373,13 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const id = pathname.split('/').pop()!;
     const rec = db.materialEstimates.find((e) => e.id === id);
     if (!rec) {
-      throw new StaticEngineError(errMsg('ردیف برآورد متریال یافت نشد', 'Material estimation record not found'), 404);
+      throw new StaticEngineError(errMsg('ردیف برآورد تجهیزات یافت نشد', 'Equipment estimation record not found'), 404);
     }
     const raw = body as Partial<MaterialEstimateRecord>;
     if (raw.description !== undefined) {
       const cleanDesc = normKey(raw.description);
       if (!cleanDesc) {
-        throw new StaticEngineError(errMsg('شرح متریال برآورد الزامی است', 'Estimated material description is required'), 400);
+        throw new StaticEngineError(errMsg('شرح تجهیزات برآورد الزامی است', 'Estimated equipment description is required'), 400);
       }
       rec.description = cleanDesc;
     }
@@ -2194,7 +2418,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       'UPDATE_ESTIMATION',
       'estimation',
       rec.mtoCode || rec.itemCode || rec.description.slice(0, 32),
-      `ویرایش ردیف برآورد متریال: ${rec.description}`,
+      `ویرایش ردیف برآورد تجهیزات: ${rec.description}`,
     );
     await saveDb(db);
     return { record: rec } as T;
@@ -2205,7 +2429,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const id = pathname.split('/').pop()!;
     const idx = db.materialEstimates.findIndex((e) => e.id === id);
     if (idx === -1) {
-      throw new StaticEngineError(errMsg('ردیف برآورد متریال یافت نشد', 'Material estimation record not found'), 404);
+      throw new StaticEngineError(errMsg('ردیف برآورد تجهیزات یافت نشد', 'Equipment estimation record not found'), 404);
     }
     const [removed] = db.materialEstimates.splice(idx, 1);
     addAudit(
@@ -2214,7 +2438,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       'DELETE_ESTIMATION',
       'estimation',
       removed.mtoCode || removed.itemCode || removed.description.slice(0, 32),
-      `حذف ردیف برآورد متریال: ${removed.description}`,
+      `حذف ردیف برآورد تجهیزات: ${removed.description}`,
     );
     await saveDb(db);
     return { ok: true } as T;
@@ -2255,7 +2479,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const cleanDate = normKey(String(body.stocktakeDate || ''));
     const cleanInfo = normKey(String(body.stocktakeInfo || ''));
     if (!detailedIds.length || !cleanStatus) {
-      throw new StaticEngineError(errMsg('انتخاب اقلام و وضعیت انبارگردانی الزامی است', 'Items and stocktake status are required'), 400);
+      throw new StaticEngineError(errMsg('انتخاب اقلام و وضعیت انبارگردانی و بازدید ادواری الزامی است', 'Items and stocktake & periodic inspection status are required'), 400);
     }
     const now = new Date().toISOString();
     let updatedCount = 0;
@@ -2268,9 +2492,76 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       d.updatedAt = now;
       updatedCount += 1;
     }
-    addAudit(db, sanitizeUser(u), 'ASSIGN_STOCKTAKE', 'stocktake', cleanStatus, `ثبت وضعیت انبارگردانی «${cleanStatus}» برای ${updatedCount} ردیف`);
+    addAudit(db, sanitizeUser(u), 'ASSIGN_STOCKTAKE', 'stocktake', cleanStatus, `ثبت وضعیت انبارگردانی و بازدید ادواری «${cleanStatus}» برای ${updatedCount} ردیف`);
     await saveDb(db);
     return { ok: true, updatedCount } as T;
+  }
+
+  // ---------------- PERIODIC INSPECTION CHECKLIST ----------------
+  if (pathname === '/api/periodic-inspections' && method === 'GET') {
+    requireAuth();
+    return { records: db.periodicInspections } as T;
+  }
+
+  if (pathname === '/api/periodic-inspections' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const raw = body as Partial<PeriodicInspectionRecord>;
+    const cleanDate = normKey(raw.inspectionDate);
+    if (!cleanDate) {
+      throw new StaticEngineError(errMsg('تاریخ بازدید ادواری الزامی است', 'Inspection date is required'), 400);
+    }
+    const answers = Array.isArray(raw.answers)
+      ? raw.answers.map((a) => ({
+          questionKey: normKey(a?.questionKey),
+          status: (a?.status === '+' || a?.status === '-' ? a.status : '') as '+' | '-' | '',
+          remarks: normKey(a?.remarks),
+        }))
+      : [];
+
+    const record: PeriodicInspectionRecord = {
+      id: makeId(),
+      projectName: normKey(raw.projectName),
+      inspectionDate: cleanDate,
+      supervisorName: normKey(raw.supervisorName),
+      inspectorsSignatory: normKey(raw.inspectorsSignatory),
+      siteSupervisorSignatory: normKey(raw.siteSupervisorSignatory),
+      projectManagerSignatory: normKey(raw.projectManagerSignatory),
+      copyTo: normKey(raw.copyTo),
+      answers,
+      createdAt: new Date().toISOString(),
+      createdBy: u.fullName || u.username,
+    };
+    db.periodicInspections.unshift(record);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'CREATE_PERIODIC_INSPECTION',
+      'periodicInspection',
+      cleanDate,
+      `ثبت چک‌لیست بازدید ادواری انبار مورخ ${cleanDate}`,
+    );
+    await saveDb(db);
+    return { record } as T;
+  }
+
+  if (pathname.startsWith('/api/periodic-inspections/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.split('/').pop()!;
+    const idx = db.periodicInspections.findIndex((r) => r.id === id);
+    if (idx === -1) {
+      throw new StaticEngineError(errMsg('سابقه بازدید ادواری یافت نشد', 'Periodic inspection record not found'), 404);
+    }
+    const [removed] = db.periodicInspections.splice(idx, 1);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'DELETE_PERIODIC_INSPECTION',
+      'periodicInspection',
+      removed.inspectionDate,
+      `حذف چک‌لیست بازدید ادواری مورخ ${removed.inspectionDate}`,
+    );
+    await saveDb(db);
+    return { ok: true } as T;
   }
 
   // ---------------- SEARCH ----------------
@@ -2281,7 +2572,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (!q) return { general: [], detailed: [], transit: [] } as T;
 
     const general = db.general.filter((g) => matchSearch([
-      g.rowNo, g.packingListNo, g.packageNo, g.itemDescription, g.supplier, g.dispatchLocation,
+      g.rowNo, g.packingListNo, g.packageNo, g.packageType || '', g.itemDescription, g.supplier, g.dispatchLocation,
       g.employerEntryMinutesNo, g.mapnaEntryMinutesNo, g.billOfLadingNo, g.driverName, g.island, g.system,
     ], q)).slice(0, limit);
 
@@ -2603,6 +2894,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       gcvDocuments: db.gcvDocuments,
       mivDocuments: db.mivDocuments,
       materialEstimates: db.materialEstimates,
+      periodicInspections: db.periodicInspections,
     } as DatabaseSnapshot as T;
   }
 
@@ -2624,6 +2916,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.gcvDocuments = Array.isArray(snap.gcvDocuments) ? snap.gcvDocuments : [];
     db.mivDocuments = Array.isArray(snap.mivDocuments) ? snap.mivDocuments : [];
     db.materialEstimates = Array.isArray(snap.materialEstimates) ? snap.materialEstimates : [];
+    db.periodicInspections = Array.isArray(snap.periodicInspections) ? snap.periodicInspections : [];
     renumberScope(db, 'general');
     renumberScope(db, 'detailed');
     renumberScope(db, 'transit');

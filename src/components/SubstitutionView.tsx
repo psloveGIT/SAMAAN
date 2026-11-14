@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeftRight,
   CheckCircle2,
@@ -11,19 +12,497 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import type { DetailedComputed, SubstitutionRecord } from '../shared/types.ts';
+import type {
+  DetailedComputed,
+  GeneralEntry,
+  SubstitutionRecord,
+} from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+
+const MD1_STACKED_LOGO = '/assets/aistudio/______________________________65f1164c.png';
 
 interface SubstitutionsApiResponse {
   records: SubstitutionRecord[];
   detailedItems: DetailedComputed[];
+  generalEntries?: GeneralEntry[];
 }
 
 interface SubstitutionViewProps {
   refreshSignal: number;
   onDataChanged: () => void;
 }
+
+interface OfficialRepSheetProps {
+  rec: SubstitutionRecord;
+  formatDate: (iso: string) => string;
+}
+
+const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) => {
+  const unitDisplay = rec.unit?.trim() || '..................';
+  const origPackageText = [rec.shipmentNo, rec.packageNo].filter(Boolean).join(' / ');
+  const subPackageText = rec.substitutePackageNo?.trim() || origPackageText;
+  const subDescText = `${rec.substituteDescription}${rec.substituteSize ? ` (${rec.substituteSize})` : ''}`;
+
+  const renderSectionTable = (
+    itemIndex: number,
+    pkgText: string,
+    descText: string,
+    tagNo: string,
+    qtyText: string,
+    drawingNo: string,
+    remarksText: string,
+  ) => (
+    <table
+      dir="rtl"
+      style={{
+        width: '100%',
+        borderCollapse: 'collapse',
+        tableLayout: 'fixed',
+        fontSize: '9.5px',
+      }}
+    >
+      <thead>
+        <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
+          <th style={{ width: '6%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px' }}>
+            <span dir="ltr">Item No.</span>
+          </th>
+          <th style={{ width: '11%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '4px 3px', lineHeight: 1.3 }}>
+            <div>شماره بسته</div>
+            <div dir="ltr">(PN)</div>
+          </th>
+          <th style={{ width: '27%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px' }}>
+            شرح مواد/ تجهیزات
+          </th>
+          <th style={{ width: '7%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '4px 3px' }}>
+            <span dir="ltr">Tag No.</span>
+          </th>
+          <th style={{ width: '7%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px' }}>
+            تعداد
+          </th>
+          <th style={{ width: '19%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px' }}>
+            شماره نقشه
+          </th>
+          <th style={{ width: '23%', borderBottom: '1px solid #000000', padding: '5px 4px' }}>
+            توضیحات
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style={{ height: '62px' }}>
+          <td
+            className="tabular-nums"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px' }}
+          >
+            {itemIndex}
+          </td>
+          <td
+            dir="ltr"
+            className="tabular-nums"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px', wordBreak: 'break-word' }}
+          >
+            {pkgText}
+          </td>
+          <td
+            className="bidi-plaintext"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 6px', wordBreak: 'break-word' }}
+          >
+            {descText}
+          </td>
+          <td
+            dir="ltr"
+            className="tabular-nums"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px', wordBreak: 'break-word' }}
+          >
+            {tagNo}
+          </td>
+          <td
+            className="tabular-nums"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px', fontWeight: 700 }}
+          >
+            {qtyText}
+          </td>
+          <td
+            dir="ltr"
+            className="tabular-nums"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px', wordBreak: 'break-word' }}
+          >
+            {drawingNo}
+          </td>
+          <td
+            className="bidi-plaintext"
+            style={{ borderBottom: '1px solid #000000', padding: '5px 6px', wordBreak: 'break-word' }}
+          >
+            {remarksText}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  );
+
+  return (
+    <div
+      dir="rtl"
+      style={{
+        backgroundColor: '#ffffff',
+        color: '#000000',
+        fontFamily: '"Vazirmatn", "Plus Jakarta Sans", Tahoma, sans-serif',
+        width: '100%',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* Unified Outer Box */}
+      <div style={{ border: '1.8px solid #000000' }}>
+        {/* Header Row (Single unified white strip with no vertical lines) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '118px 1fr 170px',
+            alignItems: 'stretch',
+            borderBottom: '1.5px solid #000000',
+            padding: '6px 10px',
+          }}
+        >
+          {/* Right: Stacked MAPNA MD1 Logo */}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
+            }}
+          >
+            <img
+              src={MD1_STACKED_LOGO}
+              alt="گروه مپنا - توسعه یک"
+              style={{ height: '54px', width: 'auto', objectFit: 'contain', display: 'block' }}
+            />
+            <div
+              style={{
+                fontSize: '7.5px',
+                fontWeight: 700,
+                marginTop: '3px',
+                color: '#334155',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              مستندات سیستم مدیریت یکپارچه
+            </div>
+          </div>
+
+          {/* Center: Form Title */}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
+              lineHeight: 1.55,
+              padding: '2px 8px',
+            }}
+          >
+            <div style={{ fontSize: '12px', fontWeight: 700 }}>
+              شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
+            </div>
+            <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
+              پروژه {rec.projectName?.trim() || '...............................'}
+            </div>
+            <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
+              جایگزینی
+            </div>
+            <div dir="ltr" style={{ fontSize: '11.5px', fontWeight: 700, marginTop: '2px' }}>
+              Replacement Form
+            </div>
+          </div>
+
+          {/* Left: شماره جایگزینی & تاریخ */}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              padding: '6px 6px',
+              fontSize: '10px',
+              fontWeight: 700,
+              textAlign: 'right',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px' }}>
+              <span>شماره جایگزینی:</span>
+              <span dir="ltr" className="tabular-nums">
+                {rec.docNo}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px' }}>
+              <span>تاریخ:</span>
+              <span dir="ltr" className="tabular-nums">
+                {formatDate(rec.date)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Metadata Row 1 (5 columns RTL: شماره قرارداد/درخواست خرید | سیستم | جزیره | واحد | تامین کننده) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.1fr 0.9fr 0.9fr 0.85fr 1.25fr',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.5px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px', lineHeight: 1.45 }}>
+            <strong style={{ fontWeight: 700 }}>شماره قرارداد/ درخواست خرید: </strong>
+            <span dir="ltr" className="tabular-nums">
+              {rec.contractNo || ''}
+            </span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>سیستم: </strong>
+            <span className="bidi-plaintext">{rec.system || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>جزیره: </strong>
+            <span className="bidi-plaintext">{rec.island || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>واحد: </strong>
+            <span className="bidi-plaintext">{rec.unit || ''}</span>
+          </div>
+          <div style={{ padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>تامین کننده: </strong>
+            <span className="bidi-plaintext">{rec.supplier || ''}</span>
+          </div>
+        </div>
+
+        {/* Metadata Row 2 (4 columns RTL: فوریت تامین | پیمانکار نصب | شماره حواله | شماره NCR/MER) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.35fr 1.15fr 1fr 1.25fr',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.5px',
+            textAlign: 'right',
+            minHeight: '38px',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>فوریت تامین (عادی/اضطراری): </strong>
+            <span className="bidi-plaintext">{rec.supplyUrgency || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>پیمانکار نصب: </strong>
+            <span className="bidi-plaintext">{rec.installerContractor || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>شماره حواله: </strong>
+            <span dir="ltr" className="tabular-nums">
+              {rec.mivNo || ''}
+            </span>
+          </div>
+          <div style={{ padding: '5px 7px' }}>
+            <strong style={{ fontWeight: 700 }}>
+              شماره <span dir="ltr">NCR/MER</span>:{' '}
+            </strong>
+            <span dir="ltr" className="tabular-nums">
+              {rec.merNcrNo || ''}
+            </span>
+          </div>
+        </div>
+
+        {/* Section الف Statement */}
+        <div
+          style={{
+            borderBottom: '1px solid #000000',
+            padding: '8px 10px',
+            fontSize: '10px',
+            fontWeight: 700,
+            textAlign: 'center',
+          }}
+        >
+          الف- مواد / تجهیزات مشخص شده در ذیل مربوط به واحد شماره {unitDisplay} نیازمند تعویض می‌باشند:
+        </div>
+
+        {/* Section الف Table */}
+        {renderSectionTable(
+          1,
+          origPackageText,
+          rec.originalDescription,
+          rec.originalItemCode || '',
+          `${rec.qty} ${rec.countingUnit}`,
+          rec.originalDrawingNo || '',
+          rec.originalRemarks || '',
+        )}
+
+        {/* Section ب Statement */}
+        <div
+          style={{
+            borderBottom: '1px solid #000000',
+            padding: '8px 10px',
+            fontSize: '10px',
+            fontWeight: 700,
+            textAlign: 'center',
+          }}
+        >
+          ب - مواد / تجهیزات مشخص شده ما فوق با اقلام ذیل جهت واحد شماره {unitDisplay} تعویض شدند:
+        </div>
+
+        {/* Section ب Table */}
+        {renderSectionTable(
+          1,
+          subPackageText,
+          subDescText,
+          rec.substituteItemCode || '',
+          `${rec.qty} ${rec.countingUnit}`,
+          rec.substituteDrawingNo || '',
+          rec.substituteRemarks || rec.notes || '',
+        )}
+
+        {/* علت تعویض */}
+        <div
+          style={{
+            borderBottom: '1px solid #000000',
+            minHeight: '58px',
+            padding: '6px 10px',
+            fontSize: '9.8px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>علت تعویض:</div>
+          <div className="bidi-plaintext" style={{ marginTop: '4px', lineHeight: 1.7 }}>
+            {rec.reason}
+          </div>
+        </div>
+
+        {/* توضیحات تامین کننده */}
+        <div
+          style={{
+            borderBottom: '1px solid #000000',
+            minHeight: '72px',
+            padding: '6px 10px',
+            fontSize: '9.8px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>توضیحات تامین کننده:</div>
+          {rec.supplierNotes && (
+            <div className="bidi-plaintext" style={{ marginTop: '4px', lineHeight: 1.7 }}>
+              {rec.supplierNotes}
+            </div>
+          )}
+        </div>
+
+        {/* Agreement Statement & 3 Signatures */}
+        <div
+          style={{
+            borderBottom: '1px solid #000000',
+            padding: '10px 12px 14px',
+            fontSize: '9.8px',
+            lineHeight: 2,
+            textAlign: 'justify',
+          }}
+        >
+          <div>
+            امضاء کنندگان ذیل توافق و تایید نمودند که مواد/ تجهیزات تعیین شده در(ب) می‌توانند به جای اقلام قید شده در(الف) مورد استفاده قرار بگیرند، از سوی دیگر مواد/ تجهیزات جایگزین می‌بایست توسط{' '}
+            <span
+              className="bidi-plaintext"
+              style={{
+                fontWeight: 700,
+                display: 'inline-block',
+                minWidth: '140px',
+                textAlign: 'center',
+              }}
+            >
+              {rec.reprocureBy?.trim() || '...................................................'}
+            </span>{' '}
+            مجدداً تهیه شده و هزینه‌های ذیربط توسط{' '}
+            <span
+              className="bidi-plaintext"
+              style={{
+                fontWeight: 700,
+                display: 'inline-block',
+                minWidth: '150px',
+                textAlign: 'center',
+              }}
+            >
+              {rec.costBorneBy?.trim() || '.......................................................'}
+            </span>{' '}
+            می‌بایست پرداخت شوند.
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr 1fr',
+              marginTop: '20px',
+              minHeight: '42px',
+              fontSize: '9.8px',
+              fontWeight: 700,
+            }}
+          >
+            <div style={{ textAlign: 'right' }}>
+              <div>توسعه یک مپنا:</div>
+              {(rec.mapnaRep || rec.approvedBy) && (
+                <div className="bidi-plaintext" style={{ fontWeight: 500, fontSize: '9.2px', marginTop: '4px' }}>
+                  {rec.mapnaRep || rec.approvedBy}
+                </div>
+              )}
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div>پیمانکار نصب/ راه اندازی:</div>
+              {(rec.installerSignatory || rec.installerContractor) && (
+                <div className="bidi-plaintext" style={{ fontWeight: 500, fontSize: '9.2px', marginTop: '4px' }}>
+                  {rec.installerSignatory || rec.installerContractor}
+                </div>
+              )}
+            </div>
+            <div style={{ textAlign: 'left', paddingLeft: '24px' }}>
+              <div>تامین کننده:</div>
+              {(rec.supplierSignatory || rec.supplier) && (
+                <div className="bidi-plaintext" style={{ fontWeight: 500, fontSize: '9.2px', marginTop: '4px' }}>
+                  {rec.supplierSignatory || rec.supplier}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* QA Control Notice */}
+        <div
+          style={{
+            borderBottom: '1px solid #000000',
+            padding: '3px 10px',
+            fontSize: '8.5px',
+            fontWeight: 600,
+            textAlign: 'left',
+          }}
+        >
+          توجه : این فرم تحت کنترل واحد QA میباشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
+        </div>
+
+        {/* Bottom Footer Strip INSIDE outer frame */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '4px 10px',
+            fontSize: '9px',
+            fontWeight: 700,
+          }}
+        >
+          <div>رونوشت: معاونت تامین ، فروشنده، پیمانکار نصب</div>
+          <div dir="ltr" className="tabular-nums">
+            MD1EX-FQP02/10-03
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   refreshSignal,
@@ -38,14 +517,36 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   const [docNo, setDocNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
+  const [projectName, setProjectName] = useState('');
+  const [contractNo, setContractNo] = useState('');
+  const [system, setSystem] = useState('');
+  const [island, setIsland] = useState('');
+  const [unit, setUnit] = useState('');
+  const [supplier, setSupplier] = useState('');
+  const [supplyUrgency, setSupplyUrgency] = useState('عادی');
+  const [installerContractor, setInstallerContractor] = useState('');
+  const [mivNo, setMivNo] = useState('');
+  const [merNcrNo, setMerNcrNo] = useState('');
+
   const [itemSearch, setItemSearch] = useState('');
   const [selectedItemId, setSelectedItemId] = useState('');
+  const [originalDrawingNo, setOriginalDrawingNo] = useState('');
+  const [originalRemarks, setOriginalRemarks] = useState('');
+
+  const [substitutePackageNo, setSubstitutePackageNo] = useState('');
   const [substituteDescription, setSubstituteDescription] = useState('');
   const [substituteItemCode, setSubstituteItemCode] = useState('');
   const [substituteSize, setSubstituteSize] = useState('');
+  const [substituteDrawingNo, setSubstituteDrawingNo] = useState('');
+  const [substituteRemarks, setSubstituteRemarks] = useState('');
   const [qty, setQty] = useState('');
   const [reason, setReason] = useState('');
+  const [supplierNotes, setSupplierNotes] = useState('');
+  const [reprocureBy, setReprocureBy] = useState('');
+  const [costBorneBy, setCostBorneBy] = useState('');
   const [approvedBy, setApprovedBy] = useState('');
+  const [installerSignatory, setInstallerSignatory] = useState('');
+  const [supplierSignatory, setSupplierSignatory] = useState('');
   const [status, setStatus] = useState<SubstitutionRecord['status']>('pending');
   const [notes, setNotes] = useState('');
 
@@ -96,6 +597,34 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     [isFa],
   );
 
+  const handleSelectOriginal = (id: string) => {
+    setSelectedItemId(id);
+    const found = (data?.detailedItems || []).find((x) => x.id === id);
+    if (!found) return;
+
+    const genMatch =
+      (data?.generalEntries || []).find(
+        (g) =>
+          (g.packingListNo || '').trim() === (found.shipmentNo || '').trim() &&
+          (g.packageNo || '').trim() === (found.packageNo || '').trim(),
+      ) ||
+      (data?.generalEntries || []).find(
+        (g) => (g.packingListNo || '').trim() === (found.shipmentNo || '').trim(),
+      );
+
+    if (!qty && found.packingQty) setQty(String(found.packingQty));
+    if (!system.trim() && (found.system || genMatch?.system)) setSystem(found.system || genMatch?.system || '');
+    if (!island.trim() && (found.island || genMatch?.island)) setIsland(found.island || genMatch?.island || '');
+    if (!unit.trim() && (found.unit || genMatch?.unit)) setUnit(found.unit || genMatch?.unit || '');
+    if (!supplier.trim() && (found.supplier || genMatch?.supplier)) setSupplier(found.supplier || genMatch?.supplier || '');
+    if (!mivNo.trim() && (found.mivContractorNo || found.mivMapnaNo)) {
+      setMivNo(found.mivContractorNo || found.mivMapnaNo || '');
+    }
+    if (!merNcrNo.trim() && (found.merNo || found.repNo)) {
+      setMerNcrNo(found.merNo || found.repNo || '');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedItemId) {
@@ -110,12 +639,33 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
           docNo,
           date,
           detailedId: selectedItemId,
+          projectName,
+          contractNo,
+          system,
+          island,
+          unit,
+          supplier,
+          supplyUrgency,
+          installerContractor,
+          mivNo,
+          merNcrNo,
+          originalDrawingNo,
+          originalRemarks,
+          substitutePackageNo,
           substituteDescription,
           substituteItemCode,
           substituteSize,
+          substituteDrawingNo,
+          substituteRemarks,
           qty: Number(qty),
           reason,
+          supplierNotes,
+          reprocureBy,
+          costBorneBy,
           approvedBy,
+          mapnaRep: approvedBy,
+          installerSignatory: installerSignatory || installerContractor,
+          supplierSignatory: supplierSignatory || supplier,
           status,
           notes,
         }),
@@ -127,13 +677,32 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
           : `Substitution record ${res.record.docNo} saved.`,
       );
       setDocNo('');
+      setContractNo('');
+      setSystem('');
+      setIsland('');
+      setUnit('');
+      setSupplier('');
+      setSupplyUrgency('عادی');
+      setInstallerContractor('');
+      setMivNo('');
+      setMerNcrNo('');
       setSelectedItemId('');
+      setOriginalDrawingNo('');
+      setOriginalRemarks('');
+      setSubstitutePackageNo('');
       setSubstituteDescription('');
       setSubstituteItemCode('');
       setSubstituteSize('');
+      setSubstituteDrawingNo('');
+      setSubstituteRemarks('');
       setQty('');
       setReason('');
+      setSupplierNotes('');
+      setReprocureBy('');
+      setCostBorneBy('');
       setApprovedBy('');
+      setInstallerSignatory('');
+      setSupplierSignatory('');
       setStatus('pending');
       setNotes('');
       setPrintRec(res.record);
@@ -161,18 +730,21 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   const reportColumns = useMemo<CsvColumnDef<SubstitutionRecord>[]>(
     () => [
-      { key: 'docNo', header: isFa ? 'شماره سند' : 'Doc No.', getValue: (r) => r.docNo },
+      { key: 'docNo', header: isFa ? 'شماره جایگزینی' : 'Rep No.', getValue: (r) => r.docNo },
       { key: 'date', header: isFa ? 'تاریخ' : 'Date', isDate: true, getValue: (r) => r.date },
+      { key: 'projectName', header: isFa ? 'پروژه' : 'Project', getValue: (r) => r.projectName || '' },
+      { key: 'contractNo', header: isFa ? 'شماره قرارداد' : 'Contract No.', getValue: (r) => r.contractNo || '' },
+      { key: 'supplier', header: t.headers.supplier, getValue: (r) => r.supplier || '' },
       { key: 'shipmentNo', header: t.headers.shipmentNo, getValue: (r) => r.shipmentNo },
       { key: 'packageNo', header: t.headers.packageNo, getValue: (r) => r.packageNo },
       { key: 'itemNo', header: t.headers.itemNo, getValue: (r) => r.itemNo },
-      { key: 'originalDescription', header: isFa ? 'کالای اصلی' : 'Original Item', getValue: (r) => r.originalDescription },
-      { key: 'originalItemCode', header: isFa ? 'کد کالای اصلی' : 'Original Code', getValue: (r) => r.originalItemCode },
-      { key: 'substituteDescription', header: isFa ? 'کالای جایگزین' : 'Substitute Item', getValue: (r) => r.substituteDescription },
-      { key: 'substituteItemCode', header: isFa ? 'کد کالای جایگزین' : 'Substitute Code', getValue: (r) => r.substituteItemCode },
-      { key: 'qty', header: isFa ? 'مقدار' : 'Qty', getValue: (r) => r.qty },
+      { key: 'originalDescription', header: isFa ? 'کالای اصلی (الف)' : 'Original Item (A)', getValue: (r) => r.originalDescription },
+      { key: 'originalItemCode', header: isFa ? 'Tag کالای اصلی' : 'Original Tag', getValue: (r) => r.originalItemCode },
+      { key: 'substituteDescription', header: isFa ? 'کالای جایگزین (ب)' : 'Substitute Item (B)', getValue: (r) => r.substituteDescription },
+      { key: 'substituteItemCode', header: isFa ? 'Tag جایگزین' : 'Substitute Tag', getValue: (r) => r.substituteItemCode },
+      { key: 'qty', header: isFa ? 'تعداد' : 'Qty', getValue: (r) => r.qty },
       { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => r.countingUnit },
-      { key: 'reason', header: isFa ? 'دلیل جایگزینی' : 'Reason', getValue: (r) => r.reason },
+      { key: 'reason', header: isFa ? 'علت تعویض' : 'Reason', getValue: (r) => r.reason },
       { key: 'status', header: isFa ? 'وضعیت' : 'Status', getValue: (r) => statusLabel(r.status) },
       { key: 'approvedBy', header: isFa ? 'تاییدکننده' : 'Approved By', getValue: (r) => r.approvedBy || '' },
     ],
@@ -181,20 +753,63 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Dedicated A4 Portrait Portal for Official MD1EX-FQP02/10-03 Replacement Form */}
+      {printRec && !printReportOpen
+        ? createPortal(
+            <div id="samaan-rep-print-root">
+              <style>{`
+                @media screen {
+                  #samaan-rep-print-root { display: none !important; }
+                }
+                @media print {
+                  @page {
+                    size: A4 portrait;
+                    margin: 7mm;
+                  }
+                  body > *:not(#samaan-rep-print-root) {
+                    display: none !important;
+                  }
+                  #samaan-rep-print-root {
+                    display: block !important;
+                    background: #ffffff !important;
+                    color: #000000 !important;
+                    width: 100%;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                  }
+                  #samaan-rep-print-root table th,
+                  #samaan-rep-print-root table td {
+                    text-align: center;
+                    vertical-align: middle;
+                  }
+                }
+              `}</style>
+              <OfficialRepSheet rec={printRec} formatDate={formatDate} />
+            </div>,
+            document.body,
+          )
+        : null}
+
       {canEdit && (
         <form
           onSubmit={handleSubmit}
-          className={`${printRec ? 'print:hidden' : ''} rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4`}
+          className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
         >
-          <div className="flex items-center gap-2 text-sm font-bold">
-            <ArrowLeftRight className="w-4 h-4 text-[var(--accent-primary)]" />
-            <span>{isFa ? 'ثبت درخواست و مجوز جایگزینی کالا' : 'Register Material Substitution'}</span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-bold">
+              <ArrowLeftRight className="w-4 h-4 text-[var(--accent-primary)]" />
+              <span>{isFa ? 'ثبت درخواست و مجوز جایگزینی تجهیزات (REP)' : 'Register Equipment Substitution Form (REP)'}</span>
+            </div>
+            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+              MD1EX-FQP02/10-03
+            </span>
           </div>
 
+          {/* Row 1: Doc No, Date, Project, Contract */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره سند جایگزینی' : 'Substitution Doc No.'} *
+                {isFa ? 'شماره جایگزینی (REP No.)' : 'Replacement No.'} *
               </label>
               <input
                 type="text"
@@ -202,7 +817,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                 dir={isFa && !docNo ? 'rtl' : 'ltr'}
                 value={docNo}
                 onChange={(e) => setDocNo(e.target.value)}
-                placeholder="SUB-1405-001"
+                placeholder="REP-1405-001"
                 className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
                   isFa && !docNo ? 'text-right' : 'text-left'
                 }`}
@@ -217,7 +832,39 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'جستجو و انتخاب کالای اصلی' : 'Search Original Item'} *
+                {isFa ? 'پروژه' : 'Project Name'}
+              </label>
+              <input
+                type="text"
+                dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder={isFa ? 'نام پروژه' : 'Project name'}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'شماره قرارداد / درخواست خرید' : 'Contract / Req. No.'}
+              </label>
+              <input
+                type="text"
+                dir={isFa && !contractNo ? 'rtl' : 'ltr'}
+                value={contractNo}
+                onChange={(e) => setContractNo(e.target.value)}
+                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !contractNo ? 'text-right' : 'text-left'
+                }`}
+              />
+            </div>
+          </div>
+
+          {/* Row 2: Search & Original Item Selection */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+            <div className="lg:col-span-4">
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'جستجوی کالای اصلی (الف)' : 'Search Original Item (A)'}
               </label>
               <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
                 <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
@@ -232,27 +879,20 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
               </div>
             </div>
 
-            <div>
+            <div className="lg:col-span-8">
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'انتخاب ردیف کالای اصلی' : 'Select Original Row'} *
+                {isFa ? 'انتخاب کالای اصلی نیازمند تعویض (بخش الف)' : 'Select Original Item (Section A)'} *
               </label>
               <select
                 required
                 value={selectedItemId}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  setSelectedItemId(id);
-                  const found = (data?.detailedItems || []).find((x) => x.id === id);
-                  if (found && !qty && found.packingQty) {
-                    setQty(String(found.packingQty));
-                  }
-                }}
+                onChange={(e) => handleSelectOriginal(e.target.value)}
                 className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
               >
                 <option value="">{isFa ? 'یک کالا انتخاب کنید...' : 'Select item...'}</option>
                 {filteredItems.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.shipmentNo} / {d.packageNo} #{d.itemNo} — {(d.description || d.generalDescription).slice(0, 42)}
+                    {d.shipmentNo} / {d.packageNo} #{d.itemNo} — {(d.description || d.generalDescription).slice(0, 50)}
                   </option>
                 ))}
               </select>
@@ -278,10 +918,154 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Row 3: System, Island, Unit, Supplier, Urgency */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {t.headers.system}
+              </label>
+              <input
+                type="text"
+                dir={!system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={system}
+                onChange={(e) => setSystem(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {t.headers.island}
+              </label>
+              <input
+                type="text"
+                dir={!island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={island}
+                onChange={(e) => setIsland(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {t.headers.unit}
+              </label>
+              <input
+                type="text"
+                dir={!unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {t.headers.supplier}
+              </label>
+              <input
+                type="text"
+                dir={!supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={supplier}
+                onChange={(e) => setSupplier(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'فوریت تامین (عادی/اضطراری)' : 'Supply Urgency'}
+              </label>
+              <select
+                value={supplyUrgency}
+                onChange={(e) => setSupplyUrgency(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+              >
+                <option value="عادی">{isFa ? 'عادی' : 'Normal'}</option>
+                <option value="اضطراری">{isFa ? 'اضطراری' : 'Urgent'}</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Row 4: Installer, MIV No, NCR/MER No, Original Drawing, Original Remarks */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'پیمانکار نصب' : 'Installer Contractor'}
+              </label>
+              <input
+                type="text"
+                dir={!installerContractor ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={installerContractor}
+                onChange={(e) => setInstallerContractor(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'شماره حواله' : 'MIV No.'}
+              </label>
+              <input
+                type="text"
+                dir={isFa && !mivNo ? 'rtl' : 'ltr'}
+                value={mivNo}
+                onChange={(e) => setMivNo(e.target.value)}
+                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !mivNo ? 'text-right' : 'text-left'
+                }`}
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'شماره NCR/MER' : 'NCR/MER No.'}
+              </label>
+              <input
+                type="text"
+                dir={isFa && !merNcrNo ? 'rtl' : 'ltr'}
+                value={merNcrNo}
+                onChange={(e) => setMerNcrNo(e.target.value)}
+                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !merNcrNo ? 'text-right' : 'text-left'
+                }`}
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'شماره نقشه کالای اصلی (الف)' : 'Original Drawing No.'}
+              </label>
+              <input
+                type="text"
+                dir={isFa && !originalDrawingNo ? 'rtl' : 'ltr'}
+                value={originalDrawingNo}
+                onChange={(e) => setOriginalDrawingNo(e.target.value)}
+                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !originalDrawingNo ? 'text-right' : 'text-left'
+                }`}
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'توضیحات کالای اصلی (الف)' : 'Original Remarks'}
+              </label>
+              <input
+                type="text"
+                dir={!originalRemarks ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={originalRemarks}
+                onChange={(e) => setOriginalRemarks(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+          </div>
+
+          {/* Row 5: Substitute Item (Section ب) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
             <div className="lg:col-span-2">
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شرح کالای جایگزین' : 'Substitute Description'} *
+                {isFa ? 'شرح کالای جایگزین (بخش ب)' : 'Substitute Description (B)'} *
               </label>
               <input
                 type="text"
@@ -295,7 +1079,22 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'کد کالای جایگزین' : 'Substitute Item Code'}
+                {isFa ? 'شماره بسته جایگزین (PN)' : 'Substitute PN'}
+              </label>
+              <input
+                type="text"
+                dir={isFa && !substitutePackageNo ? 'rtl' : 'ltr'}
+                value={substitutePackageNo}
+                onChange={(e) => setSubstitutePackageNo(e.target.value)}
+                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !substitutePackageNo ? 'text-right' : 'text-left'
+                }`}
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'Tag No. جایگزین' : 'Substitute Tag No.'}
               </label>
               <input
                 type="text"
@@ -310,7 +1109,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'سایز / مشخصات فنی جایگزین' : 'Substitute Size / Spec'}
+                {isFa ? 'سایز / مشخصات جایگزین' : 'Substitute Size'}
               </label>
               <input
                 type="text"
@@ -320,12 +1119,10 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                 className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'مقدار جایگزین' : 'Qty'} *
+                {isFa ? 'تعداد' : 'Qty'} *
               </label>
               <input
                 type="number"
@@ -340,10 +1137,41 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                 }`}
               />
             </div>
+          </div>
+
+          {/* Row 6: Substitute Drawing, Substitute Remarks, Reason, Supplier Notes */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'شماره نقشه جایگزین (ب)' : 'Substitute Drawing No.'}
+              </label>
+              <input
+                type="text"
+                dir={isFa && !substituteDrawingNo ? 'rtl' : 'ltr'}
+                value={substituteDrawingNo}
+                onChange={(e) => setSubstituteDrawingNo(e.target.value)}
+                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !substituteDrawingNo ? 'text-right' : 'text-left'
+                }`}
+              />
+            </div>
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'دلیل جایگزینی' : 'Reason for Substitution'} *
+                {isFa ? 'توضیحات جایگزین (ب)' : 'Substitute Remarks'}
+              </label>
+              <input
+                type="text"
+                dir={!substituteRemarks ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={substituteRemarks}
+                onChange={(e) => setSubstituteRemarks(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'علت تعویض' : 'Reason for Replacement'} *
               </label>
               <input
                 type="text"
@@ -358,13 +1186,83 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'مرجع تایید مهندسی / کارفرما' : 'Approved By'}
+                {isFa ? 'توضیحات تامین کننده' : 'Supplier Notes'}
+              </label>
+              <input
+                type="text"
+                dir={!supplierNotes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={supplierNotes}
+                onChange={(e) => setSupplierNotes(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+          </div>
+
+          {/* Row 7: Re-procurement / Cost Responsibilities & Signatories */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'تهیه مجدد توسط' : 'Re-procured By'}
+              </label>
+              <input
+                type="text"
+                dir={!reprocureBy ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={reprocureBy}
+                onChange={(e) => setReprocureBy(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'پرداخت هزینه توسط' : 'Cost Borne By'}
+              </label>
+              <input
+                type="text"
+                dir={!costBorneBy ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={costBorneBy}
+                onChange={(e) => setCostBorneBy(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'امضا توسعه یک مپنا' : 'MAPNA MD1 Signatory'}
               </label>
               <input
                 type="text"
                 dir={!approvedBy ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={approvedBy}
                 onChange={(e) => setApprovedBy(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'امضا پیمانکار نصب/راه‌اندازی' : 'Installer Signatory'}
+              </label>
+              <input
+                type="text"
+                dir={!installerSignatory ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={installerSignatory}
+                onChange={(e) => setInstallerSignatory(e.target.value)}
+                placeholder={installerContractor || ''}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                {isFa ? 'امضا تامین کننده' : 'Supplier Signatory'}
+              </label>
+              <input
+                type="text"
+                dir={!supplierSignatory ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={supplierSignatory}
+                onChange={(e) => setSupplierSignatory(e.target.value)}
+                placeholder={supplier || ''}
                 className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
@@ -411,10 +1309,10 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
       )}
 
       {/* Substitutions History */}
-      <div className={`${printRec ? 'print:hidden' : ''} rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden`}>
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
         <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold">
-            {isFa ? 'سوابق جایگزینی کالا و تجهیزات' : 'Material Substitution History'}
+            {isFa ? 'سوابق جایگزینی تجهیزات (REP)' : 'Equipment Substitution History'}
           </h3>
           <div className="flex items-center gap-2">
             <button
@@ -448,14 +1346,14 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
-                <th className="py-2.5 px-3 text-start">{isFa ? 'شماره سند' : 'Doc No.'}</th>
-                <th className="py-2.5 px-3 text-start">{isFa ? 'تاریخ' : 'Date'}</th>
-                <th className="py-2.5 px-3 text-start">{t.headers.shipmentNo}</th>
-                <th className="py-2.5 px-3 text-start">{isFa ? 'کالای اصلی' : 'Original'}</th>
-                <th className="py-2.5 px-3 text-start">{isFa ? 'کالای جایگزین' : 'Substitute'}</th>
-                <th className="py-2.5 px-3 text-end">{isFa ? 'مقدار' : 'Qty'}</th>
-                <th className="py-2.5 px-3 text-start">{isFa ? 'وضعیت' : 'Status'}</th>
-                <th className="py-2.5 px-3 text-end">{isFa ? 'عملیات' : 'Actions'}</th>
+                <th className="py-2.5 px-3">{isFa ? 'شماره جایگزینی' : 'Rep No.'}</th>
+                <th className="py-2.5 px-3">{isFa ? 'تاریخ' : 'Date'}</th>
+                <th className="py-2.5 px-3">{t.headers.shipmentNo}</th>
+                <th className="py-2.5 px-3">{isFa ? 'کالای اصلی (الف)' : 'Original (A)'}</th>
+                <th className="py-2.5 px-3">{isFa ? 'کالای جایگزین (ب)' : 'Substitute (B)'}</th>
+                <th className="py-2.5 px-3">{isFa ? 'تعداد' : 'Qty'}</th>
+                <th className="py-2.5 px-3">{isFa ? 'وضعیت' : 'Status'}</th>
+                <th className="py-2.5 px-3">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -474,14 +1372,22 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
               ) : (
                 (data?.records || []).map((rec) => (
                   <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/50">
-                    <td className="py-2.5 px-3 font-semibold tabular-nums" dir="ltr">{rec.docNo}</td>
-                    <td className="py-2.5 px-3 tabular-nums" dir="ltr">{formatDate(rec.date)}</td>
+                    <td className="py-2.5 px-3 font-semibold tabular-nums" dir="ltr">
+                      {rec.docNo}
+                    </td>
+                    <td className="py-2.5 px-3 tabular-nums" dir="ltr">
+                      {formatDate(rec.date)}
+                    </td>
                     <td className="py-2.5 px-3 tabular-nums" dir="ltr">
                       {rec.shipmentNo} / {rec.packageNo} #{rec.itemNo}
                     </td>
-                    <td className="py-2.5 px-3 max-w-[180px] truncate bidi-plaintext">{rec.originalDescription}</td>
-                    <td className="py-2.5 px-3 max-w-[180px] truncate bidi-plaintext">{rec.substituteDescription}</td>
-                    <td className="py-2.5 px-3 text-end tabular-nums font-semibold">
+                    <td className="py-2.5 px-3 max-w-[180px] truncate bidi-plaintext">
+                      {rec.originalDescription}
+                    </td>
+                    <td className="py-2.5 px-3 max-w-[180px] truncate bidi-plaintext">
+                      {rec.substituteDescription}
+                    </td>
+                    <td className="py-2.5 px-3 tabular-nums font-semibold">
                       {rec.qty} {rec.countingUnit}
                     </td>
                     <td className="py-2.5 px-3">
@@ -497,7 +1403,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                         {statusLabel(rec.status)}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 text-end">
+                    <td className="py-2.5 px-3">
                       <div className="inline-flex items-center gap-1.5">
                         {canEdit && rec.status === 'pending' && (
                           <button
@@ -535,108 +1441,41 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         </div>
       </div>
 
-      {/* Printable Substitution Sheet */}
+      {/* Printable Official MD1EX-FQP02/10-03 Replacement Form Modal */}
       {printRec && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 print:static print:bg-transparent print:p-0">
-          <div className="w-full max-w-3xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5 max-h-[92vh] overflow-y-auto print-sheet">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 print:hidden">
-              <h3 className="text-sm font-bold">{t.nav.substitution}</h3>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
+              <div>
+                <h3 className="text-sm font-bold">
+                  {isFa ? 'فرم رسمی جایگزینی تجهیزات (Replacement Form)' : 'Official Equipment Substitution Form'}
+                </h3>
+                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
+                  MD1EX-FQP02/10-03 · {printRec.docNo}
+                </p>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+                  className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>{t.controls.print}</span>
+                  <span>{isFa ? 'چاپ فرم (A4)' : 'Print Form (A4)'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPrintRec(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)]"
+                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="border-2 border-current rounded-lg p-5 space-y-4 text-xs">
-              <div className="flex items-center justify-between border-b border-current pb-3">
-                <div>
-                  <div className="text-base font-bold">{t.brandFull}</div>
-                  <div className="text-[11px] opacity-80">
-                    {isFa ? 'برگه درخواست و مجوز جایگزینی کالا و تجهیزات' : 'Material Substitution Request & Approval Form'}
-                  </div>
-                </div>
-                <div className="text-end tabular-nums">
-                  <div>
-                    <span className="font-semibold">{isFa ? 'شماره سند:' : 'Doc No.:'} </span>
-                    <span dir="ltr">{printRec.docNo}</span>
-                  </div>
-                  <div>
-                    <span className="font-semibold">{isFa ? 'تاریخ:' : 'Date:'} </span>
-                    <span dir="ltr">{formatDate(printRec.date)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="font-semibold">{t.headers.shipmentNo}: </span>
-                  <span dir="ltr" className="tabular-nums">{printRec.shipmentNo}</span>
-                </div>
-                <div>
-                  <span className="font-semibold">{t.headers.packageNo} / {t.headers.itemNo}: </span>
-                  <span dir="ltr" className="tabular-nums">{printRec.packageNo} / #{printRec.itemNo}</span>
-                </div>
-              </div>
-
-              <table className="w-full border-collapse border border-current text-xs">
-                <thead>
-                  <tr>
-                    <th className="border border-current py-1.5 px-3 text-start">{isFa ? 'بخش' : 'Section'}</th>
-                    <th className="border border-current py-1.5 px-3 text-start">{t.headers.description}</th>
-                    <th className="border border-current py-1.5 px-3 text-start">{t.headers.itemCode}</th>
-                    <th className="border border-current py-1.5 px-3 text-end">{isFa ? 'مقدار' : 'Qty'}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="border border-current py-1.5 px-3 font-semibold">{isFa ? 'کالای اصلی' : 'Original'}</td>
-                    <td className="border border-current py-1.5 px-3 bidi-plaintext">{printRec.originalDescription}</td>
-                    <td className="border border-current py-1.5 px-3 tabular-nums" dir="ltr">{printRec.originalItemCode || '-'}</td>
-                    <td className="border border-current py-1.5 px-3 text-end tabular-nums">{printRec.qty} {printRec.countingUnit}</td>
-                  </tr>
-                  <tr>
-                    <td className="border border-current py-1.5 px-3 font-semibold">{isFa ? 'کالای جایگزین' : 'Substitute'}</td>
-                    <td className="border border-current py-1.5 px-3 bidi-plaintext">
-                      {printRec.substituteDescription} {printRec.substituteSize ? `(${printRec.substituteSize})` : ''}
-                    </td>
-                    <td className="border border-current py-1.5 px-3 tabular-nums" dir="ltr">{printRec.substituteItemCode || '-'}</td>
-                    <td className="border border-current py-1.5 px-3 text-end tabular-nums">{printRec.qty} {printRec.countingUnit}</td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <div>
-                <span className="font-semibold">{isFa ? 'دلیل جایگزینی:' : 'Reason:'} </span>
-                <span className="bidi-plaintext">{printRec.reason}</span>
-              </div>
-
-              {printRec.notes && (
-                <div>
-                  <span className="font-semibold">{t.headers.notes}: </span>
-                  <span className="bidi-plaintext">{printRec.notes}</span>
-                </div>
-              )}
-
-              <div className="grid grid-cols-3 gap-6 pt-8 text-center">
-                <div className="border-t border-current pt-2">{isFa ? 'تنظیم‌کننده (انبار)' : 'Prepared By'}</div>
-                <div className="border-t border-current pt-2">
-                  <div>{isFa ? 'تایید فنی / مهندسی' : 'Engineering Approval'}</div>
-                  <div className="text-[10px] opacity-80 mt-1">{printRec.approvedBy || ''}</div>
-                </div>
-                <div className="border-t border-current pt-2">{isFa ? 'مدیریت پروژه / کارفرما' : 'Project Management'}</div>
+            <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
+              <div className="mx-auto max-w-[790px] bg-white p-5 shadow-lg rounded-sm">
+                <OfficialRepSheet rec={printRec} formatDate={formatDate} />
               </div>
             </div>
           </div>

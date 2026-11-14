@@ -53,6 +53,7 @@ import type {
   OpiMinutesRecord,
   OsdrReportItem,
   OsdrReportRecord,
+  PeriodicInspectionRecord,
   ShortageBackfillRecord,
   SiteEntryMinutesRecord,
   SubstitutionRecord,
@@ -547,6 +548,7 @@ async function startServer() {
           g.rowNo,
           g.packingListNo,
           g.packageNo,
+          g.packageType || '',
           g.itemDescription,
           g.supplier,
           g.dispatchLocation,
@@ -700,6 +702,7 @@ async function startServer() {
         mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
+        packageType: normKey(raw.packageType),
         itemCount: parsedItemCount,
         itemDescription: normKey(raw.itemDescription),
         island: normKey(raw.island),
@@ -785,6 +788,9 @@ async function startServer() {
       ? (normKey(patch.releaseDate ?? item.releaseDate) || finalArrival)
       : finalArrival;
 
+    if (patch.packageType !== undefined) {
+      patch.packageType = normKey(patch.packageType);
+    }
     if (patch.itemCount !== undefined) {
       patch.itemCount =
         patch.itemCount !== null && Number.isFinite(Number(patch.itemCount)) && Number(patch.itemCount) > 0
@@ -1502,23 +1508,10 @@ async function startServer() {
   });
 
   app.post('/api/site-entry', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const {
-      minutesNo,
-      date,
-      packingListNos,
-      supplier,
-      driverName,
-      vehicleNo,
-      waybillNo,
-      warehouseKeeper,
-      employerRep,
-      mapnaRep,
-      conditionStatus,
-      notes,
-    } = req.body as Partial<SiteEntryMinutesRecord>;
-    const cleanNo = normKey(minutesNo);
-    const cleanDate = normKey(date);
-    const cleanPackings = Array.from(new Set((packingListNos || []).map(normKey).filter(Boolean)));
+    const raw = req.body as Partial<SiteEntryMinutesRecord>;
+    const cleanNo = normKey(raw.minutesNo);
+    const cleanDate = normKey(raw.date);
+    const cleanPackings = Array.from(new Set((raw.packingListNos || []).map(normKey).filter(Boolean)));
     if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
       res.status(400).json({
         error: errMsg(
@@ -1529,20 +1522,69 @@ async function startServer() {
       });
       return;
     }
+    const cleanItems = Array.isArray(raw.items)
+      ? raw.items
+          .map((it) => ({
+            description: normKey(it?.description),
+            packingListNo: normKey(it?.packingListNo),
+            packageNo: normKey(it?.packageNo),
+            dimensions: normKey(it?.dimensions),
+            qty: normKey(it?.qty),
+            unit: normKey(it?.unit),
+            netWeight: normKey(it?.netWeight),
+            grossWeight: normKey(it?.grossWeight),
+            remarks: normKey(it?.remarks),
+          }))
+          .filter(
+            (it) =>
+              it.description ||
+              it.packingListNo ||
+              it.packageNo ||
+              it.dimensions ||
+              it.qty ||
+              it.unit ||
+              it.netWeight ||
+              it.grossWeight ||
+              it.remarks,
+          )
+      : undefined;
+
     const record: SiteEntryMinutesRecord = {
       id: makeId(),
       minutesNo: cleanNo,
+      releaseNoteNo: normKey(raw.releaseNoteNo),
+      projectName: normKey(raw.projectName),
+      entryType: raw.entryType === 'temporary' ? 'temporary' : 'permanent',
+      goodsUsage:
+        raw.goodsUsage === 'site_equip' || raw.goodsUsage === 'general' ? raw.goodsUsage : 'project',
+      contractNo: normKey(raw.contractNo),
       date: cleanDate,
+      arrivalDate: normKey(raw.arrivalDate) || cleanDate,
       packingListNos: cleanPackings,
-      supplier: normKey(supplier),
-      driverName: normKey(driverName),
-      vehicleNo: normKey(vehicleNo),
-      waybillNo: normKey(waybillNo),
-      warehouseKeeper: normKey(warehouseKeeper),
-      employerRep: normKey(employerRep),
-      mapnaRep: normKey(mapnaRep),
-      conditionStatus: conditionStatus || 'healthy',
-      notes: normKey(notes),
+      supplier: normKey(raw.supplier),
+      unit: normKey(raw.unit),
+      system: normKey(raw.system),
+      island: normKey(raw.island),
+      origin: normKey(raw.origin),
+      carrierCompany: normKey(raw.carrierCompany),
+      trafficLocation: normKey(raw.trafficLocation),
+      vehicleType: normKey(raw.vehicleType),
+      driverName: normKey(raw.driverName),
+      vehicleNo: normKey(raw.vehicleNo),
+      waybillNo: normKey(raw.waybillNo),
+      items: cleanItems,
+      warehouseKeeper: normKey(raw.warehouseKeeper),
+      contractorManager: normKey(raw.contractorManager),
+      mapnaSecurity: normKey(raw.mapnaSecurity),
+      qcChecked: Boolean(raw.qcChecked),
+      qcTechOffice: normKey(raw.qcTechOffice),
+      hseChecked: Boolean(raw.hseChecked),
+      hseOfficer: normKey(raw.hseOfficer),
+      equipmentSupply: normKey(raw.equipmentSupply) || normKey(raw.mapnaRep),
+      employerRep: normKey(raw.employerRep),
+      mapnaRep: normKey(raw.mapnaRep) || normKey(raw.equipmentSupply),
+      conditionStatus: raw.conditionStatus || 'healthy',
+      notes: normKey(raw.notes),
       createdAt: new Date().toISOString(),
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
     };
@@ -1572,22 +1614,16 @@ async function startServer() {
     res.json({
       invitations: store.db.opiInvitations,
       detailedItems: store.getDetailedComputedList(),
+      generalEntries: store.db.general,
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     });
   });
 
   app.post('/api/opi', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { invitationNo, date, time, packingNos, location, notes } = req.body as {
-      invitationNo?: string;
-      date?: string;
-      time?: string;
-      packingNos?: string[];
-      location?: string;
-      notes?: string;
-    };
-    const cleanNo = normKey(invitationNo);
-    const cleanDate = normKey(date);
-    const cleanPackings = Array.from(new Set((packingNos || []).map(normKey).filter(Boolean)));
+    const raw = req.body as Partial<OpiInvitationRecord>;
+    const cleanNo = normKey(raw.invitationNo);
+    const cleanDate = normKey(raw.date);
+    const cleanPackings = Array.from(new Set((raw.packingNos || []).map(normKey).filter(Boolean)));
     if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
       res.status(400).json({
         error: errMsg(
@@ -1599,14 +1635,48 @@ async function startServer() {
       return;
     }
 
+    const cleanItems = Array.isArray(raw.items)
+      ? raw.items
+          .map((it) => ({
+            itemNo: normKey(it?.itemNo),
+            packingListNo: normKey(it?.packingListNo),
+            packageNo: normKey(it?.packageNo),
+            description: normKey(it?.description),
+            uom: normKey(it?.uom),
+            remarks: normKey(it?.remarks),
+          }))
+          .filter(
+            (it) =>
+              it.itemNo ||
+              it.packingListNo ||
+              it.packageNo ||
+              it.description ||
+              it.uom ||
+              it.remarks,
+          )
+      : undefined;
+
     const record: OpiInvitationRecord = {
       id: makeId(),
       invitationNo: cleanNo,
+      issueDate: normKey(raw.issueDate) || cleanDate,
       date: cleanDate,
-      time: normKey(time) || '09:00',
+      time: normKey(raw.time) || '09:00',
       packingNos: cleanPackings,
-      location: normKey(location),
-      notes: normKey(notes),
+      location: normKey(raw.location),
+      projectName: normKey(raw.projectName),
+      system: normKey(raw.system),
+      island: normKey(raw.island),
+      unit: normKey(raw.unit),
+      supplier: normKey(raw.supplier),
+      contractNo: normKey(raw.contractNo),
+      purchasePackageNo: normKey(raw.purchasePackageNo),
+      items: cleanItems,
+      installerContractor: normKey(raw.installerContractor),
+      supplierRep: normKey(raw.supplierRep),
+      equipmentSupply: normKey(raw.equipmentSupply),
+      employerRep: normKey(raw.employerRep),
+      notes: normKey(raw.notes),
       status: 'issued',
       createdAt: new Date().toISOString(),
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
@@ -1716,29 +1786,17 @@ async function startServer() {
       osdrReports: store.db.osdrReports,
       invitations: store.db.opiInvitations,
       detailedItems: store.getDetailedComputedList(),
+      generalEntries: store.db.general,
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     });
   });
 
   app.post('/api/opi-minutes', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const {
-      minutesNo,
-      invitationNo,
-      date,
-      packingListNo,
-      packageNos,
-      location,
-      mapnaInspector,
-      employerInspector,
-      contractorInspector,
-      qcInspector,
-      resultStatus,
-      notes,
-    } = req.body as Partial<OpiMinutesRecord>;
+    const raw = req.body as Partial<OpiMinutesRecord>;
 
-    const cleanNo = normKey(minutesNo);
-    const cleanDate = normKey(date);
-    const cleanPacking = normKey(packingListNo);
+    const cleanNo = normKey(raw.minutesNo);
+    const cleanDate = normKey(raw.date);
+    const cleanPacking = normKey(raw.packingListNo);
     if (!cleanNo || !cleanDate || !cleanPacking) {
       res.status(400).json({
         error: errMsg(
@@ -1750,20 +1808,53 @@ async function startServer() {
       return;
     }
 
+    const cleanItems = Array.isArray(raw.items)
+      ? raw.items
+          .map((it) => ({
+            itemNo: normKey(it?.itemNo),
+            packingListNo: normKey(it?.packingListNo),
+            packageNo: normKey(it?.packageNo),
+            description: normKey(it?.description),
+            uom: normKey(it?.uom),
+            remarks: normKey(it?.remarks),
+          }))
+          .filter(
+            (it) =>
+              it.itemNo ||
+              it.packingListNo ||
+              it.packageNo ||
+              it.description ||
+              it.uom ||
+              it.remarks,
+          )
+      : undefined;
+
     const record: OpiMinutesRecord = {
       id: makeId(),
       minutesNo: cleanNo,
-      invitationNo: normKey(invitationNo),
+      invitationNo: normKey(raw.invitationNo),
       date: cleanDate,
+      time: normKey(raw.time),
       packingListNo: cleanPacking,
-      packageNos: Array.from(new Set((packageNos || []).map(normKey).filter(Boolean))),
-      location: normKey(location),
-      mapnaInspector: normKey(mapnaInspector),
-      employerInspector: normKey(employerInspector),
-      contractorInspector: normKey(contractorInspector),
-      qcInspector: normKey(qcInspector),
-      resultStatus: resultStatus || 'compliant',
-      notes: normKey(notes),
+      packageNos: Array.from(new Set((raw.packageNos || []).map(normKey).filter(Boolean))),
+      projectName: normKey(raw.projectName),
+      supplier: normKey(raw.supplier),
+      system: normKey(raw.system),
+      island: normKey(raw.island),
+      unit: normKey(raw.unit),
+      contractNo: normKey(raw.contractNo),
+      purchasePackageNo: normKey(raw.purchasePackageNo),
+      items: cleanItems,
+      merNo: normKey(raw.merNo),
+      location: normKey(raw.location),
+      storekeeper: normKey(raw.storekeeper),
+      mapnaInspector: normKey(raw.mapnaInspector),
+      sellerRep: normKey(raw.sellerRep) || normKey(raw.contractorInspector),
+      employerInspector: normKey(raw.employerInspector),
+      contractorInspector: normKey(raw.contractorInspector) || normKey(raw.sellerRep),
+      qcInspector: normKey(raw.qcInspector),
+      resultStatus: raw.resultStatus || 'compliant',
+      notes: normKey(raw.notes),
       createdAt: new Date().toISOString(),
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
     };
@@ -1838,19 +1929,24 @@ async function startServer() {
     res.json({
       documents: store.db.gcvDocuments,
       detailedItems: store.getDetailedComputedList(),
+      generalEntries: store.db.general,
     });
   });
 
   app.post('/api/gcv', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { receiptNo, date, receiver, notes, items } = req.body as {
-      receiptNo?: string;
-      date?: string;
-      receiver?: string;
-      notes?: string;
-      items?: Array<{ detailedId: string; qty: number }>;
+    const raw = req.body as Partial<GcvDocumentRecord> & {
+      items?: Array<{
+        detailedId: string;
+        qty: number;
+        technicalInfo?: string;
+        tagNo?: string;
+        uom?: string;
+        remark?: string;
+      }>;
     };
-    const cleanNo = normKey(receiptNo);
-    const cleanReceiver = normKey(receiver);
+    const cleanNo = normKey(raw.receiptNo);
+    const cleanReceiver = normKey(raw.receiver);
+    const items = raw.items;
     if (!cleanNo || !cleanReceiver || !Array.isArray(items) || items.length === 0) {
       res.status(400).json({
         error: errMsg(
@@ -1902,6 +1998,10 @@ async function startServer() {
         itemNo: d.itemNo,
         description: d.description || d.generalDescription,
         qty,
+        technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        uom: normKey(reqItem.uom) || d.countingUnit || '',
+        remark: normKey(reqItem.remark) || '',
       });
     }
 
@@ -1917,9 +2017,27 @@ async function startServer() {
     const doc: GcvDocumentRecord = {
       id: makeId(),
       receiptNo: cleanNo,
-      date: normKey(date),
+      date: normKey(raw.date),
       receiver: cleanReceiver,
-      notes: normKey(notes),
+      projectName: normKey(raw.projectName),
+      purchaseRequestNo: normKey(raw.purchaseRequestNo),
+      supplier: normKey(raw.supplier),
+      buyerName: normKey(raw.buyerName),
+      purchasePackageNo: normKey(raw.purchasePackageNo),
+      releaseNoteNo: normKey(raw.releaseNoteNo),
+      purchaseBy:
+        raw.purchaseBy === 'site_admin' || raw.purchaseBy === 'contractor_supplier'
+          ? raw.purchaseBy
+          : raw.purchaseBy === 'tehran_proc'
+            ? 'tehran_proc'
+            : undefined,
+      islandSystem: normKey(raw.islandSystem),
+      waybillNo: normKey(raw.waybillNo),
+      storekeeper: normKey(raw.storekeeper),
+      receiverManager: normKey(raw.receiverManager) || cleanReceiver,
+      equipmentSupply: normKey(raw.equipmentSupply),
+      mapnaSiteManager: normKey(raw.mapnaSiteManager),
+      notes: normKey(raw.notes),
       items: lineItems,
       createdAt: now,
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
@@ -1941,18 +2059,27 @@ async function startServer() {
     res.json({
       documents: store.db.mivDocuments,
       detailedItems: store.getDetailedComputedList(),
+      generalEntries: store.db.general,
     });
   });
 
   app.post('/api/miv', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { docType, docNo, date, party, notes, items } = req.body as {
-      docType?: MivDocType;
-      docNo?: string;
-      date?: string;
-      party?: string;
-      notes?: string;
-      items?: Array<{ detailedId: string; qty: number }>;
+    const raw = req.body as Partial<MivDocumentRecord> & {
+      items?: Array<{
+        detailedId: string;
+        qty: number;
+        requestedQty?: number;
+        technicalInfo?: string;
+        tagNo?: string;
+        codeNo?: string;
+        location?: string;
+        uom?: string;
+        opiNo?: string;
+        returnReason?: string;
+        remark?: string;
+      }>;
     };
+    const { docType, docNo, date, party, notes, items } = raw;
     const validTypes: MivDocType[] = ['miv_contractor', 'smr_contractor', 'smr_mapna', 'miv_mapna'];
     if (!docType || !validTypes.includes(docType)) {
       res.status(400).json({ error: errMsg(req, 'نوع فرم معتبر نیست', 'Invalid document type') });
@@ -1998,6 +2125,7 @@ async function startServer() {
         });
         return;
       }
+      const reqQtyNum = Number(reqItem.requestedQty);
       lineItems.push({
         detailedId: d.id,
         shipmentNo: d.shipmentNo,
@@ -2005,6 +2133,15 @@ async function startServer() {
         itemNo: d.itemNo,
         description: d.description || d.generalDescription,
         qty,
+        requestedQty: Number.isFinite(reqQtyNum) && reqQtyNum > 0 ? reqQtyNum : qty,
+        technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        codeNo: normKey(reqItem.codeNo) || d.itemCode || '',
+        location: normKey(reqItem.location) || d.storageLocation || '',
+        uom: normKey(reqItem.uom) || d.countingUnit || '',
+        opiNo: normKey(reqItem.opiNo) || d.opiNo || '',
+        returnReason: normKey(reqItem.returnReason) || '',
+        remark: normKey(reqItem.remark) || '',
       });
     }
 
@@ -2040,6 +2177,22 @@ async function startServer() {
       docNo: cleanNo,
       date: cleanDate,
       party: normKey(party),
+      projectName: normKey(raw.projectName),
+      contractNo: normKey(raw.contractNo),
+      purchasePackageNo: normKey(raw.purchasePackageNo),
+      supplier: normKey(raw.supplier),
+      releaseNoteNo: normKey(raw.releaseNoteNo),
+      islandSystem: normKey(raw.islandSystem),
+      unit: normKey(raw.unit),
+      receiptNo: normKey(raw.receiptNo),
+      storekeeper: normKey(raw.storekeeper),
+      equipmentSupply: normKey(raw.equipmentSupply),
+      techOffice: normKey(raw.techOffice),
+      installationDept: normKey(raw.installationDept),
+      qcInspector: normKey(raw.qcInspector),
+      installerRep: normKey(raw.installerRep),
+      requester: normKey(raw.requester),
+      receiver: normKey(raw.receiver),
       notes: cleanNotes,
       items: lineItems,
       createdAt: now,
@@ -2062,29 +2215,17 @@ async function startServer() {
     res.json({
       records: store.db.substitutions,
       detailedItems: store.getDetailedComputedList(),
+      generalEntries: store.db.general,
     });
   });
 
   app.post('/api/substitutions', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const {
-      docNo,
-      date,
-      detailedId,
-      substituteDescription,
-      substituteItemCode,
-      substituteSize,
-      qty,
-      reason,
-      approvedBy,
-      status,
-      notes,
-    } = req.body as Partial<SubstitutionRecord>;
-
-    const cleanNo = normKey(docNo);
-    const cleanDate = normKey(date);
-    const cleanSubDesc = normKey(substituteDescription);
-    const cleanReason = normKey(reason);
-    const d = store.db.detailed.find((x) => x.id === detailedId);
+    const raw = req.body as Partial<SubstitutionRecord>;
+    const cleanNo = normKey(raw.docNo);
+    const cleanDate = normKey(raw.date);
+    const cleanSubDesc = normKey(raw.substituteDescription);
+    const cleanReason = normKey(raw.reason);
+    const d = store.db.detailed.find((x) => x.id === raw.detailedId);
     if (!cleanNo || !cleanDate || !d || !cleanSubDesc || !cleanReason) {
       res.status(400).json({
         error: errMsg(
@@ -2096,7 +2237,7 @@ async function startServer() {
       return;
     }
 
-    const numQty = Number(qty);
+    const numQty = Number(raw.qty);
     if (!Number.isFinite(numQty) || numQty <= 0) {
       res.status(400).json({ error: errMsg(req, 'تعداد جایگزینی باید بزرگتر از صفر باشد', 'Substitution quantity must be greater than zero') });
       return;
@@ -2110,17 +2251,38 @@ async function startServer() {
       shipmentNo: d.shipmentNo,
       packageNo: d.packageNo,
       itemNo: d.itemNo,
+      projectName: normKey(raw.projectName),
+      contractNo: normKey(raw.contractNo),
+      system: normKey(raw.system) || d.system || '',
+      island: normKey(raw.island) || d.island || '',
+      unit: normKey(raw.unit) || d.unit || '',
+      supplier: normKey(raw.supplier) || d.supplier || '',
+      supplyUrgency: normKey(raw.supplyUrgency),
+      installerContractor: normKey(raw.installerContractor),
+      mivNo: normKey(raw.mivNo) || d.mivContractorNo || d.mivMapnaNo || '',
+      merNcrNo: normKey(raw.merNcrNo) || d.merNo || d.repNo || '',
       originalDescription: d.description || d.generalDescription,
       originalItemCode: d.itemCode,
+      originalDrawingNo: normKey(raw.originalDrawingNo),
+      originalRemarks: normKey(raw.originalRemarks),
+      substitutePackageNo: normKey(raw.substitutePackageNo),
       substituteDescription: cleanSubDesc,
-      substituteItemCode: normKey(substituteItemCode),
-      substituteSize: normKey(substituteSize),
+      substituteItemCode: normKey(raw.substituteItemCode),
+      substituteSize: normKey(raw.substituteSize),
+      substituteDrawingNo: normKey(raw.substituteDrawingNo),
+      substituteRemarks: normKey(raw.substituteRemarks),
       qty: numQty,
       countingUnit: d.countingUnit || 'PC',
       reason: cleanReason,
-      approvedBy: normKey(approvedBy),
-      status: status || 'pending',
-      notes: normKey(notes),
+      supplierNotes: normKey(raw.supplierNotes),
+      reprocureBy: normKey(raw.reprocureBy),
+      costBorneBy: normKey(raw.costBorneBy),
+      approvedBy: normKey(raw.approvedBy),
+      mapnaRep: normKey(raw.mapnaRep) || normKey(raw.approvedBy),
+      installerSignatory: normKey(raw.installerSignatory),
+      supplierSignatory: normKey(raw.supplierSignatory),
+      status: raw.status || 'pending',
+      notes: normKey(raw.notes),
       createdAt: new Date().toISOString(),
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
     };
@@ -2170,7 +2332,7 @@ async function startServer() {
     const cleanDesc = normKey(raw.description);
     const estQty = toNum(raw.estimatedQty) ?? 0;
     if (!cleanDesc) {
-      res.status(400).json({ error: errMsg(req, 'شرح متریال برآورد الزامی است', 'Estimated material description is required') });
+      res.status(400).json({ error: errMsg(req, 'شرح تجهیزات برآورد الزامی است', 'Estimated equipment description is required') });
       return;
     }
     if (estQty <= 0) {
@@ -2212,7 +2374,7 @@ async function startServer() {
       action: 'CREATE_ESTIMATION',
       scope: 'estimation',
       targetId: record.mtoCode || record.itemCode || record.description.slice(0, 32),
-      summary: `ثبت ردیف برآورد متریال: ${record.description} (مقدار برآورد: ${record.estimatedQty} ${record.countingUnit})`,
+      summary: `ثبت ردیف برآورد تجهیزات: ${record.description} (مقدار برآورد: ${record.estimatedQty} ${record.countingUnit})`,
     });
     store.saveImmediate();
     res.json({ record });
@@ -2221,14 +2383,14 @@ async function startServer() {
   app.patch('/api/estimations/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const rec = store.db.materialEstimates.find((e) => e.id === req.params.id);
     if (!rec) {
-      res.status(404).json({ error: errMsg(req, 'ردیف برآورد متریال یافت نشد', 'Material estimation record not found') });
+      res.status(404).json({ error: errMsg(req, 'ردیف برآورد تجهیزات یافت نشد', 'Equipment estimation record not found') });
       return;
     }
     const raw = req.body as Partial<MaterialEstimateRecord>;
     if (raw.description !== undefined) {
       const cleanDesc = normKey(raw.description);
       if (!cleanDesc) {
-        res.status(400).json({ error: errMsg(req, 'شرح متریال برآورد الزامی است', 'Estimated material description is required') });
+        res.status(400).json({ error: errMsg(req, 'شرح تجهیزات برآورد الزامی است', 'Estimated equipment description is required') });
         return;
       }
       rec.description = cleanDesc;
@@ -2270,7 +2432,7 @@ async function startServer() {
       action: 'UPDATE_ESTIMATION',
       scope: 'estimation',
       targetId: rec.mtoCode || rec.itemCode || rec.description.slice(0, 32),
-      summary: `ویرایش ردیف برآورد متریال: ${rec.description} (${rec.estimatedQty} ${rec.countingUnit})`,
+      summary: `ویرایش ردیف برآورد تجهیزات: ${rec.description} (${rec.estimatedQty} ${rec.countingUnit})`,
     });
     store.saveImmediate();
     res.json({ record: rec });
@@ -2279,7 +2441,7 @@ async function startServer() {
   app.delete('/api/estimations/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const idx = store.db.materialEstimates.findIndex((e) => e.id === req.params.id);
     if (idx === -1) {
-      res.status(404).json({ error: errMsg(req, 'ردیف برآورد متریال یافت نشد', 'Material estimation record not found') });
+      res.status(404).json({ error: errMsg(req, 'ردیف برآورد تجهیزات یافت نشد', 'Equipment estimation record not found') });
       return;
     }
     const [removed] = store.db.materialEstimates.splice(idx, 1);
@@ -2288,7 +2450,7 @@ async function startServer() {
       action: 'DELETE_ESTIMATION',
       scope: 'estimation',
       targetId: removed.mtoCode || removed.itemCode || removed.description.slice(0, 32),
-      summary: `حذف ردیف برآورد متریال: ${removed.description}`,
+      summary: `حذف ردیف برآورد تجهیزات: ${removed.description}`,
     });
     store.saveImmediate();
     res.json({ ok: true });
@@ -2348,7 +2510,7 @@ async function startServer() {
     const cleanDate = normKey(stocktakeDate);
     const cleanInfo = normKey(stocktakeInfo);
     if (!cleanStatus) {
-      res.status(400).json({ error: errMsg(req, 'وضعیت انبارگردانی الزامی است', 'Stocktake status is required') });
+      res.status(400).json({ error: errMsg(req, 'وضعیت انبارگردانی و بازدید ادواری الزامی است', 'Stocktake & periodic inspection status is required') });
       return;
     }
     const now = new Date().toISOString();
@@ -2367,10 +2529,73 @@ async function startServer() {
       action: 'ASSIGN_STOCKTAKE',
       scope: 'stocktake',
       targetId: cleanStatus,
-      summary: `ثبت وضعیت انبارگردانی «${cleanStatus}» در تاریخ ${cleanDate || '-'} برای ${updatedCount} ردیف`,
+      summary: `ثبت وضعیت انبارگردانی و بازدید ادواری «${cleanStatus}» در تاریخ ${cleanDate || '-'} برای ${updatedCount} ردیف`,
     });
     store.saveImmediate();
     res.json({ ok: true, updatedCount });
+  });
+
+  // ---------------- PERIODIC INSPECTION CHECKLIST (بازدید ادواری انبار) ----------------
+  app.get('/api/periodic-inspections', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    res.json({ records: store.db.periodicInspections });
+  });
+
+  app.post('/api/periodic-inspections', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const raw = req.body as Partial<PeriodicInspectionRecord>;
+    const cleanDate = normKey(raw.inspectionDate);
+    if (!cleanDate) {
+      res.status(400).json({ error: errMsg(req, 'تاریخ بازدید ادواری الزامی است', 'Inspection date is required') });
+      return;
+    }
+    const answers = Array.isArray(raw.answers)
+      ? raw.answers.map((a) => ({
+          questionKey: normKey(a?.questionKey),
+          status: (a?.status === '+' || a?.status === '-' ? a.status : '') as '+' | '-' | '',
+          remarks: normKey(a?.remarks),
+        }))
+      : [];
+
+    const record: PeriodicInspectionRecord = {
+      id: makeId(),
+      projectName: normKey(raw.projectName),
+      inspectionDate: cleanDate,
+      supervisorName: normKey(raw.supervisorName),
+      inspectorsSignatory: normKey(raw.inspectorsSignatory),
+      siteSupervisorSignatory: normKey(raw.siteSupervisorSignatory),
+      projectManagerSignatory: normKey(raw.projectManagerSignatory),
+      copyTo: normKey(raw.copyTo),
+      answers,
+      createdAt: new Date().toISOString(),
+      createdBy: req.currentUser!.fullName || req.currentUser!.username,
+    };
+    store.db.periodicInspections.unshift(record);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'CREATE_PERIODIC_INSPECTION',
+      scope: 'periodicInspection',
+      targetId: cleanDate,
+      summary: `ثبت چک‌لیست بازدید ادواری انبار مورخ ${cleanDate}${record.projectName ? ` (${record.projectName})` : ''}`,
+    });
+    store.saveImmediate();
+    res.json({ record });
+  });
+
+  app.delete('/api/periodic-inspections/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const idx = store.db.periodicInspections.findIndex((r) => r.id === req.params.id);
+    if (idx === -1) {
+      res.status(404).json({ error: errMsg(req, 'سابقه بازدید ادواری یافت نشد', 'Periodic inspection record not found') });
+      return;
+    }
+    const [removed] = store.db.periodicInspections.splice(idx, 1);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'DELETE_PERIODIC_INSPECTION',
+      scope: 'periodicInspection',
+      targetId: removed.inspectionDate,
+      summary: `حذف چک‌لیست بازدید ادواری مورخ ${removed.inspectionDate}`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true });
   });
 
   // ---------------- GLOBAL SEARCH ----------------
@@ -2388,6 +2613,7 @@ async function startServer() {
             g.rowNo,
             g.packingListNo,
             g.packageNo,
+            g.packageType || '',
             g.itemDescription,
             g.supplier,
             g.dispatchLocation,

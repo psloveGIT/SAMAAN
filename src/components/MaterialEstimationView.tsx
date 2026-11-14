@@ -323,7 +323,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
     if (!description.trim()) {
       notify(
         'warning',
-        isFa ? 'شرح متریال برآورد را وارد کنید.' : 'Enter material description.',
+        isFa ? 'شرح تجهیزات برآورد را وارد کنید.' : 'Enter equipment description.',
       );
       return;
     }
@@ -360,14 +360,14 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
           method: 'PATCH',
           body: JSON.stringify(payload),
         });
-        notify('success', isFa ? 'ردیف برآورد متریال ویرایش شد.' : 'Estimation line updated.');
+        notify('success', isFa ? 'ردیف برآورد تجهیزات ویرایش شد.' : 'Estimation line updated.');
         triggerAutoSnapshot(`Update Estimation ${mtoCode || itemCode || description.slice(0, 20)}`);
       } else {
         await apiRequest('/api/estimations', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
-        notify('success', isFa ? 'ردیف برآورد متریال ثبت شد.' : 'Estimation line added.');
+        notify('success', isFa ? 'ردیف برآورد تجهیزات ثبت شد.' : 'Estimation line added.');
         triggerAutoSnapshot(`Create Estimation ${mtoCode || itemCode || description.slice(0, 20)}`);
       }
 
@@ -385,7 +385,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
     if (!deleteTarget) return;
     try {
       await apiRequest(`/api/estimations/${deleteTarget.id}`, { method: 'DELETE' });
-      notify('success', isFa ? 'ردیف برآورد متریال حذف شد.' : 'Estimation line deleted.');
+      notify('success', isFa ? 'ردیف برآورد تجهیزات حذف شد.' : 'Estimation line deleted.');
       setDeleteTarget(null);
       triggerAutoSnapshot(`Delete Estimation ${deleteTarget.mtoCode || deleteTarget.description.slice(0, 20)}`);
       onDataChanged();
@@ -474,7 +474,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
               onChange={(e) => setQ(e.target.value)}
               placeholder={
                 isFa
-                  ? 'جستجو در کد MTO، کد کالا، شرح متریال، سیستم...'
+                  ? 'جستجو در کد MTO، کد کالا، شرح تجهیزات، سیستم...'
                   : 'Search MTO code, item code, description, system...'
               }
               className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
@@ -594,8 +594,8 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
                       <Calculator className="w-7 h-7 opacity-40" />
                       <div className="text-xs font-medium">
                         {isFa
-                          ? 'هنوز ردیفی در برآورد متریال ثبت نشده است.'
-                          : 'No material estimation lines recorded yet.'}
+                          ? 'هنوز ردیفی در برآورد تجهیزات ثبت نشده است.'
+                          : 'No equipment estimation lines recorded yet.'}
                       </div>
                       {canEdit && (
                         <button
@@ -728,8 +728,8 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
             <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
               <h3 className="text-sm font-bold">
                 {editingRecord
-                  ? isFa ? 'ویرایش ردیف برآورد متریال' : 'Edit Material Estimation'
-                  : isFa ? 'ثبت ردیف جدید برآورد متریال' : 'New Material Estimation Line'}
+                  ? isFa ? 'ویرایش ردیف برآورد تجهیزات' : 'Edit Equipment Estimation'
+                  : isFa ? 'ثبت ردیف جدید برآورد تجهیزات' : 'New Equipment Estimation Line'}
               </h3>
               <button type="button" onClick={() => setFormOpen(false)}>
                 <X className="w-4 h-4" />
@@ -995,7 +995,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-[var(--status-danger)]">
-                {isFa ? 'حذف ردیف برآورد متریال' : 'Delete Estimation Line'}
+                {isFa ? 'حذف ردیف برآورد تجهیزات' : 'Delete Estimation Line'}
               </h3>
               <button type="button" onClick={() => setDeleteTarget(null)}>
                 <X className="w-4 h-4" />
@@ -1004,7 +1004,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               {isFa
                 ? `آیا از حذف ردیف برآورد «${deleteTarget.description}» اطمینان دارید؟`
-                : `Are you sure you want to delete "${deleteTarget.description}" from Material Estimation?`}
+                : `Are you sure you want to delete "${deleteTarget.description}" from Equipment Estimation?`}
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button

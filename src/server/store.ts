@@ -16,6 +16,7 @@ import type {
   OpiMinutesRecord,
   OsdrReportRecord,
   PackingStatusMeta,
+  PeriodicInspectionRecord,
   SiteEntryMinutesRecord,
   SubstitutionRecord,
   TransitEntry,
@@ -46,6 +47,7 @@ export interface PersistedDatabase {
   gcvDocuments: GcvDocumentRecord[];
   mivDocuments: MivDocumentRecord[];
   materialEstimates: MaterialEstimateRecord[];
+  periodicInspections: PeriodicInspectionRecord[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -84,6 +86,7 @@ function createEmptyDb(): PersistedDatabase {
     gcvDocuments: [],
     mivDocuments: [],
     materialEstimates: [],
+    periodicInspections: [],
   };
 }
 
@@ -144,6 +147,7 @@ export class SamaanStore {
         gcvDocuments: Array.isArray(parsed.gcvDocuments) ? parsed.gcvDocuments : [],
         mivDocuments: Array.isArray(parsed.mivDocuments) ? parsed.mivDocuments : [],
         materialEstimates: Array.isArray(parsed.materialEstimates) ? parsed.materialEstimates : [],
+        periodicInspections: Array.isArray(parsed.periodicInspections) ? parsed.periodicInspections : [],
       };
     } catch (err) {
       console.error('Failed to load local database file, starting fresh:', err);
@@ -485,6 +489,7 @@ export class SamaanStore {
       gcvDocuments: this.db.gcvDocuments,
       mivDocuments: this.db.mivDocuments,
       materialEstimates: this.db.materialEstimates,
+      periodicInspections: this.db.periodicInspections,
     };
   }
 
@@ -509,6 +514,7 @@ export class SamaanStore {
     this.db.gcvDocuments = Array.isArray(snapshot.gcvDocuments) ? snapshot.gcvDocuments : [];
     this.db.mivDocuments = Array.isArray(snapshot.mivDocuments) ? snapshot.mivDocuments : [];
     this.db.materialEstimates = Array.isArray(snapshot.materialEstimates) ? snapshot.materialEstimates : [];
+    this.db.periodicInspections = Array.isArray(snapshot.periodicInspections) ? snapshot.periodicInspections : [];
     this.renumberScope('general');
     this.renumberScope('detailed');
     this.rebuildIndexes();

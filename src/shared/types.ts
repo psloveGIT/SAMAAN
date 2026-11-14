@@ -42,6 +42,7 @@ export interface GeneralEntry {
   mapnaEntryMinutesNo: string; // شماره صورتجلسه ورود مپنا (Unique)
   packingListNo: string; // شماره پکینگ لیست
   packageNo: string; // شماره نگله
+  packageType?: string; // نوع بسته‌بندی
   itemCount?: number | null; // تعداد اقلام نگله
   itemDescription: string; // شرح کالا
   island: string; // جزیره
@@ -187,31 +188,86 @@ export interface TrashRecord {
   linkedTrashDetailedCount?: number;
 }
 
+export interface OpiInvitationLineItem {
+  itemNo: string;
+  packingListNo: string;
+  packageNo: string;
+  description: string;
+  uom: string;
+  remarks: string;
+}
+
 export interface OpiInvitationRecord {
   id: string;
   invitationNo: string;
-  date: string; // ISO YYYY-MM-DD
+  issueDate?: string; // تاریخ صدور دعوتنامه در سربرگ
+  date: string; // ISO YYYY-MM-DD (تاریخ بازرسی)
   time: string; // HH:mm
   packingNos: string[];
   location?: string;
+  projectName?: string;
+  system?: string;
+  island?: string;
+  unit?: string;
+  supplier?: string;
+  contractNo?: string;
+  purchasePackageNo?: string;
+  items?: OpiInvitationLineItem[];
+  installerContractor?: string;
+  supplierRep?: string;
+  equipmentSupply?: string;
+  employerRep?: string;
   notes?: string;
   status: 'issued' | 'completed';
   createdAt: string;
   createdBy: string;
 }
 
+export interface SiteEntryLineItem {
+  description: string;
+  packingListNo: string;
+  packageNo: string;
+  dimensions: string;
+  qty: string;
+  unit: string;
+  netWeight: string;
+  grossWeight: string;
+  remarks: string;
+}
+
 export interface SiteEntryMinutesRecord {
   id: string;
-  minutesNo: string;
+  minutesNo: string; // Arrival Notice No / شماره صورتجلسه
+  releaseNoteNo?: string; // Release Note No
+  projectName?: string; // پروژه
+  entryType?: 'permanent' | 'temporary'; // ورود دائم / ورود موقت
+  goodsUsage?: 'project' | 'site_equip' | 'general'; // کاربرد کالا
+  contractNo?: string; // شماره قرارداد
   date: string; // ISO YYYY-MM-DD
+  arrivalDate?: string; // تاریخ ورود ISO YYYY-MM-DD
   packingListNos: string[];
-  supplier?: string;
+  supplier?: string; // نام پیمانکار / درخواست کننده
+  unit?: string; // واحد
+  system?: string; // سیستم
+  island?: string; // جزیره
+  origin?: string; // مبدا
+  carrierCompany?: string; // شرکت حمل کننده
+  trafficLocation?: string; // محل تردد / تخلیه و بارگیری
+  vehicleType?: string; // وسیله نقلیه
   driverName?: string;
   vehicleNo?: string;
   waybillNo?: string;
-  warehouseKeeper?: string;
-  employerRep?: string;
-  mapnaRep?: string;
+  items?: SiteEntryLineItem[];
+  warehouseKeeper?: string; // انباردار / پیمانکار
+  contractorManager?: string; // مدیر پروژه / سرپرست کارگاه پیمانکار
+  mapnaSecurity?: string; // انتظامات مپنا
+  qcChecked?: boolean; // تیک QC / دفتر فنی
+  qcTechOffice?: string; // QC / دفتر فنی
+  hseChecked?: boolean; // تیک HSE
+  hseOfficer?: string; // HSE
+  equipmentSupply?: string; // تامین تجهیزات
+  employerRep?: string; // نماینده کارفرما / نماینده دستگاه نظارت
+  mapnaRep?: string; // legacy alias kept for backwards compatibility
   conditionStatus: 'healthy' | 'shortage_suspected' | 'damaged_apparent';
   notes?: string;
   createdAt: string;
@@ -223,10 +279,22 @@ export interface OpiMinutesRecord {
   minutesNo: string;
   invitationNo?: string;
   date: string; // ISO YYYY-MM-DD
+  time?: string; // ساعت
   packingListNo: string;
   packageNos: string[];
+  projectName?: string;
+  supplier?: string;
+  system?: string;
+  island?: string;
+  unit?: string;
+  contractNo?: string;
+  purchasePackageNo?: string;
+  items?: OpiInvitationLineItem[];
+  merNo?: string;
   location?: string;
+  storekeeper?: string;
   mapnaInspector?: string;
+  sellerRep?: string;
   employerInspector?: string;
   contractorInspector?: string;
   qcInspector?: string;
@@ -274,15 +342,36 @@ export interface SubstitutionRecord {
   shipmentNo: string;
   packageNo: string;
   itemNo: string;
+  projectName?: string;
+  contractNo?: string;
+  system?: string;
+  island?: string;
+  unit?: string;
+  supplier?: string;
+  supplyUrgency?: string;
+  installerContractor?: string;
+  mivNo?: string;
+  merNcrNo?: string;
   originalDescription: string;
   originalItemCode: string;
+  originalDrawingNo?: string;
+  originalRemarks?: string;
+  substitutePackageNo?: string;
   substituteDescription: string;
   substituteItemCode: string;
   substituteSize?: string;
+  substituteDrawingNo?: string;
+  substituteRemarks?: string;
   qty: number;
   countingUnit: string;
   reason: string;
+  supplierNotes?: string;
+  reprocureBy?: string;
+  costBorneBy?: string;
   approvedBy?: string;
+  mapnaRep?: string;
+  installerSignatory?: string;
+  supplierSignatory?: string;
   status: 'pending' | 'approved' | 'executed';
   notes?: string;
   createdAt: string;
@@ -296,6 +385,15 @@ export interface DocumentLineItem {
   itemNo: string;
   description: string;
   qty: number;
+  technicalInfo?: string;
+  tagNo?: string;
+  codeNo?: string;
+  location?: string;
+  requestedQty?: number;
+  uom?: string;
+  opiNo?: string;
+  returnReason?: string;
+  remark?: string;
 }
 
 export interface GcvDocumentRecord {
@@ -303,6 +401,19 @@ export interface GcvDocumentRecord {
   receiptNo: string;
   date: string;
   receiver: string;
+  projectName?: string;
+  purchaseRequestNo?: string;
+  supplier?: string;
+  buyerName?: string;
+  purchasePackageNo?: string;
+  releaseNoteNo?: string;
+  purchaseBy?: 'tehran_proc' | 'site_admin' | 'contractor_supplier';
+  islandSystem?: string;
+  waybillNo?: string;
+  storekeeper?: string;
+  receiverManager?: string;
+  equipmentSupply?: string;
+  mapnaSiteManager?: string;
   notes?: string;
   items: DocumentLineItem[];
   createdAt: string;
@@ -317,6 +428,22 @@ export interface MivDocumentRecord {
   docNo: string;
   date: string;
   party?: string;
+  projectName?: string;
+  contractNo?: string;
+  purchasePackageNo?: string;
+  supplier?: string;
+  releaseNoteNo?: string;
+  islandSystem?: string;
+  unit?: string;
+  receiptNo?: string;
+  storekeeper?: string;
+  equipmentSupply?: string;
+  techOffice?: string;
+  installationDept?: string;
+  qcInspector?: string;
+  installerRep?: string;
+  requester?: string;
+  receiver?: string;
   notes?: string;
   items: DocumentLineItem[];
   createdAt: string;
@@ -340,6 +467,26 @@ export interface MaterialEstimateRecord {
   notes?: string;
   createdAt: string;
   updatedAt: string;
+  createdBy: string;
+}
+
+export interface PeriodicInspectionAnswer {
+  questionKey: string;
+  status: '+' | '-' | '';
+  remarks: string;
+}
+
+export interface PeriodicInspectionRecord {
+  id: string;
+  projectName: string;
+  inspectionDate: string;
+  supervisorName: string;
+  inspectorsSignatory: string;
+  siteSupervisorSignatory: string;
+  projectManagerSignatory: string;
+  copyTo: string;
+  answers: PeriodicInspectionAnswer[];
+  createdAt: string;
   createdBy: string;
 }
 
@@ -389,6 +536,7 @@ export interface AuditLogEntry {
     | 'estimation'
     | 'balance'
     | 'stocktake'
+    | 'periodicInspection'
     | 'trash'
     | 'category'
     | 'import'
@@ -438,4 +586,5 @@ export interface DatabaseSnapshot {
   gcvDocuments?: GcvDocumentRecord[];
   mivDocuments?: MivDocumentRecord[];
   materialEstimates?: MaterialEstimateRecord[];
+  periodicInspections?: PeriodicInspectionRecord[];
 }
