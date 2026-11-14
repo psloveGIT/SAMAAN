@@ -699,15 +699,15 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       {/* Toolbar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="relative flex-1 min-w-[240px]">
-            <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
+          <div className="flex items-center flex-1 min-w-[240px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
             <input
               type="text"
-              dir="auto"
+              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
               value={q}
               onChange={(e) => { setQ(e.target.value); setPage(1); }}
               placeholder={t.controls.searchPlaceholder}
-              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
             />
           </div>
 
@@ -767,19 +767,23 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5">
           <input
             type="text"
-            dir="ltr"
+            dir={isFa && !shipmentFilter ? 'rtl' : 'ltr'}
             value={shipmentFilter}
             onChange={(e) => { setShipmentFilter(e.target.value); setPage(1); }}
             placeholder={t.headers.shipmentNo}
-            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+            className={`h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+              isFa && !shipmentFilter ? 'text-right' : 'text-left'
+            }`}
           />
           <input
             type="text"
-            dir="ltr"
+            dir={isFa && !packageFilter ? 'rtl' : 'ltr'}
             value={packageFilter}
             onChange={(e) => { setPackageFilter(e.target.value); setPage(1); }}
             placeholder={t.headers.packageNo}
-            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+            className={`h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+              isFa && !packageFilter ? 'text-right' : 'text-left'
+            }`}
           />
           <select
             value={island}
@@ -1140,10 +1144,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   step="any"
                   min="0.001"
                   required
-                  dir="ltr"
+                  dir={isFa && !backfillQty ? 'rtl' : 'ltr'}
                   value={backfillQty}
                   onChange={(e) => setBackfillQty(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums"
+                  className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums ${
+                    isFa && !backfillQty ? 'text-right' : 'text-left'
+                  }`}
                 />
               </div>
               <JalaliDateInput
@@ -1157,10 +1163,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </label>
                 <input
                   type="text"
-                  dir="ltr"
+                  dir={isFa && !backfillShipmentNo ? 'rtl' : 'ltr'}
                   value={backfillShipmentNo}
                   onChange={(e) => setBackfillShipmentNo(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums"
+                  className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums ${
+                    isFa && !backfillShipmentNo ? 'text-right' : 'text-left'
+                  }`}
                 />
               </div>
               <div>
@@ -1169,10 +1177,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </label>
                 <input
                   type="text"
-                  dir="ltr"
+                  dir={isFa && !backfillPackageNo ? 'rtl' : 'ltr'}
                   value={backfillPackageNo}
                   onChange={(e) => setBackfillPackageNo(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums"
+                  className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums ${
+                    isFa && !backfillPackageNo ? 'text-right' : 'text-left'
+                  }`}
                 />
               </div>
               <div>
@@ -1181,7 +1191,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </label>
                 <input
                   type="text"
-                  dir="auto"
+                  dir={!backfillNote ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                   value={backfillNote}
                   onChange={(e) => setBackfillNote(e.target.value)}
                   className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext"
@@ -1284,14 +1294,16 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   <input
                     type="text"
                     required
-                    dir="ltr"
+                    dir={isFa && !draft.shipmentNo ? 'rtl' : 'ltr'}
                     list="detailed-packings-datalist"
                     value={draft.shipmentNo || ''}
                     onChange={(e) => {
                       setItemNoManual(false);
                       setDraft({ ...draft, shipmentNo: e.target.value });
                     }}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !draft.shipmentNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                   <datalist id="detailed-packings-datalist">
                     {knownPackings.map((pk) => (
@@ -1306,14 +1318,16 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.packageNo ? 'rtl' : 'ltr'}
                     list="detailed-packages-datalist"
                     value={draft.packageNo || ''}
                     onChange={(e) => {
                       setItemNoManual(false);
                       setDraft({ ...draft, packageNo: e.target.value });
                     }}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !draft.packageNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                   <datalist id="detailed-packages-datalist">
                     {knownPackages.map((pkg) => (
@@ -1329,13 +1343,15 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   <input
                     type="text"
                     required
-                    dir="ltr"
+                    dir={isFa && !draft.itemNo ? 'rtl' : 'ltr'}
                     value={draft.itemNo || ''}
                     onChange={(e) => {
                       setItemNoManual(true);
                       setDraft({ ...draft, itemNo: e.target.value });
                     }}
-                    className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-xs text-left tabular-nums ${
+                    className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !draft.itemNo ? 'text-right' : 'text-left'
+                    } ${
                       itemNoTaken
                         ? 'border-[var(--status-danger)] text-[var(--status-danger)]'
                         : 'border-[var(--border-subtle)]'
@@ -1363,7 +1379,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   <input
                     type="text"
                     required
-                    dir="auto"
+                    dir={!draft.description ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.description || ''}
                     onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -1376,7 +1392,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.generalDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.generalDescription || ''}
                     onChange={(e) => setDraft({ ...draft, generalDescription: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -1389,10 +1405,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.itemCode ? 'rtl' : 'ltr'}
                     value={draft.itemCode || ''}
                     onChange={(e) => setDraft({ ...draft, itemCode: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !draft.itemCode ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -1402,10 +1420,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.size ? 'rtl' : 'ltr'}
                     value={draft.size || ''}
                     onChange={(e) => setDraft({ ...draft, size: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !draft.size ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -1417,10 +1437,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     type="number"
                     step="any"
                     required
-                    dir="ltr"
+                    dir={isFa && (draft.packingQty === null || draft.packingQty === undefined) ? 'rtl' : 'ltr'}
                     value={numInput(draft.packingQty)}
                     onChange={(e) => handlePackingQtyChange(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && (draft.packingQty === null || draft.packingQty === undefined) ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -1430,12 +1452,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.countingUnit ? 'rtl' : 'ltr'}
                     list="counting-unit-datalist"
                     value={draft.countingUnit || ''}
                     onChange={(e) => setDraft({ ...draft, countingUnit: e.target.value })}
                     placeholder="PC / PCs"
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs ${
+                      isFa && !draft.countingUnit ? 'text-right' : 'text-left'
+                    }`}
                   />
                   <datalist id="counting-unit-datalist">
                     {COUNTING_UNIT_SUGGESTIONS.map((u) => (
@@ -1451,7 +1475,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="detailed-island-datalist"
                     value={draft.island || ''}
                     onChange={(e) => setDraft({ ...draft, island: e.target.value })}
@@ -1468,7 +1492,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="detailed-system-datalist"
                     value={draft.system || ''}
                     onChange={(e) => setDraft({ ...draft, system: e.target.value })}
@@ -1485,7 +1509,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.subSystem ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="detailed-subsystem-datalist"
                     value={draft.subSystem || ''}
                     onChange={(e) => setDraft({ ...draft, subSystem: e.target.value })}
@@ -1502,7 +1526,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="detailed-unit-datalist"
                     value={draft.unit || ''}
                     onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
@@ -1519,7 +1543,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.supplier || ''}
                     onChange={(e) => setDraft({ ...draft, supplier: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -1532,7 +1556,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.origin ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.origin || ''}
                     onChange={(e) => setDraft({ ...draft, origin: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -1545,7 +1569,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.storageLocation ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="detailed-storage-datalist"
                     value={draft.storageLocation || ''}
                     onChange={(e) => setDraft({ ...draft, storageLocation: e.target.value })}
@@ -1562,7 +1586,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.notes || ''}
                     onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"

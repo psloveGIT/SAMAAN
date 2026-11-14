@@ -123,6 +123,11 @@ html[lang="en"] {
   unicode-bidi: plaintext;
 }
 
+html[dir="rtl"] input::placeholder,
+html[dir="rtl"] textarea::placeholder {
+  unicode-bidi: plaintext;
+}
+
 /* Custom warm/neutral scrollbars */
 ::-webkit-scrollbar {
   width: 8px;

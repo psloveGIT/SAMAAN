@@ -138,14 +138,15 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
       {/* Category Values Manager */}
       <div className="lg:col-span-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
+          <div className="flex items-center flex-1 min-w-[200px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
             <input
               type="text"
+              dir={!filterText ? (isFa ? 'rtl' : 'ltr') : 'auto'}
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
               placeholder={isFa ? 'فیلتر در مقادیر دسته‌بندی...' : 'Filter category values...'}
-              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
             />
           </div>
 
@@ -153,10 +154,11 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
             <form onSubmit={handleAdd} className="flex items-center gap-2">
               <input
                 type="text"
+                dir={!newValue ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={newValue}
                 onChange={(e) => setNewValue(e.target.value)}
                 placeholder={isFa ? 'نام مقدار جدید...' : 'New category value...'}
-                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
               <button
                 type="submit"
@@ -234,9 +236,10 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
               <input
                 type="text"
                 required
+                dir={!renameValue ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm"
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
               <div className="flex justify-end gap-2">
                 <button

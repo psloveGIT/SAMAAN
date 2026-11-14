@@ -274,11 +274,13 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                   <input
                     type="text"
                     required
-                    dir="ltr"
+                    dir={isFa && !invitationNo ? 'rtl' : 'ltr'}
                     value={invitationNo}
                     onChange={(e) => setInvitationNo(e.target.value)}
                     placeholder="OPI-2026-001"
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !invitationNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -298,7 +300,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                     dir="ltr"
                     value={time}
                     onChange={(e) => setTime(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>
 
@@ -308,11 +310,11 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!location ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder={isFa ? 'انبار مرکزی سایت...' : 'Site Warehouse...'}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>
               </div>
@@ -325,15 +327,17 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                       ? `انتخاب پکینگ لیست‌ها (${selectedPackings.length.toLocaleString('fa-IR')} مورد انتخاب‌شده)`
                       : `Select Packing Lists (${selectedPackings.length} selected)`}
                   </label>
-                  <div className="relative w-64">
-                    <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute start-2.5 top-2.5" />
+                  <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+                    <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
                     <input
                       type="text"
-                      dir="ltr"
+                      dir={isFa && !packingSearch ? 'rtl' : 'ltr'}
                       value={packingSearch}
                       onChange={(e) => setPackingSearch(e.target.value)}
                       placeholder={isFa ? 'فیلتر شماره پکینگ...' : 'Filter packing no...'}
-                      className="w-full h-8 ps-8 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left"
+                      className={`flex-1 min-w-0 h-full bg-transparent text-xs focus:outline-none ${
+                        isFa && !packingSearch ? 'text-right' : 'text-left'
+                      }`}
                     />
                   </div>
                 </div>
@@ -376,10 +380,10 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 </label>
                 <input
                   type="text"
-                  dir="auto"
+                  dir={!notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                 />
               </div>
 
@@ -542,10 +546,12 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               </label>
               <input
                 type="text"
-                dir="ltr"
+                dir={isFa && !resultOpiNo ? 'rtl' : 'ltr'}
                 value={resultOpiNo}
                 onChange={(e) => setResultOpiNo(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !resultOpiNo ? 'text-right' : 'text-left'
+                }`}
               />
             </div>
 
@@ -606,44 +612,50 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                             <input
                               type="number"
                               step="any"
-                              dir="ltr"
+                              dir={isFa && !d.actualQty ? 'rtl' : 'ltr'}
                               disabled={!canEdit}
                               value={d.actualQty}
                               onChange={(e) =>
                                 updateDraft(item.id, item, { actualQty: e.target.value, selected: true })
                               }
-                              className="w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                              className={`w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                                isFa && !d.actualQty ? 'text-right' : 'text-left'
+                              }`}
                             />
                           </td>
                           <td className="py-2 px-3 w-24">
                             <input
                               type="number"
                               step="any"
-                              dir="ltr"
+                              dir={isFa && !d.damagedQty ? 'rtl' : 'ltr'}
                               disabled={!canEdit}
                               value={d.damagedQty}
                               onChange={(e) =>
                                 updateDraft(item.id, item, { damagedQty: e.target.value, selected: true })
                               }
-                              className="w-20 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                              className={`w-20 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                                isFa && !d.damagedQty ? 'text-right' : 'text-left'
+                              }`}
                             />
                           </td>
                           <td className="py-2 px-3 w-28">
                             <input
                               type="text"
-                              dir="ltr"
+                              dir={isFa && !d.repNo ? 'rtl' : 'ltr'}
                               disabled={!canEdit}
                               value={d.repNo}
                               onChange={(e) =>
                                 updateDraft(item.id, item, { repNo: e.target.value, selected: true })
                               }
-                              className="w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left"
+                              className={`w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs ${
+                                isFa && !d.repNo ? 'text-right' : 'text-left'
+                              }`}
                             />
                           </td>
                           <td className="py-2 px-3 w-28">
                             <input
                               type="text"
-                              dir="auto"
+                              dir={!d.repStatus ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                               disabled={!canEdit}
                               value={d.repStatus}
                               onChange={(e) =>
@@ -655,7 +667,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                           <td className="py-2 px-3 w-40">
                             <input
                               type="text"
-                              dir="auto"
+                              dir={!d.repDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                               disabled={!canEdit}
                               value={d.repDescription}
                               onChange={(e) =>

@@ -178,7 +178,7 @@ export const JalaliDateInput: React.FC<JalaliDateInputProps> = ({
       <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] focus-within:border-[var(--accent-primary)] transition-colors overflow-hidden">
         <input
           type="text"
-          dir="ltr"
+          dir={prefs.language === 'fa' && !textInput ? 'rtl' : 'ltr'}
           disabled={disabled}
           value={textInput}
           onChange={(e) => setTextInput(e.target.value)}

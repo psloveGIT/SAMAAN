@@ -299,18 +299,18 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       {/* Filter & Search Toolbar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="relative flex-1 min-w-[240px]">
-            <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
+          <div className="flex items-center flex-1 min-w-[240px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
             <input
               type="text"
-              dir="auto"
+              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
               value={q}
               onChange={(e) => {
                 setQ(e.target.value);
                 setPage(1);
               }}
               placeholder={t.controls.searchPlaceholder}
-              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
             />
           </div>
 
@@ -751,10 +751,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !editing.packageNo ? 'rtl' : 'ltr'}
                     value={editing.packageNo}
                     onChange={(e) => setEditing({ ...editing, packageNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !editing.packageNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <div>
@@ -763,10 +765,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !editing.mapnaEntryMinutesNo ? 'rtl' : 'ltr'}
                     value={editing.mapnaEntryMinutesNo}
                     onChange={(e) => setEditing({ ...editing, mapnaEntryMinutesNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !editing.mapnaEntryMinutesNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -776,10 +780,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !editing.employerEntryMinutesNo ? 'rtl' : 'ltr'}
                     value={editing.employerEntryMinutesNo}
                     onChange={(e) => setEditing({ ...editing, employerEntryMinutesNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !editing.employerEntryMinutesNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <div>
@@ -788,7 +794,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !editing.releaseNo ? 'rtl' : 'ltr'}
                     value={editing.releaseNo}
                     onChange={(e) =>
                       setEditing({
@@ -797,7 +803,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         releaseDate: e.target.value.trim() ? editing.releaseDate : editing.arrivalDate,
                       })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !editing.releaseNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <JalaliDateInput
@@ -813,7 +821,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!editing.itemDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.itemDescription}
                     onChange={(e) => setEditing({ ...editing, itemDescription: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -826,7 +834,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!editing.island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.island}
                     onChange={(e) => setEditing({ ...editing, island: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -838,7 +846,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!editing.system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.system}
                     onChange={(e) => setEditing({ ...editing, system: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -850,7 +858,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!editing.subSystem ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.subSystem}
                     onChange={(e) => setEditing({ ...editing, subSystem: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -862,7 +870,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!editing.unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.unit}
                     onChange={(e) => setEditing({ ...editing, unit: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -874,7 +882,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!editing.supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.supplier}
                     onChange={(e) => setEditing({ ...editing, supplier: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -886,7 +894,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!editing.dispatchLocation ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.dispatchLocation}
                     onChange={(e) => setEditing({ ...editing, dispatchLocation: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -899,7 +907,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   <input
                     type="number"
                     step="any"
-                    dir="ltr"
+                    dir={isFa && (editing.grossWeight === null || editing.grossWeight === undefined) ? 'rtl' : 'ltr'}
                     value={editing.grossWeight ?? ''}
                     onChange={(e) =>
                       setEditing({
@@ -907,7 +915,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         grossWeight: e.target.value === '' ? null : Number(e.target.value),
                       })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && (editing.grossWeight === null || editing.grossWeight === undefined) ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <div>
@@ -917,7 +927,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   <input
                     type="number"
                     step="any"
-                    dir="ltr"
+                    dir={isFa && (editing.netWeight === null || editing.netWeight === undefined) ? 'rtl' : 'ltr'}
                     value={editing.netWeight ?? ''}
                     onChange={(e) =>
                       setEditing({
@@ -925,7 +935,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         netWeight: e.target.value === '' ? null : Number(e.target.value),
                       })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && (editing.netWeight === null || editing.netWeight === undefined) ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <div>
@@ -935,7 +947,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   <input
                     type="number"
                     step="any"
-                    dir="ltr"
+                    dir={isFa && (editing.freightCost === null || editing.freightCost === undefined) ? 'rtl' : 'ltr'}
                     value={editing.freightCost ?? ''}
                     onChange={(e) =>
                       setEditing({
@@ -943,7 +955,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         freightCost: e.target.value === '' ? null : Number(e.target.value),
                       })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && (editing.freightCost === null || editing.freightCost === undefined) ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
               </div>

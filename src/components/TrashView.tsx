@@ -82,15 +82,15 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[240px]">
-          <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
+        <div className="flex items-center flex-1 min-w-[240px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+          <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
           <input
             type="text"
-            dir="auto"
+            dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={isFa ? 'جستجو در موارد حذف‌شده...' : 'Search deleted items...'}
-            className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+            className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
           />
         </div>
 

@@ -505,11 +505,13 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   <input
                     type="text"
                     required
-                    dir="ltr"
+                    dir={isFa && !packingListNo ? 'rtl' : 'ltr'}
                     value={packingListNo}
                     onChange={(e) => setPackingListNo(e.target.value)}
                     placeholder="8000001604"
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !packingListNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -525,7 +527,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="samaan-suppliers"
                     value={supplier}
                     onChange={(e) => setSupplier(e.target.value)}
@@ -539,7 +541,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!dispatchLocation ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="samaan-dispatch"
                     value={dispatchLocation}
                     onChange={(e) => setDispatchLocation(e.target.value)}
@@ -553,10 +555,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !employerEntryMinutesNo ? 'rtl' : 'ltr'}
                     value={employerEntryMinutesNo}
                     onChange={(e) => setEmployerEntryMinutesNo(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !employerEntryMinutesNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -566,10 +570,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !mapnaEntryMinutesNo ? 'rtl' : 'ltr'}
                     value={mapnaEntryMinutesNo}
                     onChange={(e) => setMapnaEntryMinutesNo(e.target.value)}
-                    className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none ${
+                    className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none ${
+                      isFa && !mapnaEntryMinutesNo ? 'text-right' : 'text-left'
+                    } ${
                       mapnaDuplicateError
                         ? 'border-[var(--status-danger)]'
                         : 'border-[var(--border-subtle)] focus:border-[var(--accent-primary)]'
@@ -586,10 +592,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !releaseNo ? 'rtl' : 'ltr'}
                     value={releaseNo}
                     onChange={(e) => setReleaseNo(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !releaseNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -615,10 +623,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !billOfLadingNo ? 'rtl' : 'ltr'}
                     value={billOfLadingNo}
                     onChange={(e) => setBillOfLadingNo(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !billOfLadingNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -628,7 +638,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!vehicleNo ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={vehicleNo}
                     onChange={(e) => setVehicleNo(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
@@ -641,10 +651,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !weighbridgeWeight ? 'rtl' : 'ltr'}
                     value={weighbridgeWeight}
                     onChange={(e) => setWeighbridgeWeight(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !weighbridgeWeight ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -654,10 +666,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !freightCost ? 'rtl' : 'ltr'}
                     value={freightCost}
                     onChange={(e) => setFreightCost(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                      isFa && !freightCost ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
 
@@ -667,7 +681,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!driverName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={driverName}
                     onChange={(e) => setDriverName(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
@@ -723,11 +737,13 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           <input
                             type="text"
                             required
-                            dir="ltr"
+                            dir={isFa && !line.packageNo ? 'rtl' : 'ltr'}
                             value={line.packageNo}
                             onChange={(e) => updateLine(line.id, { packageNo: e.target.value })}
                             placeholder="1000004794-28"
-                            className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                            className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                              isFa && !line.packageNo ? 'text-right' : 'text-left'
+                            }`}
                           />
                         </div>
 
@@ -738,7 +754,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           <input
                             type="text"
                             required
-                            dir="auto"
+                            dir={!line.itemDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             value={line.itemDescription}
                             onChange={(e) => updateLine(line.id, { itemDescription: e.target.value })}
                             className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
@@ -751,7 +767,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </label>
                           <input
                             type="text"
-                            dir="auto"
+                            dir={!line.island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             list="samaan-islands"
                             value={line.island}
                             onChange={(e) => updateLine(line.id, { island: e.target.value })}
@@ -765,7 +781,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </label>
                           <input
                             type="text"
-                            dir="auto"
+                            dir={!line.system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             list="samaan-systems"
                             value={line.system}
                             onChange={(e) => updateLine(line.id, { system: e.target.value })}
@@ -779,7 +795,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </label>
                           <input
                             type="text"
-                            dir="auto"
+                            dir={!line.subSystem ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             list="samaan-subsystems"
                             value={line.subSystem}
                             onChange={(e) => updateLine(line.id, { subSystem: e.target.value })}
@@ -793,7 +809,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </label>
                           <input
                             type="text"
-                            dir="auto"
+                            dir={!line.unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             list="samaan-units"
                             value={line.unit}
                             onChange={(e) => updateLine(line.id, { unit: e.target.value })}
@@ -807,10 +823,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </label>
                           <input
                             type="text"
-                            dir="ltr"
+                            dir={isFa && !line.grossWeight ? 'rtl' : 'ltr'}
                             value={line.grossWeight}
                             onChange={(e) => updateLine(line.id, { grossWeight: e.target.value })}
-                            className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                            className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                              isFa && !line.grossWeight ? 'text-right' : 'text-left'
+                            }`}
                           />
                         </div>
 
@@ -820,10 +838,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </label>
                           <input
                             type="text"
-                            dir="ltr"
+                            dir={isFa && !line.netWeight ? 'rtl' : 'ltr'}
                             value={line.netWeight}
                             onChange={(e) => updateLine(line.id, { netWeight: e.target.value })}
-                            className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm text-left tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                            className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                              isFa && !line.netWeight ? 'text-right' : 'text-left'
+                            }`}
                           />
                         </div>
 
@@ -834,10 +854,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             </label>
                             <input
                               type="text"
-                              dir="ltr"
+                              dir={isFa && !line.lengthCm ? 'rtl' : 'ltr'}
                               value={line.lengthCm}
                               onChange={(e) => updateLine(line.id, { lengthCm: e.target.value })}
-                              className="w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm text-left tabular-nums"
+                              className={`w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums ${
+                                isFa && !line.lengthCm ? 'text-right' : 'text-left'
+                              }`}
                             />
                           </div>
                           <div>
@@ -846,10 +868,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             </label>
                             <input
                               type="text"
-                              dir="ltr"
+                              dir={isFa && !line.widthCm ? 'rtl' : 'ltr'}
                               value={line.widthCm}
                               onChange={(e) => updateLine(line.id, { widthCm: e.target.value })}
-                              className="w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm text-left tabular-nums"
+                              className={`w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums ${
+                                isFa && !line.widthCm ? 'text-right' : 'text-left'
+                              }`}
                             />
                           </div>
                           <div>
@@ -858,10 +882,12 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             </label>
                             <input
                               type="text"
-                              dir="ltr"
+                              dir={isFa && !line.heightCm ? 'rtl' : 'ltr'}
                               value={line.heightCm}
                               onChange={(e) => updateLine(line.id, { heightCm: e.target.value })}
-                              className="w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm text-left tabular-nums"
+                              className={`w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums ${
+                                isFa && !line.heightCm ? 'text-right' : 'text-left'
+                              }`}
                             />
                           </div>
                         </div>

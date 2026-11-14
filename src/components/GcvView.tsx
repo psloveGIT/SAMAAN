@@ -123,10 +123,12 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               <input
                 type="text"
                 required
-                dir="ltr"
+                dir={isFa && !receiptNo ? 'rtl' : 'ltr'}
                 value={receiptNo}
                 onChange={(e) => setReceiptNo(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !receiptNo ? 'text-right' : 'text-left'
+                }`}
               />
             </div>
 
@@ -143,10 +145,10 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               <input
                 type="text"
                 required
-                dir="auto"
+                dir={!receiver ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={receiver}
                 onChange={(e) => setReceiver(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
 
@@ -156,10 +158,10 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               </label>
               <input
                 type="text"
-                dir="auto"
+                dir={!notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
           </div>
@@ -171,15 +173,15 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                   ? 'اقلام آماده تحویل از موجودی مپنا (دارای OPI ثبت‌شده)'
                   : 'Deliverable Items from MAPNA Stock (OPI Recorded)'}
               </div>
-              <div className="relative w-64">
-                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute start-2.5 top-2.5" />
+              <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
                 <input
                   type="text"
-                  dir="auto"
+                  dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                   value={itemSearch}
                   onChange={(e) => setItemSearch(e.target.value)}
                   placeholder={t.controls.searchPlaceholder}
-                  className="w-full h-8 ps-8 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
                 />
               </div>
             </div>
@@ -224,13 +226,15 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                               step="any"
                               min="0"
                               max={item.mapnaInventory}
-                              dir="ltr"
+                              dir={isFa && !qtyMap[item.id] ? 'rtl' : 'ltr'}
                               value={qtyMap[item.id] || ''}
                               onChange={(e) =>
                                 setQtyMap((prev) => ({ ...prev, [item.id]: e.target.value }))
                               }
                               placeholder="0"
-                              className="w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                              className={`w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+                                isFa && !qtyMap[item.id] ? 'text-right' : 'text-left'
+                              }`}
                             />
                             <button
                               type="button"

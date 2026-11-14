@@ -369,32 +369,36 @@ export const UsersAuditView: React.FC = () => {
               <input
                 type="text"
                 required
-                dir="ltr"
+                dir={isFa && !newUsername ? 'rtl' : 'ltr'}
                 value={newUsername}
                 onChange={(e) => setNewUsername(e.target.value)}
                 placeholder={t.auth.username}
-                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-left"
+                className={`h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs focus:outline-none focus:border-[var(--accent-primary)] ${
+                  isFa && !newUsername ? 'text-right' : 'text-left'
+                }`}
               />
               <input
                 type="text"
-                dir="auto"
+                dir={!newFullName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={newFullName}
                 onChange={(e) => setNewFullName(e.target.value)}
                 placeholder={t.auth.fullName}
-                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext"
+                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
-              <div className="relative flex items-center">
+              <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 gap-1.5 focus-within:border-[var(--accent-primary)] overflow-hidden">
                 <input
                   type={showNewPassword ? 'text' : 'password'}
                   required
                   minLength={4}
-                  dir="ltr"
+                  dir={isFa && !newPassword ? 'rtl' : 'ltr'}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder={t.auth.password}
-                  className="w-full h-9 ps-3 pe-16 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-left"
+                  className={`flex-1 min-w-0 h-full bg-transparent text-xs focus:outline-none ${
+                    isFa && !newPassword ? 'text-right' : 'text-left'
+                  }`}
                 />
-                <div className="absolute end-1.5 flex items-center gap-0.5">
+                <div className="flex items-center gap-0.5 shrink-0">
                   <button
                     type="button"
                     onClick={() => setShowNewPassword((v) => !v)}
@@ -445,15 +449,15 @@ export const UsersAuditView: React.FC = () => {
 
           {/* Search & Filter Users */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            <div className="relative">
-              <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
+            <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+              <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
               <input
                 type="text"
-                dir="auto"
+                dir={!userSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={userSearch}
                 onChange={(e) => setUserSearch(e.target.value)}
                 placeholder={isFa ? 'جستجو نام یا نام کاربری...' : 'Search name or username...'}
-                className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
               />
             </div>
             <select
@@ -602,15 +606,15 @@ export const UsersAuditView: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-            <div className="relative">
-              <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
+            <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+              <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
               <input
                 type="text"
-                dir="auto"
+                dir={!auditQuery ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={auditQuery}
                 onChange={(e) => { setAuditQuery(e.target.value); setPage(1); }}
                 placeholder={isFa ? 'جستجو کاربر، عملیات، شناسه...' : 'Search user, action, target...'}
-                className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
               />
             </div>
 
@@ -751,10 +755,12 @@ export const UsersAuditView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  dir="ltr"
+                  dir={isFa && !editUsername ? 'rtl' : 'ltr'}
                   value={editUsername}
                   onChange={(e) => setEditUsername(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left"
+                  className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm focus:outline-none focus:border-[var(--accent-primary)] ${
+                    isFa && !editUsername ? 'text-right' : 'text-left'
+                  }`}
                 />
               </div>
 
@@ -765,10 +771,10 @@ export const UsersAuditView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  dir="auto"
+                  dir={!editFullName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                   value={editFullName}
                   onChange={(e) => setEditFullName(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext"
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                 />
               </div>
 
@@ -871,20 +877,22 @@ export const UsersAuditView: React.FC = () => {
                     <span>{t.auth.generatePassword}</span>
                   </button>
                 </div>
-                <div className="relative">
+                <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
                   <input
                     type={showResetPassword ? 'text' : 'password'}
                     required
                     minLength={4}
-                    dir="ltr"
+                    dir={isFa && !resetPassword ? 'rtl' : 'ltr'}
                     value={resetPassword}
                     onChange={(e) => setResetPassword(e.target.value)}
-                    className="w-full h-9 ps-3 pe-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left"
+                    className={`flex-1 min-w-0 h-full bg-transparent text-sm focus:outline-none ${
+                      isFa && !resetPassword ? 'text-right' : 'text-left'
+                    }`}
                   />
                   <button
                     type="button"
                     onClick={() => setShowResetPassword((v) => !v)}
-                    className="absolute end-2.5 top-2 text-[var(--text-muted)]"
+                    className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
                   >
                     {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -899,10 +907,12 @@ export const UsersAuditView: React.FC = () => {
                   type={showResetPassword ? 'text' : 'password'}
                   required
                   minLength={4}
-                  dir="ltr"
+                  dir={isFa && !resetConfirm ? 'rtl' : 'ltr'}
                   value={resetConfirm}
                   onChange={(e) => setResetConfirm(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left"
+                  className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm focus:outline-none focus:border-[var(--accent-primary)] ${
+                    isFa && !resetConfirm ? 'text-right' : 'text-left'
+                  }`}
                 />
               </div>
 

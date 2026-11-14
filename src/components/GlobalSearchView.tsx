@@ -43,15 +43,15 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
         onSubmit={runSearch}
         className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-wrap gap-3"
       >
-        <div className="relative flex-1 min-w-[260px]">
-          <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-3" />
+        <div className="flex items-center flex-1 min-w-[260px] h-10 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+          <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
           <input
             type="text"
-            dir="auto"
+            dir={!query ? (isFa ? 'rtl' : 'ltr') : 'auto'}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t.controls.searchPlaceholder}
-            className="w-full h-10 ps-10 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+            className="flex-1 min-w-0 h-full bg-transparent text-sm bidi-plaintext focus:outline-none"
           />
         </div>
         <button

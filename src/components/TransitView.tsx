@@ -238,15 +238,15 @@ export const TransitView: React.FC<TransitViewProps> = ({
     <div className="space-y-4">
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="relative flex-1 min-w-[240px]">
-            <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
+          <div className="flex items-center flex-1 min-w-[240px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
             <input
               type="text"
-              dir="auto"
+              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
               value={q}
               onChange={(e) => { setQ(e.target.value); setPage(1); }}
               placeholder={t.controls.searchPlaceholder}
-              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
             />
           </div>
 
@@ -526,27 +526,31 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.packingListNo}</label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.packingListNo ? 'rtl' : 'ltr'}
                     value={draft.packingListNo || ''}
                     onChange={(e) => setDraft({ ...draft, packingListNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !draft.packingListNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.packageNo}</label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.packageNo ? 'rtl' : 'ltr'}
                     value={draft.packageNo || ''}
                     onChange={(e) => setDraft({ ...draft, packageNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !draft.packageNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.itemDescription}</label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.itemDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.itemDescription || ''}
                     onChange={(e) => setDraft({ ...draft, itemDescription: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -556,7 +560,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.supplier}</label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.supplier || ''}
                     onChange={(e) => setDraft({ ...draft, supplier: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -566,7 +570,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.dispatchLocation}</label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.dispatchLocation ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.dispatchLocation || ''}
                     onChange={(e) => setDraft({ ...draft, dispatchLocation: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -576,10 +580,12 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.releaseNetNo}</label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.releaseNetNo ? 'rtl' : 'ltr'}
                     value={draft.releaseNetNo || ''}
                     onChange={(e) => setDraft({ ...draft, releaseNetNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !draft.releaseNetNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <JalaliDateInput
@@ -591,10 +597,12 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.interimNo}</label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.interimNo ? 'rtl' : 'ltr'}
                     value={draft.interimNo || ''}
                     onChange={(e) => setDraft({ ...draft, interimNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !draft.interimNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <JalaliDateInput
@@ -606,7 +614,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.carrierContractor}</label>
                   <input
                     type="text"
-                    dir="auto"
+                    dir={!draft.carrierContractor ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.carrierContractor || ''}
                     onChange={(e) => setDraft({ ...draft, carrierContractor: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -616,10 +624,12 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.billOfLadingNo}</label>
                   <input
                     type="text"
-                    dir="ltr"
+                    dir={isFa && !draft.billOfLadingNo ? 'rtl' : 'ltr'}
                     value={draft.billOfLadingNo || ''}
                     onChange={(e) => setDraft({ ...draft, billOfLadingNo: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums bidi-plaintext"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !draft.billOfLadingNo ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
                 <div>
@@ -627,12 +637,14 @@ export const TransitView: React.FC<TransitViewProps> = ({
                   <input
                     type="number"
                     step="any"
-                    dir="ltr"
+                    dir={isFa && (draft.amount === null || draft.amount === undefined) ? 'rtl' : 'ltr'}
                     value={draft.amount ?? ''}
                     onChange={(e) =>
                       setDraft({ ...draft, amount: e.target.value === '' ? null : Number(e.target.value) })
                     }
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && (draft.amount === null || draft.amount === undefined) ? 'text-right' : 'text-left'
+                    }`}
                   />
                 </div>
               </div>

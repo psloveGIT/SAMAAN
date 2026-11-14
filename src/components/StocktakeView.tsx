@@ -141,12 +141,12 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
               <input
                 type="text"
                 required
-                dir="auto"
+                dir={!stocktakeStatus ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 list="stocktake-status-presets"
                 value={stocktakeStatus}
                 onChange={(e) => setStocktakeStatus(e.target.value)}
                 placeholder={isFa ? 'شمارش شده - مطابق...' : 'Counted - Matched...'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
               <datalist id="stocktake-status-presets">
                 {STOCKTAKE_STATUS_PRESETS.map((s) => (
@@ -167,10 +167,10 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
               </label>
               <input
                 type="text"
-                dir="auto"
+                dir={!stocktakeInfo ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={stocktakeInfo}
                 onChange={(e) => setStocktakeInfo(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
 
@@ -192,24 +192,26 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
       {/* Items Table */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
         <div className="p-4 border-b border-[var(--border-subtle)] grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          <div className="relative">
-            <Search className="w-4 h-4 text-[var(--text-muted)] absolute start-3 top-2.5" />
+          <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
+            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
             <input
               type="text"
-              dir="auto"
+              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder={t.controls.searchPlaceholder}
-              className="w-full h-9 ps-9 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
             />
           </div>
           <input
             type="text"
-            dir="ltr"
+            dir={isFa && !shipmentFilter ? 'rtl' : 'ltr'}
             value={shipmentFilter}
             onChange={(e) => setShipmentFilter(e.target.value)}
             placeholder={t.headers.shipmentNo}
-            className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums"
+            className={`h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
+              isFa && !shipmentFilter ? 'text-right' : 'text-left'
+            }`}
           />
         </div>
 

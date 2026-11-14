@@ -15,7 +15,8 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
   forced = false,
   onClose,
 }) => {
-  const { t, user, setAuthenticatedUser, notify, logout } = useApp();
+  const { prefs, t, user, setAuthenticatedUser, notify, logout } = useApp();
+  const isFa = prefs.language === 'fa';
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -123,19 +124,21 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
             <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
               {t.auth.currentPassword} *
             </label>
-            <div className="relative">
+            <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
               <input
                 type={showCurrent ? 'text' : 'password'}
                 required
-                dir="ltr"
+                dir={isFa && !currentPassword ? 'rtl' : 'ltr'}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full h-9 ps-3 pe-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left"
+                className={`flex-1 min-w-0 h-full bg-transparent text-sm focus:outline-none ${
+                  isFa && !currentPassword ? 'text-right' : 'text-left'
+                }`}
               />
               <button
                 type="button"
                 onClick={() => setShowCurrent((v) => !v)}
-                className="absolute end-2.5 top-2 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
               >
                 {showCurrent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -146,20 +149,22 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
             <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
               {t.auth.newPassword} *
             </label>
-            <div className="relative">
+            <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
               <input
                 type={showNew ? 'text' : 'password'}
                 required
                 minLength={4}
-                dir="ltr"
+                dir={isFa && !newPassword ? 'rtl' : 'ltr'}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full h-9 ps-3 pe-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left"
+                className={`flex-1 min-w-0 h-full bg-transparent text-sm focus:outline-none ${
+                  isFa && !newPassword ? 'text-right' : 'text-left'
+                }`}
               />
               <button
                 type="button"
                 onClick={() => setShowNew((v) => !v)}
-                className="absolute end-2.5 top-2 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
               >
                 {showNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -174,10 +179,12 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
               type={showNew ? 'text' : 'password'}
               required
               minLength={4}
-              dir="ltr"
+              dir={isFa && !confirmPassword ? 'rtl' : 'ltr'}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-left"
+              className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm focus:outline-none focus:border-[var(--accent-primary)] ${
+                isFa && !confirmPassword ? 'text-right' : 'text-left'
+              }`}
             />
           </div>
 

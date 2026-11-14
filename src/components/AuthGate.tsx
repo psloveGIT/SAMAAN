@@ -153,9 +153,10 @@ export const AuthGate: React.FC = () => {
               <input
                 type="text"
                 required
+                dir={!fullName ? (prefs.language === 'fa' ? 'rtl' : 'ltr') : 'auto'}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                className="w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
           )}
@@ -167,11 +168,13 @@ export const AuthGate: React.FC = () => {
             <input
               type="text"
               required
-              dir="ltr"
+              dir={prefs.language === 'fa' && !username ? 'rtl' : 'ltr'}
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+              className={`w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] ${
+                prefs.language === 'fa' && !username ? 'text-right' : 'text-left'
+              }`}
             />
           </div>
 
@@ -183,11 +186,13 @@ export const AuthGate: React.FC = () => {
               type="password"
               required
               minLength={4}
-              dir="ltr"
+              dir={prefs.language === 'fa' && !password ? 'rtl' : 'ltr'}
               autoComplete={needsSetup ? 'new-password' : 'current-password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+              className={`w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] ${
+                prefs.language === 'fa' && !password ? 'text-right' : 'text-left'
+              }`}
             />
           </div>
 
