@@ -3,6 +3,7 @@ import { CheckCircle2, ClipboardCheck, ClipboardList, Download, Printer, Search 
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { DetailedComputed } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
@@ -35,9 +36,10 @@ export function localizeStocktakeStatus(raw: string | undefined, isFa: boolean):
 }
 
 export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onDataChanged }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const periodicFormCode = getEmployerFormCode(activeEmployer, '07-03');
 
   const [activeSection, setActiveSection] = useState<'stocktake' | 'periodic'>('stocktake');
   const [q, setQ] = useState('');
@@ -219,8 +221,12 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
           <ClipboardList className="w-4 h-4" />
           <span>
             {isFa
-              ? 'بازدید ادواری انبار (چک‌لیست MD1EX-FQP02/07-03)'
-              : 'Periodic Warehouse Inspection (MD1EX-FQP02/07-03)'}
+              ? periodicFormCode
+                ? `بازدید ادواری انبار (چک‌لیست ${periodicFormCode})`
+                : 'بازدید ادواری انبار (چک‌لیست)'
+              : periodicFormCode
+                ? `Periodic Warehouse Inspection (${periodicFormCode})`
+                : 'Periodic Warehouse Inspection Checklist'}
           </span>
         </button>
       </div>

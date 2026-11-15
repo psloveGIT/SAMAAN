@@ -14,9 +14,10 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -107,6 +108,10 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
   generalEntries,
   formatDate,
 }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '06-03');
+  const displayProjectName = record.projectName?.trim() || activeProject?.name || '..................';
+
   const resolvedItems = useMemo(() => {
     if (record.items && record.items.length > 0) return record.items;
     return buildMomItemsForPacking(
@@ -129,6 +134,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
   return (
     <div
       dir="rtl"
+      className="samaan-a4-portrait"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -165,11 +171,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                 textAlign: 'center',
               }}
             >
-              <img
-                src={MD1_STACKED_LOGO}
-                alt="گروه مپنا - توسعه یک"
-                style={{ height: '56px', width: 'auto', objectFit: 'contain', display: 'block' }}
-              />
+              <EmployerFormLogo employer={activeEmployer} height={56} />
               <div
                 style={{
                   fontSize: '7.5px',
@@ -179,7 +181,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                   whiteSpace: 'nowrap',
                 }}
               >
-                مستندات سیستم مدیریت یکپارچه
+                {activeEmployer.imsSubtitle}
               </div>
             </div>
 
@@ -191,10 +193,10 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
               }}
             >
               <div style={{ fontSize: '12px', fontWeight: 700 }}>
-                شرکت احداث و توسعه نیروگاه های مپنا – توسعه یک (MD1)
+                {activeEmployer.companyFullName}
               </div>
               <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-                پروژه {record.projectName?.trim() || '..................'}
+                پروژه {displayProjectName}
               </div>
               <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '2px' }}>
                 صورتجلسه گشایش و بازرسی بسته ها
@@ -298,21 +300,21 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
         {/* Items Table (LTR column order matching PDF: Item No., Packing List No., Package No., شرح (کالا/تجهیز), واحد (UOM), توضیحات) */}
         <table
           dir="ltr"
+          className="samaan-dynamic-table"
           style={{
             width: '100%',
             borderCollapse: 'collapse',
             fontSize: '9.5px',
-            tableLayout: 'fixed',
           }}
         >
           <thead>
             <tr style={{ backgroundColor: '#e5e7eb' }}>
               <th
+                className="samaan-col-compact"
                 style={{
-                  width: '7%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
-                  padding: '5px 3px',
+                  padding: '5px 4px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -322,11 +324,11 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                 No.
               </th>
               <th
+                className="samaan-col-code"
                 style={{
-                  width: '14%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
-                  padding: '5px 4px',
+                  padding: '5px 5px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -336,11 +338,11 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                 No.
               </th>
               <th
+                className="samaan-col-code"
                 style={{
-                  width: '13%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
-                  padding: '5px 4px',
+                  padding: '5px 5px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -351,8 +353,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
               </th>
               <th
                 dir="rtl"
+                className="samaan-col-fluid"
                 style={{
-                  width: '36%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
                   padding: '5px 6px',
@@ -363,11 +365,11 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
               </th>
               <th
                 dir="rtl"
+                className="samaan-col-compact"
                 style={{
-                  width: '9%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
-                  padding: '5px 3px',
+                  padding: '5px 4px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -378,8 +380,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
               </th>
               <th
                 dir="rtl"
+                className="samaan-col-fluid"
                 style={{
-                  width: '21%',
                   borderBottom: '1px solid #000000',
                   padding: '5px 6px',
                   fontWeight: 700,
@@ -391,68 +393,65 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           </thead>
           <tbody>
             {paddedRows.map((row, idx) => (
-              <tr key={idx} style={{ height: '27px' }}>
+              <tr key={idx}>
                 <td
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-compact"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 3px',
+                    padding: '4px 4px',
                   }}
                 >
-                  {row?.itemNo || ''}
+                  {row?.itemNo || '\u00A0'}
                 </td>
                 <td
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-code"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 4px',
-                    wordBreak: 'break-word',
+                    padding: '4px 5px',
                   }}
                 >
                   {row?.packingListNo || ''}
                 </td>
                 <td
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-code"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 4px',
-                    wordBreak: 'break-word',
+                    padding: '4px 5px',
                   }}
                 >
                   {row?.packageNo || ''}
                 </td>
                 <td
                   dir="auto"
-                  className="bidi-plaintext"
+                  className="bidi-plaintext samaan-col-fluid"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 5px',
-                    wordBreak: 'break-word',
+                    padding: '4px 6px',
                   }}
                 >
                   {row?.description || ''}
                 </td>
                 <td
                   dir="auto"
+                  className="samaan-col-compact"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 3px',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.uom || ''}
                 </td>
                 <td
                   dir="auto"
-                  className="bidi-plaintext"
+                  className="bidi-plaintext samaan-col-fluid"
                   style={{
                     borderBottom: '1px solid #000000',
-                    padding: '3px 5px',
-                    wordBreak: 'break-word',
+                    padding: '4px 6px',
                   }}
                 >
                   {row?.remarks || ''}
@@ -542,7 +541,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           }}
         >
           <div style={{ fontWeight: 600 }}>
-            بسته (Package) های بالا در حضور نمایندگان کارفرما، مشاور، مپنا و انباردار OPI شد و اقلام موجود برابر با Packing List های پیوست، تحویل انبارگردید.
+            بسته (Package) های بالا در حضور نمایندگان کارفرما، مشاور، {activeEmployer.shortName} و انباردار OPI شد و اقلام موجود برابر با Packing List های پیوست، تحویل انبارگردید.
           </div>
 
           <div
@@ -592,7 +591,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
       </div>
 
       {/* Separate Lower Signature Frame */}
-      <div style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
+      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
         <div
           style={{
             backgroundColor: '#e5e7eb',
@@ -641,7 +640,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>تأمین تجهیزات توسعه یک :</div>
+              <div style={{ fontWeight: 700 }}>{activeEmployer.equipmentSupplyLabel} :</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }}>{record.mapnaInspector || ''}</div>
@@ -702,12 +701,223 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           }}
         >
           <div>رونوشت: معاونت تأمین تجهیزات، فروشنده، دستگاه نظارت، کارفرما</div>
-          <div dir="ltr" className="tabular-nums">
-            MD1EX-FQP02/06-03
-          </div>
+          {formCode && (
+            <div dir="ltr" className="tabular-nums">
+              {formCode}
+            </div>
+          )}
         </div>
       </div>
     </div>
+  );
+};
+
+interface OfficialMerSheetProps {
+  report: OsdrReportRecord;
+  isFa: boolean;
+  brandFull: string;
+  formatDate: (iso: string) => string;
+  discrepancyTypeLabel: (type: OsdrReportItem['discrepancyType']) => string;
+}
+
+const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({
+  report,
+  isFa,
+  brandFull,
+  formatDate,
+  discrepancyTypeLabel,
+}) => {
+  const { activeEmployer, activeProject } = useApp();
+  const merFormCode = getEmployerFormCode(activeEmployer, '06-03');
+  return (
+  <div
+    dir={isFa ? 'rtl' : 'ltr'}
+    className="samaan-a4-portrait"
+    style={{
+      backgroundColor: '#ffffff',
+      color: '#000000',
+      fontFamily: '"Vazirmatn", "Plus Jakarta Sans", Tahoma, sans-serif',
+      width: '100%',
+      boxSizing: 'border-box',
+    }}
+  >
+    <div style={{ border: '1.8px solid #000000', padding: '12px', fontSize: '10.5px' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          borderBottom: '1.5px solid #000000',
+          paddingBottom: '10px',
+          marginBottom: '10px',
+          gap: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <EmployerFormLogo employer={activeEmployer} height={50} />
+          <div>
+            <div style={{ fontSize: '12px', fontWeight: 800 }}>
+              {isFa ? activeEmployer.companyFullName : activeEmployer.companyFullNameEn}
+            </div>
+            {activeProject?.name && (
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#334155' }}>
+                {isFa ? `پروژه ${activeProject.name}` : `Project: ${activeProject.name}`}
+              </div>
+            )}
+            <div style={{ fontSize: '10.5px', fontWeight: 700, marginTop: '2px' }}>
+              {isFa
+                ? 'گزارش مغایرت، کسری و آسیب‌دیدگی کالا (MER)'
+                : `${brandFull} — Material Exception / Discrepancy Report (MER)`}
+            </div>
+          </div>
+        </div>
+        <div className="tabular-nums" style={{ textAlign: isFa ? 'left' : 'right', lineHeight: 1.7 }}>
+          <div>
+            <strong>{isFa ? 'شماره گزارش MER:' : 'MER Report No.:'} </strong>
+            <span dir="ltr">{report.reportNo}</span>
+          </div>
+          <div>
+            <strong>{isFa ? 'تاریخ:' : 'Date:'} </strong>
+            <span dir="ltr">{formatDate(report.date)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '8px',
+          border: '1px solid #000000',
+          padding: '6px 8px',
+          marginBottom: '10px',
+          fontSize: '10px',
+        }}
+      >
+        <div>
+          <strong>{isFa ? 'شماره پکینگ لیست:' : 'Packing List No.:'} </strong>
+          <span dir="ltr" className="tabular-nums">{report.packingListNo}</span>
+        </div>
+        <div>
+          <strong>{isFa ? 'صورتجلسه گشایش:' : 'OPI Minutes:'} </strong>
+          <span dir="ltr" className="tabular-nums">{report.opiMinutesNo || '-'}</span>
+        </div>
+        <div>
+          <strong>{isFa ? 'تأمین‌کننده:' : 'Supplier:'} </strong>
+          <span className="bidi-plaintext">{report.supplier || '-'}</span>
+        </div>
+      </div>
+
+      <table
+        className="samaan-dynamic-table"
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          fontSize: '9.8px',
+          border: '1px solid #000000',
+        }}
+      >
+        <thead>
+          <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
+            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>#</th>
+            <th className="samaan-col-code" style={{ border: '1px solid #000000', padding: '5px 5px' }}>
+              {isFa ? 'شماره بسته' : 'Package No.'}
+            </th>
+            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
+              {isFa ? 'شماره قلم' : 'Item No.'}
+            </th>
+            <th className="samaan-col-fluid" style={{ border: '1px solid #000000', padding: '5px 6px' }}>
+              {isFa ? 'شرح کالا / تجهیز' : 'Description'}
+            </th>
+            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
+              {isFa ? 'پکینگ' : 'Packing'}
+            </th>
+            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
+              {isFa ? 'واقعی' : 'Actual'}
+            </th>
+            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
+              {isFa ? 'کسری' : 'Shortage'}
+            </th>
+            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
+              {isFa ? 'آسیب‌دیده' : 'Damaged'}
+            </th>
+            <th className="samaan-col-fluid" style={{ border: '1px solid #000000', padding: '5px 6px' }}>
+              {isFa ? 'توضیحات' : 'Remarks'}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.items.map((line, i) => (
+            <tr key={`${line.detailedId}-${i}`}>
+              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px' }}>
+                {i + 1}
+              </td>
+              <td className="samaan-col-code tabular-nums" dir="ltr" style={{ border: '1px solid #000000', padding: '4px 5px' }}>
+                {line.packageNo}
+              </td>
+              <td className="samaan-col-compact tabular-nums" dir="ltr" style={{ border: '1px solid #000000', padding: '4px 4px' }}>
+                {line.itemNo}
+              </td>
+              <td className="samaan-col-fluid bidi-plaintext" style={{ border: '1px solid #000000', padding: '4px 6px' }}>
+                {line.description}
+              </td>
+              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px' }}>
+                {line.packingQty}
+              </td>
+              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px' }}>
+                {line.actualQty}
+              </td>
+              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px', fontWeight: 700 }}>
+                {line.shortage || '-'}
+              </td>
+              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px', fontWeight: 700 }}>
+                {line.damagedQty || '-'}
+              </td>
+              <td className="samaan-col-fluid bidi-plaintext" style={{ border: '1px solid #000000', padding: '4px 6px' }}>
+                {discrepancyTypeLabel(line.discrepancyType)}
+                {line.remarks ? ` - ${line.remarks}` : ''}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {report.notes && (
+        <div style={{ marginTop: '10px', border: '1px solid #000000', padding: '6px 8px', fontSize: '10px' }}>
+          <strong>{isFa ? 'توضیحات تکمیلی:' : 'Notes:'} </strong>
+          <span className="bidi-plaintext">{report.notes}</span>
+        </div>
+      )}
+
+      <div
+        className="samaan-keep-together"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '16px',
+          marginTop: '28px',
+          textAlign: 'center',
+          fontSize: '10px',
+          fontWeight: 700,
+        }}
+      >
+        <div style={{ borderTop: '1px solid #000000', paddingTop: '6px' }}>
+          {isFa ? 'مسئول انبار' : 'Warehouse Supervisor'}
+        </div>
+        <div style={{ borderTop: '1px solid #000000', paddingTop: '6px' }}>
+          {isFa ? 'کنترل کیفیت / بازرسی' : 'QA / QC Inspector'}
+        </div>
+        <div style={{ borderTop: '1px solid #000000', paddingTop: '6px' }}>
+          {isFa ? activeEmployer.inspectorLabel : `${activeEmployer.badgeCode} / Client Rep.`}
+        </div>
+      </div>
+      {merFormCode && (
+        <div dir="ltr" style={{ marginTop: '10px', fontSize: '8.5px', fontWeight: 700, textAlign: 'left' }}>
+          {merFormCode}
+        </div>
+      )}
+    </div>
+  </div>
   );
 };
 
@@ -729,9 +939,10 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   refreshSignal,
   onDataChanged,
 }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const formCode = getEmployerFormCode(activeEmployer, '06-03');
 
   const [subTab, setSubTab] = useState<'minutes' | 'osdr'>('minutes');
   const [data, setData] = useState<OpiMinutesApiResponse | null>(null);
@@ -744,7 +955,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const [time, setTime] = useState('09:00');
   const [packingListNo, setPackingListNo] = useState('');
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
-  const [projectName, setProjectName] = useState('');
+  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [supplier, setSupplier] = useState('');
   const [system, setSystem] = useState('');
   const [island, setIsland] = useState('');
@@ -1180,12 +1391,12 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         notify(
           'success',
           isFa
-            ? `گزارش مغایرت شماره ${res.report.reportNo} ویرایش شد.`
-            : `OSDR Report ${res.report.reportNo} updated.`,
+            ? `گزارش مغایرت، کسری و آسیب‌دیدگی (MER) شماره ${res.report.reportNo} ویرایش شد.`
+            : `MER Report ${res.report.reportNo} updated.`,
         );
         resetOsdrForm();
         setPrintOsdr(res.report);
-        triggerAutoSnapshot(`Edit OSDR ${res.report.reportNo}`);
+        triggerAutoSnapshot(`Edit MER ${res.report.reportNo}`);
         onDataChanged();
         loadData();
       } else {
@@ -1196,12 +1407,12 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         notify(
           'success',
           isFa
-            ? `گزارش مغایرت، کسری و آسیب‌دیدگی شماره ${res.report.reportNo} ثبت شد.`
-            : `OSDR Report ${res.report.reportNo} issued.`,
+            ? `گزارش مغایرت، کسری و آسیب‌دیدگی (MER) شماره ${res.report.reportNo} ثبت شد.`
+            : `MER Report ${res.report.reportNo} issued.`,
         );
         resetOsdrForm();
         setPrintOsdr(res.report);
-        triggerAutoSnapshot(`OSDR ${res.report.reportNo}`);
+        triggerAutoSnapshot(`MER ${res.report.reportNo}`);
         onDataChanged();
         loadData();
       }
@@ -1219,13 +1430,13 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       notify(
         'success',
         isFa
-          ? `گزارش مغایرت شماره ${deleteOsdrTarget.reportNo} حذف شد.`
-          : `OSDR Report ${deleteOsdrTarget.reportNo} deleted.`,
+          ? `گزارش مغایرت (MER) شماره ${deleteOsdrTarget.reportNo} حذف شد.`
+          : `MER Report ${deleteOsdrTarget.reportNo} deleted.`,
       );
       if (editingOsdr?.id === deleteOsdrTarget.id) resetOsdrForm();
       if (printOsdr?.id === deleteOsdrTarget.id) setPrintOsdr(null);
       setDeleteOsdrTarget(null);
-      triggerAutoSnapshot(`Delete OSDR ${deleteOsdrTarget.reportNo}`);
+      triggerAutoSnapshot(`Delete MER ${deleteOsdrTarget.reportNo}`);
       onDataChanged();
       loadData();
     } catch (err) {
@@ -1258,7 +1469,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
   const osdrColumns = useMemo<CsvColumnDef<OsdrReportRecord>[]>(
     () => [
-      { key: 'reportNo', header: isFa ? 'شماره گزارش (OSDR)' : 'OSDR No.', getValue: (r) => r.reportNo },
+      { key: 'reportNo', header: isFa ? 'شماره گزارش (MER)' : 'MER No.', getValue: (r) => r.reportNo },
       { key: 'date', header: isFa ? 'تاریخ گزارش' : 'Report Date', isDate: true, getValue: (r) => r.date },
       { key: 'packingListNo', header: t.headers.packingListNo, getValue: (r) => r.packingListNo },
       { key: 'opiMinutesNo', header: isFa ? 'شماره صورتجلسه' : 'Minutes No.', getValue: (r) => r.opiMinutesNo || '' },
@@ -1276,8 +1487,6 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     ],
     [t, isFa, discrepancyTypeLabel],
   );
-
-  const anyPrintModalOpen = Boolean(printMinutes || printOsdr);
 
   const minutesPrintPortal =
     printMinutes && !printMinutesTableOpen && !printOsdrTableOpen
@@ -1303,10 +1512,20 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                   -webkit-print-color-adjust: exact;
                   print-color-adjust: exact;
                 }
+                #samaan-mom-print-root table {
+                  width: 100% !important;
+                  table-layout: auto !important;
+                }
+                #samaan-mom-print-root tr {
+                  height: auto !important;
+                  break-inside: avoid;
+                  page-break-inside: avoid;
+                }
                 #samaan-mom-print-root table th,
                 #samaan-mom-print-root table td {
                   text-align: center;
                   vertical-align: middle;
+                  height: auto !important;
                 }
               }
             `}</style>
@@ -1321,12 +1540,66 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         )
       : null;
 
+  const merPrintPortal =
+    printOsdr && !printMinutes && !printMinutesTableOpen && !printOsdrTableOpen
+      ? createPortal(
+          <div id="samaan-mer-print-root">
+            <style>{`
+              @media screen {
+                #samaan-mer-print-root { display: none !important; }
+              }
+              @media print {
+                @page {
+                  size: A4 portrait;
+                  margin: 7mm;
+                }
+                body > *:not(#samaan-mer-print-root) {
+                  display: none !important;
+                }
+                #samaan-mer-print-root {
+                  display: block !important;
+                  background: #ffffff !important;
+                  color: #000000 !important;
+                  width: 100%;
+                  -webkit-print-color-adjust: exact;
+                  print-color-adjust: exact;
+                }
+                #samaan-mer-print-root table {
+                  width: 100% !important;
+                  table-layout: auto !important;
+                }
+                #samaan-mer-print-root tr {
+                  height: auto !important;
+                  break-inside: avoid;
+                  page-break-inside: avoid;
+                }
+                #samaan-mer-print-root table th,
+                #samaan-mer-print-root table td {
+                  text-align: center;
+                  vertical-align: middle;
+                  height: auto !important;
+                }
+              }
+            `}</style>
+            <OfficialMerSheet
+              report={printOsdr}
+              isFa={isFa}
+              brandFull={t.brandFull}
+              formatDate={formatDate}
+              discrepancyTypeLabel={discrepancyTypeLabel}
+            />
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <div className="space-y-6">
       {minutesPrintPortal}
+      {merPrintPortal}
 
       {/* Sub-navigation Tabs */}
-      <div className={`${printOsdr ? 'print:hidden' : ''} flex flex-wrap items-center gap-2`}>
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => setSubTab('minutes')}
@@ -1350,7 +1623,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
           }`}
         >
           <FileWarning className="w-4 h-4" />
-          <span>{isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (OSDR)' : 'Discrepancy, Shortage & Damage Report (OSDR)'}</span>
+          <span>{isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Discrepancy, Shortage & Damage Report (MER)'}</span>
         </button>
       </div>
 
@@ -1384,9 +1657,11 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                       <span>{t.controls.cancel}</span>
                     </button>
                   )}
-                  <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
-                    MD1EX-FQP02/06-03
-                  </span>
+                  {formCode && (
+                    <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
+                      {formCode}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1763,7 +2038,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'تأمین تجهیزات توسعه یک' : 'MD1 Equipment Supply'}
+                    {isFa ? activeEmployer.equipmentSupplyLabel : `${activeEmployer.badgeCode} Equipment Supply`}
                   </label>
                   <input
                     type="text"
@@ -1964,7 +2239,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                                 }}
                                 className="h-7 px-2.5 rounded-lg bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold"
                               >
-                                {isFa ? 'صدور OSDR' : 'Issue OSDR'}
+                                {isFa ? 'صدور MER' : 'Issue MER'}
                               </button>
                             )}
                           </div>
@@ -1979,9 +2254,9 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         </div>
       )}
 
-      {/* SUB-TAB 2: OSDR DISCREPANCY REPORT */}
+      {/* SUB-TAB 2: MER DISCREPANCY REPORT */}
       {subTab === 'osdr' && (
-        <div className={`space-y-6 ${anyPrintModalOpen ? 'print:hidden' : ''}`}>
+        <div className="space-y-6">
           {canEdit && (
             <form
               onSubmit={handleSaveOsdr}
@@ -1990,7 +2265,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-bold">
                   <AlertTriangle className="w-4 h-4 text-[var(--status-warning)]" />
-                  <span>{isFa ? 'صدور گزارش مغایرت، کسری و آسیب‌دیدگی (OSDR)' : 'Issue OSDR Discrepancy Report'}</span>
+                  <span>{isFa ? 'صدور گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Issue MER Discrepancy Report'}</span>
                   {editingOsdr && (
                     <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
                       {isFa ? `حالت ویرایش: ${editingOsdr.reportNo}` : `Editing: ${editingOsdr.reportNo}`}
@@ -2012,7 +2287,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره گزارش (OSDR)' : 'OSDR Report No.'} *
+                    {isFa ? 'شماره گزارش (MER)' : 'MER Report No.'} *
                   </label>
                   <input
                     type="text"
@@ -2020,7 +2295,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     dir={isFa && !osdrReportNo ? 'rtl' : 'ltr'}
                     value={osdrReportNo}
                     onChange={(e) => setOsdrReportNo(e.target.value)}
-                    placeholder="OSDR-1405-001"
+                    placeholder="MER-1405-001"
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !osdrReportNo ? 'text-right' : 'text-left'
                     }`}
@@ -2084,8 +2359,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               <div className="space-y-2">
                 <div className="text-xs font-semibold text-[var(--text-secondary)]">
                   {isFa
-                    ? 'اقلام دارای کسری، اضافی یا آسیب‌دیدگی (جهت درج در گزارش مغایرت انتخاب کنید):'
-                    : 'Items with Shortage, Overage, or Damage (select to include in OSDR):'}
+                    ? 'اقلام دارای کسری، اضافی یا آسیب‌دیدگی (جهت درج در گزارش مغایرت (MER) انتخاب کنید):'
+                    : 'Items with Shortage, Overage, or Damage (select to include in MER):'}
                 </div>
                 <div className="max-h-72 overflow-y-auto rounded-xl border border-[var(--border-subtle)]">
                   <table className="w-full text-xs">
@@ -2199,22 +2474,22 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                   <span>
                     {editingOsdr
                       ? isFa
-                        ? 'ذخیره تغییرات گزارش OSDR'
-                        : 'Update OSDR Report'
+                        ? 'ذخیره تغییرات گزارش MER'
+                        : 'Update MER Report'
                       : isFa
-                        ? 'ثبت گزارش مغایرت (OSDR) و نمایش فرم چاپی'
-                        : 'Issue OSDR & Preview Sheet'}
+                        ? 'ثبت گزارش مغایرت (MER) و نمایش فرم چاپی'
+                        : 'Issue MER & Preview Sheet'}
                   </span>
                 </button>
               </div>
             </form>
           )}
 
-          {/* OSDR History Table */}
+          {/* MER History Table */}
           <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
             <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold">
-                {isFa ? 'سوابق گزارش‌های مغایرت، کسری و آسیب‌دیدگی (OSDR)' : 'Issued OSDR Reports'}
+                {isFa ? 'سوابق گزارش‌های مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Issued MER Reports'}
               </h3>
               <div className="flex items-center gap-2">
                 <button
@@ -2223,7 +2498,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     exportRowsToCsv({
                       rows: data?.osdrReports || [],
                       columns: osdrColumns,
-                      filename: 'samaan-osdr-reports',
+                      filename: 'samaan-mer-reports',
                       calendar: prefs.calendar,
                       hideEmptyColumns: true,
                     })
@@ -2247,7 +2522,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               <table className="w-full text-xs">
                 <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                   <tr>
-                    <th className="py-2.5 px-4 text-start">{isFa ? 'شماره OSDR' : 'OSDR No.'}</th>
+                    <th className="py-2.5 px-4 text-start">{isFa ? 'شماره MER' : 'MER No.'}</th>
                     <th className="py-2.5 px-4 text-start">{isFa ? 'تاریخ' : 'Date'}</th>
                     <th className="py-2.5 px-4 text-start">{t.headers.packingListNo}</th>
                     <th className="py-2.5 px-4 text-start">{t.headers.supplier}</th>
@@ -2328,7 +2603,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold">{t.nav.opiMinutes}</h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/06-03 · {printMinutes.minutesNo}
+                  {formCode ? `${formCode} · ` : ''}{printMinutes.minutesNo}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -2351,7 +2626,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
             </div>
 
             <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto max-w-[790px] bg-white p-5 shadow-lg rounded-sm">
+              <div className="mx-auto w-full max-w-[196mm] bg-white p-5 shadow-lg rounded-sm">
                 <OfficialOpiMinutesSheet
                   record={printMinutes}
                   detailedItems={data?.detailedItems || []}
@@ -2364,115 +2639,47 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         </div>
       )}
 
-      {/* Printable OSDR Modal */}
+      {/* Printable MER Modal */}
       {printOsdr && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 print:static print:bg-transparent print:p-0">
-          <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-5 max-h-[92vh] overflow-y-auto print-sheet">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 print:hidden">
-              <h3 className="text-sm font-bold">
-                {isFa ? 'پیش‌نمایش گزارش مغایرت، کسری و آسیب‌دیدگی (OSDR)' : 'Printable OSDR Report'}
-              </h3>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
+              <div>
+                <h3 className="text-sm font-bold">
+                  {isFa ? 'پیش‌نمایش گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Printable MER Report'}
+                </h3>
+                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
+                  MER · {printOsdr.reportNo}
+                </p>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+                  className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>{t.controls.print}</span>
+                  <span>{isFa ? 'چاپ فرم (A4)' : 'Print Form (A4)'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPrintOsdr(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)]"
+                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="border-2 border-current rounded-lg p-5 space-y-4 text-xs">
-              <div className="flex items-center justify-between border-b border-current pb-3">
-                <div>
-                  <div className="text-base font-bold">{t.brandFull}</div>
-                  <div className="text-[11px] opacity-80">
-                    {isFa
-                      ? 'گزارش مغایرت، کسری و آسیب‌دیدگی کالا (Overage, Shortage & Damage Report - OSDR)'
-                      : 'Overage, Shortage & Damage Report (OSDR)'}
-                  </div>
-                </div>
-                <div className="text-end tabular-nums">
-                  <div>
-                    <span className="font-semibold">{isFa ? 'شماره گزارش:' : 'Report No.:'} </span>
-                    <span dir="ltr">{printOsdr.reportNo}</span>
-                  </div>
-                  <div>
-                    <span className="font-semibold">{isFa ? 'تاریخ:' : 'Date:'} </span>
-                    <span dir="ltr">{formatDate(printOsdr.date)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <span className="font-semibold">{t.headers.packingListNo}: </span>
-                  <span dir="ltr" className="tabular-nums">{printOsdr.packingListNo}</span>
-                </div>
-                <div>
-                  <span className="font-semibold">{isFa ? 'صورتجلسه گشایش:' : 'OPI Minutes:'} </span>
-                  <span dir="ltr" className="tabular-nums">{printOsdr.opiMinutesNo || '-'}</span>
-                </div>
-                <div>
-                  <span className="font-semibold">{t.headers.supplier}: </span>
-                  <span className="bidi-plaintext">{printOsdr.supplier || '-'}</span>
-                </div>
-              </div>
-
-              <table className="w-full border-collapse border border-current text-xs">
-                <thead>
-                  <tr>
-                    <th className="border border-current py-1.5 px-2 text-center">#</th>
-                    <th className="border border-current py-1.5 px-2 text-start">{t.headers.packageNo}</th>
-                    <th className="border border-current py-1.5 px-2 text-start">{t.headers.itemNo}</th>
-                    <th className="border border-current py-1.5 px-2 text-start">{t.headers.description}</th>
-                    <th className="border border-current py-1.5 px-2 text-end">{t.headers.packingQty}</th>
-                    <th className="border border-current py-1.5 px-2 text-end">{t.headers.actualQty}</th>
-                    <th className="border border-current py-1.5 px-2 text-end">{t.headers.shortage}</th>
-                    <th className="border border-current py-1.5 px-2 text-end">{t.headers.damagedQty}</th>
-                    <th className="border border-current py-1.5 px-2 text-start">{isFa ? 'توضیحات' : 'Remarks'}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {printOsdr.items.map((line, i) => (
-                    <tr key={`${line.detailedId}-${i}`}>
-                      <td className="border border-current py-1.5 px-2 text-center tabular-nums">{i + 1}</td>
-                      <td className="border border-current py-1.5 px-2 tabular-nums" dir="ltr">{line.packageNo}</td>
-                      <td className="border border-current py-1.5 px-2 tabular-nums" dir="ltr">{line.itemNo}</td>
-                      <td className="border border-current py-1.5 px-2 bidi-plaintext">{line.description}</td>
-                      <td className="border border-current py-1.5 px-2 text-end tabular-nums">{line.packingQty}</td>
-                      <td className="border border-current py-1.5 px-2 text-end tabular-nums">{line.actualQty}</td>
-                      <td className="border border-current py-1.5 px-2 text-end font-bold tabular-nums">{line.shortage || '-'}</td>
-                      <td className="border border-current py-1.5 px-2 text-end font-bold tabular-nums">{line.damagedQty || '-'}</td>
-                      <td className="border border-current py-1.5 px-2 bidi-plaintext">
-                        {discrepancyTypeLabel(line.discrepancyType)}
-                        {line.remarks ? ` - ${line.remarks}` : ''}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              {printOsdr.notes && (
-                <div>
-                  <span className="font-semibold">{t.headers.notes}: </span>
-                  <span className="bidi-plaintext">{printOsdr.notes}</span>
-                </div>
-              )}
-
-              <div className="grid grid-cols-3 gap-6 pt-8 text-center">
-                <div className="border-t border-current pt-2">{isFa ? 'مسئول انبار' : 'Warehouse Supervisor'}</div>
-                <div className="border-t border-current pt-2">{isFa ? 'کنترل کیفیت / بازرسی' : 'QA / QC Inspector'}</div>
-                <div className="border-t border-current pt-2">{isFa ? 'نماینده کارفرما / مپنا' : 'Client / MAPNA Rep.'}</div>
+            <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
+              <div className="mx-auto w-full max-w-[196mm] bg-white p-5 shadow-lg rounded-sm">
+                <OfficialMerSheet
+                  report={printOsdr}
+                  isFa={isFa}
+                  brandFull={t.brandFull}
+                  formatDate={formatDate}
+                  discrepancyTypeLabel={discrepancyTypeLabel}
+                />
               </div>
             </div>
           </div>
@@ -2490,7 +2697,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       <PrintReportModal
         open={printOsdrTableOpen}
         onClose={() => setPrintOsdrTableOpen(false)}
-        title={isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (OSDR)' : 'OSDR Reports'}
+        title={isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'MER Reports'}
         columns={osdrColumns}
         rows={data?.osdrReports || []}
       />
@@ -2511,12 +2718,12 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
       <ConfirmActionModal
         open={Boolean(deleteOsdrTarget)}
-        title={isFa ? 'حذف گزارش مغایرت (OSDR)' : 'Delete OSDR Report'}
+        title={isFa ? 'حذف گزارش مغایرت (MER)' : 'Delete MER Report'}
         message={
           deleteOsdrTarget
             ? isFa
-              ? `آیا از حذف گزارش OSDR شماره ${deleteOsdrTarget.reportNo} اطمینان دارید؟`
-              : `Delete OSDR Report ${deleteOsdrTarget.reportNo}?`
+              ? `آیا از حذف گزارش MER شماره ${deleteOsdrTarget.reportNo} اطمینان دارید؟`
+              : `Delete MER Report ${deleteOsdrTarget.reportNo}?`
             : ''
         }
         onConfirm={handleConfirmDeleteOsdr}

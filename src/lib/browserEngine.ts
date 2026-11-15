@@ -16,6 +16,11 @@ import {
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
 import { sortDetailedEntries, sortGeneralEntries } from '../shared/sorting.ts';
+import {
+  DEFAULT_EMPLOYER_ID,
+  isValidEmployerId,
+  sanitizeEmployerConfig,
+} from '../shared/employers.ts';
 import type {
   AuditLogEntry,
   CalendarMode,
@@ -25,6 +30,8 @@ import type {
   DetailedComputed,
   DetailedEntry,
   DocumentLineItem,
+  EmployerCustomConfig,
+  EmployerId,
   GcvDocumentRecord,
   GeneralEntry,
   MaterialEstimateRecord,
@@ -36,6 +43,7 @@ import type {
   OsdrReportRecord,
   PackingStatusMeta,
   PeriodicInspectionRecord,
+  ProjectInfo,
   ShortageBackfillRecord,
   SiteEntryMinutesRecord,
   SubstitutionRecord,
@@ -76,6 +84,8 @@ const DB_NAME = 'samaan_static_db';
 const DB_VERSION = 1;
 const STORE_NAME = 'state';
 const RECORD_KEY = 'primary';
+const PROJECTS_REGISTRY_KEY = 'projects_registry';
+const DEFAULT_PROJECT_ID = 'default';
 
 const DEFAULT_PREFERENCES: UserPreferences = {
   language: 'fa',
@@ -121,7 +131,8 @@ function createEmptyDb(): StaticDatabase {
   };
 }
 
-let cachedDb: StaticDatabase | null = null;
+const cachedDbs = new Map<string, StaticDatabase>();
+let cachedProjects: ProjectInfo[] | null = null;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -135,6 +146,69 @@ function openDb(): Promise<IDBDatabase> {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+
+function projectRecordKey(projectId: string): string {
+  return projectId === DEFAULT_PROJECT_ID ? RECORD_KEY : `project:${projectId}`;
+}
+
+async function getProjects(): Promise<ProjectInfo[]> {
+  if (cachedProjects) return cachedProjects;
+  const idb = await openDb();
+  const loaded = await new Promise<ProjectInfo[] | null>((resolve, reject) => {
+    const tx = idb.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(PROJECTS_REGISTRY_KEY);
+    req.onsuccess = () => resolve((req.result as ProjectInfo[]) || null);
+    req.onerror = () => reject(req.error);
+  });
+  idb.close();
+  if (Array.isArray(loaded) && loaded.length > 0) {
+    cachedProjects = loaded.map((p) => ({
+      ...p,
+      employerId: isValidEmployerId(p.employerId) ? p.employerId : DEFAULT_EMPLOYER_ID,
+      employerConfig: sanitizeEmployerConfig(p.employerConfig),
+    }));
+    if (!cachedProjects.some((p) => p.id === DEFAULT_PROJECT_ID)) {
+      cachedProjects.unshift({
+        id: DEFAULT_PROJECT_ID,
+        name: 'پروژه پیش‌فرض (اصلی)',
+        code: 'DEFAULT',
+        employerId: DEFAULT_EMPLOYER_ID,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    return cachedProjects;
+  }
+  cachedProjects = [
+    {
+      id: DEFAULT_PROJECT_ID,
+      name: 'پروژه پیش‌فرض (اصلی)',
+      code: 'DEFAULT',
+      employerId: DEFAULT_EMPLOYER_ID,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  await saveProjects(cachedProjects);
+  return cachedProjects;
+}
+
+async function saveProjects(list: ProjectInfo[]): Promise<void> {
+  cachedProjects = list;
+  const idb = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = idb.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(list, PROJECTS_REGISTRY_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  idb.close();
+}
+
+async function resolveProjectId(rawId?: string): Promise<string> {
+  const list = await getProjects();
+  const clean = (rawId || '').trim();
+  if (clean && list.some((p) => p.id === clean)) return clean;
+  return DEFAULT_PROJECT_ID;
 }
 
 function renumberScope(db: StaticDatabase, scope: 'general' | 'detailed' | 'transit') {
@@ -158,18 +232,20 @@ function renumberScope(db: StaticDatabase, scope: 'general' | 'detailed' | 'tran
   }
 }
 
-async function getDb(): Promise<StaticDatabase> {
-  if (cachedDb) return cachedDb;
+async function getDb(projectId = DEFAULT_PROJECT_ID): Promise<StaticDatabase> {
+  const existing = cachedDbs.get(projectId);
+  if (existing) return existing;
   const idb = await openDb();
+  const key = projectRecordKey(projectId);
   const loaded = await new Promise<Partial<StaticDatabase> | null>((resolve, reject) => {
     const tx = idb.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get(RECORD_KEY);
+    const req = tx.objectStore(STORE_NAME).get(key);
     req.onsuccess = () => resolve((req.result as Partial<StaticDatabase>) || null);
     req.onerror = () => reject(req.error);
   });
   idb.close();
   const empty = createEmptyDb();
-  cachedDb = loaded
+  const hydrated: StaticDatabase = loaded
     ? {
         ...empty,
         ...loaded,
@@ -186,18 +262,32 @@ async function getDb(): Promise<StaticDatabase> {
         periodicInspections: Array.isArray(loaded.periodicInspections) ? loaded.periodicInspections : [],
       }
     : empty;
-  renumberScope(cachedDb, 'general');
-  renumberScope(cachedDb, 'detailed');
-  renumberScope(cachedDb, 'transit');
-  return cachedDb;
+  renumberScope(hydrated, 'general');
+  renumberScope(hydrated, 'detailed');
+  renumberScope(hydrated, 'transit');
+  cachedDbs.set(projectId, hydrated);
+  return hydrated;
 }
 
-async function saveDb(db: StaticDatabase): Promise<void> {
-  cachedDb = db;
+async function saveDb(db: StaticDatabase, projectId = DEFAULT_PROJECT_ID): Promise<void> {
+  cachedDbs.set(projectId, db);
   const idb = await openDb();
   await new Promise<void>((resolve, reject) => {
     const tx = idb.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(db, RECORD_KEY);
+    tx.objectStore(STORE_NAME).put(db, projectRecordKey(projectId));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  idb.close();
+}
+
+async function deleteProjectDb(projectId: string): Promise<void> {
+  if (projectId === DEFAULT_PROJECT_ID) return;
+  cachedDbs.delete(projectId);
+  const idb = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = idb.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(projectRecordKey(projectId));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -491,7 +581,6 @@ export class StaticEngineError extends Error {
 }
 
 export async function handleStaticApiRequest<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const db = await getDb();
   const parsedUrl = new URL(url, 'http://localhost');
   const pathname = parsedUrl.pathname;
   const query = parsedUrl.searchParams;
@@ -499,6 +588,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   const body = options.body ? (JSON.parse(String(options.body)) as Record<string, unknown>) : {};
   const headers = (options.headers as Record<string, string>) || {};
   const langHeader = String(headers['X-Samaan-Lang'] || headers['x-samaan-lang'] || '').toLowerCase();
+  const projectHeader = String(headers['X-Samaan-Project'] || headers['x-samaan-project'] || '').trim();
+  const activeProjectId = await resolveProjectId(projectHeader);
+  const db = await getDb(activeProjectId);
+  const saveActiveDb = (targetDb: StaticDatabase = db) => saveDb(targetDb, activeProjectId);
 
   const currentUserObj = db.currentUserId
     ? db.users.find((u) => u.id === db.currentUserId && u.active) || null
@@ -518,6 +611,110 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     }
     return currentUserObj;
   };
+
+  // ---------------- PROJECTS ----------------
+  if (pathname === '/api/projects' && method === 'GET') {
+    const projects = await getProjects();
+    return { projects, activeProjectId } as T;
+  }
+
+  if (pathname === '/api/projects' && method === 'POST') {
+    const projects = await getProjects();
+    const cleanName = normKey(String(body.name || ''));
+    const cleanCode = normKey(String(body.code || ''));
+    const rawEmployerId = body.employerId;
+    const employerId: EmployerId = isValidEmployerId(rawEmployerId) ? rawEmployerId : DEFAULT_EMPLOYER_ID;
+    const employerConfig = sanitizeEmployerConfig(body.employerConfig as EmployerCustomConfig | undefined);
+    const copyUsers = Boolean(body.copyUsers && currentUserObj);
+    if (!cleanName) {
+      throw new StaticEngineError(errMsg('نام پروژه الزامی است', 'Project name is required'), 400);
+    }
+    if (projects.some((p) => p.name.toLowerCase() === cleanName.toLowerCase())) {
+      throw new StaticEngineError(
+        errMsg('پروژه‌ای با این نام قبلاً ثبت شده است', 'A project with this name already exists'),
+        409,
+      );
+    }
+    const newId = `prj_${makeId().replace(/-/g, '').slice(0, 12)}`;
+    const created: ProjectInfo = {
+      id: newId,
+      name: cleanName,
+      code: cleanCode || undefined,
+      employerId,
+      employerConfig,
+      createdAt: new Date().toISOString(),
+    };
+    const nextDb = createEmptyDb();
+    if (copyUsers) {
+      nextDb.users = db.users.map((u) => ({ ...u }));
+      if (currentUserObj) {
+        nextDb.currentUserId = currentUserObj.id;
+      }
+    }
+    await saveDb(nextDb, newId);
+    const updatedList = [...projects, created];
+    await saveProjects(updatedList);
+    return { project: created, projects: updatedList } as T;
+  }
+
+  if (pathname.startsWith('/api/projects/') && method === 'PATCH') {
+    const targetId = pathname.split('/').pop()!;
+    const projects = await getProjects();
+    const targetProj = projects.find((p) => p.id === targetId);
+    if (!targetProj) {
+      throw new StaticEngineError(errMsg('پروژه یافت نشد', 'Project not found'), 404);
+    }
+    const targetDb = await getDb(targetId);
+    if (targetDb.users.length > 0 && (!currentUserObj || !['admin', 'operator'].includes(currentUserObj.role))) {
+      throw new StaticEngineError(
+        errMsg('دسترسی برای ویرایش پروژه مجاز نیست', 'Permission denied to update project'),
+        currentUserObj ? 403 : 401,
+      );
+    }
+    if (body.name !== undefined) {
+      const cleanName = normKey(String(body.name || ''));
+      if (!cleanName) {
+        throw new StaticEngineError(errMsg('نام پروژه الزامی است', 'Project name is required'), 400);
+      }
+      targetProj.name = cleanName;
+    }
+    if (body.code !== undefined) {
+      targetProj.code = normKey(String(body.code || '')) || undefined;
+    }
+    if (body.employerId !== undefined && isValidEmployerId(body.employerId)) {
+      targetProj.employerId = body.employerId;
+    }
+    if (body.employerConfig !== undefined) {
+      targetProj.employerConfig = sanitizeEmployerConfig(body.employerConfig as EmployerCustomConfig | undefined);
+    }
+    await saveProjects(projects);
+    return { project: targetProj, projects } as T;
+  }
+
+  if (pathname.startsWith('/api/projects/') && method === 'DELETE') {
+    const targetId = pathname.split('/').pop()!;
+    if (targetId === DEFAULT_PROJECT_ID) {
+      throw new StaticEngineError(
+        errMsg('پروژه پیش‌فرض قابل حذف نیست (می‌توانید نام آن را ویرایش کنید)', 'Default project cannot be deleted (you can rename it)'),
+        400,
+      );
+    }
+    const projects = await getProjects();
+    if (!projects.some((p) => p.id === targetId)) {
+      throw new StaticEngineError(errMsg('پروژه یافت نشد', 'Project not found'), 404);
+    }
+    const targetDb = await getDb(targetId);
+    if (targetDb.users.length > 0 && (!currentUserObj || currentUserObj.role !== 'admin')) {
+      throw new StaticEngineError(
+        errMsg('حذف پروژه دارای کاربر فقط توسط مدیر کل مجاز است', 'Only administrators can delete an initialized project'),
+        currentUserObj ? 403 : 401,
+      );
+    }
+    const updatedList = projects.filter((p) => p.id !== targetId);
+    await saveProjects(updatedList);
+    await deleteProjectDb(targetId);
+    return { ok: true, projects: updatedList } as T;
+  }
 
   // ---------------- AUTH ----------------
   if (pathname === '/api/auth/status' && method === 'GET') {
@@ -553,7 +750,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.users.push(newUser);
     db.currentUserId = newUser.id;
     addAudit(db, sanitizeUser(newUser), 'INITIAL_ADMIN_SETUP', 'auth', newUser.id, `راه‌اندازی اولیه سیستم و ایجاد مدیر کل (${newUser.username})`);
-    await saveDb(db);
+    await saveActiveDb();
     return { user: sanitizeUser(newUser) } as T;
   }
 
@@ -570,7 +767,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     found.lastLoginAt = new Date().toISOString();
     db.currentUserId = found.id;
     addAudit(db, sanitizeUser(found), 'LOGIN', 'auth', found.id, `ورود کاربر ${found.fullName} (${found.username})`);
-    await saveDb(db);
+    await saveActiveDb();
     return { user: sanitizeUser(found) } as T;
   }
 
@@ -579,14 +776,14 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       addAudit(db, sanitizeUser(currentUserObj), 'LOGOUT', 'auth', currentUserObj.id, `خروج کاربر ${currentUserObj.fullName} (${currentUserObj.username})`);
     }
     db.currentUserId = null;
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
   if (pathname === '/api/auth/preferences' && method === 'PATCH') {
     const u = requireAuth();
     u.preferences = { ...u.preferences, ...(body as Partial<UserPreferences>) };
-    await saveDb(db);
+    await saveActiveDb();
     return { user: sanitizeUser(u) } as T;
   }
 
@@ -606,7 +803,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     u.passwordHash = await hashBrowserPassword(newPassword);
     u.mustChangePassword = false;
     addAudit(db, sanitizeUser(u), 'CHANGE_OWN_PASSWORD', 'auth', u.id, `تغییر رمز عبور توسط کاربر ${u.fullName} (${u.username})`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true, user: sanitizeUser(u) } as T;
   }
 
@@ -646,7 +843,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     };
     db.users.push(created);
     addAudit(db, sanitizeUser(admin), 'CREATE_USER', 'user', created.id, `ایجاد کاربر جدید: ${created.username} با نقش ${created.role}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { user: sanitizeUser(created) } as T;
   }
 
@@ -708,7 +905,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         ? `تغییر رمز عبور کاربر ${target.username} توسط مدیر`
         : `ویرایش حساب کاربری ${target.username}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { user: sanitizeUser(target) } as T;
   }
 
@@ -735,7 +932,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     }
     db.users.splice(idx, 1);
     addAudit(db, sanitizeUser(admin), 'DELETE_USER', 'user', target.id, `حذف حساب کاربری ${target.fullName} (${target.username})`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -812,7 +1009,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       closureNote: String(body.note || '').trim(),
     };
     addAudit(db, sanitizeUser(u), 'CLOSE_PACKING', 'packing', packingNo, `اعلام رسیدن کامل و بستن پکینگ لیست ${packingNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { meta: db.packingMeta[packingNo] } as T;
   }
 
@@ -821,7 +1018,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const packingNo = decodeURIComponent(pathname.slice('/api/packing/'.length, -'/reopen'.length));
     db.packingMeta[packingNo] = { packingNo, isClosed: false };
     addAudit(db, sanitizeUser(u), 'REOPEN_PACKING', 'packing', packingNo, `بازگشایی وضعیت پکینگ لیست ${packingNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { meta: db.packingMeta[packingNo] } as T;
   }
 
@@ -1005,7 +1202,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       pk,
       `${isContinuation ? 'ادامه ثبت روی پکینگ لیست' : 'ثبت پکینگ لیست جدید'} ${pk} (${preparedGeneral.length} ردیف)`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { createdGeneral: preparedGeneral, createdDetailedCount: 0, transitUpdated } as T;
   }
 
@@ -1063,7 +1260,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, item.packingListNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'UPDATE_GENERAL', 'general', `${item.packingListNo} (#${item.rowNo})`, `ویرایش ردیف جنرال ${item.rowNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { item, transitUpdated } as T;
   }
 
@@ -1114,7 +1311,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
 
     renumberScope(db, 'general');
     addAudit(db, sanitizeUser(u), 'DELETE_GENERAL', 'general', `${removed.packingListNo} (#${removed.rowNo})`, `انتقال ردیف جنرال ${removed.rowNo} به سطل بازیافت`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true, trashedDetailedCount } as T;
   }
 
@@ -1271,7 +1468,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, pk, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'CREATE_DETAILED', 'detailed', `${pk} / ${pkgNo || '-'} (#${itemNo})`, `ثبت آیتم جزئیات ردیف ${created.rowNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { item: computeDetailedEntry(created), transitUpdated } as T;
   }
 
@@ -1299,7 +1496,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const computed = computeDetailedEntry(item);
     const transitUpdated = syncTransitArrival(db, rec.shipmentNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'BACKFILL_SHORTAGE', 'detailed', `${item.shipmentNo} (#${item.rowNo})`, `جبران کسری به مقدار ${qty}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { item: computed, transitUpdated } as T;
   }
 
@@ -1346,7 +1543,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     rebuildCategories(db);
     const transitUpdated = syncTransitArrival(db, item.shipmentNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'UPDATE_DETAILED', 'detailed', `${item.shipmentNo} (#${item.rowNo})`, `ویرایش آیتم جزئیات ${item.rowNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { item: computeDetailedEntry(item), transitUpdated } as T;
   }
 
@@ -1366,7 +1563,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     });
     renumberScope(db, 'detailed');
     addAudit(db, sanitizeUser(u), 'DELETE_DETAILED', 'detailed', `${removed.shipmentNo} (#${removed.rowNo})`, `انتقال ردیف جزئیات ${removed.rowNo} به سطل بازیافت`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -1428,7 +1625,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     renumberScope(db, 'transit');
     rebuildCategories(db);
     addAudit(db, sanitizeUser(u), 'CREATE_TRANSIT', 'transit', pk || created.rowNo, `ثبت محموله در راه ${pk || created.rowNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { item: created } as T;
   }
 
@@ -1441,7 +1638,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     Object.assign(item, { ...patch, rowNo: item.rowNo, updatedAt: new Date().toISOString() });
     rebuildCategories(db);
     addAudit(db, sanitizeUser(u), 'UPDATE_TRANSIT', 'transit', item.packingListNo || item.rowNo, `ویرایش محموله در راه`);
-    await saveDb(db);
+    await saveActiveDb();
     return { item } as T;
   }
 
@@ -1461,7 +1658,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     });
     renumberScope(db, 'transit');
     addAudit(db, sanitizeUser(u), 'DELETE_TRANSIT', 'transit', removed.packingListNo || removed.rowNo, `انتقال ردیف در راه به سطل بازیافت`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -1568,7 +1765,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         restoredDetailedCount > 0 ? ` همراه با ${restoredDetailedCount} ردیف جزئیات` : ''
       }`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true, restoredDetailedCount } as T;
   }
 
@@ -1579,7 +1776,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (idx === -1) throw new StaticEngineError(errMsg('آیتم در سطل بازیافت یافت نشد', 'Trash item not found'), 404);
     const [purged] = db.trash.splice(idx, 1);
     addAudit(db, sanitizeUser(u), 'PURGE_TRASH', 'trash', purged.targetLabel, `حذف دائمی ${purged.targetLabel}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -1683,7 +1880,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     };
     db.siteEntryMinutes.unshift(record);
     addAudit(db, sanitizeUser(u), 'CREATE_SITE_ENTRY_MINUTES', 'siteEntry', cleanNo, `ثبت صورتجلسه ورود کالا به کارگاه شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { record } as T;
   }
 
@@ -1773,7 +1970,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
 
     addAudit(db, sanitizeUser(u), 'UPDATE_SITE_ENTRY_MINUTES', 'siteEntry', cleanNo, `ویرایش صورتجلسه ورود کالا به کارگاه شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { record: rec } as T;
   }
 
@@ -1784,7 +1981,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (idx === -1) throw new StaticEngineError(errMsg('صورتجلسه ورود کالا یافت نشد', 'Site entry minutes record not found'), 404);
     const [removed] = db.siteEntryMinutes.splice(idx, 1);
     addAudit(db, sanitizeUser(u), 'DELETE_SITE_ENTRY_MINUTES', 'siteEntry', removed.minutesNo, `حذف صورتجلسه ورود کالا به کارگاه شماره ${removed.minutesNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -1883,7 +2080,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       }
     }
     addAudit(db, sanitizeUser(u), 'ISSUE_OPI_INVITATION', 'opi', cleanNo, `صدور دعوتنامه OPI شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { invitation: record } as T;
   }
 
@@ -1980,7 +2177,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (raw.status === 'issued' || raw.status === 'completed') rec.status = raw.status;
 
     addAudit(db, sanitizeUser(u), 'UPDATE_OPI_INVITATION', 'opi', cleanNo, `ویرایش دعوتنامه OPI شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { invitation: rec } as T;
   }
 
@@ -2011,7 +2208,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       }
     }
     addAudit(db, sanitizeUser(u), 'DELETE_OPI_INVITATION', 'opi', removed.invitationNo, `حذف دعوتنامه OPI شماره ${removed.invitationNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -2058,7 +2255,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (inv) inv.status = 'completed';
     }
     addAudit(db, sanitizeUser(u), 'RECORD_OPI_RESULTS', 'opi', cleanOpiNo || 'OPI', `ثبت نتایج OPI برای ${updatedCount} قلم`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true, updatedCount } as T;
   }
 
@@ -2152,7 +2349,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     }
     db.opiMinutes.unshift(record);
     addAudit(db, sanitizeUser(u), 'CREATE_OPI_MINUTES', 'opiMinutes', cleanNo, `ثبت صورتجلسه گشایش و بازرسی بسته‌ها شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { record } as T;
   }
 
@@ -2226,7 +2423,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (inv) inv.status = 'completed';
     }
     addAudit(db, sanitizeUser(u), 'UPDATE_OPI_MINUTES', 'opiMinutes', cleanNo, `ویرایش صورتجلسه گشایش و بازرسی بسته‌ها شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { record: rec } as T;
   }
 
@@ -2237,7 +2434,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (idx === -1) throw new StaticEngineError(errMsg('صورتجلسه گشایش و بازرسی یافت نشد', 'OPI minutes record not found'), 404);
     const [removed] = db.opiMinutes.splice(idx, 1);
     addAudit(db, sanitizeUser(u), 'DELETE_OPI_MINUTES', 'opiMinutes', removed.minutesNo, `حذف صورتجلسه گشایش و بازرسی بسته‌ها شماره ${removed.minutesNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -2269,8 +2466,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       createdBy: u.fullName || u.username,
     };
     db.osdrReports.unshift(record);
-    addAudit(db, sanitizeUser(u), 'CREATE_OSDR_REPORT', 'osdr', cleanNo, `ثبت گزارش مغایرت، کسری و آسیب‌دیدگی شماره ${cleanNo}`);
-    await saveDb(db);
+    addAudit(db, sanitizeUser(u), 'CREATE_OSDR_REPORT', 'osdr', cleanNo, `ثبت گزارش مغایرت، کسری و آسیب‌دیدگی (MER) شماره ${cleanNo}`);
+    await saveActiveDb();
     return { report: record } as T;
   }
 
@@ -2278,7 +2475,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const rec = db.osdrReports.find((r) => r.id === id);
-    if (!rec) throw new StaticEngineError(errMsg('گزارش مغایرت OSDR یافت نشد', 'OSDR report not found'), 404);
+    if (!rec) throw new StaticEngineError(errMsg('گزارش مغایرت MER یافت نشد', 'MER report not found'), 404);
     const raw = body as Partial<OsdrReportRecord>;
     const cleanNo = normKey(raw.reportNo ?? rec.reportNo);
     const cleanDate = normKey(raw.date ?? rec.date);
@@ -2301,8 +2498,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     rec.items = nextItems;
     if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
 
-    addAudit(db, sanitizeUser(u), 'UPDATE_OSDR_REPORT', 'osdr', cleanNo, `ویرایش گزارش مغایرت OSDR شماره ${cleanNo}`);
-    await saveDb(db);
+    addAudit(db, sanitizeUser(u), 'UPDATE_OSDR_REPORT', 'osdr', cleanNo, `ویرایش گزارش مغایرت MER شماره ${cleanNo}`);
+    await saveActiveDb();
     return { report: rec } as T;
   }
 
@@ -2310,10 +2507,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const idx = db.osdrReports.findIndex((r) => r.id === id);
-    if (idx === -1) throw new StaticEngineError(errMsg('گزارش مغایرت OSDR یافت نشد', 'OSDR report not found'), 404);
+    if (idx === -1) throw new StaticEngineError(errMsg('گزارش مغایرت MER یافت نشد', 'MER report not found'), 404);
     const [removed] = db.osdrReports.splice(idx, 1);
-    addAudit(db, sanitizeUser(u), 'DELETE_OSDR_REPORT', 'osdr', removed.reportNo, `حذف گزارش مغایرت OSDR شماره ${removed.reportNo}`);
-    await saveDb(db);
+    addAudit(db, sanitizeUser(u), 'DELETE_OSDR_REPORT', 'osdr', removed.reportNo, `حذف گزارش مغایرت MER شماره ${removed.reportNo}`);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -2429,7 +2626,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     };
     db.gcvDocuments.unshift(doc);
     addAudit(db, sanitizeUser(u), 'CREATE_GCV_RECEIPT', 'gcv', cleanNo, `ثبت رسید مصرف مستقیم کالا شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { document: doc } as T;
   }
 
@@ -2553,7 +2750,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     existing.items = nextLines;
 
     addAudit(db, sanitizeUser(u), 'UPDATE_GCV_RECEIPT', 'gcv', cleanNo, `ویرایش رسید مصرف مستقیم کالا شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { document: existing } as T;
   }
 
@@ -2578,7 +2775,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       d.updatedAt = now;
     }
     addAudit(db, sanitizeUser(u), 'DELETE_GCV_RECEIPT', 'gcv', removed.receiptNo, `حذف رسید مصرف مستقیم کالا شماره ${removed.receiptNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -2730,7 +2927,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       cleanNo,
       `ثبت فرم ${docType} شماره ${cleanNo}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { document: doc } as T;
   }
 
@@ -2920,7 +3117,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       cleanNo,
       `ویرایش فرم ${nextDocType} شماره ${cleanNo}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { document: existing } as T;
   }
 
@@ -2977,7 +3174,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       removed.docNo,
       `حذف فرم ${removed.docType} شماره ${removed.docNo}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -3057,7 +3254,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     };
     db.substitutions.unshift(record);
     addAudit(db, sanitizeUser(u), 'CREATE_SUBSTITUTION', 'substitution', cleanNo, `ثبت فرم جایگزینی شماره ${cleanNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { record } as T;
   }
 
@@ -3133,7 +3330,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
 
     addAudit(db, sanitizeUser(u), 'UPDATE_SUBSTITUTION', 'substitution', rec.docNo, `ویرایش فرم جایگزینی شماره ${rec.docNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { record: rec } as T;
   }
 
@@ -3144,7 +3341,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (idx === -1) throw new StaticEngineError(errMsg('سند جایگزینی یافت نشد', 'Substitution record not found'), 404);
     const [removed] = db.substitutions.splice(idx, 1);
     addAudit(db, sanitizeUser(u), 'DELETE_SUBSTITUTION', 'substitution', removed.docNo, `حذف فرم جایگزینی شماره ${removed.docNo}`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -3204,7 +3401,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       record.mtoCode || record.itemCode || record.description.slice(0, 32),
       `ثبت ردیف برآورد تجهیزات: ${record.description}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { record } as T;
   }
 
@@ -3260,7 +3457,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       rec.mtoCode || rec.itemCode || rec.description.slice(0, 32),
       `ویرایش ردیف برآورد تجهیزات: ${rec.description}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { record: rec } as T;
   }
 
@@ -3280,7 +3477,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       removed.mtoCode || removed.itemCode || removed.description.slice(0, 32),
       `حذف ردیف برآورد تجهیزات: ${removed.description}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -3307,7 +3504,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       updatedCount += 1;
     }
     addAudit(db, sanitizeUser(u), 'ASSIGN_MATERIAL_BALANCE', 'balance', cleanNo || cleanStatus, `ثبت موازنه مواد برای ${updatedCount} ردیف`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true, updatedCount } as T;
   }
 
@@ -3333,7 +3530,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       updatedCount += 1;
     }
     addAudit(db, sanitizeUser(u), 'ASSIGN_STOCKTAKE', 'stocktake', cleanStatus, `ثبت وضعیت انبارگردانی و بازدید ادواری «${cleanStatus}» برای ${updatedCount} ردیف`);
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true, updatedCount } as T;
   }
 
@@ -3380,7 +3577,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       cleanDate,
       `ثبت چک‌لیست بازدید ادواری انبار مورخ ${cleanDate}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { record } as T;
   }
 
@@ -3416,7 +3613,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       cleanDate,
       `ویرایش چک‌لیست بازدید ادواری انبار مورخ ${cleanDate}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { record: rec } as T;
   }
 
@@ -3436,7 +3633,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       removed.inspectionDate,
       `حذف چک‌لیست بازدید ادواری مورخ ${removed.inspectionDate}`,
     );
-    await saveDb(db);
+    await saveActiveDb();
     return { ok: true } as T;
   }
 
@@ -3500,7 +3697,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (!db.categories[group] || !val) throw new StaticEngineError(errMsg('گروه یا مقدار نامعتبر است', 'Invalid category group or value'), 400);
     registerCategoryValue(db, group, val);
     addAudit(db, sanitizeUser(u), 'ADD_CATEGORY', 'category', `${group}:${val}`, `افزودن دسته‌بندی «${val}»`);
-    await saveDb(db);
+    await saveActiveDb();
     return { categories: db.categories } as T;
   }
 
@@ -3539,7 +3736,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.categories[group] = db.categories[group].filter((v) => v !== from);
     registerCategoryValue(db, group, to);
     addAudit(db, sanitizeUser(u), 'RENAME_MERGE_CATEGORY', 'category', `${group}:${from}->${to}`, `تغییر نام/ادغام «${from}» به «${to}»`);
-    await saveDb(db);
+    await saveActiveDb();
     return { categories: db.categories, updatedCount } as T;
   }
 
@@ -3549,7 +3746,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const val = normKey(query.get('value'));
     db.categories[group] = db.categories[group].filter((v) => v !== val);
     addAudit(db, sanitizeUser(u), 'DELETE_CATEGORY', 'category', `${group}:${val}`, `حذف «${val}»`);
-    await saveDb(db);
+    await saveActiveDb();
     return { categories: db.categories } as T;
   }
 
@@ -3719,7 +3916,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       transitAutoArrived += syncTransitArrival(db, pk, sanitizeUser(u));
     }
     addAudit(db, sanitizeUser(u), 'IMPORT_CSV', 'import', targetScope, `ورود فایل CSV (${targetScope}): ${imported} ردیف ثبت شد`);
-    await saveDb(db);
+    await saveActiveDb();
     return { scope: targetScope, imported, skipped, transitAutoArrived } as T;
   }
 
@@ -3798,7 +3995,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     renumberScope(db, 'transit');
     rebuildCategories(db);
     addAudit(db, sanitizeUser(u), 'RESTORE_SNAPSHOT', 'backup', 'database', `بازیابی نسخه پشتیبان در مرورگر`);
-    await saveDb(db);
+    await saveActiveDb();
     return {
       ok: true,
       counts: { general: db.general.length, detailed: db.detailed.length, transit: db.transit.length },

@@ -13,9 +13,10 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -161,6 +162,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
   generalEntries,
   formatDate,
 }) => {
+  const { activeEmployer, activeProject } = useApp();
   const resolvedItems = useMemo(() => {
     if (record.items && record.items.length > 0) return record.items;
     return buildItemsFromGeneral(record.packingListNos || [], generalEntries);
@@ -176,11 +178,13 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
   const entryType = record.entryType || 'permanent';
   const goodsUsage = record.goodsUsage || 'project';
   const equipmentSupplyName = record.equipmentSupply || record.mapnaRep || '';
+  const formCode = getEmployerFormCode(activeEmployer, '15-01');
+  const displayProjectName = record.projectName?.trim() || activeProject?.name || '..........';
 
   return (
     <div
       dir="rtl"
-      className="site-entry-official-sheet"
+      className="site-entry-official-sheet samaan-a4-portrait"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -209,11 +213,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               textAlign: 'center',
             }}
           >
-            <img
-              src={MD1_STACKED_LOGO}
-              alt="گروه مپنا - توسعه یک"
-              style={{ height: '56px', width: 'auto', objectFit: 'contain', display: 'block' }}
-            />
+            <EmployerFormLogo employer={activeEmployer} height={56} />
             <div
               style={{
                 fontSize: '7.5px',
@@ -223,7 +223,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              مستندات سیستم مدیریت یکپارچه
+              {activeEmployer.imsSubtitle}
             </div>
           </div>
 
@@ -239,10 +239,10 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             }}
           >
             <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              شرکت احداث و توسعه نیروگاه های مپنا– توسعه یک (MD1)
+              {activeEmployer.companyFullName}
             </div>
             <div style={{ fontSize: '11.5px', fontWeight: 700, marginTop: '1px' }}>
-              پروژه {record.projectName?.trim() || '..........'}
+              پروژه {displayProjectName}
             </div>
             <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
               صورتجلسه ورود کالا و تجهیزات به کارگاه
@@ -405,22 +405,22 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
 
         {/* Main Equipment / Packing Table */}
         <table
+          className="samaan-dynamic-table"
           style={{
             width: '100%',
             borderCollapse: 'collapse',
             fontSize: '9.5px',
-            tableLayout: 'fixed',
           }}
         >
           <thead>
             <tr>
               <th
                 rowSpan={2}
+                className="samaan-col-compact"
                 style={{
-                  width: '4.5%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '4px 2px',
+                  padding: '4px 4px',
                   fontWeight: 700,
                 }}
               >
@@ -428,11 +428,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </th>
               <th
                 rowSpan={2}
+                className="samaan-col-fluid"
                 style={{
-                  width: '28.5%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '4px 4px',
+                  padding: '4px 5px',
                   fontWeight: 700,
                 }}
               >
@@ -440,11 +440,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </th>
               <th
                 rowSpan={2}
+                className="samaan-col-code"
                 style={{
-                  width: '11%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '4px 3px',
+                  padding: '4px 4px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -453,11 +453,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </th>
               <th
                 rowSpan={2}
+                className="samaan-col-code"
                 style={{
-                  width: '9%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '4px 3px',
+                  padding: '4px 4px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -466,11 +466,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </th>
               <th
                 rowSpan={2}
+                className="samaan-col-code"
                 style={{
-                  width: '9%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '4px 3px',
+                  padding: '4px 4px',
                   fontWeight: 700,
                 }}
               >
@@ -478,11 +478,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </th>
               <th
                 rowSpan={2}
+                className="samaan-col-compact"
                 style={{
-                  width: '6%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '4px 2px',
+                  padding: '4px 4px',
                   fontWeight: 700,
                 }}
               >
@@ -490,11 +490,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </th>
               <th
                 rowSpan={2}
+                className="samaan-col-compact"
                 style={{
-                  width: '6%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '4px 2px',
+                  padding: '4px 4px',
                   fontWeight: 700,
                 }}
               >
@@ -503,10 +503,9 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               <th
                 colSpan={2}
                 style={{
-                  width: '12%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '3px 2px',
+                  padding: '3px 4px',
                   fontWeight: 700,
                 }}
               >
@@ -514,10 +513,10 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </th>
               <th
                 rowSpan={2}
+                className="samaan-col-fluid"
                 style={{
-                  width: '14%',
                   borderBottom: '1px solid #000000',
-                  padding: '4px 4px',
+                  padding: '4px 5px',
                   fontWeight: 700,
                 }}
               >
@@ -526,11 +525,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             </tr>
             <tr>
               <th
+                className="samaan-col-compact"
                 style={{
-                  width: '6%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '3px 2px',
+                  padding: '3px 4px',
                   fontSize: '8.5px',
                   fontWeight: 700,
                 }}
@@ -538,11 +537,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
                 خالص
               </th>
               <th
+                className="samaan-col-compact"
                 style={{
-                  width: '6%',
                   borderBottom: '1px solid #000000',
                   borderLeft: '1px solid #000000',
-                  padding: '3px 2px',
+                  padding: '3px 4px',
                   fontSize: '8.5px',
                   fontWeight: 700,
                 }}
@@ -553,112 +552,109 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
           </thead>
           <tbody>
             {paddedRows.map((row, idx) => (
-              <tr key={idx} style={{ height: '25px' }}>
+              <tr key={idx}>
                 <td
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-compact"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 2px',
+                    padding: '4px 4px',
                     fontSize: '9px',
                   }}
                 >
-                  {row ? idx + 1 : idx === 0 ? '1.' : ''}
+                  {row ? idx + 1 : idx === 0 ? '1.' : '\u00A0'}
                 </td>
                 <td
-                  className="bidi-plaintext"
+                  className="bidi-plaintext samaan-col-fluid"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 4px',
-                    wordBreak: 'break-word',
+                    padding: '4px 5px',
                   }}
                 >
                   {row?.description || ''}
                 </td>
                 <td
                   dir="ltr"
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-code"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 3px',
-                    wordBreak: 'break-word',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.packingListNo || ''}
                 </td>
                 <td
                   dir="ltr"
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-code"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 3px',
-                    wordBreak: 'break-word',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.packageNo || ''}
                 </td>
                 <td
                   dir="ltr"
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-code"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 3px',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.dimensions || ''}
                 </td>
                 <td
                   dir="ltr"
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-compact"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 2px',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.qty || ''}
                 </td>
                 <td
+                  className="samaan-col-compact"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 2px',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.unit || ''}
                 </td>
                 <td
                   dir="ltr"
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-compact"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 2px',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.netWeight || ''}
                 </td>
                 <td
                   dir="ltr"
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-compact"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
                     borderLeft: '1px solid #000000',
-                    padding: '3px 2px',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.grossWeight || ''}
                 </td>
                 <td
-                  className="bidi-plaintext"
+                  className="bidi-plaintext samaan-col-fluid"
                   style={{
                     borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    padding: '3px 4px',
-                    wordBreak: 'break-word',
+                    padding: '4px 5px',
                   }}
                 >
                   {row?.remarks || ''}
@@ -700,6 +696,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
 
         {/* 5-Column Signatures Strip */}
         <div
+          className="samaan-keep-together"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(5, 1fr)',
@@ -719,7 +716,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>انتظامات مپنا</div>
+              <div style={{ fontWeight: 700 }}>{activeEmployer.securityLabel}</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.mapnaSecurity || ''}</div>
@@ -815,7 +812,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             توضیح 3 : تائیدکنترل کیفی به منزله تائید ورود کالا به کارگاه می باشد و به معنای تائید نهایی نیست ، مسئولیت اصلی کیفیت کالا از نظر ظاهری و انطباق با مشخصات در طول دوران ساخت ،نصب، راه اندازی و بهره برداری بر عهده مسئول اجرایی کار می باشد.
           </div>
           <div>
-            توضیح 4 : فرم مذکور میبایست توسط انتظامات مپنا امضا و سپس ممهور گردد.
+            توضیح 4 : فرم مذکور میبایست توسط {activeEmployer.securityLabel} امضا و سپس ممهور گردد.
           </div>
           <div style={{ fontWeight: 700 }}>
             توجه : این فرم تحت کنترل واحد QA میباشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
@@ -836,10 +833,14 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
           fontWeight: 700,
         }}
       >
-        <div>رونوشت : 1- درخواست کننده / پیمانکار   2- تامین تجهیزات توسعه یک   3- انتظامات مپنا</div>
-        <div dir="ltr" className="tabular-nums">
-          MD1EX-FQP02/15-01
+        <div>
+          رونوشت : 1- درخواست کننده / پیمانکار   2- {activeEmployer.equipmentSupplyLabel}   3- {activeEmployer.securityLabel}
         </div>
+        {formCode && (
+          <div dir="ltr" className="tabular-nums">
+            {formCode}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -849,16 +850,17 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   refreshSignal,
   onDataChanged,
 }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const formCode = getEmployerFormCode(activeEmployer, '15-01');
 
   const [data, setData] = useState<SiteEntryApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [minutesNo, setMinutesNo] = useState('');
   const [releaseNoteNo, setReleaseNoteNo] = useState('');
-  const [projectName, setProjectName] = useState('');
+  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [entryType, setEntryType] = useState<'permanent' | 'temporary'>('permanent');
   const [goodsUsage, setGoodsUsage] = useState<'project' | 'site_equip' | 'general'>('project');
   const [contractNo, setContractNo] = useState('');
@@ -1214,10 +1216,20 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                   -webkit-print-color-adjust: exact;
                   print-color-adjust: exact;
                 }
+                #samaan-form-print-root table {
+                  width: 100% !important;
+                  table-layout: auto !important;
+                }
+                #samaan-form-print-root tr {
+                  height: auto !important;
+                  break-inside: avoid;
+                  page-break-inside: avoid;
+                }
                 #samaan-form-print-root table th,
                 #samaan-form-print-root table td {
                   text-align: center;
                   vertical-align: middle;
+                  height: auto !important;
                 }
               }
             `}</style>
@@ -1261,9 +1273,11 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                   <span>{t.controls.cancel}</span>
                 </button>
               )}
-              <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
-                MD1EX-FQP02/15-01
-              </span>
+              {formCode && (
+                <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
+                  {formCode}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1917,7 +1931,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold">{t.nav.siteEntry}</h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/15-01 · {printSheet.minutesNo}
+                  {formCode ? `${formCode} · ` : ''}{printSheet.minutesNo}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1940,7 +1954,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             </div>
 
             <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto max-w-[790px] bg-white p-5 shadow-lg rounded-sm">
+              <div className="mx-auto w-full max-w-[196mm] bg-white p-5 shadow-lg rounded-sm">
                 <OfficialSiteEntrySheet
                   record={printSheet}
                   generalEntries={data?.generalEntries || []}

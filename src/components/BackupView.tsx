@@ -22,7 +22,7 @@ function formatBytes(bytes: number): string {
 }
 
 export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
-  const { prefs, user, notify, formatTimestamp } = useApp();
+  const { prefs, user, notify, formatTimestamp, activeProjectId, activeProject } = useApp();
   const isFa = prefs.language === 'fa';
   const isAdmin = user?.role === 'admin';
 
@@ -31,12 +31,12 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
 
   const loadSnapshots = useCallback(async () => {
     try {
-      const list = await listIndexedDbSnapshots();
+      const list = await listIndexedDbSnapshots(activeProjectId);
       setSnapshots(list);
     } catch {
       // IndexedDB unavailable
     }
-  }, []);
+  }, [activeProjectId]);
 
   useEffect(() => {
     loadSnapshots();
@@ -50,6 +50,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
         snapshot,
         'manual',
         isFa ? 'اسنپ‌شات دستی مدیر/کاربر' : 'Manual Snapshot',
+        activeProjectId,
       );
       notify('success', isFa ? 'نسخه پشتیبان در IndexedDB ذخیره شد.' : 'Snapshot saved to IndexedDB.');
       loadSnapshots();
@@ -64,7 +65,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setBusy(true);
     try {
       const snapshot = await apiRequest<DatabaseSnapshot>('/api/backup/snapshot');
-      downloadJsonBackup(snapshot, 'samaan-full-backup');
+      const safeSlug = (activeProject?.code || activeProjectId).replace(/[^a-zA-Z0-9_-]+/g, '-');
+      downloadJsonBackup(snapshot, `samaan-backup-${safeSlug}`);
       notify('success', isFa ? 'فایل پشتیبان دانلود شد.' : 'Backup file downloaded.');
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);

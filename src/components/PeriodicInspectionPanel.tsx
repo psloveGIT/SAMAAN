@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, ClipboardList, Pencil, Printer, RotateCcw, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
+import { getEmployerFormCode, type ResolvedEmployerProfile } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { PeriodicInspectionAnswer, PeriodicInspectionRecord } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 
 interface ChecklistQuestionDef {
@@ -22,94 +23,106 @@ interface ChecklistPageDef {
   hasSignaturesAndFootnotes?: boolean;
 }
 
-const PERIODIC_INSPECTION_PAGES: ChecklistPageDef[] = [
-  {
-    pageNumber: 1,
-    sectionTitle: 'کنترل مستندات انبارش',
-    questions: [
-      {
-        key: 'doc-1',
-        rowNo: '1',
-        text: 'در دسترس بودن ویرایش معتبر روش اجرایی انبارش و نگهداری کالا و تجهیزات و دستورالعمل آماده‌سازی انبار موقت پروژه',
-      },
-      {
-        key: 'doc-2',
-        rowNo: '2',
-        text: 'آشنایی و رعایت روش اجرایی انبارش و نگهداری کالا و تجهیزات و دستورالعمل آماده‌سازی انبار موقت پروژه',
-      },
-      {
-        key: 'doc-3',
-        rowNo: '3',
-        text: 'در دسترس بودن مدارک و دستورالعمل‌های نگهداری کالاها و تجهیزات (بویژه تجهیزات خاص همچون توربین، بویلر و ...)',
-      },
-      {
-        key: 'doc-4',
-        rowNo: '4',
-        text: 'آشنایی با مدارک و دستورالعمل‌های نگهداری کالاها و تجهیزات (بویژه تجهیزات خاص همچون توربین)',
-      },
-      {
-        key: 'doc-5',
-        rowNo: '5',
-        text: 'ثبت اطلاعات در بانک اطلاعاتی',
-      },
-      {
-        key: 'doc-6',
-        rowNo: '6',
-        text: 'بکارگیری فرم گزارش آسیب‌دیدگی حین حمل و نقل در مواقع لزوم (MD1EX-FQP02-01)',
-      },
-      {
-        key: 'doc-7',
-        rowNo: '7',
-        text: 'بکارگیری صورتجلسه ورود کالا و تجهیزات به کارگاه (MD1EX-FQP02-15)',
-      },
-      {
-        key: 'doc-8',
-        rowNo: '8',
-        text: 'بکارگیری فرم دعوتنامه گشایش و بازرسی بسته‌ها (OPI) (MD1EX-FQP02-02)',
-      },
-    ],
-  },
-  {
-    pageNumber: 2,
-    sectionTitle: 'کنترل مستندات انبارش',
-    questions: [
-      {
-        key: 'doc-9',
-        rowNo: '9',
-        text: 'بکارگیری فرم صورتجلسه گشایش و بازرسی بسته‌ها (OPI) (MD1EX-FQP02-06)',
-      },
-      {
-        key: 'doc-10',
-        rowNo: '10',
-        text: 'بکارگیری درخواست خرید کالای پروژه در کارگاه (MD1EX-FQW15-01)',
-      },
-      {
-        key: 'doc-11',
-        rowNo: '11',
-        text: 'بکارگیری فرم رسید مصرف مستقیم کالا (MD1EX-FQP02-11) در مواقع لزوم',
-      },
-      {
-        key: 'doc-12',
-        rowNo: '12',
-        text: 'بکارگیری فرم گزارش خسارت‌ها پس از OPI (MD1EX-FQP02-13) در مواقع لزوم',
-      },
-      {
-        key: 'doc-13',
-        rowNo: '13',
-        text: 'بکارگیری فرم جایگزینی (MD1EX-FQP02-10) در مواقع لزوم',
-      },
-      {
-        key: 'doc-14',
-        rowNo: '14',
-        text: 'بکارگیری فرم درخواست کالا از انبار و حواله انبار (MD1EX-FQP02-05)',
-      },
-      {
-        key: 'doc-15',
-        rowNo: '15',
-        text: 'بکارگیری فرم ارجاع قطعات، کالا و تجهیزات مازاد (MD1EX-FQP02-08)',
-      },
-    ],
-  },
+function formatProcCode(employer: ResolvedEmployerProfile, codeSuffix: string, isWorkInstruction = false): string {
+  if (employer.hideDocCodes) return '';
+  const basePrefix = (employer.docCodePrefix || 'FQP02').replace(/\/+$/, '');
+  const prefix = isWorkInstruction ? basePrefix.replace(/FQP\d+/i, 'FQW15') : basePrefix;
+  return ` (${prefix}-${codeSuffix})`;
+}
+
+function getPeriodicInspectionPages(employer: ResolvedEmployerProfile): ChecklistPageDef[] {
+  return [
+    {
+      pageNumber: 1,
+      sectionTitle: 'کنترل مستندات انبارش',
+      questions: [
+        {
+          key: 'doc-1',
+          rowNo: '1',
+          text: 'در دسترس بودن ویرایش معتبر روش اجرایی انبارش و نگهداری کالا و تجهیزات و دستورالعمل آماده‌سازی انبار موقت پروژه',
+        },
+        {
+          key: 'doc-2',
+          rowNo: '2',
+          text: 'آشنایی و رعایت روش اجرایی انبارش و نگهداری کالا و تجهیزات و دستورالعمل آماده‌سازی انبار موقت پروژه',
+        },
+        {
+          key: 'doc-3',
+          rowNo: '3',
+          text: 'در دسترس بودن مدارک و دستورالعمل‌های نگهداری کالاها و تجهیزات (بویژه تجهیزات خاص همچون توربین، بویلر و ...)',
+        },
+        {
+          key: 'doc-4',
+          rowNo: '4',
+          text: 'آشنایی با مدارک و دستورالعمل‌های نگهداری کالاها و تجهیزات (بویژه تجهیزات خاص همچون توربین)',
+        },
+        {
+          key: 'doc-5',
+          rowNo: '5',
+          text: 'ثبت اطلاعات در بانک اطلاعاتی',
+        },
+        {
+          key: 'doc-6',
+          rowNo: '6',
+          text: `بکارگیری فرم گزارش آسیب‌دیدگی حین حمل و نقل در مواقع لزوم${formatProcCode(employer, '01')}`,
+        },
+        {
+          key: 'doc-7',
+          rowNo: '7',
+          text: `بکارگیری صورتجلسه ورود کالا و تجهیزات به کارگاه${formatProcCode(employer, '15')}`,
+        },
+        {
+          key: 'doc-8',
+          rowNo: '8',
+          text: `بکارگیری فرم دعوتنامه گشایش و بازرسی بسته‌ها (OPI)${formatProcCode(employer, '02')}`,
+        },
+      ],
+    },
+    {
+      pageNumber: 2,
+      sectionTitle: 'کنترل مستندات انبارش',
+      questions: [
+        {
+          key: 'doc-9',
+          rowNo: '9',
+          text: `بکارگیری فرم صورتجلسه گشایش و بازرسی بسته‌ها (OPI)${formatProcCode(employer, '06')}`,
+        },
+        {
+          key: 'doc-10',
+          rowNo: '10',
+          text: `بکارگیری درخواست خرید کالای پروژه در کارگاه${formatProcCode(employer, '01', true)}`,
+        },
+        {
+          key: 'doc-11',
+          rowNo: '11',
+          text: `بکارگیری فرم رسید مصرف مستقیم کالا${formatProcCode(employer, '11')} در مواقع لزوم`,
+        },
+        {
+          key: 'doc-12',
+          rowNo: '12',
+          text: `بکارگیری فرم گزارش خسارت‌ها پس از OPI${formatProcCode(employer, '13')} در مواقع لزوم`,
+        },
+        {
+          key: 'doc-13',
+          rowNo: '13',
+          text: `بکارگیری فرم جایگزینی${formatProcCode(employer, '10')} در مواقع لزوم`,
+        },
+        {
+          key: 'doc-14',
+          rowNo: '14',
+          text: `بکارگیری فرم درخواست کالا از انبار و حواله انبار${formatProcCode(employer, '05')}`,
+        },
+        {
+          key: 'doc-15',
+          rowNo: '15',
+          text: `بکارگیری فرم ارجاع قطعات، کالا و تجهیزات مازاد${formatProcCode(employer, '08')}`,
+        },
+      ],
+    },
+  ];
+}
+
+const STATIC_PHYSICAL_PAGES: ChecklistPageDef[] = [
   {
     pageNumber: 3,
     sectionTitle: 'کنترل فیزیکی انبار',
@@ -231,12 +244,18 @@ const PERIODIC_INSPECTION_PAGES: ChecklistPageDef[] = [
   },
 ];
 
-const ALL_QUESTIONS: ChecklistQuestionDef[] = PERIODIC_INSPECTION_PAGES.flatMap((p) => p.questions);
+const ALL_QUESTION_KEYS: string[] = [
+  'doc-1', 'doc-2', 'doc-3', 'doc-4', 'doc-5', 'doc-6', 'doc-7', 'doc-8',
+  'doc-9', 'doc-10', 'doc-11', 'doc-12', 'doc-13', 'doc-14', 'doc-15',
+  'phy-1', 'phy-2', 'phy-3', 'phy-4', 'phy-5', 'phy-6', 'phy-7', 'phy-8', 'phy-9',
+  'phy-10', 'phy-11', 'phy-12', 'phy-13', 'phy-14', 'phy-15', 'phy-16', 'phy-17', 'phy-18',
+  'phy-19', 'phy-20',
+];
 
 function createEmptyAnswersMap(): Record<string, { status: '+' | '-' | ''; remarks: string }> {
   const map: Record<string, { status: '+' | '-' | ''; remarks: string }> = {};
-  for (const q of ALL_QUESTIONS) {
-    map[q.key] = { status: '', remarks: '' };
+  for (const key of ALL_QUESTION_KEYS) {
+    map[key] = { status: '', remarks: '' };
   }
   return map;
 }
@@ -250,6 +269,14 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
   record,
   formatDate,
 }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '07-03');
+  const displayProjectName = record.projectName?.trim() || activeProject?.name || '........';
+  const pages = useMemo(() => {
+    const docPages = getPeriodicInspectionPages(activeEmployer);
+    return [...docPages, ...STATIC_PHYSICAL_PAGES];
+  }, [activeEmployer]);
+
   const answerByKey = useMemo(() => {
     const map = new Map<string, PeriodicInspectionAnswer>();
     for (const a of record.answers || []) {
@@ -261,6 +288,7 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
   return (
     <div
       dir="rtl"
+      className="samaan-a4-landscape"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -269,9 +297,8 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
         boxSizing: 'border-box',
       }}
     >
-      {PERIODIC_INSPECTION_PAGES.map((page, pageIdx) => {
-        const isLastPage = pageIdx === PERIODIC_INSPECTION_PAGES.length - 1;
-        const rowMinHeight = page.questions.length <= 7 ? '50px' : page.questions.length === 8 ? '46px' : '42px';
+      {pages.map((page, pageIdx) => {
+        const isLastPage = pageIdx === pages.length - 1;
 
         return (
           <div
@@ -305,11 +332,7 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                     textAlign: 'center',
                   }}
                 >
-                  <img
-                    src={MD1_STACKED_LOGO}
-                    alt="گروه مپنا - توسعه یک"
-                    style={{ height: '54px', width: 'auto', objectFit: 'contain', display: 'block' }}
-                  />
+                  <EmployerFormLogo employer={activeEmployer} height={54} />
                   <div
                     style={{
                       fontSize: '7.5px',
@@ -319,7 +342,7 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    مستندات سیستم مدیریت یکپارچه
+                    {activeEmployer.imsSubtitle}
                   </div>
                 </div>
 
@@ -335,10 +358,10 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                   }}
                 >
                   <div style={{ fontSize: '12px', fontWeight: 700 }}>
-                    شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
+                    {activeEmployer.companyFullName}
                   </div>
                   <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-                    پروژه {record.projectName?.trim() || '........'}
+                    پروژه {displayProjectName}
                   </div>
                   <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '3px' }}>
                     چک لیست بازدید ادواری انبار
@@ -375,41 +398,41 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
               {/* Main 4-Column Checklist Table */}
               <table
                 dir="rtl"
+                className="samaan-dynamic-table"
                 style={{
                   width: '100%',
                   borderCollapse: 'collapse',
-                  tableLayout: 'fixed',
-                  fontSize: '10.5px',
+                  fontSize: '10.2px',
                 }}
               >
                 <thead>
                   <tr style={{ backgroundColor: '#ffffff', fontWeight: 700 }}>
                     <th
+                      className="samaan-col-compact"
                       style={{
-                        width: '5.5%',
                         borderBottom: '1px solid #000000',
                         borderLeft: '1px dotted #000000',
-                        padding: '6px 4px',
+                        padding: '6px 5px',
                       }}
                     >
                       ردیف
                     </th>
                     <th
+                      className="samaan-col-fluid"
                       style={{
-                        width: '44.5%',
                         borderBottom: '1px solid #000000',
                         borderLeft: '1px solid #000000',
-                        padding: '6px 6px',
+                        padding: '6px 8px',
                       }}
                     >
                       پرسش
                     </th>
                     <th
+                      className="samaan-col-compact"
                       style={{
-                        width: '8.5%',
                         borderBottom: '1px solid #000000',
                         borderLeft: '1px solid #000000',
-                        padding: '4px 4px',
+                        padding: '4px 6px',
                         lineHeight: 1.4,
                       }}
                     >
@@ -417,10 +440,10 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                       <div dir="ltr">(-/+)</div>
                     </th>
                     <th
+                      className="samaan-col-fluid"
                       style={{
-                        width: '41.5%',
                         borderBottom: '1px solid #000000',
-                        padding: '6px 6px',
+                        padding: '6px 8px',
                       }}
                     >
                       توضیحات **
@@ -445,13 +468,13 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                   {page.questions.map((q) => {
                     const ans = answerByKey.get(q.key);
                     return (
-                      <tr key={q.key} style={{ height: rowMinHeight }}>
+                      <tr key={q.key}>
                         <td
-                          className="tabular-nums"
+                          className="tabular-nums samaan-col-compact"
                           style={{
                             borderBottom: '1px solid #000000',
                             borderLeft: '1px dotted #000000',
-                            padding: '5px 4px',
+                            padding: '6px 5px',
                             fontWeight: 700,
                             textAlign: 'center',
                           }}
@@ -459,10 +482,11 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                           {q.rowNo}
                         </td>
                         <td
+                          className="bidi-plaintext samaan-col-fluid"
                           style={{
                             borderBottom: '1px solid #000000',
                             borderLeft: '1px solid #000000',
-                            padding: '5px 8px',
+                            padding: '6px 8px',
                             textAlign: 'right',
                             lineHeight: 1.45,
                             fontWeight: 600,
@@ -472,10 +496,11 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                         </td>
                         <td
                           dir="ltr"
+                          className="samaan-col-compact"
                           style={{
                             borderBottom: '1px solid #000000',
                             borderLeft: '1px solid #000000',
-                            padding: '5px 4px',
+                            padding: '6px 6px',
                             fontWeight: 800,
                             fontSize: '14px',
                             textAlign: 'center',
@@ -484,13 +509,12 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                           {ans?.status === '+' ? '+' : ans?.status === '-' ? '−' : ''}
                         </td>
                         <td
-                          className="bidi-plaintext"
+                          className="bidi-plaintext samaan-col-fluid"
                           style={{
                             borderBottom: '1px solid #000000',
-                            padding: '5px 8px',
+                            padding: '6px 8px',
                             textAlign: 'center',
-                            wordBreak: 'break-word',
-                            lineHeight: 1.4,
+                            lineHeight: 1.45,
                           }}
                         >
                           {ans?.remarks || ''}
@@ -505,6 +529,7 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
               {page.hasSignaturesAndFootnotes && (
                 <>
                   <div
+                    className="samaan-keep-together"
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '1fr 1fr 1fr',
@@ -606,9 +631,11 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                     {record.copyTo || ''}
                   </span>
                 </div>
-                <div dir="ltr" className="tabular-nums">
-                  MD1EX-FQP02/07-03
-                </div>
+                {formCode && (
+                  <div dir="ltr" className="tabular-nums">
+                    {formCode}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -621,7 +648,7 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                 marginTop: '6px',
               }}
             >
-              صفحه {page.pageNumber} از {PERIODIC_INSPECTION_PAGES.length}
+              صفحه {page.pageNumber} از {pages.length}
             </div>
           </div>
         );
@@ -639,9 +666,14 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   refreshSignal,
   onDataChanged,
 }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const formCode = getEmployerFormCode(activeEmployer, '07-03');
+  const allQuestions = useMemo(
+    () => [...getPeriodicInspectionPages(activeEmployer), ...STATIC_PHYSICAL_PAGES].flatMap((p) => p.questions),
+    [activeEmployer],
+  );
 
   const [records, setRecords] = useState<PeriodicInspectionRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -702,7 +734,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   const handleSetAllPositive = () => {
     setAnswersMap((prev) => {
       const next = { ...prev };
-      for (const q of ALL_QUESTIONS) {
+      for (const q of allQuestions) {
         next[q.key] = { ...next[q.key], status: '+' };
       }
       return next;
@@ -755,7 +787,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
     }
 
     // Warn if any '-' item lacks remarks (** rule in the form)
-    const missingNegativeRemark = ALL_QUESTIONS.find((q) => {
+    const missingNegativeRemark = allQuestions.find((q) => {
       const a = answersMap[q.key];
       return a?.status === '-' && !a.remarks.trim();
     });
@@ -771,7 +803,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
 
     setSaving(true);
     try {
-      const answers: PeriodicInspectionAnswer[] = ALL_QUESTIONS.map((q) => ({
+      const answers: PeriodicInspectionAnswer[] = allQuestions.map((q) => ({
         questionKey: q.key,
         status: answersMap[q.key]?.status || '',
         remarks: answersMap[q.key]?.remarks || '',
@@ -841,12 +873,12 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   const statsSummary = useMemo(() => {
     let ok = 0;
     let ng = 0;
-    for (const q of ALL_QUESTIONS) {
+    for (const q of allQuestions) {
       if (answersMap[q.key]?.status === '+') ok += 1;
       else if (answersMap[q.key]?.status === '-') ng += 1;
     }
-    return { ok, ng, total: ALL_QUESTIONS.length };
-  }, [answersMap]);
+    return { ok, ng, total: allQuestions.length };
+  }, [answersMap, allQuestions]);
 
   return (
     <div className="space-y-6">
@@ -877,9 +909,23 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                   #samaan-periodic-print-root .samaan-periodic-page {
                     margin-bottom: 0 !important;
                   }
+                  #samaan-periodic-print-root table {
+                    width: 100% !important;
+                    table-layout: auto !important;
+                  }
+                  #samaan-periodic-print-root tr {
+                    height: auto !important;
+                    break-inside: avoid;
+                    page-break-inside: avoid;
+                  }
                   #samaan-periodic-print-root table th {
                     text-align: center;
                     vertical-align: middle;
+                    height: auto !important;
+                  }
+                  #samaan-periodic-print-root table td {
+                    vertical-align: middle;
+                    height: auto !important;
                   }
                 }
               `}</style>
@@ -907,9 +953,11 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                     ? 'چک‌لیست بازدید ادواری انبار (کنترل مستندات و فیزیکی)'
                     : 'Periodic Warehouse Inspection Checklist'}
               </span>
-              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-                (MD1EX-FQP02/07-03)
-              </span>
+              {formCode && (
+                <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                  ({formCode})
+                </span>
+              )}
               {editingRecord && (
                 <button
                   type="button"
@@ -1001,11 +1049,11 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
             {[
               {
                 title: 'بخش اول: کنترل مستندات انبارش (صفحات ۱ و ۲ — ردیف‌های ۱ تا ۱۵)',
-                questions: ALL_QUESTIONS.filter((q) => q.key.startsWith('doc-')),
+                questions: allQuestions.filter((q) => q.key.startsWith('doc-')),
               },
               {
                 title: 'بخش دوم: کنترل فیزیکی انبار (صفحات ۳ تا ۵ — ردیف‌های ۱ تا ۲۰)',
-                questions: ALL_QUESTIONS.filter((q) => q.key.startsWith('phy-')),
+                questions: allQuestions.filter((q) => q.key.startsWith('phy-')),
               },
             ].map((group) => (
               <div
@@ -1283,7 +1331,8 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                     : 'Official Periodic Warehouse Inspection Checklist (5 Pages A4 Landscape)'}
                 </h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/07-03 · {formatDate(printRec.inspectionDate)}
+                  {formCode ? `${formCode} · ` : ''}
+                  {formatDate(printRec.inspectionDate)}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1306,7 +1355,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
             </div>
 
             <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto max-w-[1060px] space-y-6">
+              <div className="mx-auto w-full max-w-[283mm] space-y-6">
                 <div className="bg-white p-5 shadow-lg rounded-sm">
                   <OfficialPeriodicInspectionSheet record={printRec} formatDate={formatDate} />
                 </div>

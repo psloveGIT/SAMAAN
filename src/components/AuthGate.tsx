@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
-import { Calendar, Eye, Globe, Lock, Moon, ShieldCheck, Sun, UserPlus } from 'lucide-react';
+import { Building2, Calendar, Eye, FolderPlus, Globe, Lock, Moon, ShieldCheck, Sun, UserPlus } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError, isStaticFallbackMode } from '../lib/api.ts';
-import type { UserAccount } from '../shared/types.ts';
+import { EMPLOYER_PRESETS, resolveEmployerProfile } from '../shared/employers.ts';
+import type { EmployerId, UserAccount } from '../shared/types.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import { ProjectManagerModal } from './ProjectManagerModal.tsx';
 import { SamaanLogo } from './SamaanLogo.tsx';
 
 export const AuthGate: React.FC = () => {
@@ -10,6 +13,12 @@ export const AuthGate: React.FC = () => {
     needsSetup,
     prefs,
     t,
+    projects,
+    activeProjectId,
+    activeProject,
+    activeEmployer,
+    switchProject,
+    renameProject,
     setLanguage,
     setCalendar,
     setTheme,
@@ -22,7 +31,34 @@ export const AuthGate: React.FC = () => {
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [updatingEmployer, setUpdatingEmployer] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+
+  const isFa = prefs.language === 'fa';
+
+  const handleEmployerChangeOnGate = async (nextEmployerId: EmployerId) => {
+    if (!activeProject || !needsSetup) return;
+    setUpdatingEmployer(true);
+    try {
+      await renameProject(activeProject.id, {
+        name: activeProject.name,
+        code: activeProject.code,
+        employerId: nextEmployerId,
+      });
+      const chosen = EMPLOYER_PRESETS.find((e) => e.id === nextEmployerId);
+      notify(
+        'info',
+        isFa
+          ? `کارفرمای پروژه به «${chosen?.nameFa || nextEmployerId}» تغییر یافت و فرم‌های اختصاصی آن بارگذاری شد.`
+          : `Project employer set to "${chosen?.nameEn || nextEmployerId}".`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setUpdatingEmployer(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,9 +78,9 @@ export const AuthGate: React.FC = () => {
         setAuthenticatedUser(res.user);
         notify(
           'success',
-          prefs.language === 'fa'
-            ? 'حساب مدیر کل سمان ایجاد شد و وارد سامانه شدید.'
-            : 'Administrator account created. Welcome to SAMAAN.',
+          isFa
+            ? `حساب مدیر کل برای «${activeProject?.name || 'پروژه'}» (کارفرما: ${activeEmployer.nameFa}) ایجاد شد.`
+            : `Administrator account created for "${activeProject?.name || 'project'}". Welcome to SAMAAN.`,
         );
       } else {
         const res = await apiRequest<{ user: UserAccount }>('/api/auth/login', {
@@ -70,11 +106,11 @@ export const AuthGate: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setLanguage(prefs.language === 'fa' ? 'en' : 'fa')}
+            onClick={() => setLanguage(isFa ? 'en' : 'fa')}
             className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium flex items-center gap-1.5 hover:bg-[var(--bg-subtle)] whitespace-nowrap"
           >
             <Globe className="w-3.5 h-3.5" />
-            <span>{prefs.language === 'fa' ? 'English' : 'فارسی'}</span>
+            <span>{isFa ? 'English' : 'فارسی'}</span>
           </button>
 
           <button
@@ -113,13 +149,97 @@ export const AuthGate: React.FC = () => {
 
       {/* Login / Setup Card */}
       <div className="max-w-md w-full mx-auto my-8 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-7">
+        {/* Initial Project & Employer Selector Box */}
+        <div className="mb-5 p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-subtle)]/50 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-primary)]">
+              <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+              <span>{isFa ? 'انتخاب پروژه (پایگاه داده مستقل)' : 'Select Project (Isolated Database)'}</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => setProjectModalOpen(true)}
+              className="text-[11px] font-semibold text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+              <span>{isFa ? 'پروژه جدید / مدیریت' : 'New / Manage'}</span>
+            </button>
+          </div>
+          <select
+            value={activeProjectId}
+            onChange={(e) => switchProject(e.target.value)}
+            className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-semibold text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+          >
+            {(projects.length > 0
+              ? projects
+              : [{ id: 'default', name: 'پروژه پیش‌فرض (اصلی)', createdAt: '' }]
+            ).map((p) => {
+              const emp = resolveEmployerProfile(p);
+              return (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.code ? ` (${p.code})` : ''} — {isFa ? `کارفرما: ${emp.nameFa}` : `Client: ${emp.nameEn}`}
+                </option>
+              );
+            })}
+          </select>
+
+          {/* Employer Selector / Active Form Suite Indicator */}
+          <div className="pt-1 border-t border-[var(--border-subtle)] space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-[var(--text-secondary)]">
+                {isFa ? 'کارفرمای پروژه و بسته فرم‌ها:' : 'Project Employer & Form Pack:'}
+              </span>
+              {!needsSetup && (
+                <span className="text-[10px] text-[var(--text-muted)]">
+                  {isFa ? '(قابل ویرایش پس از ورود)' : '(Editable after login)'}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="shrink-0 p-1 rounded border border-[var(--border-subtle)] bg-white">
+                <EmployerFormLogo employer={activeEmployer} height={28} />
+              </div>
+              {needsSetup ? (
+                <select
+                  value={activeEmployer.id}
+                  disabled={updatingEmployer}
+                  onChange={(e) => handleEmployerChangeOnGate(e.target.value as EmployerId)}
+                  className="flex-1 h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                >
+                  {EMPLOYER_PRESETS.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {isFa ? emp.nameFa : emp.nameEn}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                    {activeEmployer.id === 'custom'
+                      ? activeEmployer.companyFullName
+                      : isFa
+                        ? activeEmployer.nameFa
+                        : activeEmployer.nameEn}
+                  </div>
+                  <div className="text-[10px] text-[var(--text-muted)] truncate">
+                    {isFa ? activeEmployer.formPackTitleFa : activeEmployer.formPackTitleEn}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="mb-6">
           <div className="flex items-center gap-3 mb-4">
             <SamaanLogo size="lg" showWordmark={false} />
             <div className="min-w-0">
               <div className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--accent-primary)]">
                 {needsSetup ? <UserPlus className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-                <span className="truncate">{t.brandFull}</span>
+                <span className="truncate">
+                  {activeProject ? activeProject.name : t.brandFull}
+                </span>
               </div>
               <h1 className="text-xl font-bold text-[var(--text-primary)] mt-0.5">
                 {needsSetup ? t.auth.setupTitle : t.auth.loginTitle}
@@ -131,9 +251,9 @@ export const AuthGate: React.FC = () => {
           </p>
           {isStaticFallbackMode() && (
             <div className="mt-3 p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-[11px] text-[var(--text-secondary)]">
-              {prefs.language === 'fa'
-                ? 'حالت آزمایشی استاتیک (GitHub Pages): داده‌ها و حساب‌ها در حافظه IndexedDB همین مرورگر ذخیره می‌شوند.'
-                : 'Static Browser Mode (GitHub Pages): Data & accounts persist locally in this browser’s IndexedDB.'}
+              {isFa
+                ? 'حالت آزمایشی استاتیک (GitHub Pages): داده‌ها و حساب‌های هر پروژه به‌صورت مجزا در حافظه IndexedDB همین مرورگر ذخیره می‌شوند.'
+                : 'Static Browser Mode (GitHub Pages): Each project’s data & accounts persist separately in this browser’s IndexedDB.'}
             </div>
           )}
         </div>
@@ -153,7 +273,7 @@ export const AuthGate: React.FC = () => {
               <input
                 type="text"
                 required
-                dir={!fullName ? (prefs.language === 'fa' ? 'rtl' : 'ltr') : 'auto'}
+                dir={!fullName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 className="w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
@@ -168,12 +288,12 @@ export const AuthGate: React.FC = () => {
             <input
               type="text"
               required
-              dir={prefs.language === 'fa' && !username ? 'rtl' : 'ltr'}
+              dir={isFa && !username ? 'rtl' : 'ltr'}
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className={`w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] ${
-                prefs.language === 'fa' && !username ? 'text-right' : 'text-left'
+                isFa && !username ? 'text-right' : 'text-left'
               }`}
             />
           </div>
@@ -186,12 +306,12 @@ export const AuthGate: React.FC = () => {
               type="password"
               required
               minLength={4}
-              dir={prefs.language === 'fa' && !password ? 'rtl' : 'ltr'}
+              dir={isFa && !password ? 'rtl' : 'ltr'}
               autoComplete={needsSetup ? 'new-password' : 'current-password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className={`w-full h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] ${
-                prefs.language === 'fa' && !password ? 'text-right' : 'text-left'
+                isFa && !password ? 'text-right' : 'text-left'
               }`}
             />
           </div>
@@ -208,10 +328,12 @@ export const AuthGate: React.FC = () => {
       </div>
 
       <div className="max-w-5xl w-full mx-auto text-center text-xs text-[var(--text-muted)]">
-        {prefs.language === 'fa'
+        {isFa
           ? 'سمان (SAMAAN) — سامانه آفلاین مدیریت انبارهای نیروگاهی'
           : 'SAMAAN — Offline Power Plant Warehouse Management System'}
       </div>
+
+      <ProjectManagerModal open={projectModalOpen} onClose={() => setProjectModalOpen(false)} />
     </div>
   );
 };

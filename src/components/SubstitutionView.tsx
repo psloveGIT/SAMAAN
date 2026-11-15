@@ -12,9 +12,10 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -41,6 +42,9 @@ interface OfficialRepSheetProps {
 }
 
 const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '10-03');
+  const displayProjectName = rec.projectName?.trim() || activeProject?.name || '...............................';
   const unitDisplay = rec.unit?.trim() || '..................';
   const origPackageText = [rec.shipmentNo, rec.packageNo].filter(Boolean).join(' / ');
   const subPackageText = rec.substitutePackageNo?.trim() || origPackageText;
@@ -57,83 +61,83 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
   ) => (
     <table
       dir="rtl"
+      className="samaan-dynamic-table"
       style={{
         width: '100%',
         borderCollapse: 'collapse',
-        tableLayout: 'fixed',
         fontSize: '9.5px',
       }}
     >
       <thead>
         <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
-          <th style={{ width: '6%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px' }}>
+          <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px' }}>
             <span dir="ltr">Item No.</span>
           </th>
-          <th style={{ width: '11%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '4px 3px', lineHeight: 1.3 }}>
+          <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '4px 4px', lineHeight: 1.3 }}>
             <div>شماره بسته</div>
             <div dir="ltr">(PN)</div>
           </th>
-          <th style={{ width: '27%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px' }}>
+          <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 6px' }}>
             شرح مواد/ تجهیزات
           </th>
-          <th style={{ width: '7%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '4px 3px' }}>
+          <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '4px 4px' }}>
             <span dir="ltr">Tag No.</span>
           </th>
-          <th style={{ width: '7%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px' }}>
+          <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px' }}>
             تعداد
           </th>
-          <th style={{ width: '19%', borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px' }}>
+          <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px' }}>
             شماره نقشه
           </th>
-          <th style={{ width: '23%', borderBottom: '1px solid #000000', padding: '5px 4px' }}>
+          <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', padding: '5px 6px' }}>
             توضیحات
           </th>
         </tr>
       </thead>
       <tbody>
-        <tr style={{ height: '62px' }}>
+        <tr>
           <td
-            className="tabular-nums"
-            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px' }}
+            className="tabular-nums samaan-col-compact"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '8px 4px' }}
           >
             {itemIndex}
           </td>
           <td
             dir="ltr"
-            className="tabular-nums"
-            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px', wordBreak: 'break-word' }}
+            className="tabular-nums samaan-col-code"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '8px 4px' }}
           >
             {pkgText}
           </td>
           <td
-            className="bidi-plaintext"
-            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 6px', wordBreak: 'break-word' }}
+            className="bidi-plaintext samaan-col-fluid"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '8px 6px' }}
           >
             {descText}
           </td>
           <td
             dir="ltr"
-            className="tabular-nums"
-            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px', wordBreak: 'break-word' }}
+            className="tabular-nums samaan-col-code"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '8px 4px' }}
           >
             {tagNo}
           </td>
           <td
-            className="tabular-nums"
-            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 3px', fontWeight: 700 }}
+            className="tabular-nums samaan-col-compact"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '8px 4px', fontWeight: 700 }}
           >
             {qtyText}
           </td>
           <td
             dir="ltr"
-            className="tabular-nums"
-            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '5px 4px', wordBreak: 'break-word' }}
+            className="tabular-nums samaan-col-code"
+            style={{ borderBottom: '1px solid #000000', borderLeft: '1px solid #000000', padding: '8px 4px' }}
           >
             {drawingNo}
           </td>
           <td
-            className="bidi-plaintext"
-            style={{ borderBottom: '1px solid #000000', padding: '5px 6px', wordBreak: 'break-word' }}
+            className="bidi-plaintext samaan-col-fluid"
+            style={{ borderBottom: '1px solid #000000', padding: '8px 6px' }}
           >
             {remarksText}
           </td>
@@ -145,6 +149,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
   return (
     <div
       dir="rtl"
+      className="samaan-a4-portrait"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -175,11 +180,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
               textAlign: 'center',
             }}
           >
-            <img
-              src={MD1_STACKED_LOGO}
-              alt="گروه مپنا - توسعه یک"
-              style={{ height: '54px', width: 'auto', objectFit: 'contain', display: 'block' }}
-            />
+            <EmployerFormLogo employer={activeEmployer} height={54} />
             <div
               style={{
                 fontSize: '7.5px',
@@ -189,7 +190,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
                 whiteSpace: 'nowrap',
               }}
             >
-              مستندات سیستم مدیریت یکپارچه
+              {activeEmployer.imsSubtitle}
             </div>
           </div>
 
@@ -206,10 +207,10 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
             }}
           >
             <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
+              {activeEmployer.companyFullName}
             </div>
             <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {rec.projectName?.trim() || '...............................'}
+              پروژه {displayProjectName}
             </div>
             <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
               جایگزینی
@@ -399,6 +400,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
 
         {/* Agreement Statement & 3 Signatures */}
         <div
+          className="samaan-keep-together"
           style={{
             borderBottom: '1px solid #000000',
             padding: '10px 12px 14px',
@@ -446,7 +448,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
             }}
           >
             <div style={{ textAlign: 'right' }}>
-              <div>توسعه یک مپنا:</div>
+              <div>{activeEmployer.inspectorLabel}:</div>
               {(rec.mapnaRep || rec.approvedBy) && (
                 <div className="bidi-plaintext" style={{ fontWeight: 500, fontSize: '9.2px', marginTop: '4px' }}>
                   {rec.mapnaRep || rec.approvedBy}
@@ -497,9 +499,11 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
           }}
         >
           <div>رونوشت: معاونت تامین ، فروشنده، پیمانکار نصب</div>
-          <div dir="ltr" className="tabular-nums">
-            MD1EX-FQP02/10-03
-          </div>
+          {formCode && (
+            <div dir="ltr" className="tabular-nums">
+              {formCode}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -510,7 +514,8 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   refreshSignal,
   onDataChanged,
 }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '10-03');
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
 
@@ -866,10 +871,20 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                     -webkit-print-color-adjust: exact;
                     print-color-adjust: exact;
                   }
+                  #samaan-rep-print-root table {
+                    width: 100% !important;
+                    table-layout: auto !important;
+                  }
+                  #samaan-rep-print-root tr {
+                    height: auto !important;
+                    break-inside: avoid;
+                    page-break-inside: avoid;
+                  }
                   #samaan-rep-print-root table th,
                   #samaan-rep-print-root table td {
                     text-align: center;
                     vertical-align: middle;
+                    height: auto !important;
                   }
                 }
               `}</style>
@@ -907,9 +922,11 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                   {t.controls.cancel}
                 </button>
               )}
-              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-                MD1EX-FQP02/10-03
-              </span>
+              {formCode && (
+                <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                  {formCode}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1336,7 +1353,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'امضا توسعه یک مپنا' : 'MAPNA MD1 Signatory'}
+                {isFa ? `امضا ${activeEmployer.inspectorLabel}` : `${activeEmployer.badgeCode} Signatory`}
               </label>
               <input
                 type="text"
@@ -1587,7 +1604,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                   {isFa ? 'فرم رسمی جایگزینی تجهیزات (Replacement Form)' : 'Official Equipment Substitution Form'}
                 </h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/10-03 · {printRec.docNo}
+                  {formCode ? `${formCode} · ${printRec.docNo}` : printRec.docNo}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1610,7 +1627,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
             </div>
 
             <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto max-w-[790px] bg-white p-5 shadow-lg rounded-sm">
+              <div className="mx-auto w-full max-w-[196mm] bg-white p-5 shadow-lg rounded-sm">
                 <OfficialRepSheet rec={printRec} formatDate={formatDate} />
               </div>
             </div>

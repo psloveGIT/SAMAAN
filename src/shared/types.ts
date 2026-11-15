@@ -3,10 +3,29 @@ export type CalendarMode = 'jalali' | 'gregorian';
 export type ThemeMode = 'light' | 'dark';
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
+export type EmployerId =
+  | 'mapna_md1'
+  | 'mapna_md2'
+  | 'mapna_md3'
+  | 'mapna_meco'
+  | 'tavanir'
+  | 'custom';
+
+export interface EmployerCustomConfig {
+  companyFullName?: string;
+  shortName?: string;
+  docCodePrefix?: string;
+  imsSubtitle?: string;
+  logoDataUrl?: string;
+  hideDocCodes?: boolean;
+}
+
 export interface ProjectInfo {
   id: string;
   name: string;
   code?: string;
+  employerId?: EmployerId;
+  employerConfig?: EmployerCustomConfig;
   createdAt: string;
 }
 

@@ -163,14 +163,85 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
   background: var(--text-muted);
 }
 
+/* Official A4 Dynamic Printable Sheets */
+.samaan-a4-portrait {
+  width: 100%;
+  max-width: 196mm;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.samaan-a4-landscape {
+  width: 100%;
+  max-width: 283mm;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.samaan-dynamic-table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+  table-layout: auto !important;
+}
+
+.samaan-dynamic-table thead {
+  display: table-header-group;
+}
+
+.samaan-dynamic-table tr {
+  height: auto !important;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.samaan-dynamic-table th,
+.samaan-dynamic-table td {
+  height: auto !important;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.samaan-col-compact {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.samaan-col-code {
+  width: auto;
+  max-width: 120px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.samaan-col-fluid {
+  width: auto;
+  min-width: 90px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.samaan-keep-together {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
 @media print {
   @page {
     size: A4 portrait;
-    margin: 12mm;
+    margin: 8mm;
   }
   html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
     background: #ffffff !important;
     color: #000000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   .print\:hidden {
     display: none !important;
@@ -186,5 +257,37 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
     padding: 0 !important;
     margin: 0 !important;
     width: 100% !important;
+  }
+  .samaan-a4-portrait,
+  .samaan-a4-landscape {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+  }
+  .samaan-dynamic-table {
+    width: 100% !important;
+    table-layout: auto !important;
+  }
+  .samaan-dynamic-table tr {
+    height: auto !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+  .samaan-dynamic-table th,
+  .samaan-dynamic-table td {
+    height: auto !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+  }
+  .samaan-col-compact {
+    width: 1% !important;
+    white-space: nowrap !important;
+  }
+  .samaan-col-fluid {
+    white-space: pre-wrap !important;
+  }
+  .samaan-keep-together {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }

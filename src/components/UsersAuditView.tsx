@@ -630,7 +630,7 @@ export const UsersAuditView: React.FC = () => {
               <option value="transit">{t.nav.transit}</option>
               <option value="opi">{t.nav.opi}</option>
               <option value="opiMinutes">{t.nav.opiMinutes}</option>
-              <option value="osdr">{isFa ? 'گزارش مغایرت (OSDR)' : 'OSDR Reports'}</option>
+              <option value="osdr">{isFa ? 'گزارش مغایرت (MER)' : 'MER Reports'}</option>
               <option value="gcv">{t.nav.gcv}</option>
               <option value="miv">{t.nav.miv}</option>
               <option value="smr">{t.nav.smr}</option>

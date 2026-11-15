@@ -41,7 +41,7 @@ const EMPTY_CATEGORIES: CategoryStore = {
 };
 
 const SamaanWorkspace: React.FC = () => {
-  const { user, loadingAuth, toasts, dismissToast, t } = useApp();
+  const { user, loadingAuth, toasts, dismissToast, t, activeProjectId } = useApp();
   const [activeTab, setActiveTab] = useState<NavTabKey>('dashboard');
   const [categories, setCategories] = useState<CategoryStore>(EMPTY_CATEGORIES);
   const [refreshSignal, setRefreshSignal] = useState(0);
@@ -72,7 +72,7 @@ const SamaanWorkspace: React.FC = () => {
 
   useEffect(() => {
     loadCategories();
-  }, [loadCategories, refreshSignal]);
+  }, [loadCategories, refreshSignal, activeProjectId]);
 
   const openNewPacking = (packingNo = '') => {
     setTransitPrefill(null);
@@ -114,6 +114,7 @@ const SamaanWorkspace: React.FC = () => {
         <AuthGate />
       ) : (
         <Layout
+          key={activeProjectId}
           activeTab={activeTab}
           onTabChange={(tab) => {
             if (tab !== 'detailed') {

@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, ClipboardList, Download, Pencil, Printer, Search, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { roundQty } from '../shared/formulas.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import type {
   DetailedComputed,
   DocumentLineItem,
@@ -42,6 +43,10 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
   detailedItems,
   formatDate,
 }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '05-03');
+  const displayProjectName = doc.projectName?.trim() || activeProject?.name || '......................';
+
   const detailedById = useMemo(() => {
     const map = new Map<string, DetailedComputed>();
     for (const d of detailedItems) map.set(d.id, d);
@@ -58,6 +63,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
   return (
     <div
       dir="rtl"
+      className="samaan-a4-landscape"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -88,11 +94,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
               textAlign: 'center',
             }}
           >
-            <img
-              src={MD1_STACKED_LOGO}
-              alt="گروه مپنا - توسعه یک"
-              style={{ height: '54px', width: 'auto', objectFit: 'contain', display: 'block' }}
-            />
+            <EmployerFormLogo employer={activeEmployer} height={54} />
             <div
               style={{
                 fontSize: '7.5px',
@@ -102,7 +104,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              مستندات سیستم مدیریت یکپارچه
+              {activeEmployer.imsSubtitle}
             </div>
           </div>
 
@@ -119,10 +121,10 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
             }}
           >
             <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
+              {activeEmployer.companyFullName}
             </div>
             <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {doc.projectName?.trim() || '......................'}
+              پروژه {displayProjectName}
             </div>
             <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
               درخواست کالا از انبار و حواله انبار
@@ -215,52 +217,52 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
         {/* 13-Column LTR Table */}
         <table
           dir="ltr"
+          className="samaan-dynamic-table"
           style={{
             width: '100%',
             borderCollapse: 'collapse',
-            tableLayout: 'fixed',
             fontSize: '8.8px',
           }}
         >
           <thead>
             <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
-              <th style={{ width: '3.8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
                 No
               </th>
-              <th style={{ width: '6.2%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Package No.
               </th>
-              <th style={{ width: '5.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Package Item
               </th>
-              <th style={{ width: '21%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 5px' }}>
                 Description Of Material
               </th>
-              <th style={{ width: '8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Technical info/Size
               </th>
-              <th style={{ width: '5.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Tag No.
               </th>
-              <th style={{ width: '5.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Code No.
               </th>
-              <th style={{ width: '8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Location
               </th>
-              <th style={{ width: '7.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Requested Quantity
               </th>
-              <th style={{ width: '7%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Issued Quantity
               </th>
-              <th style={{ width: '5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 UOM
               </th>
-              <th style={{ width: '5.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 OPI No.
               </th>
-              <th style={{ width: '11.5%', borderBottom: '1px solid #000000', padding: '5px 4px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', padding: '5px 5px' }}>
                 Remark
               </th>
             </tr>
@@ -281,82 +283,82 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
               const remarkText = row ? row.remark || (idx === 0 && doc.notes ? doc.notes : '') : '';
 
               return (
-                <tr key={row ? `${row.detailedId}-${idx}` : `empty-${idx}`} style={{ height: '27px' }}>
+                <tr key={row ? `${row.detailedId}-${idx}` : `empty-${idx}`}>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
-                    {row ? idx + 1 : ''}
+                    {row ? idx + 1 : '\u00A0'}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {pkgText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {row?.itemNo || ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 4px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 5px' }}
                   >
                     {row?.description || ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {techText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {tagText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {codeText}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {locText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {reqQty}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', fontWeight: 700 }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', fontWeight: 700 }}
                   >
                     {row ? row.qty : ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="bidi-plaintext samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {uomText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {opiText}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, padding: '3px 4px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, padding: '4px 5px' }}
                   >
                     {remarkText}
                   </td>
@@ -368,7 +370,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
       </div>
 
       {/* Separate Lower Signature Frame */}
-      <div style={{ border: '1.8px solid #000000', marginTop: '10px' }}>
+      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '10px' }}>
         {/* Header: امضاء */}
         <div
           style={{
@@ -422,7 +424,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>تأمین تجهیزات توسعه یک:</div>
+              <div style={{ fontWeight: 700 }}>{activeEmployer.equipmentSupplyLabel}:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
@@ -440,7 +442,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>دفتر فنی توسعه یک:</div>
+              <div style={{ fontWeight: 700 }}>{activeEmployer.techOfficeLabel}:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
@@ -458,7 +460,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>بخش نصب توسعه یک:</div>
+              <div style={{ fontWeight: 700 }}>{activeEmployer.installationLabel}:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
@@ -547,19 +549,22 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
           fontWeight: 700,
         }}
       >
-        <div>رونوشت: معاونت تأمین تجهیزات ، دفتر فنی مپنا، پیمانکار نصب</div>
-        <div dir="ltr" className="tabular-nums">
-          MD1EX-FQP02/05-03
-        </div>
+        <div>رونوشت: معاونت تأمین تجهیزات ، {activeEmployer.techOfficeLabel}، پیمانکار نصب</div>
+        {formCode && (
+          <div dir="ltr" className="tabular-nums">
+            {formCode}
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
 export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const formCode = getEmployerFormCode(activeEmployer, '05-03');
 
   const [data, setData] = useState<MivApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -567,7 +572,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [docType, setDocType] = useState<MivOnlyType>('miv_contractor');
   const [docNo, setDocNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
-  const [projectName, setProjectName] = useState('');
+  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [contractNo, setContractNo] = useState('');
   const [party, setParty] = useState('');
   const [islandSystem, setIslandSystem] = useState('');
@@ -950,10 +955,20 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                     -webkit-print-color-adjust: exact;
                     print-color-adjust: exact;
                   }
+                  #samaan-miv-print-root table {
+                    width: 100% !important;
+                    table-layout: auto !important;
+                  }
+                  #samaan-miv-print-root tr {
+                    height: auto !important;
+                    break-inside: avoid;
+                    page-break-inside: avoid;
+                  }
                   #samaan-miv-print-root table th,
                   #samaan-miv-print-root table td {
                     text-align: center;
                     vertical-align: middle;
+                    height: auto !important;
                   }
                 }
               `}</style>
@@ -993,9 +1008,11 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                   {t.controls.cancel}
                 </button>
               )}
-              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-                MD1EX-FQP02/05-03
-              </span>
+              {formCode && (
+                <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                  {formCode}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1146,7 +1163,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'تأمین تجهیزات توسعه یک' : 'MD1 Equipment Supply'}
+                {isFa ? activeEmployer.equipmentSupplyLabel : `${activeEmployer.badgeCode} Equipment Supply`}
               </label>
               <input
                 type="text"
@@ -1159,7 +1176,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'دفتر فنی توسعه یک' : 'MD1 Tech Office'}
+                {isFa ? activeEmployer.techOfficeLabel : `${activeEmployer.badgeCode} Tech Office`}
               </label>
               <input
                 type="text"
@@ -1172,7 +1189,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'بخش نصب توسعه یک' : 'MD1 Installation Dept.'}
+                {isFa ? activeEmployer.installationLabel : `${activeEmployer.badgeCode} Installation Dept.`}
               </label>
               <input
                 type="text"
@@ -1510,7 +1527,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                   {isFa ? 'فرم رسمی درخواست کالا از انبار و حواله انبار' : 'Official Material Issue Voucher (MIV)'}
                 </h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/05-03 · {printDoc.docNo}
+                  {formCode ? `${formCode} · ` : ''}{printDoc.docNo}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1533,7 +1550,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             </div>
 
             <div className="overflow-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto min-w-[940px] max-w-[1060px] bg-white p-5 shadow-lg rounded-sm">
+              <div className="mx-auto w-full max-w-[283mm] bg-white p-5 shadow-lg rounded-sm">
                 <OfficialMivSheet
                   doc={printDoc}
                   detailedItems={data?.detailedItems || []}

@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, CornerUpLeft, Download, Pencil, Printer, Search, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { roundQty } from '../shared/formulas.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import type {
   DetailedComputed,
   DocumentLineItem,
@@ -42,6 +43,10 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
   detailedItems,
   formatDate,
 }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '08-03');
+  const displayProjectName = doc.projectName?.trim() || activeProject?.name || '..................';
+
   const detailedById = useMemo(() => {
     const map = new Map<string, DetailedComputed>();
     for (const d of detailedItems) map.set(d.id, d);
@@ -58,6 +63,7 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
   return (
     <div
       dir="rtl"
+      className="samaan-a4-landscape"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -88,11 +94,7 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
               textAlign: 'center',
             }}
           >
-            <img
-              src={MD1_STACKED_LOGO}
-              alt="گروه مپنا - توسعه یک"
-              style={{ height: '54px', width: 'auto', objectFit: 'contain', display: 'block' }}
-            />
+            <EmployerFormLogo employer={activeEmployer} height={54} />
             <div
               style={{
                 fontSize: '7.5px',
@@ -102,7 +104,7 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              مستندات سیستم مدیریت یکپارچه
+              {activeEmployer.imsSubtitle}
             </div>
           </div>
 
@@ -119,10 +121,10 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
             }}
           >
             <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
+              {activeEmployer.companyFullName}
             </div>
             <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {doc.projectName?.trim() || '..................'}
+              پروژه {displayProjectName}
             </div>
             <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
               فرم ارجاع قطعات، کالا و تجهیزات مازاد
@@ -192,41 +194,41 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
         {/* 9-Column LTR Table */}
         <table
           dir="ltr"
+          className="samaan-dynamic-table"
           style={{
             width: '100%',
             borderCollapse: 'collapse',
-            tableLayout: 'fixed',
             fontSize: '9.3px',
           }}
         >
           <thead>
             <tr style={{ backgroundColor: '#ffffff', fontWeight: 700 }}>
-              <th style={{ width: '4.2%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Item No.
               </th>
-              <th style={{ width: '9%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Packing List No.
               </th>
-              <th style={{ width: '7.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Package item.
               </th>
-              <th style={{ width: '7%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Tag No.
               </th>
-              <th style={{ width: '29%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px', fontSize: '10px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 6px', fontSize: '10px' }}>
                 شرح
               </th>
-              <th style={{ width: '5.8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 UOM
               </th>
-              <th style={{ width: '8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Returned Quantity
               </th>
-              <th style={{ width: '8.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px', lineHeight: 1.35 }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 4px', lineHeight: 1.35 }}>
                 <div>دلیل عودت</div>
                 <div>(ارجاع)</div>
               </th>
-              <th style={{ width: '21%', borderBottom: '1px solid #000000', padding: '5px 4px', fontSize: '10px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', padding: '5px 6px', fontSize: '10px' }}>
                 توضیحات
               </th>
             </tr>
@@ -247,58 +249,58 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
                 : '';
 
               return (
-                <tr key={row ? `${row.detailedId}-${idx}` : `empty-${idx}`} style={{ height: '30px' }}>
+                <tr key={row ? `${row.detailedId}-${idx}` : `empty-${idx}`}>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
-                    {row ? idx + 1 : ''}
+                    {row ? idx + 1 : '\u00A0'}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {row?.shipmentNo || ''}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {pkgItemText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {tagText}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 5px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 6px' }}
                   >
                     {row?.description || ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
+                    className="bidi-plaintext samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {uomText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', fontWeight: 700 }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px', fontWeight: 700 }}
                   >
                     {row ? row.qty : ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {reasonText}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, padding: '4px 4px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, padding: '4px 6px' }}
                   >
                     {remarkText}
                   </td>
@@ -310,7 +312,7 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
       </div>
 
       {/* Separate Lower Approval Frame */}
-      <div style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
+      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
         {/* Header: امضاء */}
         <div
           style={{
@@ -364,7 +366,7 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>تأمین تجهیزات توسعه یک :</div>
+              <div style={{ fontWeight: 700 }}>{activeEmployer.equipmentSupplyLabel} :</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
@@ -452,18 +454,21 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
         }}
       >
         <div>رونوشت: معاونت تأمین تجهیزات، پیمانکار نصب، دفتر فنی</div>
-        <div dir="ltr" className="tabular-nums">
-          MD1EX-FQP02/08-03
-        </div>
+        {formCode && (
+          <div dir="ltr" className="tabular-nums">
+            {formCode}
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
 export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const formCode = getEmployerFormCode(activeEmployer, '08-03');
 
   const [data, setData] = useState<MivApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -471,7 +476,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
   const [docType, setDocType] = useState<SmrOnlyType>('smr_contractor');
   const [docNo, setDocNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
-  const [projectName, setProjectName] = useState('');
+  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [purchasePackageNo, setPurchasePackageNo] = useState('');
   const [supplier, setSupplier] = useState('');
   const [islandSystem, setIslandSystem] = useState('');
@@ -846,10 +851,20 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                     -webkit-print-color-adjust: exact;
                     print-color-adjust: exact;
                   }
+                  #samaan-smr-print-root table {
+                    width: 100% !important;
+                    table-layout: auto !important;
+                  }
+                  #samaan-smr-print-root tr {
+                    height: auto !important;
+                    break-inside: avoid;
+                    page-break-inside: avoid;
+                  }
                   #samaan-smr-print-root table th,
                   #samaan-smr-print-root table td {
                     text-align: center;
                     vertical-align: middle;
+                    height: auto !important;
                   }
                 }
               `}</style>
@@ -889,9 +904,11 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                   {t.controls.cancel}
                 </button>
               )}
-              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-                MD1EX-FQP02/08-03
-              </span>
+              {formCode && (
+                <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                  {formCode}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1041,7 +1058,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'تأمین تجهیزات توسعه یک' : 'MD1 Equipment Supply'}
+                {isFa ? activeEmployer.equipmentSupplyLabel : `${activeEmployer.badgeCode} Equipment Supply`}
               </label>
               <input
                 type="text"
@@ -1388,7 +1405,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                   {isFa ? 'فرم رسمی ارجاع قطعات، کالا و تجهیزات مازاد' : 'Official Surplus Material Return Form'}
                 </h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/08-03 · {printDoc.docNo}
+                  {formCode ? `${formCode} · ` : ''}{printDoc.docNo}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1411,7 +1428,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
             </div>
 
             <div className="overflow-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto min-w-[920px] max-w-[1040px] bg-white p-5 shadow-lg rounded-sm">
+              <div className="mx-auto w-full max-w-[283mm] bg-white p-5 shadow-lg rounded-sm">
                 <OfficialSmrSheet
                   doc={printDoc}
                   detailedItems={data?.detailedItems || []}

@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  DEFAULT_EMPLOYER_ID,
+  isValidEmployerId,
+  sanitizeEmployerConfig,
+} from '../shared/employers.ts';
 import type {
   AuditLogEntry,
   CategoryGroupKey,
@@ -8,6 +13,8 @@ import type {
   DatabaseSnapshot,
   DetailedComputed,
   DetailedEntry,
+  EmployerCustomConfig,
+  EmployerId,
   GcvDocumentRecord,
   GeneralEntry,
   MaterialEstimateRecord,
@@ -560,9 +567,14 @@ export class ProjectManager {
       }
       if (fs.existsSync(PROJECTS_REGISTRY_FILE)) {
         const parsed = JSON.parse(fs.readFileSync(PROJECTS_REGISTRY_FILE, 'utf8')) as Partial<ProjectRegistryData>;
-        const projects = Array.isArray(parsed.projects) && parsed.projects.length > 0
+        const rawList = Array.isArray(parsed.projects) && parsed.projects.length > 0
           ? parsed.projects
-          : [{ id: 'default', name: 'پروژه پیش‌فرض', code: '', createdAt: new Date().toISOString() }];
+          : [{ id: 'default', name: 'پروژه پیش‌فرض', code: '', employerId: DEFAULT_EMPLOYER_ID, createdAt: new Date().toISOString() }];
+        const projects: ProjectInfo[] = rawList.map((p) => ({
+          ...p,
+          employerId: isValidEmployerId(p.employerId) ? p.employerId : DEFAULT_EMPLOYER_ID,
+          employerConfig: sanitizeEmployerConfig(p.employerConfig),
+        }));
         return {
           authSecret: parsed.authSecret || crypto.randomBytes(32).toString('hex'),
           projects,
@@ -578,6 +590,7 @@ export class ProjectManager {
           id: 'default',
           name: 'پروژه پیش‌فرض',
           code: '',
+          employerId: DEFAULT_EMPLOYER_ID,
           createdAt: new Date().toISOString(),
         },
       ],
@@ -637,6 +650,8 @@ export class ProjectManager {
   public createProject(params: {
     name: string;
     code?: string;
+    employerId?: EmployerId;
+    employerConfig?: EmployerCustomConfig;
     copyUsersFromStore?: SamaanStore | null;
   }): ProjectInfo {
     const cleanName = normKey(params.name);
@@ -653,6 +668,8 @@ export class ProjectManager {
       id,
       name: cleanName,
       code: cleanCode,
+      employerId: isValidEmployerId(params.employerId) ? params.employerId : DEFAULT_EMPLOYER_ID,
+      employerConfig: sanitizeEmployerConfig(params.employerConfig),
       createdAt: new Date().toISOString(),
     };
     this.registry.projects.push(info);
@@ -666,13 +683,29 @@ export class ProjectManager {
     return info;
   }
 
-  public renameProject(id: string, params: { name: string; code?: string }): ProjectInfo | null {
+  public renameProject(
+    id: string,
+    params: {
+      name?: string;
+      code?: string;
+      employerId?: EmployerId;
+      employerConfig?: EmployerCustomConfig;
+    },
+  ): ProjectInfo | null {
     const clean = sanitizeProjectId(id);
     const target = this.registry.projects.find((p) => p.id === clean);
     if (!target) return null;
-    target.name = normKey(params.name);
+    if (params.name !== undefined && normKey(params.name)) {
+      target.name = normKey(params.name);
+    }
     if (params.code !== undefined) {
       target.code = normKey(params.code);
+    }
+    if (params.employerId !== undefined && isValidEmployerId(params.employerId)) {
+      target.employerId = params.employerId;
+    }
+    if (params.employerConfig !== undefined) {
+      target.employerConfig = sanitizeEmployerConfig(params.employerConfig);
     }
     this.saveRegistryData(this.registry);
     return target;

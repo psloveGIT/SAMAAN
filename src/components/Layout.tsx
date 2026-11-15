@@ -3,8 +3,10 @@ import {
   ArrowLeftRight,
   BarChart3,
   Boxes,
+  Building2,
   Calculator,
   Calendar,
+  ChevronDown,
   ClipboardCheck,
   ClipboardList,
   ClipboardSignature,
@@ -34,6 +36,7 @@ import {
 import { useApp } from '../context/AppContext.tsx';
 import { getTodayIso } from '../shared/jalali.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
+import { ProjectManagerModal } from './ProjectManagerModal.tsx';
 import { SamaanLogo } from './SamaanLogo.tsx';
 
 export type NavTabKey =
@@ -76,6 +79,8 @@ export const Layout: React.FC<LayoutProps> = ({
     user,
     prefs,
     t,
+    activeProject,
+    activeEmployer,
     setLanguage,
     setCalendar,
     setTheme,
@@ -86,6 +91,8 @@ export const Layout: React.FC<LayoutProps> = ({
 
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [changePwOpen, setChangePwOpen] = React.useState(false);
+  const [projectModalOpen, setProjectModalOpen] = React.useState(false);
+  const isFa = prefs.language === 'fa';
 
   const navGroups: {
     groupLabel: string;
@@ -165,6 +172,30 @@ export const Layout: React.FC<LayoutProps> = ({
               <X className="w-4 h-4" />
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setProjectModalOpen(true)}
+            className="w-full px-3 py-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] flex items-center justify-between gap-2 text-start transition-colors"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Building2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+              <div className="min-w-0">
+                <div className="text-[10px] text-[var(--text-muted)]">
+                  {isFa ? 'پروژه فعال (دیتابیس مجزا)' : 'Active Project'}
+                </div>
+                <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                  {activeProject?.name || (isFa ? 'پروژه پیش‌فرض' : 'Default Project')}
+                </div>
+                <div className="text-[10px] text-[var(--accent-primary)] truncate">
+                  {isFa
+                    ? `کارفرما: ${activeEmployer.id === 'custom' ? activeEmployer.shortName : activeEmployer.nameFa}`
+                    : `Client: ${activeEmployer.id === 'custom' ? activeEmployer.shortName : activeEmployer.nameEn}`}
+                </div>
+              </div>
+            </div>
+            <ChevronDown className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+          </button>
 
           <nav className="space-y-4">
             {navGroups.map((group) => (
@@ -303,7 +334,14 @@ export const Layout: React.FC<LayoutProps> = ({
           </div>
 
           <div className="hidden md:flex items-center gap-2 text-xs text-[var(--text-muted)] tabular-nums whitespace-nowrap shrink-0">
-            <span>{t.brandFull}</span>
+            <button
+              type="button"
+              onClick={() => setProjectModalOpen(true)}
+              className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] font-semibold flex items-center gap-1.5"
+            >
+              <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+              <span>{activeProject?.name || t.brandFull}</span>
+            </button>
             <span aria-hidden="true">·</span>
             <span>{todayFormatted}</span>
           </div>
@@ -330,6 +368,8 @@ export const Layout: React.FC<LayoutProps> = ({
         forced={Boolean(user?.mustChangePassword)}
         onClose={() => setChangePwOpen(false)}
       />
+
+      <ProjectManagerModal open={projectModalOpen} onClose={() => setProjectModalOpen(false)} />
     </div>
   );
 };

@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, FileCheck2, Pencil, Printer, Search, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { roundQty } from '../shared/formulas.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import type {
   DetailedComputed,
   DocumentLineItem,
@@ -67,6 +68,10 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
   detailedItems,
   formatDate,
 }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '11-03');
+  const displayProjectName = doc.projectName?.trim() || activeProject?.name || '..................';
+
   const detailedById = useMemo(() => {
     const map = new Map<string, DetailedComputed>();
     for (const d of detailedItems) map.set(d.id, d);
@@ -85,6 +90,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
   return (
     <div
       dir="rtl"
+      className="samaan-a4-landscape"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -115,11 +121,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
               textAlign: 'center',
             }}
           >
-            <img
-              src={MD1_STACKED_LOGO}
-              alt="گروه مپنا - توسعه یک"
-              style={{ height: '54px', width: 'auto', objectFit: 'contain', display: 'block' }}
-            />
+            <EmployerFormLogo employer={activeEmployer} height={54} />
             <div
               style={{
                 fontSize: '7.5px',
@@ -129,7 +131,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              مستندات سیستم مدیریت یکپارچه
+              {activeEmployer.imsSubtitle}
             </div>
           </div>
 
@@ -146,10 +148,10 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             }}
           >
             <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
+              {activeEmployer.companyFullName}
             </div>
             <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {doc.projectName?.trim() || '..................'}
+              پروژه {displayProjectName}
             </div>
             <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '2px' }}>
               رسید مصرف مستقیم کالا
@@ -266,40 +268,40 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
         {/* 9-Column LTR Items Table */}
         <table
           dir="ltr"
+          className="samaan-dynamic-table"
           style={{
             width: '100%',
             borderCollapse: 'collapse',
-            tableLayout: 'fixed',
             fontSize: '9.3px',
           }}
         >
           <thead>
             <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
-              <th style={{ width: '6%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Item No.
               </th>
-              <th style={{ width: '11%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 PL/Package No.
               </th>
-              <th style={{ width: '8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Package Item
               </th>
-              <th style={{ width: '31%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 6px' }}>
                 Description
               </th>
-              <th style={{ width: '10%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Technical info/Size
               </th>
-              <th style={{ width: '7%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Tag No.
               </th>
-              <th style={{ width: '8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 UOM
               </th>
-              <th style={{ width: '8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
                 Quantity
               </th>
-              <th style={{ width: '11%', borderBottom: '1px solid #000000', padding: '5px 4px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', padding: '5px 5px' }}>
                 Remark
               </th>
             </tr>
@@ -316,58 +318,58 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
               const remarkText = row ? (row.remark || (idx === 0 && doc.notes ? doc.notes : '')) : '';
 
               return (
-                <tr key={row ? `${row.detailedId}-${idx}` : `empty-${idx}`} style={{ height: '30px' }}>
+                <tr key={row ? `${row.detailedId}-${idx}` : `empty-${idx}`}>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
-                    {row ? idx + 1 : ''}
+                    {row ? idx + 1 : '\u00A0'}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {plPkgText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {row?.itemNo || ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 5px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 6px' }}
                   >
                     {row?.description || ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {techText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {tagText}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
+                    className="bidi-plaintext samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
                   >
                     {uomText}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', fontWeight: 700 }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px', fontWeight: 700 }}
                   >
                     {row ? row.qty : ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, padding: '4px 4px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, padding: '4px 5px' }}
                   >
                     {remarkText}
                   </td>
@@ -379,7 +381,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
       </div>
 
       {/* Separate Lower Approval Frame */}
-      <div style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
+      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
         {/* Row 1: امضاء */}
         <div
           style={{
@@ -409,7 +411,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             تحویل گیرنده / پیمانکار نصب
           </div>
           <div style={{ padding: '4px 8px' }}>
-            شرکت توسعه یک مپنا
+            {activeEmployer.companyFullName}
           </div>
         </div>
 
@@ -522,25 +524,28 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
         }}
       >
         <div>رونوشت: معاونت تامین ، امور مالی، واحد کنترل کالا و انبار، پیمانکار نصب</div>
-        <div dir="ltr" className="tabular-nums">
-          MD1EX-FQP02/11-03
-        </div>
+        {formCode && (
+          <div dir="ltr" className="tabular-nums">
+            {formCode}
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
 export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const formCode = getEmployerFormCode(activeEmployer, '11-03');
 
   const [data, setData] = useState<GcvApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [receiptNo, setReceiptNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
-  const [projectName, setProjectName] = useState('');
+  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [receiver, setReceiver] = useState('');
   const [purchaseRequestNo, setPurchaseRequestNo] = useState('');
   const [supplier, setSupplier] = useState('');
@@ -894,10 +899,20 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                     -webkit-print-color-adjust: exact;
                     print-color-adjust: exact;
                   }
+                  #samaan-gcv-print-root table {
+                    width: 100% !important;
+                    table-layout: auto !important;
+                  }
+                  #samaan-gcv-print-root tr {
+                    height: auto !important;
+                    break-inside: avoid;
+                    page-break-inside: avoid;
+                  }
                   #samaan-gcv-print-root table th,
                   #samaan-gcv-print-root table td {
                     text-align: center;
                     vertical-align: middle;
+                    height: auto !important;
                   }
                 }
               `}</style>
@@ -937,9 +952,11 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                   <span>{t.controls.cancel}</span>
                 </button>
               )}
-              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-                MD1EX-FQP02/11-03
-              </span>
+              {formCode && (
+                <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                  {formCode}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1168,7 +1185,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
 
             <div className="lg:col-span-2">
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'تأمین تجهیزات (مپنا)' : 'Equipment Supply (MAPNA)'}
+                {isFa ? `تأمین تجهیزات (${activeEmployer.shortName})` : `Equipment Supply (${activeEmployer.badgeCode})`}
               </label>
               <input
                 type="text"
@@ -1181,7 +1198,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
 
             <div className="lg:col-span-2">
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'مدیر پروژه / سرپرست (مپنا)' : 'MAPNA Project / Site Mgr'}
+                {isFa ? `مدیر پروژه / سرپرست (${activeEmployer.shortName})` : `${activeEmployer.badgeCode} Project / Site Mgr`}
               </label>
               <input
                 type="text"
@@ -1502,7 +1519,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                   {isFa ? 'فرم رسمی رسید مصرف مستقیم کالا' : 'Official Not-Stored Goods Consumption Voucher'}
                 </h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/11-03 · {printDoc.receiptNo}
+                  {formCode ? `${formCode} · ` : ''}{printDoc.receiptNo}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1525,7 +1542,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
             </div>
 
             <div className="overflow-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto min-w-[920px] max-w-[1040px] bg-white p-5 shadow-lg rounded-sm">
+              <div className="mx-auto w-full max-w-[283mm] bg-white p-5 shadow-lg rounded-sm">
                 <OfficialGcvSheet
                   doc={printDoc}
                   detailedItems={data?.detailedItems || []}

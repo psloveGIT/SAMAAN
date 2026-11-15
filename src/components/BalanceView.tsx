@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, FileSpreadsheet, Printer, Scale, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { roundQty, toNum } from '../shared/formulas.ts';
 import type { DetailedComputed, GeneralEntry, MaterialEstimateRecord } from '../shared/types.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 
 interface BalanceViewProps {
@@ -55,6 +56,10 @@ interface OfficialBmrSheetProps {
 }
 
 const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, meta }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '09-03');
+  const displayProjectName = meta.projectName.trim() || activeProject?.name || '..................';
+
   const estimateLookup = useMemo(() => {
     const byMto = new Map<string, number>();
     const byCode = new Map<string, number>();
@@ -94,6 +99,7 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
   return (
     <div
       dir="rtl"
+      className="samaan-a4-landscape"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -124,11 +130,7 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
               textAlign: 'center',
             }}
           >
-            <img
-              src={MD1_STACKED_LOGO}
-              alt="گروه مپنا - توسعه یک"
-              style={{ height: '54px', width: 'auto', objectFit: 'contain', display: 'block' }}
-            />
+            <EmployerFormLogo employer={activeEmployer} height={54} />
             <div
               style={{
                 fontSize: '7.5px',
@@ -138,7 +140,7 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
                 whiteSpace: 'nowrap',
               }}
             >
-              مستندات سیستم مدیریت یکپارچه
+              {activeEmployer.imsSubtitle}
             </div>
           </div>
 
@@ -155,10 +157,10 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
             }}
           >
             <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
+              {activeEmployer.companyFullName}
             </div>
             <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {meta.projectName.trim() || '..................'}
+              پروژه {displayProjectName}
             </div>
             <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
               گزارش موازنه و کنترل مصرف مواد
@@ -195,7 +197,7 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
           </div>
           <div style={{ padding: '5px 8px' }}>
             <strong style={{ fontWeight: 700 }}>پروژه: </strong>
-            <span className="bidi-plaintext">{meta.projectName}</span>
+            <span className="bidi-plaintext">{meta.projectName.trim() || activeProject?.name || ''}</span>
           </div>
         </div>
 
@@ -222,52 +224,52 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
         {/* 13-Column LTR Table */}
         <table
           dir="ltr"
+          className="samaan-dynamic-table"
           style={{
             width: '100%',
             borderCollapse: 'collapse',
-            tableLayout: 'fixed',
             fontSize: '8.8px',
           }}
         >
           <thead>
             <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
-              <th style={{ width: '3.8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
                 No.
               </th>
-              <th style={{ width: '6.2%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 PL No.
               </th>
-              <th style={{ width: '6.4%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Package No.
               </th>
-              <th style={{ width: '6.6%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Package Item No.
               </th>
-              <th style={{ width: '7.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Tag No.
               </th>
-              <th style={{ width: '23.5%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 5px' }}>
                 Description
               </th>
-              <th style={{ width: '5.2%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 UOM
               </th>
-              <th style={{ width: '6.8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Received Qty
               </th>
-              <th style={{ width: '7%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Total Delivered Qty
               </th>
-              <th style={{ width: '7%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Total Returned Qty
               </th>
-              <th style={{ width: '6.8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Total MTO Qty
               </th>
-              <th style={{ width: '6.8%', borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
                 Total Erected Qty
               </th>
-              <th style={{ width: '6.4%', borderBottom: '1px solid #000000', padding: '5px 2px' }}>
+              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', padding: '5px 3px' }}>
                 Balance
               </th>
             </tr>
@@ -296,82 +298,82 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
                 : '';
 
               return (
-                <tr key={row ? row.id : `empty-${idx}`} style={{ height: '29px' }}>
+                <tr key={row ? row.id : `empty-${idx}`}>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
-                    {row ? idx + 1 : ''}
+                    {row ? idx + 1 : '\u00A0'}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {row?.shipmentNo || ''}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {row?.packageNo || ''}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {row?.itemNo || ''}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px', wordBreak: 'break-word' }}
+                    className="tabular-nums samaan-col-code"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {row?.itemCode || ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 4px', wordBreak: 'break-word' }}
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 5px' }}
                   >
                     {row ? row.description || row.generalDescription : ''}
                   </td>
                   <td
-                    className="bidi-plaintext"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="bidi-plaintext samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {row?.countingUnit || ''}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {receivedQty}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {deliveredQty}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {returnedQty}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {mtoQty}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '3px 2px' }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
                     {erectedQty}
                   </td>
                   <td
-                    className="tabular-nums"
-                    style={{ borderBottom: rowBottomBorder, padding: '3px 2px', fontWeight: 700 }}
+                    className="tabular-nums samaan-col-compact"
+                    style={{ borderBottom: rowBottomBorder, padding: '4px 3px', fontWeight: 700 }}
                   >
                     {balanceQty}
                   </td>
@@ -383,7 +385,7 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
       </div>
 
       {/* Separate Lower Approval Frame (outer border encloses امضاء, titles, sign boxes, QA note, and footer strip) */}
-      <div style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
+      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
         {/* Row 1: امضاء */}
         <div
           style={{
@@ -410,9 +412,15 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
           }}
         >
           <div style={{ borderLeft: '1px solid #000000', padding: '4px 6px' }}>انباردار</div>
-          <div style={{ borderLeft: '1px solid #000000', padding: '4px 6px' }}>تأمین تجهیزات توسعه یک</div>
-          <div style={{ borderLeft: '1px solid #000000', padding: '4px 6px' }}>دفتر فنی</div>
-          <div style={{ borderLeft: '1px solid #000000', padding: '4px 6px' }}>واحد نصب</div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '4px 6px' }}>
+            {activeEmployer.equipmentSupplyLabel}
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '4px 6px' }}>
+            {activeEmployer.techOfficeLabel}
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '4px 6px' }}>
+            {activeEmployer.installationLabel}
+          </div>
           <div style={{ padding: '4px 6px' }}>مدیر پروژه پیمانکار نصب</div>
         </div>
 
@@ -527,9 +535,11 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
           }}
         >
           <div>رونوشت: معاونت تامین ، پیمانکار نصب، دفتر فنی</div>
-          <div dir="ltr" className="tabular-nums">
-            MD1EX-FQP02/09-03
-          </div>
+          {formCode && (
+            <div dir="ltr" className="tabular-nums">
+              {formCode}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -537,7 +547,8 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
 };
 
 export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataChanged }) => {
-  const { prefs, t, user, notify, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '09-03');
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
 
@@ -760,6 +771,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
 
     setBmrMeta((prev) => ({
       ...prev,
+      projectName: prev.projectName || activeProject?.name || '',
       system: nextSystem || prev.system,
       island: nextIsland || prev.island,
       unit: nextUnit || prev.unit,
@@ -805,10 +817,20 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
                     -webkit-print-color-adjust: exact;
                     print-color-adjust: exact;
                   }
+                  #samaan-bmr-print-root table {
+                    width: 100% !important;
+                    table-layout: auto !important;
+                  }
+                  #samaan-bmr-print-root tr {
+                    height: auto !important;
+                    break-inside: avoid;
+                    page-break-inside: avoid;
+                  }
                   #samaan-bmr-print-root table th,
                   #samaan-bmr-print-root table td {
                     text-align: center;
                     vertical-align: middle;
+                    height: auto !important;
                   }
                 }
               `}</style>
@@ -828,9 +850,11 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
               <Scale className="w-4 h-4 text-[var(--accent-primary)]" />
               <span>{t.nav.balance}</span>
             </div>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-              MD1EX-FQP02/09-03
-            </span>
+            {formCode && (
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                {formCode}
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
@@ -1046,7 +1070,8 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
                   {isFa ? 'فرم رسمی گزارش موازنه و کنترل مصرف مواد (BMR)' : 'Official Balance of Material Report (BMR)'}
                 </h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/09-03 · {printRows.length} {isFa ? 'ردیف' : 'rows'}
+                  {formCode ? `${formCode} · ` : ''}
+                  {printRows.length} {isFa ? 'ردیف' : 'rows'}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1131,7 +1156,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
                 dir={!bmrMeta.equipmentSupply ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={bmrMeta.equipmentSupply}
                 onChange={(e) => setBmrMeta((p) => ({ ...p, equipmentSupply: e.target.value }))}
-                placeholder={isFa ? 'تأمین تجهیزات توسعه یک' : 'Sign: Equip Supply'}
+                placeholder={isFa ? activeEmployer.equipmentSupplyLabel : 'Sign: Equip Supply'}
                 className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
               />
               <input
@@ -1161,7 +1186,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
             </div>
 
             <div className="overflow-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto min-w-[940px] max-w-[1060px] bg-white p-5 shadow-lg rounded-sm">
+              <div className="mx-auto w-full max-w-[283mm] bg-white p-5 shadow-lg rounded-sm">
                 <OfficialBmrSheet rows={printRows} estimates={estimates} meta={bmrMeta} />
               </div>
             </div>

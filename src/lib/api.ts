@@ -19,6 +19,30 @@ export function isStaticFallbackMode(): boolean {
   return staticFallbackActive;
 }
 
+const ACTIVE_PROJECT_KEY = 'samaan_active_project_v1';
+
+export function getActiveProjectId(): string {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const val = (localStorage.getItem(ACTIVE_PROJECT_KEY) || '').trim();
+      if (val) return val;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 'default';
+}
+
+export function setActiveProjectId(projectId: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(ACTIVE_PROJECT_KEY, (projectId || 'default').trim() || 'default');
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 function getActiveLang(): 'fa' | 'en' {
   try {
     if (typeof document !== 'undefined' && document.documentElement.lang === 'en') {
@@ -40,11 +64,13 @@ function getActiveLang(): 'fa' | 'en' {
 async function runFallback<T>(url: string, options: RequestInit): Promise<T> {
   staticFallbackActive = true;
   const lang = getActiveLang();
+  const projectId = getActiveProjectId();
   try {
     return await handleStaticApiRequest<T>(url, {
       ...options,
       headers: {
         'X-Samaan-Lang': lang,
+        'X-Samaan-Project': projectId,
         ...((options.headers as Record<string, string>) || {}),
       },
     });
@@ -67,6 +93,7 @@ export async function apiRequest<T>(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Samaan-Lang': getActiveLang(),
+    'X-Samaan-Project': getActiveProjectId(),
     ...((options.headers as Record<string, string>) || {}),
   };
 

@@ -6,6 +6,7 @@ const STORE_NAME = 'snapshots';
 
 export interface LocalBackupSnapshotRecord {
   id: string;
+  projectId?: string;
   createdAt: string;
   label: string;
   trigger: 'auto' | 'manual';
@@ -36,11 +37,14 @@ export async function saveSnapshotToIndexedDb(
   snapshot: DatabaseSnapshot,
   trigger: 'auto' | 'manual',
   label: string,
+  projectId = 'default',
 ): Promise<LocalBackupSnapshotRecord> {
+  const cleanProjectId = (projectId || 'default').trim() || 'default';
   const db = await openBackupDb();
   const serialized = JSON.stringify(snapshot);
   const record: LocalBackupSnapshotRecord = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    projectId: cleanProjectId,
     createdAt: new Date().toISOString(),
     label,
     trigger,
@@ -61,10 +65,10 @@ export async function saveSnapshotToIndexedDb(
     tx.onerror = () => reject(tx.error);
   });
 
-  // Retain at most 12 latest snapshots so IndexedDB stays fast and bounded
-  const all = await listIndexedDbSnapshots();
-  if (all.length > 12) {
-    const toDelete = all.slice(12);
+  // Retain at most 12 latest snapshots per project so IndexedDB stays fast and bounded
+  const projectList = await listIndexedDbSnapshots(cleanProjectId);
+  if (projectList.length > 12) {
+    const toDelete = projectList.slice(12);
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const st = tx.objectStore(STORE_NAME);
@@ -80,7 +84,7 @@ export async function saveSnapshotToIndexedDb(
   return record;
 }
 
-export async function listIndexedDbSnapshots(): Promise<LocalBackupSnapshotRecord[]> {
+export async function listIndexedDbSnapshots(projectId?: string): Promise<LocalBackupSnapshotRecord[]> {
   const db = await openBackupDb();
   const rows = await new Promise<LocalBackupSnapshotRecord[]>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
@@ -90,7 +94,10 @@ export async function listIndexedDbSnapshots(): Promise<LocalBackupSnapshotRecor
     req.onerror = () => reject(req.error);
   });
   db.close();
-  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const filtered = projectId
+    ? rows.filter((r) => (r.projectId || 'default') === projectId)
+    : rows;
+  return filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function deleteIndexedDbSnapshot(id: string): Promise<void> {

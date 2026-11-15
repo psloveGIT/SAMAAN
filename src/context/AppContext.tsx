@@ -1,12 +1,17 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { apiRequest } from '../lib/api.ts';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { apiRequest, getActiveProjectId, setActiveProjectId as persistActiveProjectId } from '../lib/api.ts';
 import { saveSnapshotToIndexedDb } from '../lib/indexedDbBackup.ts';
+import { resolveEmployerProfile } from '../shared/employers.ts';
+import type { ResolvedEmployerProfile } from '../shared/employers.ts';
 import { formatIsoDate, formatTimestampByCalendar } from '../shared/jalali.ts';
 import { getTranslations } from '../shared/i18n.ts';
 import type {
   CalendarMode,
   DatabaseSnapshot,
+  EmployerCustomConfig,
+  EmployerId,
   Language,
+  ProjectInfo,
   ThemeMode,
   UserAccount,
   UserPreferences,
@@ -49,6 +54,30 @@ interface AppContextValue {
   loadingAuth: boolean;
   prefs: UserPreferences;
   t: ReturnType<typeof getTranslations>;
+  projects: ProjectInfo[];
+  activeProjectId: string;
+  activeProject: ProjectInfo | null;
+  activeEmployer: ResolvedEmployerProfile;
+  refreshProjects: () => Promise<void>;
+  switchProject: (projectId: string) => Promise<void>;
+  createProject: (input: {
+    name: string;
+    code?: string;
+    employerId?: EmployerId;
+    employerConfig?: EmployerCustomConfig;
+    copyUsers?: boolean;
+    autoSwitch?: boolean;
+  }) => Promise<ProjectInfo>;
+  renameProject: (
+    id: string,
+    input: {
+      name?: string;
+      code?: string;
+      employerId?: EmployerId;
+      employerConfig?: EmployerCustomConfig;
+    },
+  ) => Promise<ProjectInfo>;
+  deleteProject: (id: string) => Promise<void>;
   setLanguage: (lang: Language) => void;
   setCalendar: (cal: CalendarMode) => void;
   setTheme: (theme: ThemeMode) => void;
@@ -72,6 +101,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [prefs, setPrefs] = useState<UserPreferences>(readStoredPrefs);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [activeProjectId, setActiveProjectIdState] = useState<string>(() => getActiveProjectId());
 
   const applyDocumentPrefs = useCallback((p: UserPreferences) => {
     const root = document.documentElement;
@@ -102,16 +133,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToasts((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const refreshProjects = useCallback(async () => {
+    try {
+      const res = await apiRequest<{ projects: ProjectInfo[]; activeProjectId: string }>('/api/projects');
+      setProjects(res.projects || []);
+      const resolved = res.activeProjectId || 'default';
+      persistActiveProjectId(resolved);
+      setActiveProjectIdState(resolved);
+    } catch {
+      // Ignore initial project fetch error
+    }
+  }, []);
+
   const refreshAuth = useCallback(async () => {
     setLoadingAuth(true);
     try {
-      const data = await apiRequest<{ needsSetup: boolean; user: UserAccount | null }>(
-        '/api/auth/status',
-      );
+      const [projRes, data] = await Promise.all([
+        apiRequest<{ projects: ProjectInfo[]; activeProjectId: string }>('/api/projects').catch(() => null),
+        apiRequest<{ needsSetup: boolean; user: UserAccount | null }>('/api/auth/status'),
+      ]);
+      if (projRes) {
+        setProjects(projRes.projects || []);
+        const resolved = projRes.activeProjectId || 'default';
+        persistActiveProjectId(resolved);
+        setActiveProjectIdState(resolved);
+      }
       setNeedsSetup(data.needsSetup);
       setUser(data.user);
       if (data.user?.preferences) {
-        // Sync user-saved preferences when signing in if localStorage wasn't explicitly changed
         const stored = localStorage.getItem(PREFS_STORAGE_KEY);
         if (!stored) {
           setPrefs(data.user.preferences);
@@ -127,6 +176,90 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     refreshAuth();
   }, [refreshAuth]);
+
+  const switchProject = useCallback(
+    async (projectId: string) => {
+      const target = (projectId || 'default').trim() || 'default';
+      persistActiveProjectId(target);
+      setActiveProjectIdState(target);
+      await refreshAuth();
+    },
+    [refreshAuth],
+  );
+
+  const createProject = useCallback(
+    async (input: {
+      name: string;
+      code?: string;
+      employerId?: EmployerId;
+      employerConfig?: EmployerCustomConfig;
+      copyUsers?: boolean;
+      autoSwitch?: boolean;
+    }) => {
+      const res = await apiRequest<{ project: ProjectInfo; projects: ProjectInfo[] }>('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          code: input.code,
+          employerId: input.employerId,
+          employerConfig: input.employerConfig,
+          copyUsers: Boolean(input.copyUsers),
+        }),
+      });
+      setProjects(res.projects || []);
+      if (input.autoSwitch !== false) {
+        await switchProject(res.project.id);
+      }
+      return res.project;
+    },
+    [switchProject],
+  );
+
+  const renameProject = useCallback(
+    async (
+      id: string,
+      input: {
+        name?: string;
+        code?: string;
+        employerId?: EmployerId;
+        employerConfig?: EmployerCustomConfig;
+      },
+    ) => {
+      const res = await apiRequest<{ project: ProjectInfo; projects: ProjectInfo[] }>(
+        `/api/projects/${encodeURIComponent(id)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(input),
+        },
+      );
+      setProjects(res.projects || []);
+      return res.project;
+    },
+    [],
+  );
+
+  const deleteProject = useCallback(
+    async (id: string) => {
+      const res = await apiRequest<{ ok: boolean; projects: ProjectInfo[] }>(
+        `/api/projects/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+        },
+      );
+      setProjects(res.projects || []);
+      if (activeProjectId === id) {
+        await switchProject('default');
+      }
+    },
+    [activeProjectId, switchProject],
+  );
+
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === activeProjectId) || projects[0] || null,
+    [projects, activeProjectId],
+  );
+
+  const activeEmployer = useMemo(() => resolveEmployerProfile(activeProject), [activeProject]);
 
   const updatePrefs = useCallback(
     (patch: Partial<UserPreferences>) => {
@@ -180,12 +313,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!user) return;
       try {
         const snapshot = await apiRequest<DatabaseSnapshot>('/api/backup/snapshot');
-        await saveSnapshotToIndexedDb(snapshot, 'auto', label);
+        await saveSnapshotToIndexedDb(snapshot, 'auto', label, activeProjectId);
       } catch {
         // Silent background snapshot
       }
     },
-    [user],
+    [user, activeProjectId],
   );
 
   // Automatic periodic IndexedDB snapshot every 10 minutes while signed in
@@ -209,6 +342,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         loadingAuth,
         prefs,
         t,
+        projects,
+        activeProjectId,
+        activeProject,
+        activeEmployer,
+        refreshProjects,
+        switchProject,
+        createProject,
+        renameProject,
+        deleteProject,
         setLanguage,
         setCalendar,
         setTheme,

@@ -14,9 +14,10 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
 import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -96,6 +97,10 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
   generalEntries,
   formatDate,
 }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '02-03');
+  const displayProjectName = record.projectName?.trim() || activeProject?.name || '..................';
+
   const resolvedItems = useMemo(() => {
     if (record.items && record.items.length > 0) return record.items;
     return buildOpiItemsForPackings(record.packingNos || [], detailedItems, generalEntries);
@@ -111,6 +116,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
   return (
     <div
       dir="rtl"
+      className="samaan-a4-portrait"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -147,11 +153,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
                 textAlign: 'center',
               }}
             >
-              <img
-                src={MD1_STACKED_LOGO}
-                alt="گروه مپنا - توسعه یک"
-                style={{ height: '56px', width: 'auto', objectFit: 'contain', display: 'block' }}
-              />
+              <EmployerFormLogo employer={activeEmployer} height={56} />
               <div
                 style={{
                   fontSize: '7.5px',
@@ -161,7 +163,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
                   whiteSpace: 'nowrap',
                 }}
               >
-                مستندات سیستم مدیریت یکپارچه
+                {activeEmployer.imsSubtitle}
               </div>
             </div>
 
@@ -173,10 +175,10 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
               }}
             >
               <div style={{ fontSize: '12px', fontWeight: 700 }}>
-                شرکت احداث و توسعه نیروگاه های مپنا – توسعه یک (MD1)
+                {activeEmployer.companyFullName}
               </div>
               <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-                پروژه {record.projectName?.trim() || '..................'}
+                پروژه {displayProjectName}
               </div>
               <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '2px' }}>
                 دعوتنامه گشایش و بازرسی بسته ها
@@ -290,21 +292,21 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
         {/* Items Table (LTR column order matching PDF: Item No., Packing List No., Package No., شرح کالا, واحد (UOM), توضیحات) */}
         <table
           dir="ltr"
+          className="samaan-dynamic-table"
           style={{
             width: '100%',
             borderCollapse: 'collapse',
             fontSize: '9.5px',
-            tableLayout: 'fixed',
           }}
         >
           <thead>
             <tr>
               <th
+                className="samaan-col-compact"
                 style={{
-                  width: '7%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
-                  padding: '5px 3px',
+                  padding: '5px 4px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -314,11 +316,11 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
                 No.
               </th>
               <th
+                className="samaan-col-code"
                 style={{
-                  width: '15%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
-                  padding: '5px 4px',
+                  padding: '5px 5px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -328,11 +330,11 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
                 No.
               </th>
               <th
+                className="samaan-col-code"
                 style={{
-                  width: '13%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
-                  padding: '5px 4px',
+                  padding: '5px 5px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -343,8 +345,8 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
               </th>
               <th
                 dir="rtl"
+                className="samaan-col-fluid"
                 style={{
-                  width: '35%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
                   padding: '5px 6px',
@@ -355,11 +357,11 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
               </th>
               <th
                 dir="rtl"
+                className="samaan-col-compact"
                 style={{
-                  width: '9%',
                   borderBottom: '1px solid #000000',
                   borderRight: '1px solid #000000',
-                  padding: '5px 3px',
+                  padding: '5px 4px',
                   fontWeight: 700,
                   lineHeight: 1.35,
                 }}
@@ -370,8 +372,8 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
               </th>
               <th
                 dir="rtl"
+                className="samaan-col-fluid"
                 style={{
-                  width: '21%',
                   borderBottom: '1px solid #000000',
                   padding: '5px 6px',
                   fontWeight: 700,
@@ -383,68 +385,65 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
           </thead>
           <tbody>
             {paddedRows.map((row, idx) => (
-              <tr key={idx} style={{ height: '27px' }}>
+              <tr key={idx}>
                 <td
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-compact"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 3px',
+                    padding: '4px 4px',
                   }}
                 >
-                  {row?.itemNo || ''}
+                  {row?.itemNo || '\u00A0'}
                 </td>
                 <td
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-code"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 4px',
-                    wordBreak: 'break-word',
+                    padding: '4px 5px',
                   }}
                 >
                   {row?.packingListNo || ''}
                 </td>
                 <td
-                  className="tabular-nums"
+                  className="tabular-nums samaan-col-code"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 4px',
-                    wordBreak: 'break-word',
+                    padding: '4px 5px',
                   }}
                 >
                   {row?.packageNo || ''}
                 </td>
                 <td
                   dir="auto"
-                  className="bidi-plaintext"
+                  className="bidi-plaintext samaan-col-fluid"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 5px',
-                    wordBreak: 'break-word',
+                    padding: '4px 6px',
                   }}
                 >
                   {row?.description || ''}
                 </td>
                 <td
                   dir="auto"
+                  className="samaan-col-compact"
                   style={{
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
-                    padding: '3px 3px',
+                    padding: '4px 4px',
                   }}
                 >
                   {row?.uom || ''}
                 </td>
                 <td
                   dir="auto"
-                  className="bidi-plaintext"
+                  className="bidi-plaintext samaan-col-fluid"
                   style={{
                     borderBottom: '1px solid #000000',
-                    padding: '3px 5px',
-                    wordBreak: 'break-word',
+                    padding: '4px 6px',
                   }}
                 >
                   {row?.remarks || ''}
@@ -525,7 +524,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
       </div>
 
       {/* Separate Lower Approval Frame */}
-      <div style={{ border: '1.8px solid #000000', marginTop: '14px' }}>
+      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '14px' }}>
         <div
           style={{
             backgroundColor: '#e5e7eb',
@@ -590,7 +589,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>تامین تجهیزات توسعه یک:</div>
+              <div style={{ fontWeight: 700 }}>{activeEmployer.equipmentSupplyLabel}:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }}>{record.equipmentSupply || ''}</div>
@@ -635,9 +634,11 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
           }}
         >
           <div>رونوشت : معاونت تأمین تجهیزات ؛ کارفرما، مشاور، تامین کننده</div>
-          <div dir="ltr" className="tabular-nums">
-            MD1EX-FQP02/02-03
-          </div>
+          {formCode && (
+            <div dir="ltr" className="tabular-nums">
+              {formCode}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -667,9 +668,10 @@ interface OpiViewProps {
 }
 
 export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const formCode = getEmployerFormCode(activeEmployer, '02-03');
 
   const [tab, setTab] = useState<'invitation' | 'results'>('invitation');
   const [data, setData] = useState<OpiApiResponse | null>(null);
@@ -681,7 +683,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const [date, setDate] = useState(getTodayIso());
   const [time, setTime] = useState('09:00');
   const [location, setLocation] = useState('');
-  const [projectName, setProjectName] = useState('');
+  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [system, setSystem] = useState('');
   const [island, setIsland] = useState('');
   const [unit, setUnit] = useState('');
@@ -1103,10 +1105,20 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                   -webkit-print-color-adjust: exact;
                   print-color-adjust: exact;
                 }
+                #samaan-opi-print-root table {
+                  width: 100% !important;
+                  table-layout: auto !important;
+                }
+                #samaan-opi-print-root tr {
+                  height: auto !important;
+                  break-inside: avoid;
+                  page-break-inside: avoid;
+                }
                 #samaan-opi-print-root table th,
                 #samaan-opi-print-root table td {
                   text-align: center;
                   vertical-align: middle;
+                  height: auto !important;
                 }
               }
             `}</style>
@@ -1184,9 +1196,11 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                       <span>{t.controls.cancel}</span>
                     </button>
                   )}
-                  <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
-                    MD1EX-FQP02/02-03
-                  </span>
+                  {formCode && (
+                    <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
+                      {formCode}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1532,7 +1546,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'تامین تجهیزات توسعه یک' : 'MD1 Equipment Supply'}
+                    {isFa ? activeEmployer.equipmentSupplyLabel : `${activeEmployer.badgeCode} Equipment Supply`}
                   </label>
                   <input
                     type="text"
@@ -1985,7 +1999,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                   {isFa ? 'دعوتنامه گشایش و بازرسی بسته‌ها (OPI Invitation)' : 'OPI Invitation Preview'}
                 </h3>
                 <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MD1EX-FQP02/02-03 · {printInvitation.invitationNo}
+                  {formCode ? `${formCode} · ` : ''}{printInvitation.invitationNo}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -2008,7 +2022,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
             </div>
 
             <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto max-w-[790px] bg-white p-5 shadow-lg rounded-sm">
+              <div className="mx-auto w-full max-w-[196mm] bg-white p-5 shadow-lg rounded-sm">
                 <OfficialOpiInvitationSheet
                   record={printInvitation}
                   detailedItems={data?.detailedItems || []}

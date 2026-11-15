@@ -94,7 +94,7 @@ export function PrintReportModal<T>({
         @media print {
           @page {
             size: A4 ${orientation};
-            margin: 10mm;
+            margin: 8mm;
           }
           body > *:not(#samaan-print-root) {
             display: none !important;
@@ -104,26 +104,46 @@ export function PrintReportModal<T>({
             background: #ffffff !important;
             color: #111827 !important;
             font-family: 'Vazirmatn', system-ui, sans-serif;
-            font-size: 10px;
-            line-height: 1.4;
+            font-size: 9.5px;
+            line-height: 1.45;
+            width: 100% !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
           }
           #samaan-print-root table {
-            width: 100%;
+            width: 100% !important;
             border-collapse: collapse;
+            table-layout: auto !important;
+          }
+          #samaan-print-root thead {
+            display: table-header-group;
+          }
+          #samaan-print-root tr {
+            height: auto !important;
+            break-inside: avoid;
+            page-break-inside: avoid;
           }
           #samaan-print-root th,
           #samaan-print-root td {
             border: 1px solid #cbd5e1;
-            padding: 4px 6px;
+            padding: 4px 5px;
             text-align: center;
             vertical-align: middle;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             word-break: break-word;
+            height: auto !important;
           }
           #samaan-print-root th {
             background: #f1f5f9 !important;
             font-weight: 700;
+            white-space: nowrap;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
+          }
+          #samaan-print-root td.samaan-print-num {
+            width: 1%;
+            white-space: nowrap;
           }
           #samaan-print-root tr:nth-child(even) td {
             background: #f8fafc !important;
@@ -146,7 +166,7 @@ export function PrintReportModal<T>({
         </div>
       </div>
 
-      <table>
+      <table className="samaan-dynamic-table">
         <thead>
           <tr>
             {activeColumns.map((col) => (
@@ -165,7 +185,15 @@ export function PrintReportModal<T>({
                     : raw === null || raw === undefined || String(raw).trim() === ''
                       ? '—'
                       : String(raw);
-                return <td key={col.key}>{val}</td>;
+                const isCompact = typeof raw === 'number' || Boolean(col.isDate) || val.length <= 16;
+                return (
+                  <td
+                    key={col.key}
+                    className={isCompact ? 'samaan-print-num tabular-nums' : 'bidi-plaintext'}
+                  >
+                    {val}
+                  </td>
+                );
               })}
             </tr>
           ))}

@@ -44,6 +44,8 @@ import type {
   DetailedComputed,
   DetailedEntry,
   DocumentLineItem,
+  EmployerCustomConfig,
+  EmployerId,
   GcvDocumentRecord,
   GeneralEntry,
   Language,
@@ -174,9 +176,11 @@ async function startServer() {
   });
 
   app.post('/api/projects', (req: AuthedRequest, res: Response) => {
-    const { name, code, copyUsers } = req.body as {
+    const { name, code, employerId, employerConfig, copyUsers } = req.body as {
       name?: string;
       code?: string;
+      employerId?: EmployerId;
+      employerConfig?: EmployerCustomConfig;
       copyUsers?: boolean;
     };
     const cleanName = normKey(name);
@@ -192,6 +196,8 @@ async function startServer() {
     const created = projectManager.createProject({
       name: cleanName,
       code,
+      employerId,
+      employerConfig,
       copyUsersFromStore: shouldCopyUsers ? activeProjectStore() : null,
     });
     res.json({ project: created, projects: projectManager.listProjects() });
@@ -202,17 +208,32 @@ async function startServer() {
     const hasUsers = targetStore.db.users.length > 0;
     if (hasUsers && (!req.currentUser || !['admin', 'operator'].includes(req.currentUser.role))) {
       res.status(req.currentUser ? 403 : 401).json({
-        error: errMsg(req, 'دسترسی برای تغییر نام پروژه مجاز نیست', 'Permission denied to rename project'),
+        error: errMsg(req, 'دسترسی برای ویرایش پروژه مجاز نیست', 'Permission denied to update project'),
       });
       return;
     }
-    const { name, code } = req.body as { name?: string; code?: string };
-    const cleanName = normKey(name);
+    const { name, code, employerId, employerConfig } = req.body as {
+      name?: string;
+      code?: string;
+      employerId?: EmployerId;
+      employerConfig?: EmployerCustomConfig;
+    };
+    const existing = projectManager.getProject(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: errMsg(req, 'پروژه یافت نشد', 'Project not found') });
+      return;
+    }
+    const cleanName = name !== undefined ? normKey(name) : existing.name;
     if (!cleanName) {
       res.status(400).json({ error: errMsg(req, 'نام پروژه الزامی است', 'Project name is required') });
       return;
     }
-    const updated = projectManager.renameProject(req.params.id, { name: cleanName, code });
+    const updated = projectManager.renameProject(req.params.id, {
+      name: cleanName,
+      code,
+      employerId,
+      employerConfig,
+    });
     if (!updated) {
       res.status(404).json({ error: errMsg(req, 'پروژه یافت نشد', 'Project not found') });
       return;

@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import { CheckSquare, Eye, Printer, Search, Square, Tag, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { MD1_STACKED_LOGO } from '../lib/assets.ts';
+import { getEmployerFormCode } from '../shared/employers.ts';
 import type { DetailedComputed, GeneralEntry } from '../shared/types.ts';
+import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 
 const LABEL_META_STORAGE_KEY = 'samaan_storage_label_meta_v1';
 
@@ -48,6 +49,10 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
   formatDate,
   compact = false,
 }) => {
+  const { activeEmployer, activeProject } = useApp();
+  const formCode = getEmployerFormCode(activeEmployer, '14-01');
+  const displayProjectName = meta.projectName.trim() || activeProject?.name || '.................';
+
   const genMatch =
     generalEntries.find(
       (g) =>
@@ -114,6 +119,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
   return (
     <div
       dir="ltr"
+      className="samaan-a4-portrait"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -159,10 +165,10 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
               }}
             >
               <div style={{ fontSize: compact ? '10.5px' : '12.5px', fontWeight: 700 }}>
-                شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
+                {activeEmployer.companyFullName}
               </div>
               <div style={{ fontSize: compact ? '10px' : '12px', fontWeight: 700 }}>
-                پروژه {meta.projectName.trim() || '.................'}
+                پروژه {displayProjectName}
               </div>
               <div style={{ fontSize: compact ? '12.5px' : '14.5px', fontWeight: 800, marginTop: '1px' }}>
                 برچسب انبارش کالا
@@ -175,7 +181,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
               </div>
             </div>
 
-            {/* Right: Stacked Persian MAPNA MD1 Logo */}
+            {/* Right: Stacked Employer Logo */}
             <div
               dir="rtl"
               style={{
@@ -186,16 +192,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
                 textAlign: 'center',
               }}
             >
-              <img
-                src={MD1_STACKED_LOGO}
-                alt="گروه مپنا - شرکت توسعه یک"
-                style={{
-                  height: compact ? '44px' : '56px',
-                  width: 'auto',
-                  objectFit: 'contain',
-                  display: 'block',
-                }}
-              />
+              <EmployerFormLogo employer={activeEmployer} height={compact ? 44 : 56} />
               <div
                 style={{
                   fontSize: compact ? '6.5px' : '7.5px',
@@ -205,7 +202,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
                   whiteSpace: 'nowrap',
                 }}
               >
-                مستندات سیستم مدیریت یکپارچه
+                {activeEmployer.imsSubtitle}
               </div>
             </div>
           </div>
@@ -234,7 +231,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
           >
             <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Project:</span>
             <span className="bidi-plaintext" style={{ fontWeight: 600 }}>
-              {meta.projectName.trim()}
+              {meta.projectName.trim() || activeProject?.name || ''}
             </span>
           </div>
           <div
@@ -318,12 +315,14 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
               dir={row.isLtr ? 'ltr' : 'auto'}
               className={row.isLtr ? 'tabular-nums' : 'bidi-plaintext'}
               style={{
-                padding: compact ? '3px 10px' : '5px 10px',
+                padding: compact ? '4px 10px' : '5px 10px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 textAlign: 'center',
                 fontWeight: 600,
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
                 wordBreak: 'break-word',
               }}
             >
@@ -406,7 +405,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
               textAlign: 'left',
             }}
           >
-            MD1EX-FQP02/14-01
+            {formCode || '\u00A0'}
           </div>
           <div style={{ padding: compact ? '3px 8px' : '4px 8px' }} />
         </div>
@@ -415,13 +414,19 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
   );
 };
 
-function loadInitialMeta(): LabelMetaConfig {
+function labelMetaStorageKey(projectId: string): string {
+  return projectId === 'default'
+    ? LABEL_META_STORAGE_KEY
+    : `${LABEL_META_STORAGE_KEY}_${projectId}`;
+}
+
+function loadInitialMeta(projectId: string, fallbackProjectName = ''): LabelMetaConfig {
   try {
-    const raw = localStorage.getItem(LABEL_META_STORAGE_KEY);
+    const raw = localStorage.getItem(labelMetaStorageKey(projectId));
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<LabelMetaConfig>;
       return {
-        projectName: parsed.projectName ?? '',
+        projectName: parsed.projectName ?? fallbackProjectName,
         warehouseName: parsed.warehouseName ?? '',
         drumNumber: parsed.drumNumber ?? '',
         customRemark: parsed.customRemark ?? '',
@@ -431,7 +436,7 @@ function loadInitialMeta(): LabelMetaConfig {
     // ignore storage errors
   }
   return {
-    projectName: '',
+    projectName: fallbackProjectName,
     warehouseName: '',
     drumNumber: '',
     customRemark: '',
@@ -439,8 +444,9 @@ function loadInitialMeta(): LabelMetaConfig {
 }
 
 export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSignal }) => {
-  const { prefs, t, notify, formatDate } = useApp();
+  const { prefs, t, notify, formatDate, activeProjectId, activeProject, activeEmployer } = useApp();
   const isFa = prefs.language === 'fa';
+  const formCode = getEmployerFormCode(activeEmployer, '14-01');
 
   const [q, setQ] = useState('');
   const [shipmentFilter, setShipmentFilter] = useState('');
@@ -452,15 +458,21 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
   const [labelsPerPage, setLabelsPerPage] = useState<1 | 2>(1);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
 
-  const [meta, setMeta] = useState<LabelMetaConfig>(loadInitialMeta);
+  const [meta, setMeta] = useState<LabelMetaConfig>(() =>
+    loadInitialMeta(activeProjectId, activeProject?.name || ''),
+  );
+
+  useEffect(() => {
+    setMeta(loadInitialMeta(activeProjectId, activeProject?.name || ''));
+  }, [activeProjectId, activeProject?.name]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(LABEL_META_STORAGE_KEY, JSON.stringify(meta));
+      localStorage.setItem(labelMetaStorageKey(activeProjectId), JSON.stringify(meta));
     } catch {
       // ignore storage errors
     }
-  }, [meta]);
+  }, [meta, activeProjectId]);
 
   const [fields, setFields] = useState<LabelFieldToggles>({
     shipmentNo: true,
@@ -578,7 +590,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
               @media print {
                 @page {
                   size: A4 portrait;
-                  margin: 9mm;
+                  margin: 8mm;
                 }
                 body > *:not(#samaan-label-print-root) {
                   display: none !important;
@@ -587,12 +599,13 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
                   display: block !important;
                   background: #ffffff !important;
                   color: #000000 !important;
+                  width: 100% !important;
                   font-family: 'Vazirmatn', 'Plus Jakarta Sans', Tahoma, sans-serif;
                 }
                 .samaan-label-page {
                   display: flex;
                   flex-direction: column;
-                  gap: 8mm;
+                  gap: 6mm;
                   page-break-after: always;
                   break-after: page;
                 }
@@ -649,9 +662,11 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
           <div className="flex items-center gap-2 text-sm font-bold">
             <Tag className="w-4 h-4 text-[var(--accent-primary)]" />
             <span>{t.nav.storageLabel}</span>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-              (MD1EX-FQP02/14-01)
-            </span>
+            {formCode && (
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                ({formCode})
+              </span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -907,7 +922,9 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
           <h3 className="text-xs font-bold text-[var(--text-secondary)]">
             {selectedItems.length > 0
               ? isFa
-                ? 'پیش‌نمایش برچسب‌های رسمی انتخاب‌شده (MD1EX-FQP02/14-01)'
+                ? formCode
+                  ? `پیش‌نمایش برچسب‌های رسمی انتخاب‌شده (${formCode})`
+                  : 'پیش‌نمایش برچسب‌های رسمی انتخاب‌شده'
                 : 'Selected Official Storage Labels Preview'
               : isFa
               ? 'پیش‌نمایش نمونه برچسب رسمی انبارش کالا (جهت چاپ موارد موردنظر را تیک بزنید)'
@@ -969,8 +986,8 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
               {printPages.map((pageItems, pageIdx) => (
                 <div
                   key={pageIdx}
-                  className="mx-auto bg-white text-black shadow-lg p-6 space-y-5"
-                  style={{ maxWidth: '794px' }}
+                  className="mx-auto w-full bg-white text-black shadow-lg p-6 space-y-5"
+                  style={{ maxWidth: '196mm' }}
                 >
                   {pageItems.map((item) => (
                     <OfficialStorageLabelSheet
