@@ -4,7 +4,6 @@ import { AuthGate } from './components/AuthGate.tsx';
 import { BackupView } from './components/BackupView.tsx';
 import { BalanceView } from './components/BalanceView.tsx';
 import { CategoryManagerView } from './components/CategoryManagerView.tsx';
-import { CsvImportView } from './components/CsvImportView.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
 import { DetailedView } from './components/DetailedView.tsx';
 import { GcvView } from './components/GcvView.tsx';
@@ -227,8 +226,6 @@ const SamaanWorkspace: React.FC = () => {
           {activeTab === 'trash' && (
             <TrashView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
           )}
-
-          {activeTab === 'importCsv' && <CsvImportView onImportDone={bumpRefresh} />}
 
           {activeTab === 'usersAudit' && <UsersAuditView />}
 

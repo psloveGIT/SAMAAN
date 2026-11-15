@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Lock,
   Plus,
+  Sparkles,
   Trash2,
   Truck,
   X,
@@ -14,7 +15,21 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { CategoryStore, TransitEntry } from '../shared/types.ts';
+import {
+  formatThousands,
+  hasEnglishLetters,
+  hasPersianLetters,
+  isValidDecimalNumber,
+  isValidDigitsOnly,
+  PACKAGE_TYPE_OPTIONS_EN,
+  PACKAGE_TYPE_OPTIONS_FA,
+  parseNumericInput,
+  sanitizeDecimalOnly,
+  sanitizeDigitsOnly,
+} from '../shared/validation.ts';
+import { IranianPlateInput } from './IranianPlateInput.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { type GeneralAiExtractionResult, SmartIntakeModal } from './SmartIntakeModal.tsx';
 
 interface PackageLineDraft {
   id: string;
@@ -76,13 +91,6 @@ function createEmptyLine(prefill?: TransitEntry | null): PackageLineDraft {
   };
 }
 
-function toOptionalNum(s: string): number | null {
-  const cleaned = s.replace(/,/g, '').trim();
-  if (!cleaned) return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
-
 export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
   open,
   onClose,
@@ -117,6 +125,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
   const [mapnaDuplicateError, setMapnaDuplicateError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+  const [smartOpen, setSmartOpen] = useState(false);
 
   // Post-save "Go to Detailed?" prompt
   const [savedNavigationPrompt, setSavedNavigationPrompt] = useState<{
@@ -132,6 +141,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     setSavedNavigationPrompt(null);
     setIsContinuation(Boolean(prefillPackingNo));
     setAcknowledgeClosed(false);
+    setSmartOpen(false);
 
     const pkInit = prefillFromTransit?.packingListNo || prefillPackingNo || '';
     const arrInit = prefillFromTransit?.arrivalDate || getTodayIso();
@@ -147,7 +157,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     setBillOfLadingNo(prefillFromTransit?.billOfLadingNo || '');
     setVehicleNo('');
     setWeighbridgeWeight('');
-    setFreightCost(prefillFromTransit?.amount ? String(prefillFromTransit.amount) : '');
+    setFreightCost(
+      prefillFromTransit?.amount !== null && prefillFromTransit?.amount !== undefined
+        ? formatThousands(prefillFromTransit.amount, isFa)
+        : '',
+    );
     setDriverName('');
     setLines([createEmptyLine(prefillFromTransit)]);
 
@@ -156,7 +170,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     )
       .then((res) => setCheckInfo(res))
       .catch(() => {});
-  }, [open, prefillFromTransit, prefillPackingNo]);
+  }, [open, prefillFromTransit, prefillPackingNo, isFa]);
 
   // Auto-sync releaseDate to arrivalDate whenever Release Note is empty
   useEffect(() => {
@@ -214,6 +228,68 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     setLines((prev) => prev.filter((l) => l.id !== id));
   };
 
+  const handleApplySmartGeneral = (result: GeneralAiExtractionResult) => {
+    const h = result.header || {};
+    if (h.packingListNo) setPackingListNo(h.packingListNo);
+    if (h.arrivalDate) setArrivalDate(h.arrivalDate);
+    if (h.releaseNo !== undefined && h.releaseNo) setReleaseNo(h.releaseNo);
+    if (h.releaseDate) setReleaseDate(h.releaseDate);
+    if (h.supplier) setSupplier(h.supplier);
+    if (h.dispatchLocation) setDispatchLocation(h.dispatchLocation);
+    if (h.employerEntryMinutesNo) setEmployerEntryMinutesNo(sanitizeDigitsOnly(h.employerEntryMinutesNo));
+    if (h.mapnaEntryMinutesNo) setMapnaEntryMinutesNo(h.mapnaEntryMinutesNo);
+    if (h.billOfLadingNo) setBillOfLadingNo(h.billOfLadingNo);
+    if (h.vehicleNo) setVehicleNo(h.vehicleNo);
+    if (h.weighbridgeWeight !== undefined && h.weighbridgeWeight !== null) {
+      setWeighbridgeWeight(sanitizeDecimalOnly(String(h.weighbridgeWeight)));
+    }
+    if (h.freightCost !== undefined && h.freightCost !== null) {
+      setFreightCost(formatThousands(h.freightCost, isFa));
+    }
+    if (h.driverName) setDriverName(h.driverName);
+
+    if (result.packages && result.packages.length > 0) {
+      setLines(
+        result.packages.map((p) => {
+          let pkgType = (p.packageType || '').trim();
+          if (isFa && hasEnglishLetters(pkgType)) pkgType = pkgType.replace(/[A-Za-z]/g, '').trim();
+          if (!isFa && hasPersianLetters(pkgType)) pkgType = pkgType.replace(/[\u0600-\u06FF]/g, '').trim();
+          return {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            packageNo: (p.packageNo || '').trim(),
+            packageType: pkgType,
+            itemCount: p.itemCount ? sanitizeDigitsOnly(String(p.itemCount)) : '',
+            itemDescription: (p.itemDescription || '').trim(),
+            island: h.island || '',
+            system: h.system || '',
+            subSystem: h.subSystem || '',
+            unit: h.unit || '',
+            grossWeight: p.grossWeight !== undefined && p.grossWeight !== null ? sanitizeDecimalOnly(String(p.grossWeight)) : '',
+            netWeight: p.netWeight !== undefined && p.netWeight !== null ? sanitizeDecimalOnly(String(p.netWeight)) : '',
+            lengthCm: p.lengthCm !== undefined && p.lengthCm !== null ? sanitizeDecimalOnly(String(p.lengthCm)) : '',
+            widthCm: p.widthCm !== undefined && p.widthCm !== null ? sanitizeDecimalOnly(String(p.widthCm)) : '',
+            heightCm: p.heightCm !== undefined && p.heightCm !== null ? sanitizeDecimalOnly(String(p.heightCm)) : '',
+          };
+        }),
+      );
+    }
+  };
+
+  const handlePackageTypeChange = (lineId: string, raw: string) => {
+    if (isFa && hasEnglishLetters(raw)) {
+      setFormError(
+        'در حالت زبان فارسی، فیلد نوع بسته‌بندی فقط باید به زبان فارسی نوشته شود.',
+      );
+      return;
+    }
+    if (!isFa && hasPersianLetters(raw)) {
+      setFormError('In English mode, Package Type must be entered in English only.');
+      return;
+    }
+    setFormError('');
+    updateLine(lineId, { packageType: raw });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
@@ -221,6 +297,26 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     const pk = packingListNo.trim();
     if (!pk) {
       setFormError(isFa ? 'شماره پکینگ لیست الزامی است.' : 'Packing List No. is required.');
+      return;
+    }
+    if (!supplier.trim()) {
+      setFormError(isFa ? 'فیلد تامین‌کننده نمی‌تواند خالی بماند.' : 'Supplier is required.');
+      return;
+    }
+    if (!dispatchLocation.trim()) {
+      setFormError(isFa ? 'فیلد محل ارسال نمی‌تواند خالی بماند.' : 'Dispatch Location is required.');
+      return;
+    }
+    if (employerEntryMinutesNo.trim() && !isValidDigitsOnly(employerEntryMinutesNo)) {
+      setFormError(isFa ? 'شماره صورتجلسه ورود کارفرما فقط باید عدد باشد.' : 'Employer Entry Minutes No. must be digits only.');
+      return;
+    }
+    if (weighbridgeWeight.trim() && !isValidDecimalNumber(weighbridgeWeight)) {
+      setFormError(isFa ? 'وزن باسکول سایت / بارنامه فقط باید عدد باشد.' : 'Weighbridge weight must be numeric.');
+      return;
+    }
+    if (freightCost.trim() && parseNumericInput(freightCost) === null) {
+      setFormError(isFa ? 'مبلغ کرایه حمل فقط باید عدد باشد.' : 'Freight cost must be numeric.');
       return;
     }
 
@@ -243,6 +339,59 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
       return;
     }
 
+    for (let idx = 0; idx < lines.length; idx++) {
+      const l = lines[idx];
+      const rowLabel = isFa ? `نگله #${(idx + 1).toLocaleString('fa-IR')}` : `Package #${idx + 1}`;
+      if (!l.packageNo.trim()) {
+        setFormError(isFa ? `شماره نگله در ${rowLabel} نمی‌تواند خالی بماند.` : `Package No. in ${rowLabel} is required.`);
+        return;
+      }
+      if (!l.packageType.trim()) {
+        setFormError(isFa ? `نوع بسته‌بندی در ${rowLabel} نمی‌تواند خالی بماند.` : `Package Type in ${rowLabel} is required.`);
+        return;
+      }
+      if (isFa && hasEnglishLetters(l.packageType)) {
+        setFormError(isFa ? `نوع بسته‌بندی در ${rowLabel} در زبان فارسی فقط باید فارسی باشد.` : `Package Type must be Persian.`);
+        return;
+      }
+      if (!isFa && hasPersianLetters(l.packageType)) {
+        setFormError(`Package Type in ${rowLabel} must be in English only.`);
+        return;
+      }
+      const cnt = parseNumericInput(l.itemCount);
+      if (cnt === null || cnt < 1 || !Number.isInteger(cnt)) {
+        setFormError(isFa ? `تعداد اقلام نگله در ${rowLabel} الزامی و باید عدد صحیح مثبت باشد.` : `Item count in ${rowLabel} must be a positive integer.`);
+        return;
+      }
+      if (!l.itemDescription.trim()) {
+        setFormError(isFa ? `شرح کالا در ${rowLabel} نمی‌تواند خالی بماند.` : `Item Description in ${rowLabel} is required.`);
+        return;
+      }
+      if (!l.island.trim() || !l.system.trim() || !l.subSystem.trim() || !l.unit.trim()) {
+        setFormError(
+          isFa
+            ? `فیلدهای جزیره، سیستم، ساب‌سیستم و واحد در ${rowLabel} نمی‌توانند خالی بمانند.`
+            : `Island, System, Sub-System, and Unit in ${rowLabel} cannot be empty.`,
+        );
+        return;
+      }
+      if (
+        (l.grossWeight.trim() && !isValidDecimalNumber(l.grossWeight)) ||
+        (l.netWeight.trim() && !isValidDecimalNumber(l.netWeight))
+      ) {
+        setFormError(isFa ? `وزن پکینگ ناخالص و خالص در ${rowLabel} فقط باید عدد باشد.` : `Gross/Net weights in ${rowLabel} must be numeric.`);
+        return;
+      }
+      if (
+        (l.lengthCm.trim() && !isValidDecimalNumber(l.lengthCm)) ||
+        (l.widthCm.trim() && !isValidDecimalNumber(l.widthCm)) ||
+        (l.heightCm.trim() && !isValidDecimalNumber(l.heightCm))
+      ) {
+        setFormError(isFa ? `طول، عرض و ارتفاع در ${rowLabel} فقط باید عدد (به متر) باشد.` : `Length, width, and height in ${rowLabel} must be numeric (meters).`);
+        return;
+      }
+    }
+
     if (isContinuation && existingGeneralPackages.length > 0) {
       for (const l of lines) {
         const pkg = l.packageNo.trim();
@@ -260,29 +409,29 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
         arrivalDate,
         releaseNo: releaseNo.trim(),
         releaseDate: effectiveReleaseDate,
-        supplier,
-        dispatchLocation,
-        employerEntryMinutesNo,
+        supplier: supplier.trim(),
+        dispatchLocation: dispatchLocation.trim(),
+        employerEntryMinutesNo: sanitizeDigitsOnly(employerEntryMinutesNo),
         mapnaEntryMinutesNo: mapnaEntryMinutesNo.trim(),
         packingListNo: pk,
         packageNo: l.packageNo.trim(),
         packageType: l.packageType.trim(),
-        itemCount: toOptionalNum(l.itemCount),
+        itemCount: parseNumericInput(l.itemCount),
         itemDescription: l.itemDescription.trim(),
         island: l.island.trim(),
         system: l.system.trim(),
         subSystem: l.subSystem.trim(),
         unit: l.unit.trim(),
-        grossWeight: toOptionalNum(l.grossWeight),
-        netWeight: toOptionalNum(l.netWeight),
-        lengthCm: toOptionalNum(l.lengthCm),
-        widthCm: toOptionalNum(l.widthCm),
-        heightCm: toOptionalNum(l.heightCm),
-        billOfLadingNo,
-        vehicleNo,
-        weighbridgeWeight: toOptionalNum(weighbridgeWeight),
-        freightCost: toOptionalNum(freightCost),
-        driverName,
+        grossWeight: parseNumericInput(l.grossWeight),
+        netWeight: parseNumericInput(l.netWeight),
+        lengthCm: parseNumericInput(l.lengthCm),
+        widthCm: parseNumericInput(l.widthCm),
+        heightCm: parseNumericInput(l.heightCm),
+        billOfLadingNo: billOfLadingNo.trim(),
+        vehicleNo: vehicleNo.trim(),
+        weighbridgeWeight: parseNumericInput(weighbridgeWeight),
+        freightCost: parseNumericInput(freightCost),
+        driverName: driverName.trim(),
       }));
 
       const res = await apiRequest<{ transitUpdated: number }>('/api/general/batch', {
@@ -324,26 +473,33 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     }
   };
 
+  const packageTypeOptions = isFa ? PACKAGE_TYPE_OPTIONS_FA : PACKAGE_TYPE_OPTIONS_EN;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-5xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xl max-h-[92vh] flex flex-col">
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between gap-4 shrink-0">
-          <div>
-            <h3 className="text-base font-bold">{t.packing.wizardTitle}</h3>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              {isFa
-                ? 'ثبت کلی تجهیزات (جنرال) همراه با شماره‌گذاری خودکار ردیف (۱ تا N) و انتقال مشخصات مشترک به جزئیات تجهیزات'
-                : 'General Equipment registration with auto row numbering (1..N) and shared metadata sync to Detailed Equipment'}
-            </p>
+          <h3 className="text-base font-bold">{t.packing.wizardTitle}</h3>
+          <div className="flex items-center gap-2">
+            {!savedNavigationPrompt && (
+              <button
+                type="button"
+                onClick={() => setSmartOpen(true)}
+                className="h-9 px-3 rounded-lg border border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-90 text-xs font-semibold flex items-center gap-1.5"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{isFa ? 'ثبت خودکار (فایل / اسکن / صدا)' : 'Auto Intake (File / Scan / Voice)'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
-          >
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
         {/* Post-Save Navigation Prompt ("Go to Detailed?") */}
@@ -514,7 +670,6 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                     dir={isFa && !packingListNo ? 'rtl' : 'ltr'}
                     value={packingListNo}
                     onChange={(e) => setPackingListNo(e.target.value)}
-                    placeholder="8000001604"
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !packingListNo ? 'text-right' : 'text-left'
                     }`}
@@ -529,10 +684,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                 <div>
                   <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                    {t.headers.supplier}
+                    {t.headers.supplier} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="samaan-suppliers"
                     value={supplier}
@@ -543,10 +699,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                 <div>
                   <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                    {t.headers.dispatchLocation}
+                    {t.headers.dispatchLocation} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!dispatchLocation ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="samaan-dispatch"
                     value={dispatchLocation}
@@ -561,9 +718,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     dir={isFa && !employerEntryMinutesNo ? 'rtl' : 'ltr'}
                     value={employerEntryMinutesNo}
-                    onChange={(e) => setEmployerEntryMinutesNo(e.target.value)}
+                    onChange={(e) => setEmployerEntryMinutesNo(sanitizeDigitsOnly(e.target.value))}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !employerEntryMinutesNo ? 'text-right' : 'text-left'
                     }`}
@@ -638,17 +796,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   />
                 </div>
 
-                <div>
+                <div className="lg:col-span-2">
                   <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
                     {t.headers.vehicleNo}
                   </label>
-                  <input
-                    type="text"
-                    dir={!vehicleNo ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={vehicleNo}
-                    onChange={(e) => setVehicleNo(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
+                  <IranianPlateInput value={vehicleNo} onChange={setVehicleNo} />
                 </div>
 
                 <div>
@@ -657,9 +809,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
+                    inputMode="decimal"
                     dir={isFa && !weighbridgeWeight ? 'rtl' : 'ltr'}
                     value={weighbridgeWeight}
-                    onChange={(e) => setWeighbridgeWeight(e.target.value)}
+                    onChange={(e) => setWeighbridgeWeight(sanitizeDecimalOnly(e.target.value))}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !weighbridgeWeight ? 'text-right' : 'text-left'
                     }`}
@@ -672,13 +825,17 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     dir={isFa && !freightCost ? 'rtl' : 'ltr'}
                     value={freightCost}
-                    onChange={(e) => setFreightCost(e.target.value)}
+                    onChange={(e) => setFreightCost(formatThousands(e.target.value, isFa))}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !freightCost ? 'text-right' : 'text-left'
                     }`}
                   />
+                  <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                    {isFa ? 'تمامی مبالغ وارد شده به ریال می‌باشد' : 'All monetary amounts are in Rials (IRR)'}
+                  </p>
                 </div>
 
                 <div>
@@ -746,7 +903,6 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             dir={isFa && !line.packageNo ? 'rtl' : 'ltr'}
                             value={line.packageNo}
                             onChange={(e) => updateLine(line.id, { packageNo: e.target.value })}
-                            placeholder="1000004794-28"
                             className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                               isFa && !line.packageNo ? 'text-right' : 'text-left'
                             }`}
@@ -755,31 +911,31 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                         <div>
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                            {t.headers.packageType}
+                            {t.headers.packageType} *
                           </label>
                           <input
                             type="text"
+                            required
                             list="samaan-package-types"
-                            dir={!line.packageType ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                            dir={isFa ? 'rtl' : 'ltr'}
                             value={line.packageType}
-                            onChange={(e) => updateLine(line.id, { packageType: e.target.value })}
-                            placeholder={isFa ? 'صندوق چوبی / پالت / کارتن...' : 'Box / Pallet / Crate...'}
+                            onChange={(e) => handlePackageTypeChange(line.id, e.target.value)}
+                            placeholder={isFa ? 'صندوق چوبی / پالت / کارتن...' : 'Wooden Box / Pallet / Crate...'}
                             className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                           />
                         </div>
 
                         <div>
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                            {t.headers.itemCount}
+                            {t.headers.itemCount} *
                           </label>
                           <input
-                            type="number"
-                            min="1"
-                            step="1"
+                            type="text"
+                            required
+                            inputMode="numeric"
                             dir={isFa && !line.itemCount ? 'rtl' : 'ltr'}
                             value={line.itemCount}
-                            onChange={(e) => updateLine(line.id, { itemCount: e.target.value })}
-                            placeholder={isFa ? 'مثلاً ۵' : 'e.g. 5'}
+                            onChange={(e) => updateLine(line.id, { itemCount: sanitizeDigitsOnly(e.target.value) })}
                             className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                               isFa && !line.itemCount ? 'text-right' : 'text-left'
                             }`}
@@ -802,10 +958,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                         <div>
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                            {t.headers.island}
+                            {t.headers.island} *
                           </label>
                           <input
                             type="text"
+                            required
                             dir={!line.island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             list="samaan-islands"
                             value={line.island}
@@ -816,10 +973,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                         <div>
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                            {t.headers.system}
+                            {t.headers.system} *
                           </label>
                           <input
                             type="text"
+                            required
                             dir={!line.system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             list="samaan-systems"
                             value={line.system}
@@ -830,10 +988,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                         <div>
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                            {t.headers.subSystem}
+                            {t.headers.subSystem} *
                           </label>
                           <input
                             type="text"
+                            required
                             dir={!line.subSystem ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             list="samaan-subsystems"
                             value={line.subSystem}
@@ -844,10 +1003,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                         <div>
                           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                            {t.headers.unit}
+                            {t.headers.unit} *
                           </label>
                           <input
                             type="text"
+                            required
                             dir={!line.unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                             list="samaan-units"
                             value={line.unit}
@@ -862,9 +1022,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </label>
                           <input
                             type="text"
+                            inputMode="decimal"
                             dir={isFa && !line.grossWeight ? 'rtl' : 'ltr'}
                             value={line.grossWeight}
-                            onChange={(e) => updateLine(line.id, { grossWeight: e.target.value })}
+                            onChange={(e) => updateLine(line.id, { grossWeight: sanitizeDecimalOnly(e.target.value) })}
                             className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                               isFa && !line.grossWeight ? 'text-right' : 'text-left'
                             }`}
@@ -877,9 +1038,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </label>
                           <input
                             type="text"
+                            inputMode="decimal"
                             dir={isFa && !line.netWeight ? 'rtl' : 'ltr'}
                             value={line.netWeight}
-                            onChange={(e) => updateLine(line.id, { netWeight: e.target.value })}
+                            onChange={(e) => updateLine(line.id, { netWeight: sanitizeDecimalOnly(e.target.value) })}
                             className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                               isFa && !line.netWeight ? 'text-right' : 'text-left'
                             }`}
@@ -893,9 +1055,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             </label>
                             <input
                               type="text"
+                              inputMode="decimal"
                               dir={isFa && !line.lengthCm ? 'rtl' : 'ltr'}
                               value={line.lengthCm}
-                              onChange={(e) => updateLine(line.id, { lengthCm: e.target.value })}
+                              onChange={(e) => updateLine(line.id, { lengthCm: sanitizeDecimalOnly(e.target.value) })}
                               className={`w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums ${
                                 isFa && !line.lengthCm ? 'text-right' : 'text-left'
                               }`}
@@ -907,9 +1070,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             </label>
                             <input
                               type="text"
+                              inputMode="decimal"
                               dir={isFa && !line.widthCm ? 'rtl' : 'ltr'}
                               value={line.widthCm}
-                              onChange={(e) => updateLine(line.id, { widthCm: e.target.value })}
+                              onChange={(e) => updateLine(line.id, { widthCm: sanitizeDecimalOnly(e.target.value) })}
                               className={`w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums ${
                                 isFa && !line.widthCm ? 'text-right' : 'text-left'
                               }`}
@@ -921,9 +1085,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             </label>
                             <input
                               type="text"
+                              inputMode="decimal"
                               dir={isFa && !line.heightCm ? 'rtl' : 'ltr'}
                               value={line.heightCm}
-                              onChange={(e) => updateLine(line.id, { heightCm: e.target.value })}
+                              onChange={(e) => updateLine(line.id, { heightCm: sanitizeDecimalOnly(e.target.value) })}
                               className={`w-full h-9 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums ${
                                 isFa && !line.heightCm ? 'text-right' : 'text-left'
                               }`}
@@ -956,15 +1121,9 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                 {categories.dispatchLocation.map((v) => <option key={v} value={v} />)}
               </datalist>
               <datalist id="samaan-package-types">
-                <option value="صندوق چوبی (Wooden Box)" />
-                <option value="جعبه مشبک (Crate)" />
-                <option value="پالت (Pallet)" />
-                <option value="باندل (Bundle)" />
-                <option value="کارتن (Carton)" />
-                <option value="قرقره / درام (Drum)" />
-                <option value="اسکید (Skid)" />
-                <option value="کانتینر (Container)" />
-                <option value="فله (Loose)" />
+                {packageTypeOptions.map((opt) => (
+                  <option key={opt} value={opt} />
+                ))}
               </datalist>
             </form>
 
@@ -989,6 +1148,13 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
           </>
         )}
       </div>
+
+      <SmartIntakeModal
+        open={smartOpen}
+        target="general"
+        onClose={() => setSmartOpen(false)}
+        onApplyGeneral={handleApplySmartGeneral}
+      />
     </div>
   );
 };

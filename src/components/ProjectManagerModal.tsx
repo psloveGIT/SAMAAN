@@ -179,11 +179,6 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({ open, 
               <h3 className="text-sm font-bold text-[var(--text-primary)]">
                 {isFa ? 'مدیریت پروژه‌ها، کارفرمایان و فرم‌های اختصاصی' : 'Manage Projects, Employers & Form Suites'}
               </h3>
-              <p className="text-[11px] text-[var(--text-muted)]">
-                {isFa
-                  ? 'هر پروژه علاوه بر پایگاه داده مجزا، کارفرمای مخصوص خود را دارد و فرم‌های رسمی بر اساس کارفرمای انتخابی بارگذاری می‌شوند.'
-                  : 'Each project has an isolated database and loads the official forms tailored to its selected employer.'}
-              </p>
             </div>
           </div>
           <button
@@ -444,7 +439,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({ open, 
           >
             <div className="flex items-center gap-2 text-xs font-bold text-[var(--text-primary)]">
               <FolderPlus className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{isFa ? 'ایجاد پروژه جدید با دیتابیس و فرم‌های کارفرمای مستقل' : 'Create New Project with Employer Form Suite'}</span>
+              <span>{isFa ? 'ایجاد پروژه جدید و انتخاب کارفرما' : 'Create New Project & Select Employer'}</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">

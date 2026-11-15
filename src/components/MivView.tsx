@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, ClipboardList, Download, Pencil, Printer, Search, Trash2, X } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Pencil, Printer, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { roundQty } from '../shared/formulas.ts';
 import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
@@ -17,7 +16,8 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
-import { PrintReportModal } from './PrintReportModal.tsx';
+import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface MivApiResponse {
   documents: MivDocumentRecord[];
@@ -907,7 +907,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     }
   };
 
-  const historyColumns = useMemo<CsvColumnDef<MivDocumentRecord>[]>(
+  const historyColumns = useMemo<PrintColumnDef<MivDocumentRecord>[]>(
     () => [
       { key: 'docType', header: isFa ? 'نوع حواله' : 'Type', getValue: (r) => docTypeLabel(r.docType) },
       { key: 'docNo', header: isFa ? 'شماره حواله' : 'Doc No.', getValue: (r) => r.docNo },
@@ -1259,17 +1259,13 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                     </option>
                   ))}
                 </select>
-                <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                  <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                  <input
-                    type="text"
-                    dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={itemSearch}
-                    onChange={(e) => setItemSearch(e.target.value)}
-                    placeholder={t.controls.searchPlaceholder}
-                    className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-                  />
-                </div>
+                <SearchInputWithClear
+                  value={itemSearch}
+                  onChange={setItemSearch}
+                  placeholder={t.controls.searchPlaceholder}
+                  className="w-64"
+                  inputClassName="h-8 text-xs"
+                />
               </div>
             </div>
 
@@ -1410,22 +1406,6 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             {isFa ? 'سوابق درخواست کالا و حواله انبار (MIV)' : 'MIV Issue History'}
           </h3>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                exportRowsToCsv({
-                  rows: mivDocuments,
-                  columns: historyColumns,
-                  filename: 'samaan-miv-history',
-                  calendar: prefs.calendar,
-                  hideEmptyColumns: true,
-                })
-              }
-              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{t.controls.exportCsv}</span>
-            </button>
             <button
               type="button"
               onClick={() => setPrintReportOpen(true)}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calculator, Download, Printer, X } from 'lucide-react';
+import { Calculator, Printer, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import type { SelectionFormulaSummary } from '../shared/types.ts';
 
@@ -9,7 +9,6 @@ interface SelectionSummaryBarProps {
   summary: SelectionFormulaSummary;
   isFilteredFallback: boolean;
   onClearSelection: () => void;
-  onExportSelected: () => void;
   onPrintSelected?: () => void;
 }
 
@@ -23,7 +22,6 @@ export const SelectionSummaryBar: React.FC<SelectionSummaryBarProps> = ({
   summary,
   isFilteredFallback,
   onClearSelection,
-  onExportSelected,
   onPrintSelected,
 }) => {
   const { prefs, t } = useApp();
@@ -113,20 +111,12 @@ export const SelectionSummaryBar: React.FC<SelectionSummaryBarProps> = ({
           <button
             type="button"
             onClick={onPrintSelected}
-            className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors"
+            className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors"
           >
-            <Printer className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+            <Printer className="w-3.5 h-3.5" />
             <span>{t.controls.printReport}</span>
           </button>
         )}
-        <button
-          type="button"
-          onClick={onExportSelected}
-          className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors"
-        >
-          <Download className="w-3.5 h-3.5" />
-          <span>{t.controls.exportCsv}</span>
-        </button>
       </div>
     </div>
   );

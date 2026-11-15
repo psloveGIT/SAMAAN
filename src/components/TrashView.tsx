@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { RotateCcw, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import type { TrashRecord } from '../shared/types.ts';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface TrashViewProps {
   refreshSignal: number;
@@ -101,17 +102,13 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-wrap items-center gap-3">
-        <div className="flex items-center flex-1 min-w-[240px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-          <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-          <input
-            type="text"
-            dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={isFa ? 'جستجو در موارد حذف‌شده...' : 'Search deleted items...'}
-            className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-          />
-        </div>
+        <SearchInputWithClear
+          value={q}
+          onChange={setQ}
+          placeholder={isFa ? 'جستجو در موارد حذف‌شده...' : 'Search deleted items...'}
+          className="flex-1 min-w-[240px]"
+          inputClassName="text-xs"
+        />
 
         <select
           value={scope}

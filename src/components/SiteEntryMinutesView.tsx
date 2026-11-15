@@ -3,17 +3,14 @@ import { createPortal } from 'react-dom';
 import {
   CheckCircle2,
   ClipboardSignature,
-  Download,
   Pencil,
   Plus,
   Printer,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
@@ -26,7 +23,8 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
-import { PrintReportModal } from './PrintReportModal.tsx';
+import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface SiteEntryApiResponse {
   minutes: SiteEntryMinutesRecord[];
@@ -1170,7 +1168,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
     }
   };
 
-  const reportColumns = useMemo<CsvColumnDef<SiteEntryMinutesRecord>[]>(
+  const reportColumns = useMemo<PrintColumnDef<SiteEntryMinutesRecord>[]>(
     () => [
       { key: 'minutesNo', header: isFa ? 'Arrival Notice / شماره صورتجلسه' : 'Arrival Notice No.', getValue: (r) => r.minutesNo },
       { key: 'releaseNoteNo', header: 'Release Note No.', getValue: (r) => r.releaseNoteNo || '' },
@@ -1289,19 +1287,13 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                   ? `۱. انتخاب پکینگ لیست‌های وارده (${selectedPackings.length.toLocaleString('fa-IR')} مورد — تکمیل خودکار از بخش ثبت کلی)`
                   : `1. Select Arriving Packing Lists (${selectedPackings.length} selected — auto-fills from General)`} *
               </label>
-              <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                <input
-                  type="text"
-                  dir={isFa && !packingSearch ? 'rtl' : 'ltr'}
-                  value={packingSearch}
-                  onChange={(e) => setPackingSearch(e.target.value)}
-                  placeholder={isFa ? 'فیلتر شماره پکینگ...' : 'Filter packing no...'}
-                  className={`flex-1 min-w-0 h-full bg-transparent text-xs focus:outline-none ${
-                    isFa && !packingSearch ? 'text-right' : 'text-left'
-                  }`}
-                />
-              </div>
+              <SearchInputWithClear
+                value={packingSearch}
+                onChange={setPackingSearch}
+                placeholder={isFa ? 'فیلتر شماره پکینگ...' : 'Filter packing no...'}
+                className="w-64"
+                inputClassName="h-8 text-xs"
+              />
             </div>
 
             <div className="max-h-40 overflow-y-auto p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
@@ -1806,22 +1798,6 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             {isFa ? 'سوابق صورتجلسه‌های ورود کالا و تجهیزات به کارگاه' : 'Recorded Site Entry Minutes'}
           </h3>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                exportRowsToCsv({
-                  rows: data?.minutes || [],
-                  columns: reportColumns,
-                  filename: 'samaan-site-entry-minutes',
-                  calendar: prefs.calendar,
-                  hideEmptyColumns: true,
-                })
-              }
-              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{t.controls.exportCsv}</span>
-            </button>
             <button
               type="button"
               onClick={() => setPrintReportOpen(true)}

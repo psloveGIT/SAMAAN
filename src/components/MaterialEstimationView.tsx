@@ -1,17 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Calculator,
-  Download,
   Edit3,
   Plus,
   Printer,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { roundQty } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import type {
@@ -19,7 +16,8 @@ import type {
   DetailedComputed,
   MaterialEstimateRecord,
 } from '../shared/types.ts';
-import { PrintReportModal } from './PrintReportModal.tsx';
+import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface MaterialEstimationViewProps {
   categories: CategoryStore;
@@ -395,7 +393,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
     }
   };
 
-  const reportColumns = useMemo<CsvColumnDef<EnrichedEstimate>[]>(
+  const reportColumns = useMemo<PrintColumnDef<EnrichedEstimate>[]>(
     () => [
       { key: 'mtoCode', header: 'MTO', getValue: (r) => r.mtoCode },
       { key: 'generalDescription', header: t.headers.generalDescription, getValue: (r) => r.generalDescription },
@@ -465,21 +463,17 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
       {/* Filters & Toolbar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
-          <div className="flex items-center flex-1 min-w-[220px] max-w-md h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-            <input
-              type="text"
-              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={
-                isFa
-                  ? 'جستجو در کد MTO، کد کالا، شرح تجهیزات، سیستم...'
-                  : 'Search MTO code, item code, description, system...'
-              }
-              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-            />
-          </div>
+          <SearchInputWithClear
+            value={q}
+            onChange={setQ}
+            placeholder={
+              isFa
+                ? 'جستجو در کد MTO، کد کالا، شرح تجهیزات، سیستم...'
+                : 'Search MTO code, item code, description, system...'
+            }
+            className="flex-1 min-w-[220px] max-w-md"
+            inputClassName="text-xs"
+          />
 
           <select
             value={statusFilter}
@@ -519,21 +513,6 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              exportRowsToCsv({
-                filename: 'samaan-material-estimation',
-                columns: reportColumns,
-                rows: filtered,
-                calendar: prefs.calendar,
-              })
-            }
-            className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>{t.controls.exportCsv}</span>
-          </button>
 
           <button
             type="button"

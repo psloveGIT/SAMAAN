@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ClipboardCheck, ClipboardList, Download, Printer, Search } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, ClipboardList, Printer } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { DetailedComputed } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PeriodicInspectionPanel } from './PeriodicInspectionPanel.tsx';
-import { PrintReportModal } from './PrintReportModal.tsx';
+import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface StocktakeViewProps {
   refreshSignal: number;
@@ -155,7 +155,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
     [items],
   );
 
-  const reportColumns = useMemo<CsvColumnDef<DetailedComputed>[]>(
+  const reportColumns = useMemo<PrintColumnDef<DetailedComputed>[]>(
     () => [
       { key: 'rowNo', header: t.headers.rowNo, getValue: (r) => r.rowNo },
       { key: 'shipmentNo', header: t.headers.shipmentNo, getValue: (r) => r.shipmentNo },
@@ -176,17 +176,6 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
     ],
     [t, isFa],
   );
-
-  const handleExportCsv = () => {
-    const rows = selectedIds.length > 0 ? filtered.filter((r) => selectedIds.includes(r.id)) : filtered;
-    exportRowsToCsv({
-      rows,
-      columns: reportColumns,
-      filename: 'samaan-stocktake',
-      calendar: prefs.calendar,
-      hideEmptyColumns: true,
-    });
-  };
 
   const printRows = useMemo(
     () => (selectedIds.length > 0 ? filtered.filter((r) => selectedIds.includes(r.id)) : filtered),
@@ -311,27 +300,20 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
       {/* Items Table */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
         <div className="p-4 border-b border-[var(--border-subtle)] flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center flex-1 min-w-[200px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-            <input
-              type="text"
-              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={t.controls.searchPlaceholder}
-              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-            />
-          </div>
+          <SearchInputWithClear
+            value={q}
+            onChange={setQ}
+            placeholder={t.controls.searchPlaceholder}
+            className="flex-1 min-w-[200px]"
+            inputClassName="text-xs"
+          />
 
-          <input
-            type="text"
-            dir={isFa && !shipmentFilter ? 'rtl' : 'ltr'}
+          <SearchInputWithClear
             value={shipmentFilter}
-            onChange={(e) => setShipmentFilter(e.target.value)}
+            onChange={setShipmentFilter}
             placeholder={t.headers.shipmentNo}
-            className={`h-9 w-44 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-              isFa && !shipmentFilter ? 'text-right' : 'text-left'
-            }`}
+            className="w-44"
+            inputClassName="text-xs tabular-nums"
           />
 
           <select
@@ -345,15 +327,6 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
-
-          <button
-            type="button"
-            onClick={handleExportCsv}
-            className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>{t.controls.exportCsv}</span>
-          </button>
 
           <button
             type="button"

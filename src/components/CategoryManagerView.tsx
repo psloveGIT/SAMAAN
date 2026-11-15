@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Edit3, Plus, Search, Trash2, X } from 'lucide-react';
+import { Edit3, Plus, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import type { CategoryGroupKey, CategoryStore } from '../shared/types.ts';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface CategoriesPayload {
   categories: CategoryStore;
@@ -138,17 +139,13 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
       {/* Category Values Manager */}
       <div className="lg:col-span-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center flex-1 min-w-[200px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-            <input
-              type="text"
-              dir={!filterText ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              placeholder={isFa ? 'فیلتر در مقادیر دسته‌بندی...' : 'Filter category values...'}
-              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-            />
-          </div>
+          <SearchInputWithClear
+            value={filterText}
+            onChange={setFilterText}
+            placeholder={isFa ? 'فیلتر در مقادیر دسته‌بندی...' : 'Filter category values...'}
+            className="flex-1 min-w-[200px]"
+            inputClassName="text-xs"
+          />
 
           {canEdit && (
             <form onSubmit={handleAdd} className="flex items-center gap-2">

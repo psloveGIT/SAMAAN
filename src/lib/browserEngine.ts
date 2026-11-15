@@ -17,6 +17,13 @@ import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared
 import { getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
 import { sortDetailedEntries, sortGeneralEntries } from '../shared/sorting.ts';
 import {
+  matchesCustomFilters,
+  matchesMultiPacking,
+  parseCustomFiltersParam,
+  parsePackingNosParam,
+} from '../shared/customFilters.ts';
+import { isValidDigitsOnly } from '../shared/validation.ts';
+import {
   DEFAULT_EMPLOYER_ID,
   isValidEmployerId,
   sanitizeEmployerConfig,
@@ -1032,6 +1039,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const unit = query.get('unit') || '';
     const supplier = query.get('supplier') || '';
     const packingListNo = normKey(query.get('packingListNo'));
+    const packingNos = parsePackingNosParam(query.get('packingNos'));
+    const customFilters = parseCustomFiltersParam(query.get('customFilters'));
     const fromDate = query.get('fromDate') || '';
     const toDate = query.get('toDate') || '';
     const page = Math.max(1, Number(query.get('page') || 1));
@@ -1044,6 +1053,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (unit && g.unit !== unit) return false;
       if (supplier && g.supplier !== supplier) return false;
       if (packingListNo && normKey(g.packingListNo) !== packingListNo) return false;
+      if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
+      if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
       if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
       return matchSearch(
         [
@@ -1118,6 +1129,24 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
 
     for (const raw of entries) {
       const pkgNo = normKey(raw.packageNo);
+      if (!pkgNo || !normKey(raw.supplier) || !normKey(raw.dispatchLocation) || !normKey(raw.packageType) || !normKey(raw.itemDescription) || !normKey(raw.island) || !normKey(raw.system) || !normKey(raw.subSystem) || !normKey(raw.unit)) {
+        throw new StaticEngineError(
+          errMsg(
+            'فیلدهای تأمین‌کننده، محل ارسال، شماره پکینگ، شماره نگله، نوع بسته‌بندی، تعداد اقلام نگله، شرح کالا، جزیره، سیستم، ساب‌سیستم و واحد نباید خالی بمانند.',
+            'Supplier, Dispatch Location, Packing List No., Package No., Package Type, Package Item Count, Description, Island, System, Sub-System, and Unit are required.',
+          ),
+          400,
+        );
+      }
+
+      const cleanEmployerMinutes = normalizeDigits(normKey(raw.employerEntryMinutesNo));
+      if (cleanEmployerMinutes && !isValidDigitsOnly(cleanEmployerMinutes)) {
+        throw new StaticEngineError(
+          errMsg('شماره صورتجلسه کارفرما فقط باید شامل عدد باشد.', 'Employer Entry Minutes No. must contain digits only.'),
+          400,
+        );
+      }
+
       if (isContinuation && existingGen.length > 0 && (!pkgNo || existingPackages.has(pkgNo))) {
         throw new StaticEngineError(
           errMsg(
@@ -1152,6 +1181,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         raw.itemCount !== undefined && raw.itemCount !== null && Number.isFinite(Number(raw.itemCount)) && Number(raw.itemCount) > 0
           ? Math.floor(Number(raw.itemCount))
           : null;
+      if (!parsedItemCount || parsedItemCount <= 0) {
+        throw new StaticEngineError(
+          errMsg(
+            'تعداد اقلام نگله الزامی و باید عدد صحیح بزرگ‌تر از صفر باشد.',
+            'Package Item Count is required and must be a positive integer.',
+          ),
+          400,
+        );
+      }
 
       preparedGeneral.push({
         id: makeId(),
@@ -1161,7 +1199,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         releaseDate: cleanReleaseDate,
         supplier: normKey(raw.supplier),
         dispatchLocation: normKey(raw.dispatchLocation),
-        employerEntryMinutesNo: normKey(raw.employerEntryMinutesNo),
+        employerEntryMinutesNo: cleanEmployerMinutes,
         mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
@@ -1233,6 +1271,17 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         );
       }
       patch.mapnaEntryMinutesNo = cleanMin;
+    }
+
+    if (patch.employerEntryMinutesNo !== undefined) {
+      const cleanEmp = normalizeDigits(normKey(patch.employerEntryMinutesNo));
+      if (cleanEmp && !isValidDigitsOnly(cleanEmp)) {
+        throw new StaticEngineError(
+          errMsg('شماره صورتجلسه کارفرما فقط باید شامل عدد باشد.', 'Employer Entry Minutes No. must contain digits only.'),
+          400,
+        );
+      }
+      patch.employerEntryMinutesNo = cleanEmp;
     }
 
     if (patch.packageType !== undefined) {
@@ -1327,6 +1376,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const storageLocation = query.get('storageLocation') || '';
     const shipmentNo = normKey(query.get('shipmentNo'));
     const packageNo = normKey(query.get('packageNo'));
+    const packingNos = parsePackingNosParam(query.get('packingNos'));
+    const customFilters = parseCustomFiltersParam(query.get('customFilters'));
     const shortageOnly = query.get('shortageOnly') === 'true';
     const damagedOnly = query.get('damagedOnly') === 'true';
     const fromDate = query.get('fromDate') || '';
@@ -1344,6 +1395,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (storageLocation && d.storageLocation !== storageLocation) continue;
       if (shipmentNo && normKey(d.shipmentNo) !== shipmentNo) continue;
       if (packageNo && normKey(d.packageNo) !== packageNo) continue;
+      if (!matchesMultiPacking(d.shipmentNo, packingNos)) continue;
       if (!inDateRange(d.arrivalDate, fromDate, toDate)) continue;
       if (!matchSearch([
         d.rowNo, d.shipmentNo, d.packageNo, d.itemNo, d.generalDescription, d.description,
@@ -1353,6 +1405,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         d.storageLocation, d.stocktakeStatus,
       ], q)) continue;
       const comp = computeDetailedEntry(d);
+      if (!matchesCustomFilters(comp as unknown as Record<string, unknown>, customFilters)) continue;
       if (shortageOnly && !comp.hasShortage) continue;
       if (damagedOnly && !comp.hasDamaged) continue;
       computedAll.push(comp);
@@ -1574,6 +1627,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const status = query.get('status') || '';
     const supplier = query.get('supplier') || '';
     const system = query.get('system') || '';
+    const packingNos = parsePackingNosParam(query.get('packingNos'));
+    const customFilters = parseCustomFiltersParam(query.get('customFilters'));
     const fromDate = query.get('fromDate') || '';
     const toDate = query.get('toDate') || '';
     const page = Math.max(1, Number(query.get('page') || 1));
@@ -1583,6 +1638,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (status && t.overallStatus !== status) return false;
       if (supplier && t.supplier !== supplier) return false;
       if (system && t.system !== system) return false;
+      if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
+      if (!matchesCustomFilters(t as unknown as Record<string, unknown>, customFilters)) return false;
       if (!inDateRange(t.arrivalDate, fromDate, toDate)) return false;
       return matchSearch([
         t.rowNo, t.overallStatus, t.packingListNo, t.packageNo, t.itemDescription,
@@ -3641,23 +3698,38 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   if (pathname === '/api/search' && method === 'GET') {
     requireAuth();
     const q = (query.get('q') || '').trim();
-    const limit = Math.min(100, Number(query.get('limit') || 40));
-    if (!q) return { general: [], detailed: [], transit: [] } as T;
+    const packingNos = parsePackingNosParam(query.get('packingNos'));
+    const customFilters = parseCustomFiltersParam(query.get('customFilters'));
+    const limit = Math.min(200, Number(query.get('limit') || 40));
+    if (!q && packingNos.length === 0 && customFilters.length === 0) {
+      return { general: [], detailed: [], transit: [] } as T;
+    }
 
-    const general = db.general.filter((g) => matchSearch([
-      g.rowNo, g.packingListNo, g.packageNo, g.packageType || '', g.itemDescription, g.supplier, g.dispatchLocation,
-      g.employerEntryMinutesNo, g.mapnaEntryMinutesNo, g.billOfLadingNo, g.driverName, g.island, g.system,
-    ], q)).slice(0, limit);
+    const general = db.general.filter((g) => {
+      if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
+      if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
+      return matchSearch([
+        g.rowNo, g.packingListNo, g.packageNo, g.packageType || '', g.itemDescription, g.supplier, g.dispatchLocation,
+        g.employerEntryMinutesNo, g.mapnaEntryMinutesNo, g.billOfLadingNo, g.vehicleNo, g.driverName, g.island, g.system, g.subSystem, g.unit,
+      ], q);
+    }).slice(0, limit);
 
-    const detailed = db.detailed.filter((d) => matchSearch([
-      d.rowNo, d.shipmentNo, d.packageNo, d.itemNo, d.generalDescription, d.description, d.itemCode, d.mtoRef,
-      d.supplier, d.gcvReceiptNo, d.mivContractorNo, d.smrContractorNo, d.materialBalanceNo, d.balanceStatus, d.storageLocation, d.stocktakeStatus,
-    ], q)).slice(0, limit).map(computeDetailedEntry);
+    const detailed = db.detailed.filter((d) => {
+      if (!matchesMultiPacking(d.shipmentNo, packingNos)) return false;
+      return matchSearch([
+        d.rowNo, d.shipmentNo, d.packageNo, d.itemNo, d.generalDescription, d.description, d.itemCode, d.mtoRef,
+        d.supplier, d.gcvReceiptNo, d.mivContractorNo, d.smrContractorNo, d.materialBalanceNo, d.balanceStatus, d.storageLocation, d.stocktakeStatus,
+      ], q);
+    }).map(computeDetailedEntry).filter((c) => matchesCustomFilters(c as unknown as Record<string, unknown>, customFilters)).slice(0, limit);
 
-    const transit = db.transit.filter((t) => matchSearch([
-      t.rowNo, t.packingListNo, t.packageNo, t.itemDescription, t.supplier, t.overallStatus,
-      t.releaseNetNo, t.interimNo, t.billOfLadingNo, t.carrierContractor,
-    ], q)).slice(0, limit);
+    const transit = db.transit.filter((t) => {
+      if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
+      if (!matchesCustomFilters(t as unknown as Record<string, unknown>, customFilters)) return false;
+      return matchSearch([
+        t.rowNo, t.packingListNo, t.packageNo, t.itemDescription, t.supplier, t.overallStatus,
+        t.releaseNetNo, t.interimNo, t.billOfLadingNo, t.carrierContractor,
+      ], q);
+    }).slice(0, limit);
 
     return { general, detailed, transit } as T;
   }
@@ -3839,73 +3911,219 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     } as T;
   }
 
-  // ---------------- IMPORT ----------------
+  // ---------------- IMPORT & AI FALLBACK ----------------
+  const generalDupKey = (r: Pick<GeneralEntry, 'packingListNo' | 'packageNo' | 'mapnaEntryMinutesNo'>) => {
+    const pk = normalizeDigits(normKey(r.packingListNo)).toLowerCase();
+    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
+    const mp = normalizeDigits(normKey(r.mapnaEntryMinutesNo)).toLowerCase();
+    if (pk && pkg) return `pk:${pk}::pkg:${pkg}`;
+    if (mp) return `mp:${mp}`;
+    return '';
+  };
+
+  const detailedDupKey = (r: Pick<DetailedEntry, 'shipmentNo' | 'packageNo' | 'itemNo'>) => {
+    const pk = normalizeDigits(normKey(r.shipmentNo)).toLowerCase();
+    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
+    const itm = normalizeDigits(normKey(r.itemNo)).toLowerCase();
+    if (pk && itm) return `sh:${pk}::pkg:${pkg}::itm:${itm}`;
+    return '';
+  };
+
+  const transitDupKey = (r: Pick<TransitEntry, 'packingListNo' | 'packageNo'>) => {
+    const pk = normalizeDigits(normKey(r.packingListNo)).toLowerCase();
+    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
+    if (pk) return `tr:${pk}::pkg:${pkg}`;
+    return '';
+  };
+
   if (pathname === '/api/import/preview' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
     const csvText = String(body.csvText || '');
-    const matrix = parseCsvMatrix(csvText);
+    const rawMatrix = body.matrix as string[][] | undefined;
+    const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : parseCsvMatrix(csvText);
     const detectedScope = (body.scope as ImportScope | undefined) || detectCsvScope(matrix) || 'general';
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
 
     if (detectedScope === 'general') {
       const parsed = parseGeneralCsv(matrix, cal, u.username);
       const duplicateRowNos = parsed.rows.filter((r) => r.rowNo && isRowNoTaken(db, 'general', r.rowNo)).length;
-      return { scope: 'general', totalRows: parsed.rows.length, skippedEmpty: parsed.skippedEmpty, duplicateRowNos, sample: parsed.rows.slice(0, 5) } as T;
+      const existingKeys = new Set(db.general.map(generalDupKey).filter(Boolean));
+      const duplicateRecords = parsed.rows.filter((r) => {
+        const k = generalDupKey(r);
+        return Boolean(k && existingKeys.has(k));
+      });
+      return {
+        scope: 'general',
+        totalRows: parsed.rows.length,
+        skippedEmpty: parsed.skippedEmpty,
+        duplicateRowNos,
+        duplicateRecordsCount: duplicateRecords.length,
+        duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.packingListNo || '-'} / ${r.packageNo || r.mapnaEntryMinutesNo || '-'}`),
+        sample: parsed.rows.slice(0, 5),
+      } as T;
     }
     if (detectedScope === 'detailed') {
       const parsed = parseDetailedCsv(matrix, cal, u.username);
       const duplicateRowNos = parsed.rows.filter((r) => r.rowNo && isRowNoTaken(db, 'detailed', r.rowNo)).length;
-      return { scope: 'detailed', totalRows: parsed.rows.length, skippedEmpty: parsed.skippedEmpty, duplicateRowNos, sample: parsed.rows.slice(0, 5) } as T;
+      const existingKeys = new Set(db.detailed.map(detailedDupKey).filter(Boolean));
+      const duplicateRecords = parsed.rows.filter((r) => {
+        const k = detailedDupKey(r);
+        return Boolean(k && existingKeys.has(k));
+      });
+      return {
+        scope: 'detailed',
+        totalRows: parsed.rows.length,
+        skippedEmpty: parsed.skippedEmpty,
+        duplicateRowNos,
+        duplicateRecordsCount: duplicateRecords.length,
+        duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.shipmentNo || '-'} / ${r.packageNo || '-'} / #${r.itemNo || '-'}`),
+        sample: parsed.rows.slice(0, 5),
+      } as T;
     }
     const parsed = parseTransitCsv(matrix, cal, u.username);
-    return { scope: 'transit', totalRows: parsed.rows.length, skippedEmpty: parsed.skippedEmpty, duplicateRowNos: 0, sample: parsed.rows.slice(0, 5) } as T;
+    const existingKeys = new Set(db.transit.map(transitDupKey).filter(Boolean));
+    const duplicateRecords = parsed.rows.filter((r) => {
+      const k = transitDupKey(r);
+      return Boolean(k && existingKeys.has(k));
+    });
+    return {
+      scope: 'transit',
+      totalRows: parsed.rows.length,
+      skippedEmpty: parsed.skippedEmpty,
+      duplicateRowNos: 0,
+      duplicateRecordsCount: duplicateRecords.length,
+      duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.packingListNo || '-'} / ${r.packageNo || '-'}`),
+      sample: parsed.rows.slice(0, 5),
+    } as T;
   }
 
   if (pathname === '/api/import/commit' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
     const csvText = String(body.csvText || '');
-    const matrix = parseCsvMatrix(csvText);
+    const rawMatrix = body.matrix as string[][] | undefined;
+    const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : parseCsvMatrix(csvText);
     const targetScope = (body.scope as ImportScope | undefined) || detectCsvScope(matrix) || 'general';
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
+    const dupPolicy: 'replace' | 'skip' = body.duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
 
     let imported = 0;
-    const skipped = 0;
+    let replaced = 0;
+    let skipped = 0;
     let transitAutoArrived = 0;
     const touchedPackings = new Set<string>();
+    const now = new Date().toISOString();
 
     if (targetScope === 'general') {
       const parsed = parseGeneralCsv(matrix, cal, u.username);
+      const existingByKey = new Map<string, GeneralEntry>();
+      for (const g of db.general) {
+        const k = generalDupKey(g);
+        if (k) existingByKey.set(k, g);
+      }
       for (const r of parsed.rows) {
+        const k = generalDupKey(r);
+        const existing = k ? existingByKey.get(k) : undefined;
+        if (existing) {
+          if (dupPolicy === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          Object.assign(existing, {
+            ...r,
+            id: existing.id,
+            rowNo: existing.rowNo,
+            createdAt: existing.createdAt,
+            createdBy: existing.createdBy,
+            updatedAt: now,
+          });
+          replaced += 1;
+          if (r.packingListNo) touchedPackings.add(r.packingListNo);
+          continue;
+        }
+        const created: GeneralEntry = { ...r, id: makeId() };
+        if (k) existingByKey.set(k, created);
         if (r.packingListNo) touchedPackings.add(r.packingListNo);
-        db.general.push({ ...r, id: makeId() });
+        db.general.push(created);
         imported += 1;
       }
       renumberScope(db, 'general');
     } else if (targetScope === 'detailed') {
       const parsed = parseDetailedCsv(matrix, cal, u.username);
+      const existingByKey = new Map<string, DetailedEntry>();
+      for (const d of db.detailed) {
+        const k = detailedDupKey(d);
+        if (k) existingByKey.set(k, d);
+      }
       for (const r of parsed.rows) {
+        const k = detailedDupKey(r);
+        const existing = k ? existingByKey.get(k) : undefined;
+        const genDesc = r.generalDescription
+          ? formatGeneralDescriptionCase(r.generalDescription)
+          : inferGeneralDescription(r.description);
+        if (existing) {
+          if (dupPolicy === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          Object.assign(existing, {
+            ...r,
+            generalDescription: genDesc,
+            id: existing.id,
+            rowNo: existing.rowNo,
+            shortageBackfills: existing.shortageBackfills || [],
+            createdAt: existing.createdAt,
+            createdBy: existing.createdBy,
+            updatedAt: now,
+          });
+          replaced += 1;
+          if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
+          continue;
+        }
+        const created: DetailedEntry = { ...r, generalDescription: genDesc, id: makeId() };
+        if (k) existingByKey.set(k, created);
         if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
-        db.detailed.push({
-          ...r,
-          id: makeId(),
-          generalDescription: r.generalDescription
-            ? formatGeneralDescriptionCase(r.generalDescription)
-            : inferGeneralDescription(r.description),
-        });
+        db.detailed.push(created);
         imported += 1;
       }
       renumberScope(db, 'detailed');
     } else {
       const parsed = parseTransitCsv(matrix, cal, u.username);
+      const existingByKey = new Map<string, TransitEntry>();
+      for (const t of db.transit) {
+        const k = transitDupKey(t);
+        if (k) existingByKey.set(k, t);
+      }
       for (const r of parsed.rows) {
         const pk = normKey(r.packingListNo);
         const arrived = pk && (db.general.some((g) => normKey(g.packingListNo) === pk) || db.detailed.some((d) => normKey(d.shipmentNo) === pk));
-        db.transit.push({
+        const k = transitDupKey(r);
+        const existing = k ? existingByKey.get(k) : undefined;
+        if (existing) {
+          if (dupPolicy === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          Object.assign(existing, {
+            ...r,
+            id: existing.id,
+            rowNo: existing.rowNo,
+            overallStatus: arrived ? 'رسیده' : r.overallStatus,
+            linkedGeneralPackingNo: arrived ? pk : r.linkedGeneralPackingNo,
+            createdAt: existing.createdAt,
+            createdBy: existing.createdBy,
+            updatedAt: now,
+          });
+          replaced += 1;
+          continue;
+        }
+        const created: TransitEntry = {
           ...r,
           id: makeId(),
           overallStatus: arrived ? 'رسیده' : r.overallStatus,
           linkedGeneralPackingNo: arrived ? pk : undefined,
-        });
+        };
+        if (k) existingByKey.set(k, created);
+        db.transit.push(created);
         imported += 1;
       }
       renumberScope(db, 'transit');
@@ -3915,9 +4133,27 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     for (const pk of touchedPackings) {
       transitAutoArrived += syncTransitArrival(db, pk, sanitizeUser(u));
     }
-    addAudit(db, sanitizeUser(u), 'IMPORT_CSV', 'import', targetScope, `ورود فایل CSV (${targetScope}): ${imported} ردیف ثبت شد`);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'IMPORT_DATA',
+      'import',
+      targetScope,
+      `بارگذاری فایل (${targetScope}): ${imported} ردیف جدید، ${replaced} جایگزین، ${skipped} رد شد`,
+    );
     await saveActiveDb();
-    return { scope: targetScope, imported, skipped, transitAutoArrived } as T;
+    return { scope: targetScope, imported, replaced, skipped, transitAutoArrived } as T;
+  }
+
+  if (pathname === '/api/ai/extract-equipment' && method === 'POST') {
+    requireAuth(['admin', 'operator']);
+    throw new StaticEngineError(
+      errMsg(
+        'اسکن هوشمند اسناد و دستورات صوتی نیازمند اتصال به سرور اصلی نرم‌افزار است (حالت استاتیک فقط ورود فایل اکسل/CSV را پشتیبانی می‌کند).',
+        'AI document scan and voice commands require the Node server runtime (static mode supports Excel/CSV file import directly).',
+      ),
+      501,
+    );
   }
 
   // ---------------- AUDIT & BACKUP ----------------

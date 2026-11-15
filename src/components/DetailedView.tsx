@@ -9,13 +9,13 @@ import {
   Link2,
   PackagePlus,
   Plus,
-  Search,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv } from '../lib/csvExport.ts';
+import { type CustomFieldFilter, DETAILED_FILTER_FIELDS } from '../shared/customFilters.ts';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { getTodayIso } from '../shared/jalali.ts';
@@ -27,8 +27,11 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { MultiPackingAndFieldFilter } from './MultiPackingAndFieldFilter.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
+import { type DetailedAiExtractionResult, SmartIntakeModal } from './SmartIntakeModal.tsx';
 
 interface DetailedListResponse {
   items: DetailedComputed[];
@@ -170,6 +173,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [damagedOnly, setDamagedOnly] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
+  const [customFilters, setCustomFilters] = useState<CustomFieldFilter[]>([]);
   const [page, setPage] = useState(1);
   const [hideEmptyCols, setHideEmptyCols] = useState(true);
 
@@ -181,6 +186,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
   // Add/Edit Modal
   const [formModalOpen, setFormModalOpen] = useState(false);
+  const [smartOpen, setSmartOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<DetailedEntry>>(emptyDetailedDraft());
   const [closedWarningVisible, setClosedWarningVisible] = useState(false);
@@ -229,6 +235,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         ...(damagedOnly ? { damagedOnly: 'true' } : {}),
         ...(fromDate ? { fromDate } : {}),
         ...(toDate ? { toDate } : {}),
+        ...(selectedPackings.length > 0 ? { packingNos: JSON.stringify(selectedPackings) } : {}),
+        ...(customFilters.length > 0 ? { customFilters: JSON.stringify(customFilters) } : {}),
       });
       const res = await apiRequest<DetailedListResponse>(`/api/detailed?${params.toString()}`);
       setData(res);
@@ -249,6 +257,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     damagedOnly,
     fromDate,
     toDate,
+    selectedPackings,
+    customFilters,
     notify,
   ]);
 
@@ -758,20 +768,103 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     });
   };
 
-  const handleExport = () => {
-    const rowsToExport = selectedRows.length > 0 ? selectedRows : items;
-    exportRowsToCsv({
-      rows: rowsToExport,
-      columns: columns.map((c) => ({
-        key: c.key,
-        header: c.header,
-        isDate: c.isDate,
-        getValue: c.get,
-      })),
-      filename: 'samaan-detailed',
-      calendar: prefs.calendar,
-      hideEmptyColumns: hideEmptyCols,
-    });
+  const handleApplySmartDetailed = async (
+    result: DetailedAiExtractionResult,
+    mode: 'fill_first' | 'save_all',
+  ) => {
+    const itemsList = result.items || [];
+    if (itemsList.length === 0) return;
+
+    const targetShipment = (result.shipmentNo || draft.shipmentNo || '').trim();
+    const targetPackage = (result.packageNo || draft.packageNo || '').trim();
+
+    if (mode === 'fill_first') {
+      const first = itemsList[0];
+      const desc = first.description || first.generalDescription || '';
+      const genDesc = first.generalDescription
+        ? formatGeneralDescriptionCase(first.generalDescription)
+        : inferGeneralDescription(desc);
+      if (first.itemNo) setItemNoManual(true);
+      setGenDescManual(Boolean(first.generalDescription));
+      setDraft((prev) => ({
+        ...prev,
+        shipmentNo: targetShipment,
+        packageNo: targetPackage,
+        itemNo: first.itemNo || prev.itemNo || '1',
+        description: desc,
+        generalDescription: genDesc,
+        size: first.size || prev.size || '',
+        itemCode: first.itemCode || prev.itemCode || '',
+        mtoRef: first.mtoRef || prev.mtoRef || '',
+        packingQty: first.packingQty ?? prev.packingQty ?? null,
+        countingUnit: first.countingUnit || prev.countingUnit || 'PC',
+        notes: first.notes || prev.notes || '',
+      }));
+      notify('success', isFa ? 'اطلاعات آیتم در فرم جایگذاری شد.' : 'Item populated into form.');
+      return;
+    }
+
+    // Batch save all extracted items
+    if (!targetShipment) {
+      setRowError(isFa ? 'شماره پکینگ لیست برای ثبت خودکار الزامی است.' : 'Shipment / Packing No. is required.');
+      return;
+    }
+    setSaving(true);
+    try {
+      let savedCount = 0;
+      const baseItemNo = Math.max(1, Number(draft.itemNo) || 1);
+      for (let i = 0; i < itemsList.length; i++) {
+        const it = itemsList[i];
+        const desc = (it.description || it.generalDescription || '').trim();
+        if (!desc) continue;
+        const genDesc = it.generalDescription
+          ? formatGeneralDescriptionCase(it.generalDescription)
+          : inferGeneralDescription(desc);
+        await apiRequest('/api/detailed', {
+          method: 'POST',
+          body: JSON.stringify({
+            arrivalDate: draft.arrivalDate,
+            supplier: draft.supplier,
+            origin: draft.origin,
+            shipmentNo: targetShipment,
+            packageNo: targetPackage,
+            itemNo: it.itemNo || String(baseItemNo + i),
+            generalDescription: genDesc,
+            description: desc,
+            size: it.size || '',
+            itemCode: it.itemCode || '',
+            mtoRef: it.mtoRef || '',
+            packingQty: it.packingQty ?? 1,
+            actualQty: null,
+            damagedQty: null,
+            countingUnit: it.countingUnit || draft.countingUnit || 'PC',
+            island: draft.island,
+            system: draft.system,
+            subSystem: draft.subSystem,
+            unit: draft.unit,
+            storageLocation: draft.storageLocation,
+            receiver: draft.receiver,
+            notes: it.notes || '',
+            acknowledgeClosed: ackClosed,
+          }),
+        });
+        savedCount++;
+      }
+      notify(
+        'success',
+        isFa
+          ? `${savedCount.toLocaleString('fa-IR')} آیتم جزئیات به‌صورت خودکار ثبت شد.`
+          : `${savedCount} detailed item(s) saved automatically.`,
+      );
+      triggerAutoSnapshot(`Smart Detailed ${targetShipment}`);
+      onDataChanged();
+      loadData();
+      setFormModalOpen(false);
+    } catch (err) {
+      if (err instanceof ApiError) setRowError(err.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const numInput = (val: number | null | undefined) => (val === null || val === undefined ? '' : String(val));
@@ -781,17 +874,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       {/* Toolbar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center flex-1 min-w-[240px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-            <input
-              type="text"
-              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-              value={q}
-              onChange={(e) => { setQ(e.target.value); setPage(1); }}
-              placeholder={t.controls.searchPlaceholder}
-              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-            />
-          </div>
+          <SearchInputWithClear
+            value={q}
+            onChange={(val) => { setQ(val); setPage(1); }}
+            placeholder={t.controls.searchPlaceholder}
+            className="flex-1 min-w-[240px]"
+          />
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -846,26 +934,35 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           </div>
         </div>
 
+        <MultiPackingAndFieldFilter
+          fields={DETAILED_FILTER_FIELDS}
+          selectedPackings={selectedPackings}
+          onChangePackings={(next) => {
+            setSelectedPackings(next);
+            setPage(1);
+          }}
+          customFilters={customFilters}
+          onChangeCustomFilters={(next) => {
+            setCustomFilters(next);
+            setPage(1);
+          }}
+          compact
+        />
+
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5">
-          <input
-            type="text"
-            dir={isFa && !shipmentFilter ? 'rtl' : 'ltr'}
+          <SearchInputWithClear
             value={shipmentFilter}
-            onChange={(e) => { setShipmentFilter(e.target.value); setPage(1); }}
+            onChange={(val) => { setShipmentFilter(val); setPage(1); }}
             placeholder={t.headers.shipmentNo}
-            className={`h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-              isFa && !shipmentFilter ? 'text-right' : 'text-left'
-            }`}
+            dir={isFa && !shipmentFilter ? 'rtl' : 'ltr'}
+            inputClassName="text-xs tabular-nums"
           />
-          <input
-            type="text"
-            dir={isFa && !packageFilter ? 'rtl' : 'ltr'}
+          <SearchInputWithClear
             value={packageFilter}
-            onChange={(e) => { setPackageFilter(e.target.value); setPage(1); }}
+            onChange={(val) => { setPackageFilter(val); setPage(1); }}
             placeholder={t.headers.packageNo}
-            className={`h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-              isFa && !packageFilter ? 'text-right' : 'text-left'
-            }`}
+            dir={isFa && !packageFilter ? 'rtl' : 'ltr'}
+            inputClassName="text-xs tabular-nums"
           />
           <select
             value={island}
@@ -912,7 +1009,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           summary={activeSummary}
           isFilteredFallback={selectedRows.length === 0}
           onClearSelection={() => setSelectedMap({})}
-          onExportSelected={handleExport}
           onPrintSelected={() => setPrintOpen(true)}
         />
       )}
@@ -1363,7 +1459,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       {formModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-[92vh] flex flex-col">
-            <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <h3 className="text-sm font-bold">
                   {editingId ? t.controls.edit : isFa ? 'ثبت آیتم جزئیات' : 'Add Detailed Item'}
@@ -1374,9 +1470,21 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     : `${t.headers.rowNo}: ${t.packing.rowNoAuto}`}
                 </span>
               </div>
-              <button type="button" onClick={() => setFormModalOpen(false)}>
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {!editingId && (
+                  <button
+                    type="button"
+                    onClick={() => setSmartOpen(true)}
+                    className="h-8 px-3 rounded-lg border border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-90 text-xs font-semibold flex items-center gap-1.5"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'ثبت خودکار (فایل / اسکن / صدا)' : 'Auto Intake'}</span>
+                  </button>
+                )}
+                <button type="button" onClick={() => setFormModalOpen(false)}>
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <form onSubmit={handleSaveForm} className="p-6 overflow-y-auto space-y-4">
@@ -1858,6 +1966,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           getValue: c.get,
         }))}
         defaultSelectedKeys={visibleColumns.map((c) => c.key)}
+      />
+
+      <SmartIntakeModal
+        open={smartOpen}
+        target="detailed"
+        onClose={() => setSmartOpen(false)}
+        onApplyDetailed={handleApplySmartDetailed}
       />
     </div>
   );

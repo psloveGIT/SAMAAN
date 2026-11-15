@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckSquare, Eye, Printer, Search, Square, Tag, X } from 'lucide-react';
+import { CheckSquare, Eye, Printer, Square, Tag, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode } from '../shared/employers.ts';
 import type { DetailedComputed, GeneralEntry } from '../shared/types.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 const LABEL_META_STORAGE_KEY = 'samaan_storage_label_meta_v1';
 
@@ -805,27 +806,20 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
       {/* Item Selection Table */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
         <div className="p-4 border-b border-[var(--border-subtle)] flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center flex-1 min-w-[200px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-            <input
-              type="text"
-              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={t.controls.searchPlaceholder}
-              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-            />
-          </div>
+          <SearchInputWithClear
+            value={q}
+            onChange={setQ}
+            placeholder={t.controls.searchPlaceholder}
+            className="flex-1 min-w-[200px]"
+            inputClassName="text-xs"
+          />
 
-          <input
-            type="text"
-            dir={isFa && !shipmentFilter ? 'rtl' : 'ltr'}
+          <SearchInputWithClear
             value={shipmentFilter}
-            onChange={(e) => setShipmentFilter(e.target.value)}
+            onChange={setShipmentFilter}
             placeholder={t.headers.shipmentNo}
-            className={`h-9 w-44 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-              isFa && !shipmentFilter ? 'text-right' : 'text-left'
-            }`}
+            className="w-44"
+            inputClassName="text-xs tabular-nums"
           />
 
           <select

@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   ClipboardCheck,
-  Download,
   FileWarning,
   Pencil,
   Plus,
@@ -14,10 +13,10 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import type { PrintColumnDef } from './PrintReportModal.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -1444,7 +1443,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     }
   };
 
-  const minutesColumns = useMemo<CsvColumnDef<OpiMinutesRecord>[]>(
+  const minutesColumns = useMemo<PrintColumnDef<OpiMinutesRecord>[]>(
     () => [
       { key: 'minutesNo', header: isFa ? 'شماره صورتجلسه' : 'Minutes No.', getValue: (r) => r.minutesNo },
       { key: 'invitationNo', header: t.headers.opiInvitationNo, getValue: (r) => r.invitationNo || '' },
@@ -1467,7 +1466,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     [t, isFa],
   );
 
-  const osdrColumns = useMemo<CsvColumnDef<OsdrReportRecord>[]>(
+  const osdrColumns = useMemo<PrintColumnDef<OsdrReportRecord>[]>(
     () => [
       { key: 'reportNo', header: isFa ? 'شماره گزارش (MER)' : 'MER No.', getValue: (r) => r.reportNo },
       { key: 'date', header: isFa ? 'تاریخ گزارش' : 'Report Date', isDate: true, getValue: (r) => r.date },
@@ -2128,22 +2127,6 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() =>
-                    exportRowsToCsv({
-                      rows: data?.minutes || [],
-                      columns: minutesColumns,
-                      filename: 'samaan-opi-minutes',
-                      calendar: prefs.calendar,
-                      hideEmptyColumns: true,
-                    })
-                  }
-                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{t.controls.exportCsv}</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setPrintMinutesTableOpen(true)}
                   className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
                 >
@@ -2492,22 +2475,6 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 {isFa ? 'سوابق گزارش‌های مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Issued MER Reports'}
               </h3>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    exportRowsToCsv({
-                      rows: data?.osdrReports || [],
-                      columns: osdrColumns,
-                      filename: 'samaan-mer-reports',
-                      calendar: prefs.calendar,
-                      hideEmptyColumns: true,
-                    })
-                  }
-                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{t.controls.exportCsv}</span>
-                </button>
                 <button
                   type="button"
                   onClick={() => setPrintOsdrTableOpen(true)}

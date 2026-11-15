@@ -3,9 +3,12 @@ import { createPortal } from 'react-dom';
 import { CheckSquare, Printer, Square, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { formatIsoDate } from '../shared/jalali.ts';
-import type { CsvColumnDef } from '../lib/csvExport.ts';
-
-export type PrintColumnDef<T> = CsvColumnDef<T>;
+export interface PrintColumnDef<T> {
+  key: string;
+  header: string;
+  isDate?: boolean;
+  getValue: (row: T) => string | number | null | undefined;
+}
 
 interface PrintReportModalProps<T> {
   open: boolean;

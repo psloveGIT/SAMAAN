@@ -13,7 +13,6 @@ import {
   CornerUpLeft,
   Eye,
   FileCheck2,
-  FileSpreadsheet,
   FileText,
   FolderTree,
   Globe,
@@ -58,7 +57,6 @@ export type NavTabKey =
   | 'search'
   | 'categories'
   | 'trash'
-  | 'importCsv'
   | 'usersAudit'
   | 'backup';
 
@@ -129,7 +127,6 @@ export const Layout: React.FC<LayoutProps> = ({
         { key: 'search', label: t.nav.search, icon: <Search className="w-4 h-4" /> },
         { key: 'categories', label: t.nav.categories, icon: <FolderTree className="w-4 h-4" /> },
         { key: 'trash', label: t.nav.trash, icon: <Trash2 className="w-4 h-4" /> },
-        { key: 'importCsv', label: t.nav.importCsv, icon: <FileSpreadsheet className="w-4 h-4" /> },
         { key: 'usersAudit', label: t.nav.usersAudit, icon: <Shield className="w-4 h-4" /> },
         { key: 'backup', label: t.nav.backup, icon: <HardDriveDownload className="w-4 h-4" /> },
       ],
@@ -182,7 +179,7 @@ export const Layout: React.FC<LayoutProps> = ({
               <Building2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
               <div className="min-w-0">
                 <div className="text-[10px] text-[var(--text-muted)]">
-                  {isFa ? 'پروژه فعال (دیتابیس مجزا)' : 'Active Project'}
+                  {isFa ? 'پروژه فعال' : 'Active Project'}
                 </div>
                 <div className="text-xs font-bold text-[var(--text-primary)] truncate">
                   {activeProject?.name || (isFa ? 'پروژه پیش‌فرض' : 'Default Project')}

@@ -154,7 +154,7 @@ export const AuthGate: React.FC = () => {
           <div className="flex items-center justify-between gap-2">
             <label className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-primary)]">
               <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-              <span>{isFa ? 'انتخاب پروژه (پایگاه داده مستقل)' : 'Select Project (Isolated Database)'}</span>
+              <span>{isFa ? 'انتخاب پروژه' : 'Select Project'}</span>
             </label>
             <button
               type="button"

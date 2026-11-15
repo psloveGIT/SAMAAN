@@ -109,7 +109,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => onNavigate('importCsv')}
+                onClick={() => onNavigate('backup')}
                 className="h-10 px-5 rounded-lg border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-semibold flex items-center gap-2"
               >
                 <FileSpreadsheet className="w-4 h-4" />
@@ -318,7 +318,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div className="flex justify-between">
                   <span className="text-[var(--text-muted)]">{t.headers.freightCost}</span>
                   <span className="font-semibold tabular-nums text-[var(--accent-primary)]">
-                    {fmt(data.totals.freightCostSum)}
+                    {fmt(data.totals.freightCostSum)} {isFa ? 'ریال' : 'IRR'}
                   </span>
                 </div>
               )}

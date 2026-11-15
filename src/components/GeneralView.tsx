@@ -10,13 +10,12 @@ import {
   Lock,
   LockOpen,
   Plus,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv } from '../lib/csvExport.ts';
+import { type CustomFieldFilter, GENERAL_FILTER_FIELDS } from '../shared/customFilters.ts';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
 import type {
   CategoryStore,
@@ -24,9 +23,24 @@ import type {
   PackingStatusMeta,
   SelectionFormulaSummary,
 } from '../shared/types.ts';
+import {
+  formatThousands,
+  hasEnglishLetters,
+  hasPersianLetters,
+  isValidDecimalNumber,
+  isValidDigitsOnly,
+  PACKAGE_TYPE_OPTIONS_EN,
+  PACKAGE_TYPE_OPTIONS_FA,
+  parseNumericInput,
+  sanitizeDecimalOnly,
+  sanitizeDigitsOnly,
+} from '../shared/validation.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
+import { IranianPlateInput } from './IranianPlateInput.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { MultiPackingAndFieldFilter } from './MultiPackingAndFieldFilter.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 
 interface GeneralRowView extends GeneralEntry {
@@ -72,6 +86,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [supplier, setSupplier] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
+  const [customFilters, setCustomFilters] = useState<CustomFieldFilter[]>([]);
   const [page, setPage] = useState(1);
   const [hideEmptyCols, setHideEmptyCols] = useState(true);
 
@@ -80,6 +96,17 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [selectedMap, setSelectedMap] = useState<Record<string, GeneralRowView>>({});
   const [inspected, setInspected] = useState<GeneralRowView | null>(null);
   const [editing, setEditing] = useState<GeneralRowView | null>(null);
+  const [editError, setEditError] = useState('');
+  const [editNums, setEditNums] = useState({
+    itemCount: '',
+    grossWeight: '',
+    netWeight: '',
+    weighbridgeWeight: '',
+    lengthCm: '',
+    widthCm: '',
+    heightCm: '',
+    freightCost: '',
+  });
   const [ackClosedEdit, setAckClosedEdit] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<GeneralRowView | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
@@ -98,6 +125,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         ...(supplier ? { supplier } : {}),
         ...(fromDate ? { fromDate } : {}),
         ...(toDate ? { toDate } : {}),
+        ...(selectedPackings.length > 0 ? { packingNos: JSON.stringify(selectedPackings) } : {}),
+        ...(customFilters.length > 0 ? { customFilters: JSON.stringify(customFilters) } : {}),
       });
       const res = await apiRequest<GeneralListResponse>(`/api/general?${params.toString()}`);
       setData(res);
@@ -106,7 +135,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [page, q, island, system, subSystem, unit, supplier, fromDate, toDate, notify]);
+  }, [page, q, island, system, subSystem, unit, supplier, fromDate, toDate, selectedPackings, customFilters, notify]);
 
   useEffect(() => {
     loadData();
@@ -149,19 +178,19 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, get: (r: GeneralRowView) => r.arrivalDate },
       { key: 'packingListNo', header: t.headers.packingListNo, get: (r: GeneralRowView) => r.packingListNo },
       { key: 'packageNo', header: t.headers.packageNo, get: (r: GeneralRowView) => r.packageNo },
-      { key: 'packageType', header: t.headers.packageType, get: (r: GeneralRowView) => r.packageType },
-      { key: 'itemCount', header: t.headers.itemCount, isNum: true, get: (r: GeneralRowView) => r.itemCount },
+      { key: 'packageType', header: t.headers.packageType, hideInTable: true, get: (r: GeneralRowView) => r.packageType },
+      { key: 'itemCount', header: t.headers.itemCount, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.itemCount },
       { key: 'itemDescription', header: t.headers.itemDescription, get: (r: GeneralRowView) => r.itemDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: GeneralRowView) => r.supplier },
-      { key: 'dispatchLocation', header: t.headers.dispatchLocation, get: (r: GeneralRowView) => r.dispatchLocation },
+      { key: 'dispatchLocation', header: t.headers.dispatchLocation, hideInTable: true, get: (r: GeneralRowView) => r.dispatchLocation },
       { key: 'employerEntryMinutesNo', header: t.headers.employerEntryMinutesNo, hideInTable: true, get: (r: GeneralRowView) => r.employerEntryMinutesNo },
       { key: 'mapnaEntryMinutesNo', header: t.headers.mapnaEntryMinutesNo, hideInTable: true, get: (r: GeneralRowView) => r.mapnaEntryMinutesNo },
       { key: 'releaseNo', header: t.headers.releaseNo, hideInTable: true, get: (r: GeneralRowView) => r.releaseNo },
       { key: 'releaseDate', header: t.headers.releaseDate, isDate: true, hideInTable: true, get: (r: GeneralRowView) => r.releaseDate },
-      { key: 'island', header: t.headers.island, get: (r: GeneralRowView) => r.island },
-      { key: 'system', header: t.headers.system, get: (r: GeneralRowView) => r.system },
-      { key: 'subSystem', header: t.headers.subSystem, get: (r: GeneralRowView) => r.subSystem },
-      { key: 'unit', header: t.headers.unit, get: (r: GeneralRowView) => r.unit },
+      { key: 'island', header: t.headers.island, hideInTable: true, get: (r: GeneralRowView) => r.island },
+      { key: 'system', header: t.headers.system, hideInTable: true, get: (r: GeneralRowView) => r.system },
+      { key: 'subSystem', header: t.headers.subSystem, hideInTable: true, get: (r: GeneralRowView) => r.subSystem },
+      { key: 'unit', header: t.headers.unit, hideInTable: true, get: (r: GeneralRowView) => r.unit },
       { key: 'grossWeight', header: t.headers.grossWeight, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.grossWeight },
       { key: 'netWeight', header: t.headers.netWeight, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.netWeight },
       { key: 'lengthCm', header: t.headers.lengthCm, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.lengthCm },
@@ -234,9 +263,68 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     }
   };
 
+  const openEditRow = (row: GeneralRowView) => {
+    setEditing({ ...row });
+    setAckClosedEdit(false);
+    setEditError('');
+    setEditNums({
+      itemCount: row.itemCount !== null && row.itemCount !== undefined ? String(row.itemCount) : '',
+      grossWeight: row.grossWeight !== null && row.grossWeight !== undefined ? String(row.grossWeight) : '',
+      netWeight: row.netWeight !== null && row.netWeight !== undefined ? String(row.netWeight) : '',
+      weighbridgeWeight: row.weighbridgeWeight !== null && row.weighbridgeWeight !== undefined ? String(row.weighbridgeWeight) : '',
+      lengthCm: row.lengthCm !== null && row.lengthCm !== undefined ? String(row.lengthCm) : '',
+      widthCm: row.widthCm !== null && row.widthCm !== undefined ? String(row.widthCm) : '',
+      heightCm: row.heightCm !== null && row.heightCm !== undefined ? String(row.heightCm) : '',
+      freightCost: row.freightCost !== null && row.freightCost !== undefined ? formatThousands(row.freightCost, isFa) : '',
+    });
+  };
+
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editing) return;
+    setEditError('');
+
+    if (!editing.supplier?.trim() || !editing.dispatchLocation?.trim()) {
+      setEditError(isFa ? 'تامین‌کننده و محل ارسال نمی‌توانند خالی بمانند.' : 'Supplier and Dispatch Location are required.');
+      return;
+    }
+    if (!editing.packageNo?.trim() || !(editing.packageType || '').trim() || !editing.itemDescription?.trim()) {
+      setEditError(isFa ? 'شماره نگله، نوع بسته‌بندی و شرح کالا نمی‌توانند خالی بمانند.' : 'Package No., Package Type, and Item Description are required.');
+      return;
+    }
+    if (isFa && hasEnglishLetters(editing.packageType || '')) {
+      setEditError('در زبان فارسی، نوع بسته‌بندی فقط باید به فارسی نوشته شود.');
+      return;
+    }
+    if (!isFa && hasPersianLetters(editing.packageType || '')) {
+      setEditError('In English mode, Package Type must be in English only.');
+      return;
+    }
+    const cnt = parseNumericInput(editNums.itemCount);
+    if (cnt === null || cnt < 1 || !Number.isInteger(cnt)) {
+      setEditError(isFa ? 'تعداد اقلام نگله الزامی و باید عدد صحیح مثبت باشد.' : 'Package item count must be a positive integer.');
+      return;
+    }
+    if (!editing.island?.trim() || !editing.system?.trim() || !editing.subSystem?.trim() || !editing.unit?.trim()) {
+      setEditError(isFa ? 'جزیره، سیستم، ساب‌سیستم و واحد نمی‌توانند خالی بمانند.' : 'Island, System, Sub-System, and Unit are required.');
+      return;
+    }
+    if (editing.employerEntryMinutesNo?.trim() && !isValidDigitsOnly(editing.employerEntryMinutesNo)) {
+      setEditError(isFa ? 'شماره صورتجلسه ورود کارفرما فقط باید عدد باشد.' : 'Employer Entry Minutes No. must be digits only.');
+      return;
+    }
+    if (
+      (editNums.grossWeight.trim() && !isValidDecimalNumber(editNums.grossWeight)) ||
+      (editNums.netWeight.trim() && !isValidDecimalNumber(editNums.netWeight)) ||
+      (editNums.weighbridgeWeight.trim() && !isValidDecimalNumber(editNums.weighbridgeWeight)) ||
+      (editNums.lengthCm.trim() && !isValidDecimalNumber(editNums.lengthCm)) ||
+      (editNums.widthCm.trim() && !isValidDecimalNumber(editNums.widthCm)) ||
+      (editNums.heightCm.trim() && !isValidDecimalNumber(editNums.heightCm))
+    ) {
+      setEditError(isFa ? 'اوزان و ابعاد (متر) فقط باید عدد باشند.' : 'Weights and dimensions must be numeric.');
+      return;
+    }
+
     try {
       const { rowNo: _ignored, ...rest } = editing;
       const effectiveReleaseDate = editing.releaseNo.trim()
@@ -246,6 +334,15 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         method: 'PATCH',
         body: JSON.stringify({
           ...rest,
+          employerEntryMinutesNo: sanitizeDigitsOnly(editing.employerEntryMinutesNo || ''),
+          itemCount: cnt,
+          grossWeight: parseNumericInput(editNums.grossWeight),
+          netWeight: parseNumericInput(editNums.netWeight),
+          weighbridgeWeight: parseNumericInput(editNums.weighbridgeWeight),
+          lengthCm: parseNumericInput(editNums.lengthCm),
+          widthCm: parseNumericInput(editNums.widthCm),
+          heightCm: parseNumericInput(editNums.heightCm),
+          freightCost: parseNumericInput(editNums.freightCost),
           releaseDate: effectiveReleaseDate,
           acknowledgeClosed: ackClosedEdit,
         }),
@@ -257,7 +354,10 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       onDataChanged();
       loadData();
     } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
+      if (err instanceof ApiError) {
+        setEditError(err.message);
+        notify('error', err.message);
+      }
     }
   };
 
@@ -284,41 +384,22 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     }
   };
 
-  const handleExport = () => {
-    const rowsToExport = selectedRows.length > 0 ? selectedRows : items;
-    exportRowsToCsv({
-      rows: rowsToExport,
-      columns: columns.map((c) => ({
-        key: c.key,
-        header: c.header,
-        isDate: c.isDate,
-        getValue: c.get,
-      })),
-      filename: 'samaan-general',
-      calendar: prefs.calendar,
-      hideEmptyColumns: hideEmptyCols,
-    });
-  };
+  const editPackageTypeOptions = isFa ? PACKAGE_TYPE_OPTIONS_FA : PACKAGE_TYPE_OPTIONS_EN;
 
   return (
     <div className="space-y-4">
       {/* Filter & Search Toolbar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center flex-1 min-w-[240px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-            <input
-              type="text"
-              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setPage(1);
-              }}
-              placeholder={t.controls.searchPlaceholder}
-              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-            />
-          </div>
+          <SearchInputWithClear
+            value={q}
+            onChange={(val) => {
+              setQ(val);
+              setPage(1);
+            }}
+            placeholder={t.controls.searchPlaceholder}
+            className="flex-1 min-w-[240px]"
+          />
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -346,6 +427,21 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
             )}
           </div>
         </div>
+
+        <MultiPackingAndFieldFilter
+          fields={GENERAL_FILTER_FIELDS}
+          selectedPackings={selectedPackings}
+          onChangePackings={(next) => {
+            setSelectedPackings(next);
+            setPage(1);
+          }}
+          customFilters={customFilters}
+          onChangeCustomFilters={(next) => {
+            setCustomFilters(next);
+            setPage(1);
+          }}
+          compact
+        />
 
         {/* Category & Date Filters */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5">
@@ -416,7 +512,6 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           summary={activeSummary}
           isFilteredFallback={selectedRows.length === 0}
           onClearSelection={() => setSelectedMap({})}
-          onExportSelected={handleExport}
           onPrintSelected={() => setPrintOpen(true)}
         />
       )}
@@ -564,10 +659,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                             )}
                             <button
                               type="button"
-                              onClick={() => {
-                                setEditing({ ...row });
-                                setAckClosedEdit(false);
-                              }}
+                              onClick={() => openEditRow(row)}
                               className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
                               title={t.controls.edit}
                             >
@@ -797,6 +889,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
               )}
 
+              {editError && (
+                <div className="p-3 rounded-xl border border-[var(--status-danger)] bg-[var(--status-danger-bg)] text-xs font-medium text-[var(--status-danger)]">
+                  {editError}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <JalaliDateInput
                   label={t.headers.arrivalDate}
@@ -811,10 +909,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 />
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.packageNo}
+                    {t.headers.packageNo} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={isFa && !editing.packageNo ? 'rtl' : 'ltr'}
                     value={editing.packageNo}
                     onChange={(e) => setEditing({ ...editing, packageNo: e.target.value })}
@@ -825,47 +924,49 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.packageType}
+                    {t.headers.packageType} *
                   </label>
                   <input
                     type="text"
+                    required
                     list="samaan-general-package-types"
-                    dir={!editing.packageType ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    dir={isFa ? 'rtl' : 'ltr'}
                     value={editing.packageType || ''}
-                    onChange={(e) => setEditing({ ...editing, packageType: e.target.value })}
-                    placeholder={isFa ? 'صندوق چوبی / پالت / کارتن...' : 'Box / Pallet / Crate...'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (isFa && hasEnglishLetters(val)) {
+                        setEditError('در زبان فارسی، نوع بسته‌بندی فقط باید به فارسی نوشته شود.');
+                        return;
+                      }
+                      if (!isFa && hasPersianLetters(val)) {
+                        setEditError('In English mode, Package Type must be entered in English only.');
+                        return;
+                      }
+                      setEditError('');
+                      setEditing({ ...editing, packageType: val });
+                    }}
+                    placeholder={isFa ? 'صندوق چوبی / پالت / کارتن...' : 'Wooden Box / Pallet / Crate...'}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                   <datalist id="samaan-general-package-types">
-                    <option value="صندوق چوبی (Wooden Box)" />
-                    <option value="جعبه مشبک (Crate)" />
-                    <option value="پالت (Pallet)" />
-                    <option value="باندل (Bundle)" />
-                    <option value="کارتن (Carton)" />
-                    <option value="قرقره / درام (Drum)" />
-                    <option value="اسکید (Skid)" />
-                    <option value="کانتینر (Container)" />
-                    <option value="فله (Loose)" />
+                    {editPackageTypeOptions.map((opt) => (
+                      <option key={opt} value={opt} />
+                    ))}
                   </datalist>
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.itemCount}
+                    {t.headers.itemCount} *
                   </label>
                   <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    dir={isFa && (editing.itemCount === null || editing.itemCount === undefined) ? 'rtl' : 'ltr'}
-                    value={editing.itemCount ?? ''}
-                    onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        itemCount: e.target.value === '' ? null : Math.floor(Number(e.target.value)),
-                      })
-                    }
+                    type="text"
+                    required
+                    inputMode="numeric"
+                    dir={isFa && !editNums.itemCount ? 'rtl' : 'ltr'}
+                    value={editNums.itemCount}
+                    onChange={(e) => setEditNums({ ...editNums, itemCount: sanitizeDigitsOnly(e.target.value) })}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
-                      isFa && (editing.itemCount === null || editing.itemCount === undefined) ? 'text-right' : 'text-left'
+                      isFa && !editNums.itemCount ? 'text-right' : 'text-left'
                     }`}
                   />
                 </div>
@@ -890,9 +991,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     dir={isFa && !editing.employerEntryMinutesNo ? 'rtl' : 'ltr'}
                     value={editing.employerEntryMinutesNo}
-                    onChange={(e) => setEditing({ ...editing, employerEntryMinutesNo: e.target.value })}
+                    onChange={(e) =>
+                      setEditing({ ...editing, employerEntryMinutesNo: sanitizeDigitsOnly(e.target.value) })
+                    }
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
                       isFa && !editing.employerEntryMinutesNo ? 'text-right' : 'text-left'
                     }`}
@@ -927,10 +1031,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
                 <div className="sm:col-span-3">
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.itemDescription}
+                    {t.headers.itemDescription} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!editing.itemDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.itemDescription}
                     onChange={(e) => setEditing({ ...editing, itemDescription: e.target.value })}
@@ -940,10 +1045,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.island}
+                    {t.headers.island} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!editing.island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.island}
                     onChange={(e) => setEditing({ ...editing, island: e.target.value })}
@@ -952,10 +1058,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.system}
+                    {t.headers.system} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!editing.system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.system}
                     onChange={(e) => setEditing({ ...editing, system: e.target.value })}
@@ -964,10 +1071,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.subSystem}
+                    {t.headers.subSystem} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!editing.subSystem ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.subSystem}
                     onChange={(e) => setEditing({ ...editing, subSystem: e.target.value })}
@@ -976,10 +1084,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.unit}
+                    {t.headers.unit} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!editing.unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.unit}
                     onChange={(e) => setEditing({ ...editing, unit: e.target.value })}
@@ -988,10 +1097,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.supplier}
+                    {t.headers.supplier} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!editing.supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.supplier}
                     onChange={(e) => setEditing({ ...editing, supplier: e.target.value })}
@@ -1000,10 +1110,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.dispatchLocation}
+                    {t.headers.dispatchLocation} *
                   </label>
                   <input
                     type="text"
+                    required
                     dir={!editing.dispatchLocation ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={editing.dispatchLocation}
                     onChange={(e) => setEditing({ ...editing, dispatchLocation: e.target.value })}
@@ -1012,21 +1123,70 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.billOfLadingNo}
+                  </label>
+                  <input
+                    type="text"
+                    dir={isFa && !editing.billOfLadingNo ? 'rtl' : 'ltr'}
+                    value={editing.billOfLadingNo || ''}
+                    onChange={(e) => setEditing({ ...editing, billOfLadingNo: e.target.value })}
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !editing.billOfLadingNo ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.vehicleNo}
+                  </label>
+                  <IranianPlateInput
+                    value={editing.vehicleNo || ''}
+                    onChange={(next) => setEditing({ ...editing, vehicleNo: next })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.driverName}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!editing.driverName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={editing.driverName || ''}
+                    onChange={(e) => setEditing({ ...editing, driverName: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.weighbridgeWeight}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    dir={isFa && !editNums.weighbridgeWeight ? 'rtl' : 'ltr'}
+                    value={editNums.weighbridgeWeight}
+                    onChange={(e) =>
+                      setEditNums({ ...editNums, weighbridgeWeight: sanitizeDecimalOnly(e.target.value) })
+                    }
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !editNums.weighbridgeWeight ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.grossWeight}
                   </label>
                   <input
-                    type="number"
-                    step="any"
-                    dir={isFa && (editing.grossWeight === null || editing.grossWeight === undefined) ? 'rtl' : 'ltr'}
-                    value={editing.grossWeight ?? ''}
+                    type="text"
+                    inputMode="decimal"
+                    dir={isFa && !editNums.grossWeight ? 'rtl' : 'ltr'}
+                    value={editNums.grossWeight}
                     onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        grossWeight: e.target.value === '' ? null : Number(e.target.value),
-                      })
+                      setEditNums({ ...editNums, grossWeight: sanitizeDecimalOnly(e.target.value) })
                     }
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
-                      isFa && (editing.grossWeight === null || editing.grossWeight === undefined) ? 'text-right' : 'text-left'
+                      isFa && !editNums.grossWeight ? 'text-right' : 'text-left'
                     }`}
                   />
                 </div>
@@ -1035,18 +1195,66 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     {t.headers.netWeight}
                   </label>
                   <input
-                    type="number"
-                    step="any"
-                    dir={isFa && (editing.netWeight === null || editing.netWeight === undefined) ? 'rtl' : 'ltr'}
-                    value={editing.netWeight ?? ''}
+                    type="text"
+                    inputMode="decimal"
+                    dir={isFa && !editNums.netWeight ? 'rtl' : 'ltr'}
+                    value={editNums.netWeight}
                     onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        netWeight: e.target.value === '' ? null : Number(e.target.value),
-                      })
+                      setEditNums({ ...editNums, netWeight: sanitizeDecimalOnly(e.target.value) })
                     }
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
-                      isFa && (editing.netWeight === null || editing.netWeight === undefined) ? 'text-right' : 'text-left'
+                      isFa && !editNums.netWeight ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.lengthCm}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    dir={isFa && !editNums.lengthCm ? 'rtl' : 'ltr'}
+                    value={editNums.lengthCm}
+                    onChange={(e) =>
+                      setEditNums({ ...editNums, lengthCm: sanitizeDecimalOnly(e.target.value) })
+                    }
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !editNums.lengthCm ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.widthCm}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    dir={isFa && !editNums.widthCm ? 'rtl' : 'ltr'}
+                    value={editNums.widthCm}
+                    onChange={(e) =>
+                      setEditNums({ ...editNums, widthCm: sanitizeDecimalOnly(e.target.value) })
+                    }
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !editNums.widthCm ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.heightCm}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    dir={isFa && !editNums.heightCm ? 'rtl' : 'ltr'}
+                    value={editNums.heightCm}
+                    onChange={(e) =>
+                      setEditNums({ ...editNums, heightCm: sanitizeDecimalOnly(e.target.value) })
+                    }
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !editNums.heightCm ? 'text-right' : 'text-left'
                     }`}
                   />
                 </div>
@@ -1055,20 +1263,20 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     {t.headers.freightCost}
                   </label>
                   <input
-                    type="number"
-                    step="any"
-                    dir={isFa && (editing.freightCost === null || editing.freightCost === undefined) ? 'rtl' : 'ltr'}
-                    value={editing.freightCost ?? ''}
+                    type="text"
+                    inputMode="numeric"
+                    dir={isFa && !editNums.freightCost ? 'rtl' : 'ltr'}
+                    value={editNums.freightCost}
                     onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        freightCost: e.target.value === '' ? null : Number(e.target.value),
-                      })
+                      setEditNums({ ...editNums, freightCost: formatThousands(e.target.value, isFa) })
                     }
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
-                      isFa && (editing.freightCost === null || editing.freightCost === undefined) ? 'text-right' : 'text-left'
+                      isFa && !editNums.freightCost ? 'text-right' : 'text-left'
                     }`}
                   />
+                  <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                    {isFa ? 'تمامی مبالغ به ریال می‌باشد' : 'Amounts are in Rials (IRR)'}
+                  </p>
                 </div>
               </div>
 

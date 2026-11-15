@@ -3,18 +3,15 @@ import { createPortal } from 'react-dom';
 import {
   CheckCircle2,
   ClipboardCheck,
-  Download,
   FileText,
   Pencil,
   Plus,
   Printer,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
@@ -26,7 +23,8 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
-import { PrintReportModal } from './PrintReportModal.tsx';
+import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 const joinUnique = (values: (string | undefined | null)[]): string => {
   const seen = new Set<string>();
@@ -1042,7 +1040,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     }
   };
 
-  const invReportColumns = useMemo<CsvColumnDef<OpiInvitationRecord>[]>(
+  const invReportColumns = useMemo<PrintColumnDef<OpiInvitationRecord>[]>(
     () => [
       { key: 'invitationNo', header: t.headers.opiInvitationNo, getValue: (r) => r.invitationNo },
       { key: 'date', header: t.headers.opiInvitationDate, isDate: true, getValue: (r) => r.date },
@@ -1061,7 +1059,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     [t, isFa],
   );
 
-  const itemReportColumns = useMemo<CsvColumnDef<DetailedComputed>[]>(
+  const itemReportColumns = useMemo<PrintColumnDef<DetailedComputed>[]>(
     () => [
       { key: 'rowNo', header: t.headers.rowNo, getValue: (r) => r.rowNo },
       { key: 'shipmentNo', header: t.headers.shipmentNo, getValue: (r) => r.shipmentNo },
@@ -1369,19 +1367,13 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                       ? `انتخاب پکینگ لیست‌ها (${selectedPackings.length.toLocaleString('fa-IR')} مورد انتخاب‌شده)`
                       : `Select Packing Lists (${selectedPackings.length} selected)`}
                   </label>
-                  <div className="flex items-center h-8 w-64 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                    <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                    <input
-                      type="text"
-                      dir={isFa && !packingSearch ? 'rtl' : 'ltr'}
-                      value={packingSearch}
-                      onChange={(e) => setPackingSearch(e.target.value)}
-                      placeholder={isFa ? 'فیلتر شماره پکینگ...' : 'Filter packing no...'}
-                      className={`flex-1 min-w-0 h-full bg-transparent text-xs focus:outline-none ${
-                        isFa && !packingSearch ? 'text-right' : 'text-left'
-                      }`}
-                    />
-                  </div>
+                  <SearchInputWithClear
+                    value={packingSearch}
+                    onChange={setPackingSearch}
+                    placeholder={isFa ? 'فیلتر شماره پکینگ...' : 'Filter packing no...'}
+                    className="w-64"
+                    inputClassName="h-8 text-xs"
+                  />
                 </div>
 
                 <div className="max-h-48 overflow-y-auto p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
@@ -1622,22 +1614,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() =>
-                    exportRowsToCsv({
-                      rows: data?.invitations || [],
-                      columns: invReportColumns,
-                      filename: 'samaan-opi-invitations',
-                      calendar: prefs.calendar,
-                      hideEmptyColumns: true,
-                    })
-                  }
-                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{t.controls.exportCsv}</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setPrintInvTableOpen(true)}
                   className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
                 >
@@ -1826,22 +1802,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 {isFa ? 'اقلام مشمول بازرسی گشایش' : 'Items for Opening Inspection'}
               </span>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    exportRowsToCsv({
-                      rows: itemsForResults,
-                      columns: itemReportColumns,
-                      filename: 'samaan-opi-inspection-items',
-                      calendar: prefs.calendar,
-                      hideEmptyColumns: true,
-                    })
-                  }
-                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{t.controls.exportCsv}</span>
-                </button>
                 <button
                   type="button"
                   onClick={() => setPrintItemsTableOpen(true)}

@@ -3,16 +3,13 @@ import { createPortal } from 'react-dom';
 import {
   ArrowLeftRight,
   CheckCircle2,
-  Download,
   Pencil,
   Printer,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv, type CsvColumnDef } from '../lib/csvExport.ts';
 import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
@@ -23,7 +20,8 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
-import { PrintReportModal } from './PrintReportModal.tsx';
+import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface SubstitutionsApiResponse {
   records: SubstitutionRecord[];
@@ -822,7 +820,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     }
   };
 
-  const reportColumns = useMemo<CsvColumnDef<SubstitutionRecord>[]>(
+  const reportColumns = useMemo<PrintColumnDef<SubstitutionRecord>[]>(
     () => [
       { key: 'docNo', header: isFa ? 'شماره جایگزینی' : 'Rep No.', getValue: (r) => r.docNo },
       { key: 'date', header: isFa ? 'تاریخ' : 'Date', isDate: true, getValue: (r) => r.date },
@@ -991,17 +989,12 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                 {isFa ? 'جستجوی کالای اصلی (الف)' : 'Search Original Item (A)'}
               </label>
-              <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                <input
-                  type="text"
-                  dir={!itemSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                  value={itemSearch}
-                  onChange={(e) => setItemSearch(e.target.value)}
-                  placeholder={isFa ? 'پکینگ، شرح یا کد کالا...' : 'Packing, desc or code...'}
-                  className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-                />
-              </div>
+              <SearchInputWithClear
+                value={itemSearch}
+                onChange={setItemSearch}
+                placeholder={isFa ? 'پکینگ، شرح یا کد کالا...' : 'Packing, desc or code...'}
+                inputClassName="text-xs"
+              />
             </div>
 
             <div className="lg:col-span-8">
@@ -1448,22 +1441,6 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
             {isFa ? 'سوابق جایگزینی تجهیزات (REP)' : 'Equipment Substitution History'}
           </h3>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                exportRowsToCsv({
-                  rows: data?.records || [],
-                  columns: reportColumns,
-                  filename: 'samaan-substitutions',
-                  calendar: prefs.calendar,
-                  hideEmptyColumns: true,
-                })
-              }
-              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{t.controls.exportCsv}</span>
-            </button>
             <button
               type="button"
               onClick={() => setPrintReportOpen(true)}

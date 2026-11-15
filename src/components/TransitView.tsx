@@ -4,21 +4,24 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit3,
+  Eye,
   EyeOff,
   Plus,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { exportRowsToCsv } from '../lib/csvExport.ts';
+import { type CustomFieldFilter, TRANSIT_FILTER_FIELDS } from '../shared/customFilters.ts';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { CategoryStore, SelectionFormulaSummary, TransitEntry } from '../shared/types.ts';
+import { formatThousands, parseNumericInput } from '../shared/validation.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { MultiPackingAndFieldFilter } from './MultiPackingAndFieldFilter.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 
 interface TransitListResponse {
@@ -53,15 +56,19 @@ export const TransitView: React.FC<TransitViewProps> = ({
   const [system, setSystem] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
+  const [customFilters, setCustomFilters] = useState<CustomFieldFilter[]>([]);
   const [page, setPage] = useState(1);
   const [hideEmptyCols, setHideEmptyCols] = useState(true);
 
   const [data, setData] = useState<TransitListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedMap, setSelectedMap] = useState<Record<string, TransitEntry>>({});
+  const [inspected, setInspected] = useState<TransitEntry | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<TransitEntry>>({});
+  const [amountInput, setAmountInput] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<TransitEntry | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
 
@@ -77,6 +84,8 @@ export const TransitView: React.FC<TransitViewProps> = ({
         ...(system ? { system } : {}),
         ...(fromDate ? { fromDate } : {}),
         ...(toDate ? { toDate } : {}),
+        ...(selectedPackings.length > 0 ? { packingNos: JSON.stringify(selectedPackings) } : {}),
+        ...(customFilters.length > 0 ? { customFilters: JSON.stringify(customFilters) } : {}),
       });
       const res = await apiRequest<TransitListResponse>(`/api/transit?${params.toString()}`);
       setData(res);
@@ -85,7 +94,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [page, q, status, supplier, system, fromDate, toDate, notify]);
+  }, [page, q, status, supplier, system, fromDate, toDate, selectedPackings, customFilters, notify]);
 
   useEffect(() => {
     loadData();
@@ -162,7 +171,11 @@ export const TransitView: React.FC<TransitViewProps> = ({
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { rowNo: _ignored, ...payload } = draft;
+      const { rowNo: _ignored, ...rest } = draft;
+      const payload = {
+        ...rest,
+        amount: parseNumericInput(amountInput),
+      };
       if (editingId) {
         await apiRequest(`/api/transit/${editingId}`, {
           method: 'PATCH',
@@ -220,37 +233,19 @@ export const TransitView: React.FC<TransitViewProps> = ({
     });
   };
 
-  const handleExport = () => {
-    const rowsToExport = selectedRows.length > 0 ? selectedRows : items;
-    exportRowsToCsv({
-      rows: rowsToExport,
-      columns: columns.map((c) => ({
-        key: c.key,
-        header: c.header,
-        isDate: c.isDate,
-        getValue: c.get,
-      })),
-      filename: 'samaan-transit',
-      calendar: prefs.calendar,
-      hideEmptyColumns: hideEmptyCols,
-    });
-  };
-
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center flex-1 min-w-[240px] h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-            <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-            <input
-              type="text"
-              dir={!q ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-              value={q}
-              onChange={(e) => { setQ(e.target.value); setPage(1); }}
-              placeholder={t.controls.searchPlaceholder}
-              className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-            />
-          </div>
+          <SearchInputWithClear
+            value={q}
+            onChange={(val) => {
+              setQ(val);
+              setPage(1);
+            }}
+            placeholder={t.controls.searchPlaceholder}
+            className="flex-1 min-w-[240px]"
+          />
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -272,6 +267,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                 onClick={() => {
                   setEditingId(null);
                   setDraft({ arrivalDate: getTodayIso(), overallStatus: 'در دست ارسال' });
+                  setAmountInput('');
                   setModalOpen(true);
                 }}
                 className="h-9 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap"
@@ -282,6 +278,21 @@ export const TransitView: React.FC<TransitViewProps> = ({
             )}
           </div>
         </div>
+
+        <MultiPackingAndFieldFilter
+          fields={TRANSIT_FILTER_FIELDS}
+          selectedPackings={selectedPackings}
+          onChangePackings={(next) => {
+            setSelectedPackings(next);
+            setPage(1);
+          }}
+          customFilters={customFilters}
+          onChangeCustomFilters={(next) => {
+            setCustomFilters(next);
+            setPage(1);
+          }}
+          compact
+        />
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
           <select
@@ -334,7 +345,6 @@ export const TransitView: React.FC<TransitViewProps> = ({
           summary={activeSummary}
           isFilteredFallback={selectedRows.length === 0}
           onClearSelection={() => setSelectedMap({})}
-          onExportSelected={handleExport}
           onPrintSelected={() => setPrintOpen(true)}
         />
       )}
@@ -381,8 +391,12 @@ export const TransitView: React.FC<TransitViewProps> = ({
                 </tr>
               ) : (
                 items.map((row) => (
-                  <tr key={row.id} className="hover:bg-[var(--bg-subtle)]/60 transition-colors">
-                    <td className="py-2 px-3">
+                  <tr
+                    key={row.id}
+                    onClick={() => setInspected(row)}
+                    className="cursor-pointer hover:bg-[var(--bg-subtle)]/60 transition-colors"
+                  >
+                    <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={Boolean(selectedMap[row.id])}
@@ -412,39 +426,54 @@ export const TransitView: React.FC<TransitViewProps> = ({
                         </td>
                       );
                     })}
-                    <td className="py-2 px-3 whitespace-nowrap text-end">
-                      {canEdit && (
-                        <div className="inline-flex items-center gap-1">
-                          {row.overallStatus !== 'رسیده' && (
+                    <td className="py-2 px-3 whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setInspected(row)}
+                          title={isFa ? 'مشاهده اطلاعات کامل سطر' : 'Inspect Row Details'}
+                          className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        {canEdit && (
+                          <>
+                            {row.overallStatus !== 'رسیده' && (
+                              <button
+                                type="button"
+                                onClick={() => onConvertToGeneral(row)}
+                                className="px-2 py-1 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold flex items-center gap-1"
+                              >
+                                <ArrowRightCircle className="w-3 h-3" />
+                                <span>{isFa ? 'انتقال به جنرال' : 'Mark Arrived'}</span>
+                              </button>
+                            )}
                             <button
                               type="button"
-                              onClick={() => onConvertToGeneral(row)}
-                              className="px-2 py-1 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold flex items-center gap-1"
+                              onClick={() => {
+                                setEditingId(row.id);
+                                setDraft({ ...row });
+                                setAmountInput(
+                                  row.amount !== null && row.amount !== undefined
+                                    ? formatThousands(row.amount, isFa)
+                                    : '',
+                                );
+                                setModalOpen(true);
+                              }}
+                              className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
                             >
-                              <ArrowRightCircle className="w-3 h-3" />
-                              <span>{isFa ? 'انتقال به جنرال' : 'Mark Arrived'}</span>
+                              <Edit3 className="w-3.5 h-3.5" />
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingId(row.id);
-                              setDraft({ ...row });
-                              setModalOpen(true);
-                            }}
-                            className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(row)}
-                            className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(row)}
+                              className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -481,6 +510,62 @@ export const TransitView: React.FC<TransitViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Full-row Inspector Drawer */}
+      {inspected && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end" onClick={() => setInspected(null)}>
+          <div
+            className="w-full max-w-lg bg-[var(--bg-surface)] h-full overflow-y-auto p-6 border-s border-[var(--border-subtle)] space-y-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 pb-3 border-b border-[var(--border-subtle)]">
+              <div>
+                <h3 className="text-base font-bold bidi-plaintext">
+                  {inspected.itemDescription || inspected.packingListNo || t.nav.transit}
+                </h3>
+                <div className="text-xs text-[var(--text-muted)] mt-1 tabular-nums bidi-plaintext">
+                  {t.headers.rowNo}: {inspected.rowNo}
+                  {inspected.packingListNo ? ` · ${t.headers.packingListNo}: ${inspected.packingListNo}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspected(null)}
+                className="p-1.5 rounded-lg hover:bg-[var(--bg-subtle)]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {columns
+                .filter((c) => {
+                  const val = c.get(inspected);
+                  return val !== null && val !== undefined && String(val).trim() !== '';
+                })
+                .map((c) => {
+                  const raw = c.get(inspected);
+                  const formatted = c.isDate
+                    ? formatDate(String(raw || ''))
+                    : typeof raw === 'number'
+                      ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                      : String(raw);
+                  return (
+                    <div
+                      key={c.key}
+                      className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
+                    >
+                      <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
+                      <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
+                        {formatted}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDeleteModal
         open={Boolean(deleteTarget)}
@@ -638,17 +723,18 @@ export const TransitView: React.FC<TransitViewProps> = ({
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.amount}</label>
                   <input
-                    type="number"
-                    step="any"
-                    dir={isFa && (draft.amount === null || draft.amount === undefined) ? 'rtl' : 'ltr'}
-                    value={draft.amount ?? ''}
-                    onChange={(e) =>
-                      setDraft({ ...draft, amount: e.target.value === '' ? null : Number(e.target.value) })
-                    }
+                    type="text"
+                    inputMode="numeric"
+                    dir={isFa && !amountInput ? 'rtl' : 'ltr'}
+                    value={amountInput}
+                    onChange={(e) => setAmountInput(formatThousands(e.target.value, isFa))}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
-                      isFa && (draft.amount === null || draft.amount === undefined) ? 'text-right' : 'text-left'
+                      isFa && !amountInput ? 'text-right' : 'text-left'
                     }`}
                   />
+                  <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                    {isFa ? 'مبلغ به ریال می‌باشد' : 'Amount is in Rials (IRR)'}
+                  </p>
                 </div>
               </div>
               <div className="pt-3 border-t border-[var(--border-subtle)] flex justify-end gap-2">

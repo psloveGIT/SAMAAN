@@ -5,6 +5,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
 import type { Request, Response } from 'express';
+import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import {
   clearSessionCookie,
@@ -37,6 +38,13 @@ import {
 } from './src/shared/formulas.ts';
 import { getMonthKeyFromIso, normalizeDigits } from './src/shared/jalali.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
+import {
+  matchesCustomFilters,
+  matchesMultiPacking,
+  parseCustomFiltersParam,
+  parsePackingNosParam,
+} from './src/shared/customFilters.ts';
+import { isValidDigitsOnly } from './src/shared/validation.ts';
 import type {
   CalendarMode,
   CategoryGroupKey,
@@ -672,6 +680,8 @@ async function startServer() {
     const unit = String(req.query.unit || '');
     const supplier = String(req.query.supplier || '');
     const packingListNo = normKey(String(req.query.packingListNo || ''));
+    const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
+    const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
     const page = Math.max(1, Number(req.query.page || 1));
@@ -684,6 +694,8 @@ async function startServer() {
       if (unit && g.unit !== unit) return false;
       if (supplier && g.supplier !== supplier) return false;
       if (packingListNo && normKey(g.packingListNo) !== packingListNo) return false;
+      if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
+      if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
       if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
       return matchSearch(
         [
@@ -795,6 +807,29 @@ async function startServer() {
 
     for (const raw of entries) {
       const pkgNo = normKey(raw.packageNo);
+      if (!pkgNo || !normKey(raw.supplier) || !normKey(raw.dispatchLocation) || !normKey(raw.packageType) || !normKey(raw.itemDescription) || !normKey(raw.island) || !normKey(raw.system) || !normKey(raw.subSystem) || !normKey(raw.unit)) {
+        res.status(400).json({
+          error: errMsg(
+            req,
+            'فیلدهای تأمین‌کننده، محل ارسال، شماره پکینگ، شماره نگله، نوع بسته‌بندی، تعداد اقلام نگله، شرح کالا، جزیره، سیستم، ساب‌سیستم و واحد نباید خالی بمانند.',
+            'Supplier, Dispatch Location, Packing List No., Package No., Package Type, Package Item Count, Description, Island, System, Sub-System, and Unit are required.',
+          ),
+        });
+        return;
+      }
+
+      const cleanEmployerMinutes = normalizeDigits(normKey(raw.employerEntryMinutesNo));
+      if (cleanEmployerMinutes && !isValidDigitsOnly(cleanEmployerMinutes)) {
+        res.status(400).json({
+          error: errMsg(
+            req,
+            'شماره صورتجلسه کارفرما فقط باید شامل عدد باشد.',
+            'Employer Entry Minutes No. must contain digits only.',
+          ),
+        });
+        return;
+      }
+
       if (isContinuation && existingGen.length > 0 && (!pkgNo || existingPackages.has(pkgNo))) {
         res.status(409).json({
           code: 'DUPLICATE_PACKAGE_ON_CONTINUATION',
@@ -831,6 +866,16 @@ async function startServer() {
         raw.itemCount !== undefined && raw.itemCount !== null && Number.isFinite(Number(raw.itemCount)) && Number(raw.itemCount) > 0
           ? Math.floor(Number(raw.itemCount))
           : null;
+      if (!parsedItemCount || parsedItemCount <= 0) {
+        res.status(400).json({
+          error: errMsg(
+            req,
+            'تعداد اقلام نگله الزامی و باید عدد صحیح بزرگ‌تر از صفر باشد.',
+            'Package Item Count is required and must be a positive integer.',
+          ),
+        });
+        return;
+      }
 
       preparedGeneral.push({
         id: makeId(),
@@ -840,7 +885,7 @@ async function startServer() {
         releaseDate: cleanReleaseDate,
         supplier: normKey(raw.supplier),
         dispatchLocation: normKey(raw.dispatchLocation),
-        employerEntryMinutesNo: normKey(raw.employerEntryMinutesNo),
+        employerEntryMinutesNo: normalizeDigits(normKey(raw.employerEntryMinutesNo)),
         mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
@@ -922,6 +967,21 @@ async function startServer() {
         return;
       }
       patch.mapnaEntryMinutesNo = cleanMapnaMinutes;
+    }
+
+    if (patch.employerEntryMinutesNo !== undefined) {
+      const cleanEmp = normalizeDigits(normKey(patch.employerEntryMinutesNo));
+      if (cleanEmp && !isValidDigitsOnly(cleanEmp)) {
+        res.status(400).json({
+          error: errMsg(
+            req,
+            'شماره صورتجلسه کارفرما فقط باید شامل عدد باشد.',
+            'Employer Entry Minutes No. must contain digits only.',
+          ),
+        });
+        return;
+      }
+      patch.employerEntryMinutesNo = cleanEmp;
     }
 
     const finalArrival = normKey(patch.arrivalDate ?? item.arrivalDate);
@@ -1035,6 +1095,8 @@ async function startServer() {
     const storageLocation = String(req.query.storageLocation || '');
     const shipmentNo = normKey(String(req.query.shipmentNo || ''));
     const packageNo = normKey(String(req.query.packageNo || ''));
+    const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
+    const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
     const shortageOnly = String(req.query.shortageOnly || '') === 'true';
     const damagedOnly = String(req.query.damagedOnly || '') === 'true';
     const fromDate = String(req.query.fromDate || '');
@@ -1052,6 +1114,7 @@ async function startServer() {
       if (storageLocation && d.storageLocation !== storageLocation) continue;
       if (shipmentNo && normKey(d.shipmentNo) !== shipmentNo) continue;
       if (packageNo && normKey(d.packageNo) !== packageNo) continue;
+      if (!matchesMultiPacking(d.shipmentNo, packingNos)) continue;
       if (!inDateRange(d.arrivalDate, fromDate, toDate)) continue;
       if (
         !matchSearch(
@@ -1090,6 +1153,7 @@ async function startServer() {
         continue;
       }
       const comp = computeDetailedEntry(d);
+      if (!matchesCustomFilters(comp as unknown as Record<string, unknown>, customFilters)) continue;
       if (shortageOnly && !comp.hasShortage) continue;
       if (damagedOnly && !comp.hasDamaged) continue;
       computedAll.push(comp);
@@ -1359,6 +1423,8 @@ async function startServer() {
     const status = String(req.query.status || '');
     const supplier = String(req.query.supplier || '');
     const system = String(req.query.system || '');
+    const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
+    const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
     const page = Math.max(1, Number(req.query.page || 1));
@@ -1368,6 +1434,8 @@ async function startServer() {
       if (status && t.overallStatus !== status) return false;
       if (supplier && t.supplier !== supplier) return false;
       if (system && t.system !== system) return false;
+      if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
+      if (!matchesCustomFilters(t as unknown as Record<string, unknown>, customFilters)) return false;
       if (!inDateRange(t.arrivalDate, fromDate, toDate)) return false;
       return matchSearch(
         [
@@ -3734,14 +3802,18 @@ async function startServer() {
   // ---------------- GLOBAL SEARCH ----------------
   app.get('/api/search', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
     const q = String(req.query.q || '').trim();
-    const limit = Math.min(100, Number(queryLimit(req.query.limit)));
-    if (!q) {
+    const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
+    const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
+    const limit = Math.min(200, Number(queryLimit(req.query.limit)));
+    if (!q && packingNos.length === 0 && customFilters.length === 0) {
       res.json({ general: [], detailed: [], transit: [] });
       return;
     }
     const general = store.db.general
-      .filter((g) =>
-        matchSearch(
+      .filter((g) => {
+        if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
+        if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
+        return matchSearch(
           [
             g.rowNo,
             g.packingListNo,
@@ -3753,46 +3825,57 @@ async function startServer() {
             g.employerEntryMinutesNo,
             g.mapnaEntryMinutesNo,
             g.billOfLadingNo,
+            g.vehicleNo,
             g.driverName,
             g.island,
             g.system,
             g.subSystem,
+            g.unit,
           ],
           q,
-        ),
-      )
+        );
+      })
       .slice(0, limit);
 
     const detailed = store.db.detailed
-      .filter((d) =>
-        matchSearch(
-          [
-            d.rowNo,
-            d.shipmentNo,
-            d.packageNo,
-            d.itemNo,
-            d.generalDescription,
-            d.description,
-            d.itemCode,
-            d.mtoRef,
-            d.supplier,
-            d.gcvReceiptNo,
-            d.mivContractorNo,
-            d.smrContractorNo,
-            d.materialBalanceNo,
-            d.balanceStatus,
-            d.storageLocation,
-            d.stocktakeStatus,
-          ],
-          q,
-        ),
-      )
-      .slice(0, limit)
-      .map(computeDetailedEntry);
+      .filter((d) => {
+        if (!matchesMultiPacking(d.shipmentNo, packingNos)) return false;
+        if (
+          !matchSearch(
+            [
+              d.rowNo,
+              d.shipmentNo,
+              d.packageNo,
+              d.itemNo,
+              d.generalDescription,
+              d.description,
+              d.itemCode,
+              d.mtoRef,
+              d.supplier,
+              d.gcvReceiptNo,
+              d.mivContractorNo,
+              d.smrContractorNo,
+              d.materialBalanceNo,
+              d.balanceStatus,
+              d.storageLocation,
+              d.stocktakeStatus,
+            ],
+            q,
+          )
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map(computeDetailedEntry)
+      .filter((comp) => matchesCustomFilters(comp as unknown as Record<string, unknown>, customFilters))
+      .slice(0, limit);
 
     const transit = store.db.transit
-      .filter((t) =>
-        matchSearch(
+      .filter((t) => {
+        if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
+        if (!matchesCustomFilters(t as unknown as Record<string, unknown>, customFilters)) return false;
+        return matchSearch(
           [
             t.rowNo,
             t.packingListNo,
@@ -3806,8 +3889,8 @@ async function startServer() {
             t.carrierContractor,
           ],
           q,
-        ),
-      )
+        );
+      })
       .slice(0, limit);
 
     res.json({ general, detailed, transit });
@@ -4050,29 +4133,65 @@ async function startServer() {
     });
   });
 
-  // ---------------- CSV IMPORT ----------------
+  // ---------------- SPREADSHEET / CSV / EXCEL IMPORT ----------------
+  const generalDupKey = (r: Pick<GeneralEntry, 'packingListNo' | 'packageNo' | 'mapnaEntryMinutesNo'>) => {
+    const pk = normalizeDigits(normKey(r.packingListNo)).toLowerCase();
+    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
+    const mp = normalizeDigits(normKey(r.mapnaEntryMinutesNo)).toLowerCase();
+    if (pk && pkg) return `pk:${pk}::pkg:${pkg}`;
+    if (mp) return `mp:${mp}`;
+    return '';
+  };
+
+  const detailedDupKey = (r: Pick<DetailedEntry, 'shipmentNo' | 'packageNo' | 'itemNo'>) => {
+    const pk = normalizeDigits(normKey(r.shipmentNo)).toLowerCase();
+    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
+    const itm = normalizeDigits(normKey(r.itemNo)).toLowerCase();
+    if (pk && itm) return `sh:${pk}::pkg:${pkg}::itm:${itm}`;
+    return '';
+  };
+
+  const transitDupKey = (r: Pick<TransitEntry, 'packingListNo' | 'packageNo'>) => {
+    const pk = normalizeDigits(normKey(r.packingListNo)).toLowerCase();
+    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
+    if (pk) return `tr:${pk}::pkg:${pkg}`;
+    return '';
+  };
+
   app.post('/api/import/preview', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { csvText, scope, assumedCalendar } = req.body as {
+    const { csvText, matrix: rawMatrix, scope, assumedCalendar } = req.body as {
       csvText?: string;
+      matrix?: string[][];
       scope?: ImportScope;
       assumedCalendar?: CalendarMode;
     };
-    if (!csvText) {
-      res.status(400).json({ error: errMsg(req, 'محتوای فایل CSV خالی است', 'CSV content is empty') });
+    const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0
+      ? rawMatrix
+      : csvText
+        ? parseCsvMatrix(csvText)
+        : [];
+    if (matrix.length === 0) {
+      res.status(400).json({ error: errMsg(req, 'محتوای فایل ورودی خالی است', 'Input file content is empty') });
       return;
     }
-    const matrix = parseCsvMatrix(csvText);
     const detectedScope = scope || detectCsvScope(matrix) || 'general';
     const cal = assumedCalendar || 'jalali';
 
     if (detectedScope === 'general') {
       const parsed = parseGeneralCsv(matrix, cal, req.currentUser!.username);
       const duplicateRowNos = parsed.rows.filter((r) => r.rowNo && store.isRowNoTaken('general', r.rowNo)).length;
+      const existingKeys = new Set(store.db.general.map(generalDupKey).filter(Boolean));
+      const duplicateRecords = parsed.rows.filter((r) => {
+        const k = generalDupKey(r);
+        return Boolean(k && existingKeys.has(k));
+      });
       res.json({
         scope: 'general',
         totalRows: parsed.rows.length,
         skippedEmpty: parsed.skippedEmpty,
         duplicateRowNos,
+        duplicateRecordsCount: duplicateRecords.length,
+        duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.packingListNo || '-'} / ${r.packageNo || r.mapnaEntryMinutesNo || '-'}`),
         sample: parsed.rows.slice(0, 5),
       });
       return;
@@ -4080,68 +4199,152 @@ async function startServer() {
     if (detectedScope === 'detailed') {
       const parsed = parseDetailedCsv(matrix, cal, req.currentUser!.username);
       const duplicateRowNos = parsed.rows.filter((r) => r.rowNo && store.isRowNoTaken('detailed', r.rowNo)).length;
+      const existingKeys = new Set(store.db.detailed.map(detailedDupKey).filter(Boolean));
+      const duplicateRecords = parsed.rows.filter((r) => {
+        const k = detailedDupKey(r);
+        return Boolean(k && existingKeys.has(k));
+      });
       res.json({
         scope: 'detailed',
         totalRows: parsed.rows.length,
         skippedEmpty: parsed.skippedEmpty,
         duplicateRowNos,
+        duplicateRecordsCount: duplicateRecords.length,
+        duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.shipmentNo || '-'} / ${r.packageNo || '-'} / #${r.itemNo || '-'}`),
         sample: parsed.rows.slice(0, 5),
       });
       return;
     }
 
     const parsed = parseTransitCsv(matrix, cal, req.currentUser!.username);
+    const existingKeys = new Set(store.db.transit.map(transitDupKey).filter(Boolean));
+    const duplicateRecords = parsed.rows.filter((r) => {
+      const k = transitDupKey(r);
+      return Boolean(k && existingKeys.has(k));
+    });
     res.json({
       scope: 'transit',
       totalRows: parsed.rows.length,
       skippedEmpty: parsed.skippedEmpty,
       duplicateRowNos: 0,
+      duplicateRecordsCount: duplicateRecords.length,
+      duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.packingListNo || '-'} / ${r.packageNo || '-'}`),
       sample: parsed.rows.slice(0, 5),
     });
   });
 
   app.post('/api/import/commit', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { csvText, scope, assumedCalendar } = req.body as {
+    const { csvText, matrix: rawMatrix, scope, assumedCalendar, duplicateRecordPolicy } = req.body as {
       csvText?: string;
+      matrix?: string[][];
       scope?: ImportScope;
       assumedCalendar?: CalendarMode;
-      duplicateRowPolicy?: 'auto_reassign' | 'skip';
+      duplicateRecordPolicy?: 'replace' | 'skip';
     };
-    if (!csvText) {
-      res.status(400).json({ error: errMsg(req, 'محتوای فایل CSV خالی است', 'CSV content is empty') });
+    const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0
+      ? rawMatrix
+      : csvText
+        ? parseCsvMatrix(csvText)
+        : [];
+    if (matrix.length === 0) {
+      res.status(400).json({ error: errMsg(req, 'محتوای فایل ورودی خالی است', 'Input file content is empty') });
       return;
     }
-    const matrix = parseCsvMatrix(csvText);
     const targetScope = scope || detectCsvScope(matrix) || 'general';
     const cal = assumedCalendar || 'jalali';
+    const dupPolicy: 'replace' | 'skip' = duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
 
     let imported = 0;
-    const skipped = 0;
+    let replaced = 0;
+    let skipped = 0;
     let transitAutoArrived = 0;
     const touchedPackings = new Set<string>();
+    const now = new Date().toISOString();
 
     if (targetScope === 'general') {
       const parsed = parseGeneralCsv(matrix, cal, req.currentUser!.username);
+      const existingByKey = new Map<string, GeneralEntry>();
+      for (const g of store.db.general) {
+        const k = generalDupKey(g);
+        if (k) existingByKey.set(k, g);
+      }
       const newItems: GeneralEntry[] = [];
       for (const r of parsed.rows) {
+        const k = generalDupKey(r);
+        const existing = k ? existingByKey.get(k) : undefined;
+        if (existing) {
+          if (dupPolicy === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          Object.assign(existing, {
+            ...r,
+            id: existing.id,
+            rowNo: existing.rowNo,
+            createdAt: existing.createdAt,
+            createdBy: existing.createdBy,
+            updatedAt: now,
+          });
+          replaced += 1;
+          if (r.packingListNo) touchedPackings.add(r.packingListNo);
+          continue;
+        }
+        const created: GeneralEntry = { ...r, id: makeId() };
+        if (k) existingByKey.set(k, created);
         if (r.packingListNo) touchedPackings.add(r.packingListNo);
-        newItems.push({ ...r, id: makeId() });
+        newItems.push(created);
         imported += 1;
       }
       store.db.general.push(...newItems);
       store.renumberScope('general');
     } else if (targetScope === 'detailed') {
       const parsed = parseDetailedCsv(matrix, cal, req.currentUser!.username);
+      const existingByKey = new Map<string, DetailedEntry>();
+      for (const d of store.db.detailed) {
+        const k = detailedDupKey(d);
+        if (k) existingByKey.set(k, d);
+      }
       const newItems: DetailedEntry[] = [];
       for (const r of parsed.rows) {
+        const k = detailedDupKey(r);
+        const existing = k ? existingByKey.get(k) : undefined;
+        const genDesc = r.generalDescription
+          ? formatGeneralDescriptionCase(r.generalDescription)
+          : inferGeneralDescription(r.description);
+        if (existing) {
+          if (dupPolicy === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          Object.assign(existing, {
+            ...r,
+            generalDescription: genDesc,
+            id: existing.id,
+            rowNo: existing.rowNo,
+            shortageBackfills: existing.shortageBackfills || [],
+            createdAt: existing.createdAt,
+            createdBy: existing.createdBy,
+            updatedAt: now,
+          });
+          replaced += 1;
+          if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
+          continue;
+        }
+        const created: DetailedEntry = { ...r, generalDescription: genDesc, id: makeId() };
+        if (k) existingByKey.set(k, created);
         if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
-        newItems.push({ ...r, id: makeId() });
+        newItems.push(created);
         imported += 1;
       }
       store.db.detailed.push(...newItems);
       store.renumberScope('detailed');
     } else {
       const parsed = parseTransitCsv(matrix, cal, req.currentUser!.username);
+      const existingByKey = new Map<string, TransitEntry>();
+      for (const t of store.db.transit) {
+        const k = transitDupKey(t);
+        if (k) existingByKey.set(k, t);
+      }
       const newItems: TransitEntry[] = [];
       for (const r of parsed.rows) {
         const pk = normKey(r.packingListNo);
@@ -4149,12 +4352,34 @@ async function startServer() {
           pk &&
           ((store.generalByPacking.get(pk)?.length || 0) > 0 ||
             (store.detailedByPacking.get(pk)?.length || 0) > 0);
-        newItems.push({
+        const k = transitDupKey(r);
+        const existing = k ? existingByKey.get(k) : undefined;
+        if (existing) {
+          if (dupPolicy === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          Object.assign(existing, {
+            ...r,
+            id: existing.id,
+            rowNo: existing.rowNo,
+            overallStatus: alreadyArrived ? 'رسیده' : r.overallStatus,
+            linkedGeneralPackingNo: alreadyArrived ? pk : r.linkedGeneralPackingNo,
+            createdAt: existing.createdAt,
+            createdBy: existing.createdBy,
+            updatedAt: now,
+          });
+          replaced += 1;
+          continue;
+        }
+        const created: TransitEntry = {
           ...r,
           id: makeId(),
           overallStatus: alreadyArrived ? 'رسیده' : r.overallStatus,
           linkedGeneralPackingNo: alreadyArrived ? pk : undefined,
-        });
+        };
+        if (k) existingByKey.set(k, created);
+        newItems.push(created);
         imported += 1;
       }
       store.db.transit.push(...newItems);
@@ -4168,10 +4393,10 @@ async function startServer() {
 
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
-      action: 'IMPORT_CSV',
+      action: 'IMPORT_DATA',
       scope: 'import',
       targetId: targetScope,
-      summary: `ورود فایل CSV (${targetScope}): ${imported} ردیف ثبت شد، ${skipped} ردیف رد شد${
+      summary: `بارگذاری فایل (${targetScope}): ${imported} ردیف جدید، ${replaced} ردیف جایگزین و ${skipped} ردیف تکراری رد شد${
         transitAutoArrived > 0 ? `، ${transitAutoArrived} ردیف در راه به «رسیده» تغییر وضعیت داد` : ''
       }`,
     });
@@ -4180,9 +4405,174 @@ async function startServer() {
     res.json({
       scope: targetScope,
       imported,
+      replaced,
       skipped,
       transitAutoArrived,
     });
+  });
+
+  // ---------------- AI SMART INTAKE (FILE / DOCUMENT SCAN / VOICE COMMANDS) ----------------
+  app.post('/api/ai/extract-equipment', requireRole(['admin', 'operator']), async (req: AuthedRequest, res: Response) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        error: errMsg(
+          req,
+          'کلید سرویس هوش مصنوعی (GEMINI_API_KEY) در تنظیمات سرور پیکربندی نشده است.',
+          'AI service key (GEMINI_API_KEY) is not configured on the server.',
+        ),
+      });
+      return;
+    }
+
+    const { target, mode, lang, mimeType, base64Data, textData } = req.body as {
+      target?: 'general' | 'detailed';
+      mode?: 'file' | 'scan' | 'voice';
+      lang?: Language;
+      mimeType?: string;
+      base64Data?: string;
+      textData?: string;
+    };
+
+    if (!target || (target !== 'general' && target !== 'detailed')) {
+      res.status(400).json({ error: errMsg(req, 'بخش هدف نامعتبر است', 'Invalid target scope') });
+      return;
+    }
+    if (!base64Data && !textData) {
+      res.status(400).json({ error: errMsg(req, 'داده‌ای برای تحلیل ارسال نشده است', 'No input data provided for extraction') });
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const outLang = lang === 'en' ? 'en' : 'fa';
+      const systemInstruction =
+        target === 'general'
+          ? `You are a warehouse data-entry extraction assistant for an industrial power-plant warehouse system (SAMAAN). Extract general shipment header fields and package line items accurately from the provided ${mode || 'input'}. Dates must be YYYY-MM-DD (Gregorian) if determinable or empty string. Employer Entry Minutes No. must contain digits only. Freight cost must be numeric (Rials). Dimensions must be numeric in meters. Vehicle license plate should follow Iranian plate text like "60 ایران 985 ع 14" when recognizable. For packageType, use ${outLang === 'fa' ? 'strictly Persian terms (e.g. صندوق چوبی, جعبه مشبک, پالت, باندل, کارتن)' : 'strictly English terms (e.g. Wooden Box, Crate, Pallet, Bundle, Carton)'}.`
+          : `You are a warehouse data-entry extraction assistant for detailed equipment inspection records (SAMAAN). Extract equipment items (itemNo, description, generalDescription, size, itemCode, mtoRef, packingQty, countingUnit, remarks/notes, shipmentNo, packageNo) accurately from the provided ${mode || 'input'}. Omit fields not present rather than guessing fake IDs.`;
+
+      const generalSchema = {
+        type: Type.OBJECT,
+        properties: {
+          header: {
+            type: Type.OBJECT,
+            properties: {
+              packingListNo: { type: Type.STRING },
+              arrivalDate: { type: Type.STRING },
+              supplier: { type: Type.STRING },
+              dispatchLocation: { type: Type.STRING },
+              employerEntryMinutesNo: { type: Type.STRING },
+              mapnaEntryMinutesNo: { type: Type.STRING },
+              releaseNo: { type: Type.STRING },
+              releaseDate: { type: Type.STRING },
+              billOfLadingNo: { type: Type.STRING },
+              vehicleNo: { type: Type.STRING },
+              weighbridgeWeight: { type: Type.NUMBER },
+              freightCost: { type: Type.NUMBER },
+              driverName: { type: Type.STRING },
+              opiInvitationNo: { type: Type.STRING },
+              opiInvitationDate: { type: Type.STRING },
+              island: { type: Type.STRING },
+              system: { type: Type.STRING },
+              subSystem: { type: Type.STRING },
+              unit: { type: Type.STRING },
+            },
+          },
+          packages: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                packageNo: { type: Type.STRING },
+                packageType: { type: Type.STRING },
+                itemCount: { type: Type.INTEGER },
+                itemDescription: { type: Type.STRING },
+                grossWeight: { type: Type.NUMBER },
+                netWeight: { type: Type.NUMBER },
+                lengthCm: { type: Type.NUMBER },
+                widthCm: { type: Type.NUMBER },
+                heightCm: { type: Type.NUMBER },
+              },
+            },
+          },
+          transcript: { type: Type.STRING },
+        },
+      };
+
+      const detailedSchema = {
+        type: Type.OBJECT,
+        properties: {
+          shipmentNo: { type: Type.STRING },
+          packageNo: { type: Type.STRING },
+          transcript: { type: Type.STRING },
+          items: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                itemNo: { type: Type.STRING },
+                generalDescription: { type: Type.STRING },
+                description: { type: Type.STRING },
+                size: { type: Type.STRING },
+                itemCode: { type: Type.STRING },
+                mtoRef: { type: Type.STRING },
+                packingQty: { type: Type.NUMBER },
+                actualQty: { type: Type.NUMBER },
+                damagedQty: { type: Type.NUMBER },
+                countingUnit: { type: Type.STRING },
+                notes: { type: Type.STRING },
+              },
+            },
+          },
+        },
+      };
+
+      const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+      if (base64Data && mimeType) {
+        parts.push({
+          inlineData: {
+            mimeType,
+            data: base64Data,
+          },
+        });
+      }
+      parts.push({
+        text: textData
+          ? `Extract structured ${target} warehouse equipment data from this content:\n${textData}`
+          : `Analyze the attached ${mode === 'voice' ? 'voice command audio (Persian or English)' : 'document/image'} and extract structured ${target} warehouse equipment fields in JSON format.`,
+      });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: { parts },
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: target === 'general' ? generalSchema : detailedSchema,
+        },
+      });
+
+      const rawJson = (response.text || '{}').trim();
+      const parsed = JSON.parse(rawJson);
+      res.json({ result: parsed });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({
+        error: errMsg(
+          req,
+          `خطا در پردازش هوشمند ورودی: ${msg}`,
+          `Smart extraction failed: ${msg}`,
+        ),
+      });
+    }
   });
 
   // ---------------- AUDIT LOG & BACKUP ----------------

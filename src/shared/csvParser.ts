@@ -91,21 +91,31 @@ export function detectCsvScope(matrix: string[][]): ImportScope | null {
   const previewText = matrix
     .slice(0, 8)
     .map((r) => r.join(' '))
-    .join(' ');
-  if (previewText.includes('شماره صورتجلسه ورود') || previewText.includes('وزن پکینگ')) {
+    .join(' ')
+    .toLowerCase();
+  if (
+    previewText.includes('شماره صورتجلسه ورود') ||
+    previewText.includes('وزن پکینگ') ||
+    previewText.includes('مبلغ کرایه حمل') ||
+    previewText.includes('employer entry minutes') ||
+    previewText.includes('weighbridge')
+  ) {
     return 'general';
   }
   if (
     previewText.includes('مقدار پکینگ') ||
     previewText.includes('شماره بالانس متریال') ||
-    previewText.includes('شماره رسید')
+    previewText.includes('شماره رسید') ||
+    previewText.includes('packing qty') ||
+    previewText.includes('item code')
   ) {
     return 'detailed';
   }
   if (
     previewText.includes('در دست حمل') ||
     previewText.includes('رلیزنت') ||
-    previewText.includes('علی الحساب')
+    previewText.includes('علی الحساب') ||
+    previewText.includes('overall status')
   ) {
     return 'transit';
   }
@@ -120,7 +130,7 @@ function findDataStartAndHeaders(
   const combinedCols: string[] = [];
   const maxCols = Math.max(...headerRows.map((r) => r.length), 0);
 
-  let dataStartIndex = 0;
+  let dataStartIndex = -1;
   for (let r = 0; r < Math.min(10, matrix.length); r += 1) {
     const first = normalizeDigits(cleanStr(matrix[r][0]));
     const second = normalizeDigits(cleanStr(matrix[r][1]));
@@ -141,8 +151,19 @@ function findDataStartAndHeaders(
     }
   }
 
-  if (dataStartIndex === 0) {
-    dataStartIndex = 4;
+  if (dataStartIndex <= 0) {
+    // Fallback for single-row header spreadsheets
+    const row0Text = (matrix[0] || []).join(' ').toLowerCase();
+    const looksLikeHeader =
+      row0Text.includes('پکینگ') ||
+      row0Text.includes('packing') ||
+      row0Text.includes('شرح') ||
+      row0Text.includes('description') ||
+      row0Text.includes('تاریخ') ||
+      row0Text.includes('date') ||
+      row0Text.includes('supplier') ||
+      row0Text.includes('تامین');
+    dataStartIndex = looksLikeHeader ? 1 : 4;
   }
 
   const headerSlice = matrix.slice(0, dataStartIndex);
@@ -168,7 +189,8 @@ function findCol(
   fallbackIndex?: number,
 ): number {
   for (const cand of candidates) {
-    const idx = combinedCols.findIndex((h) => h.includes(cand));
+    const cLower = cand.toLowerCase();
+    const idx = combinedCols.findIndex((h) => h.toLowerCase().includes(cLower));
     if (idx !== -1) return idx;
   }
   return fallbackIndex !== undefined ? fallbackIndex : -1;
@@ -190,34 +212,35 @@ export function parseGeneralCsv(
       .join(' | ');
   }
 
-  const idxRowNo = findCol(combinedCols, ['ردیف'], 0);
-  const idxArrivalDate = findCol(combinedCols, ['تاریخ ورود'], 1);
-  const idxReleaseNo = findCol(combinedCols, ['شماره رلیز'], 2);
-  const idxReleaseDate = findCol(combinedCols, ['| تاریخ', 'تاریخ'], 3);
-  const idxSupplier = findCol(combinedCols, ['تامین کننده'], 4);
-  const idxDispatch = findCol(combinedCols, ['محل ارسال'], 5);
-  const idxEmployerMin = findCol(combinedCols, ['کارفرما'], 6);
-  const idxMapnaMin = findCol(combinedCols, ['مپنا'], 7);
-  const idxPackingList = findCol(combinedCols, ['شماره پکینگ لیست'], 8);
-  const idxPackageNo = findCol(combinedCols, ['شماره نگله'], 9);
+  const idxRowNo = findCol(combinedCols, ['ردیف', 'row no', 'row'], 0);
+  const idxArrivalDate = findCol(combinedCols, ['تاریخ ورود', 'arrival date'], 1);
+  const idxReleaseNo = findCol(combinedCols, ['شماره رلیز', 'release note', 'release no'], 2);
+  const idxReleaseDate = findCol(combinedCols, ['| تاریخ', 'تاریخ Release', 'release date', 'تاریخ'], 3);
+  const idxSupplier = findCol(combinedCols, ['تامین کننده', 'تأمین کننده', 'supplier'], 4);
+  const idxDispatch = findCol(combinedCols, ['محل ارسال', 'dispatch location'], 5);
+  const idxEmployerMin = findCol(combinedCols, ['کارفرما', 'employer'], 6);
+  const idxMapnaMin = findCol(combinedCols, ['مپنا', 'mapna'], 7);
+  const idxPackingList = findCol(combinedCols, ['شماره پکینگ لیست', 'packing list'], 8);
+  const idxPackageNo = findCol(combinedCols, ['شماره نگله', 'package no'], 9);
   const idxPackageType = findCol(combinedCols, ['نوع بسته‌بندی', 'نوع بسته بندی', 'package type'], -1);
-  const idxDesc = findCol(combinedCols, ['شرح کالا'], 10);
-  const idxIsland = findCol(combinedCols, ['جزیره'], 11);
-  const idxSystem = findCol(combinedCols, ['سیستم'], 12);
-  const idxSubSystem = findCol(combinedCols, ['ساب سیستم'], 13);
-  const idxUnit = findCol(combinedCols, ['واحد'], 14);
-  const idxGross = findCol(combinedCols, ['ناخالص'], 15);
-  const idxNet = findCol(combinedCols, ['خالص'], 16);
-  const idxLen = findCol(combinedCols, ['طول'], 17);
-  const idxWidth = findCol(combinedCols, ['عرض'], 18);
-  const idxHeight = findCol(combinedCols, ['ارتفاع'], 19);
-  const idxWaybill = findCol(combinedCols, ['شماره بارنامه'], 20);
-  const idxVehicle = findCol(combinedCols, ['شماره خودرو'], 21);
-  const idxWeighbridge = findCol(combinedCols, ['وزن باسکول'], 22);
-  const idxFreight = findCol(combinedCols, ['مبلغ کرایه حمل'], 23);
-  const idxOpiNo = findCol(combinedCols, ['شماره دعوتنامه OPI'], 24);
-  const idxOpiDate = findCol(combinedCols, ['تاریخ دعوتنامه OPI'], 25);
-  const idxDriver = findCol(combinedCols, ['نام راننده'], 26);
+  const idxItemCount = findCol(combinedCols, ['تعداد اقلام', 'item count'], -1);
+  const idxDesc = findCol(combinedCols, ['شرح کالا', 'item description'], 10);
+  const idxIsland = findCol(combinedCols, ['جزیره', 'island'], 11);
+  const idxSystem = findCol(combinedCols, ['سیستم', 'system'], 12);
+  const idxSubSystem = findCol(combinedCols, ['ساب سیستم', 'sub-system', 'subsystem'], 13);
+  const idxUnit = findCol(combinedCols, ['واحد', 'unit'], 14);
+  const idxGross = findCol(combinedCols, ['ناخالص', 'gross weight'], 15);
+  const idxNet = findCol(combinedCols, ['خالص', 'net weight'], 16);
+  const idxLen = findCol(combinedCols, ['طول', 'length'], 17);
+  const idxWidth = findCol(combinedCols, ['عرض', 'width'], 18);
+  const idxHeight = findCol(combinedCols, ['ارتفاع', 'height'], 19);
+  const idxWaybill = findCol(combinedCols, ['شماره بارنامه', 'waybill'], 20);
+  const idxVehicle = findCol(combinedCols, ['شماره خودرو', 'vehicle'], 21);
+  const idxWeighbridge = findCol(combinedCols, ['وزن باسکول', 'weighbridge'], 22);
+  const idxFreight = findCol(combinedCols, ['مبلغ کرایه حمل', 'freight'], 23);
+  const idxOpiNo = findCol(combinedCols, ['شماره دعوتنامه OPI', 'opi invitation no'], 24);
+  const idxOpiDate = findCol(combinedCols, ['تاریخ دعوتنامه OPI', 'opi invitation date'], 25);
+  const idxDriver = findCol(combinedCols, ['نام راننده', 'driver'], 26);
 
   const now = new Date().toISOString();
   const rows: Omit<GeneralEntry, 'id'>[] = [];
@@ -246,6 +269,7 @@ export function parseGeneralCsv(
       packingListNo,
       packageNo,
       packageType: idxPackageType >= 0 ? cleanStr(line[idxPackageType]) : '',
+      itemCount: idxItemCount >= 0 ? parseNum(line[idxItemCount]) : null,
       itemDescription,
       island: cleanStr(line[idxIsland]),
       system: cleanStr(line[idxSystem]),

@@ -9,7 +9,6 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
-  Search,
   Shield,
   Trash2,
   UserCheck,
@@ -21,6 +20,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import type { AuditLogEntry, UserAccount, UserRole } from '../shared/types.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface AuditResponse {
   items: AuditLogEntry[];
@@ -449,17 +449,12 @@ export const UsersAuditView: React.FC = () => {
 
           {/* Search & Filter Users */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-              <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-              <input
-                type="text"
-                dir={!userSearch ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-                placeholder={isFa ? 'جستجو نام یا نام کاربری...' : 'Search name or username...'}
-                className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-              />
-            </div>
+            <SearchInputWithClear
+              value={userSearch}
+              onChange={setUserSearch}
+              placeholder={isFa ? 'جستجو نام یا نام کاربری...' : 'Search name or username...'}
+              inputClassName="text-xs"
+            />
             <select
               value={userRoleFilter}
               onChange={(e) => setUserRoleFilter(e.target.value as '' | UserRole)}
@@ -606,17 +601,12 @@ export const UsersAuditView: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-            <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-              <Search className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-              <input
-                type="text"
-                dir={!auditQuery ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={auditQuery}
-                onChange={(e) => { setAuditQuery(e.target.value); setPage(1); }}
-                placeholder={isFa ? 'جستجو کاربر، عملیات، شناسه...' : 'Search user, action, target...'}
-                className="flex-1 min-w-0 h-full bg-transparent text-xs bidi-plaintext focus:outline-none"
-              />
-            </div>
+            <SearchInputWithClear
+              value={auditQuery}
+              onChange={(next) => { setAuditQuery(next); setPage(1); }}
+              placeholder={isFa ? 'جستجو کاربر، عملیات، شناسه...' : 'Search user, action, target...'}
+              inputClassName="text-xs"
+            />
 
             <select
               value={auditScope}
@@ -641,7 +631,7 @@ export const UsersAuditView: React.FC = () => {
               <option value="trash">{t.nav.trash}</option>
               <option value="packing">{isFa ? 'وضعیت پکینگ' : 'Packing Closure'}</option>
               <option value="category">{t.nav.categories}</option>
-              <option value="import">{t.nav.importCsv}</option>
+              <option value="import">{isFa ? 'بارگذاری فایل (Excel / CSV)' : 'File Import'}</option>
               <option value="backup">{t.nav.backup}</option>
               <option value="auth">{isFa ? 'ورود و خروج' : 'Auth'}</option>
               <option value="user">{isFa ? 'کاربران' : 'Users'}</option>
