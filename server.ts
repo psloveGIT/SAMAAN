@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
@@ -5089,10 +5090,35 @@ async function startServer() {
   });
 
   // ---------------- VITE / STATIC SERVING ----------------
+  const httpServer = http.createServer(app);
   if (process.env.NODE_ENV !== 'production') {
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ws: hmrDisabled ? false : { server: httpServer },
+      },
       appType: 'spa',
+      plugins: hmrDisabled
+        ? [
+            {
+              name: 'samaan-disable-hmr-ws',
+              enforce: 'post',
+              transform(code, id) {
+                if (
+                  id.endsWith('/vite/dist/client/client.mjs') ||
+                  id.endsWith('\\vite\\dist\\client\\client.mjs')
+                ) {
+                  return code.replace(
+                    'transport.connect(createHMRHandler(handleMessage));',
+                    '/* HMR WebSocket disabled via DISABLE_HMR=true */',
+                  );
+                }
+                return null;
+              },
+            },
+          ]
+        : [],
     });
     app.use(vite.middlewares);
   } else {
@@ -5105,7 +5131,7 @@ async function startServer() {
     }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`SAMAAN server running at http://0.0.0.0:${PORT}`);
   });
 }
