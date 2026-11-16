@@ -13,9 +13,13 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 import type { PrintColumnDef } from './PrintReportModal.tsx';
 import type {
   DetailedComputed,
@@ -108,7 +112,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '06-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'opiMinutes');
+  const formCode = design.docCode;
   const displayProjectName = record.projectName?.trim() || activeProject?.name || '..................';
 
   const resolvedItems = useMemo(() => {
@@ -133,7 +138,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
   return (
     <div
       dir="rtl"
-      className="samaan-a4-portrait"
+      className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -143,96 +148,39 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
       }}
     >
       {/* Upper Main Frame */}
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Row */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 190px',
-            borderBottom: '1.5px solid #000000',
-          }}
-        >
-          {/* Right + Center: Logo + Title */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '118px 1fr',
-              alignItems: 'center',
-              padding: '6px 8px',
-            }}
-          >
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={`پروژه ${displayProjectName}`}
+          leftMetaSlot={
             <div
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                textAlign: 'center',
+                justifyContent: 'space-between',
+                fontSize: '10px',
+                fontWeight: 700,
+                textAlign: 'right',
+                gap: '6px',
               }}
             >
-              <EmployerFormLogo employer={activeEmployer} height={56} />
-              <div
-                style={{
-                  fontSize: '7.5px',
-                  fontWeight: 700,
-                  marginTop: '3px',
-                  color: '#334155',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {activeEmployer.imsSubtitle}
+              <div>
+                <div>شماره OPI :</div>
+                <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                  {record.minutesNo}
+                </div>
+              </div>
+              <div>
+                <div>تاریخ OPI :</div>
+                <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                  {formatDate(record.date)}
+                </div>
               </div>
             </div>
-
-            <div
-              style={{
-                textAlign: 'center',
-                lineHeight: 1.55,
-                padding: '2px 8px',
-              }}
-            >
-              <div style={{ fontSize: '12px', fontWeight: 700 }}>
-                {activeEmployer.companyFullName}
-              </div>
-              <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-                پروژه {displayProjectName}
-              </div>
-              <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '2px' }}>
-                صورتجلسه گشایش و بازرسی بسته ها
-              </div>
-              <div dir="ltr" style={{ fontSize: '12px', fontWeight: 700 }}>
-                OPI – Minutes Of Meeting
-              </div>
-            </div>
-          </div>
-
-          {/* Left Box: OPI No & OPI Date */}
-          <div
-            style={{
-              borderRight: '1.5px solid #000000',
-              padding: '8px 10px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              fontSize: '10px',
-              fontWeight: 700,
-              textAlign: 'right',
-            }}
-          >
-            <div>
-              <div>شماره OPI :</div>
-              <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
-                {record.minutesNo}
-              </div>
-            </div>
-            <div>
-              <div>تاریخ OPI :</div>
-              <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
-                {formatDate(record.date)}
-              </div>
-            </div>
-          </div>
-        </div>
+          }
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Metadata Strip Row 1 (Exact PDF RTL order: تامین کننده | سیستم | جزیره | واحد | پروژه) */}
         <div
@@ -590,7 +538,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
       </div>
 
       {/* Separate Lower Signature Frame */}
-      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
+      <div className="samaan-keep-together" style={{ border: `1.8px solid ${design.accentColor}`, marginTop: '12px' }}>
         <div
           style={{
             backgroundColor: '#e5e7eb',
@@ -604,6 +552,13 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           امضا
         </div>
 
+        {(design.template?.signatures?.length || !design.showSignatures) ? (
+          <OfficialFormSignatures
+            signatures={design.signatures}
+            showSignatures={design.showSignatures}
+            borderColor={design.accentColor}
+          />
+        ) : (
         <div
           style={{
             display: 'grid',
@@ -676,6 +631,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
             <div style={{ fontSize: '9px' }}>{record.employerInspector || ''}</div>
           </div>
         </div>
+        )}
 
         <div
           style={{
@@ -685,7 +641,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
             textAlign: 'left',
           }}
         >
-          توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
+          {design.template?.introText ||
+            'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.'}
         </div>
 
         <div
@@ -699,10 +656,10 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
             fontWeight: 700,
           }}
         >
-          <div>رونوشت: معاونت تأمین تجهیزات، فروشنده، دستگاه نظارت، کارفرما</div>
-          {formCode && (
+          <div>{design.footerCopyText || 'رونوشت: معاونت تأمین تجهیزات، فروشنده، دستگاه نظارت، کارفرما'}</div>
+          {(formCode || design.revisionText) && (
             <div dir="ltr" className="tabular-nums">
-              {formCode}
+              {[formCode, design.revisionText].filter(Boolean).join(' · ')}
             </div>
           )}
         </div>
@@ -727,11 +684,13 @@ const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({
   discrepancyTypeLabel,
 }) => {
   const { activeEmployer, activeProject } = useApp();
-  const merFormCode = getEmployerFormCode(activeEmployer, '06-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'mer');
+  const merFormCode = design.docCode;
+  const displayProjectName = activeProject?.name || '';
   return (
   <div
     dir={isFa ? 'rtl' : 'ltr'}
-    className="samaan-a4-portrait"
+    className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
     style={{
       backgroundColor: '#ffffff',
       color: '#000000',
@@ -740,46 +699,27 @@ const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({
       boxSizing: 'border-box',
     }}
   >
-    <div style={{ border: '1.8px solid #000000', padding: '12px', fontSize: '10.5px' }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1.5px solid #000000',
-          paddingBottom: '10px',
-          marginBottom: '10px',
-          gap: '12px',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <EmployerFormLogo employer={activeEmployer} height={50} />
-          <div>
-            <div style={{ fontSize: '12px', fontWeight: 800 }}>
-              {isFa ? activeEmployer.companyFullName : activeEmployer.companyFullNameEn}
-            </div>
-            {activeProject?.name && (
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#334155' }}>
-                {isFa ? `پروژه ${activeProject.name}` : `Project: ${activeProject.name}`}
+    <div style={{ border: `1.8px solid ${design.accentColor}`, padding: '12px', fontSize: '10.5px' }}>
+      <div style={{ marginBottom: '10px' }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={displayProjectName ? (isFa ? `پروژه ${displayProjectName}` : `Project: ${displayProjectName}`) : undefined}
+          compact
+          leftMetaSlot={
+            <div className="tabular-nums" style={{ textAlign: isFa ? 'left' : 'right', lineHeight: 1.7, fontSize: '10px' }}>
+              <div>
+                <strong>{isFa ? 'شماره گزارش MER:' : 'MER Report No.:'} </strong>
+                <span dir="ltr">{report.reportNo}</span>
               </div>
-            )}
-            <div style={{ fontSize: '10.5px', fontWeight: 700, marginTop: '2px' }}>
-              {isFa
-                ? 'گزارش مغایرت، کسری و آسیب‌دیدگی کالا (MER)'
-                : `${brandFull} — Material Exception / Discrepancy Report (MER)`}
+              <div>
+                <strong>{isFa ? 'تاریخ:' : 'Date:'} </strong>
+                <span dir="ltr">{formatDate(report.date)}</span>
+              </div>
             </div>
-          </div>
-        </div>
-        <div className="tabular-nums" style={{ textAlign: isFa ? 'left' : 'right', lineHeight: 1.7 }}>
-          <div>
-            <strong>{isFa ? 'شماره گزارش MER:' : 'MER Report No.:'} </strong>
-            <span dir="ltr">{report.reportNo}</span>
-          </div>
-          <div>
-            <strong>{isFa ? 'تاریخ:' : 'Date:'} </strong>
-            <span dir="ltr">{formatDate(report.date)}</span>
-          </div>
-        </div>
+          }
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
       </div>
 
       <div
@@ -888,6 +828,15 @@ const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({
         </div>
       )}
 
+      {(design.template?.signatures?.length || !design.showSignatures) ? (
+        <div className="samaan-keep-together" style={{ marginTop: '20px' }}>
+          <OfficialFormSignatures
+            signatures={design.signatures}
+            showSignatures={design.showSignatures}
+            borderColor={design.accentColor}
+          />
+        </div>
+      ) : (
       <div
         className="samaan-keep-together"
         style={{
@@ -910,9 +859,24 @@ const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({
           {isFa ? activeEmployer.inspectorLabel : `${activeEmployer.badgeCode} / Client Rep.`}
         </div>
       </div>
-      {merFormCode && (
-        <div dir="ltr" style={{ marginTop: '10px', fontSize: '8.5px', fontWeight: 700, textAlign: 'left' }}>
-          {merFormCode}
+      )}
+      {(design.footerCopyText || merFormCode || design.revisionText) && (
+        <div
+          style={{
+            marginTop: '10px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: '8.5px',
+            fontWeight: 700,
+          }}
+        >
+          <span>{design.footerCopyText || ''}</span>
+          {(merFormCode || design.revisionText) && (
+            <span dir="ltr" className="tabular-nums">
+              {[merFormCode, design.revisionText].filter(Boolean).join(' · ')}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -1458,7 +1422,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
             ? isFa ? 'منطبق با پکینگ لیست' : 'Compliant'
             : isFa ? 'دارای مغایرت / کسری / آسیب' : 'Has Discrepancy',
       },
-      { key: 'mapnaInspector', header: isFa ? 'نماینده مپنا' : 'MAPNA Inspector', getValue: (r) => r.mapnaInspector || '' },
+      { key: 'mapnaInspector', header: isFa ? (activeEmployer.inspectorLabel || 'بازرس تأمین / کارفرما') : 'Inspector / Client Rep.', getValue: (r) => r.mapnaInspector || '' },
       { key: 'employerInspector', header: isFa ? 'نماینده کارفرما' : 'Employer Inspector', getValue: (r) => r.employerInspector || '' },
       { key: 'qcInspector', header: isFa ? 'بازرس QC' : 'QC Inspector', getValue: (r) => r.qcInspector || '' },
       { key: 'notes', header: t.headers.notes, getValue: (r) => r.notes || '' },

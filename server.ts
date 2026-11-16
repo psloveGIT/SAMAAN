@@ -53,6 +53,7 @@ import { isValidDigitsOnly } from './src/shared/validation.ts';
 import type {
   CalendarMode,
   CategoryGroupKey,
+  CustomFormSubmission,
   DatabaseSnapshot,
   DetailedComputed,
   DetailedEntry,
@@ -275,6 +276,168 @@ async function startServer() {
       return;
     }
     res.json({ ok: true, projects: projectManager.listProjects() });
+  });
+
+  // ---------------- EMPLOYERS & CUSTOM FORM DESIGN STUDIO ----------------
+  app.get('/api/employers', (_req: Request, res: Response) => {
+    res.json({ employers: projectManager.listEmployers() });
+  });
+
+  app.post('/api/employers', (req: AuthedRequest, res: Response) => {
+    const store = activeProjectStore();
+    if (store.db.users.length > 0 && (!req.currentUser || !['admin', 'operator'].includes(req.currentUser.role))) {
+      res.status(req.currentUser ? 403 : 401).json({
+        error: errMsg(req, 'دسترسی برای ایجاد کارفرما مجاز نیست', 'Permission denied to create employer'),
+      });
+      return;
+    }
+    const created = projectManager.createEmployer(req.body);
+    if (!created) {
+      res.status(400).json({ error: errMsg(req, 'نام کارفرما الزامی است', 'Employer name is required') });
+      return;
+    }
+    res.json({ employer: created, employers: projectManager.listEmployers() });
+  });
+
+  app.patch('/api/employers/:id', (req: AuthedRequest, res: Response) => {
+    const store = activeProjectStore();
+    if (store.db.users.length > 0 && (!req.currentUser || !['admin', 'operator'].includes(req.currentUser.role))) {
+      res.status(req.currentUser ? 403 : 401).json({
+        error: errMsg(req, 'دسترسی برای ویرایش کارفرما مجاز نیست', 'Permission denied to update employer'),
+      });
+      return;
+    }
+    const updated = projectManager.updateEmployer(req.params.id, req.body);
+    if (!updated) {
+      res.status(404).json({ error: errMsg(req, 'کارفرما یافت نشد یا نام آن نامعتبر است', 'Employer not found or invalid data') });
+      return;
+    }
+    res.json({ employer: updated, employers: projectManager.listEmployers() });
+  });
+
+  app.delete('/api/employers/:id', (req: AuthedRequest, res: Response) => {
+    const store = activeProjectStore();
+    if (store.db.users.length > 0 && (!req.currentUser || req.currentUser.role !== 'admin')) {
+      res.status(req.currentUser ? 403 : 401).json({
+        error: errMsg(req, 'حذف کارفرما فقط توسط مدیر کل مجاز است', 'Only administrators can delete an employer'),
+      });
+      return;
+    }
+    const ok = projectManager.deleteEmployer(req.params.id);
+    if (!ok) {
+      res.status(404).json({ error: errMsg(req, 'کارفرما یافت نشد', 'Employer not found') });
+      return;
+    }
+    res.json({ ok: true, employers: projectManager.listEmployers(), projects: projectManager.listProjects() });
+  });
+
+  // ---------------- CUSTOM EMPLOYER FORM SUBMISSIONS ----------------
+  app.get('/api/custom-forms', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
+    const store = activeProjectStore();
+    const formIdFilter = normKey(String(req.query.formId || ''));
+    const q = normKey(String(req.query.q || ''));
+    const submissions = (store.db.customFormSubmissions || []).filter((sub) => {
+      if (formIdFilter && sub.formId !== formIdFilter) return false;
+      if (q) {
+        return matchSearch([sub.formTitle, sub.docNo, sub.packingListNo, sub.notes, ...Object.values(sub.fieldValues || {})], q);
+      }
+      return true;
+    });
+    const packings = Array.from(
+      new Set(store.db.general.map((g) => normKey(g.packingListNo)).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b));
+    res.json({
+      submissions: [...submissions].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+      generalEntries: store.db.general,
+      detailedItems: store.getDetailedComputedList(),
+      packings,
+    });
+  });
+
+  app.post('/api/custom-forms', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const store = activeProjectStore();
+    const body = req.body as Partial<CustomFormSubmission>;
+    const formId = normKey(body.formId);
+    const formTitle = normKey(body.formTitle);
+    const docNo = normKey(body.docNo);
+    const date = normKey(body.date);
+    if (!formId || !docNo) {
+      res.status(400).json({ error: errMsg(req, 'فرم و شماره سند الزامی است', 'Form ID and document number are required') });
+      return;
+    }
+    const now = new Date().toISOString();
+    const record: CustomFormSubmission = {
+      id: makeId(),
+      formId,
+      formTitle: formTitle || formId,
+      docNo,
+      date: date || now.slice(0, 10),
+      packingListNo: normKey(body.packingListNo),
+      fieldValues: body.fieldValues && typeof body.fieldValues === 'object' ? body.fieldValues : {},
+      rows: Array.isArray(body.rows) ? body.rows : [],
+      notes: normKey(body.notes),
+      createdAt: now,
+      updatedAt: now,
+      createdBy: req.currentUser!.username,
+    };
+    if (!store.db.customFormSubmissions) store.db.customFormSubmissions = [];
+    store.db.customFormSubmissions.push(record);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'CREATE_CUSTOM_FORM',
+      scope: 'customForm',
+      targetId: record.id,
+      summary: `ثبت فرم اختصاصی «${record.formTitle}» به شماره ${record.docNo}`,
+    });
+    store.saveImmediate();
+    res.json({ submission: record });
+  });
+
+  app.patch('/api/custom-forms/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const store = activeProjectStore();
+    const list = store.db.customFormSubmissions || [];
+    const target = list.find((s) => s.id === req.params.id);
+    if (!target) {
+      res.status(404).json({ error: errMsg(req, 'سند یافت نشد', 'Submission not found') });
+      return;
+    }
+    const body = req.body as Partial<CustomFormSubmission>;
+    if (body.docNo !== undefined) target.docNo = normKey(body.docNo);
+    if (body.date !== undefined) target.date = normKey(body.date);
+    if (body.packingListNo !== undefined) target.packingListNo = normKey(body.packingListNo);
+    if (body.fieldValues && typeof body.fieldValues === 'object') target.fieldValues = body.fieldValues;
+    if (Array.isArray(body.rows)) target.rows = body.rows;
+    if (body.notes !== undefined) target.notes = normKey(body.notes);
+    target.updatedAt = new Date().toISOString();
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'UPDATE_CUSTOM_FORM',
+      scope: 'customForm',
+      targetId: target.id,
+      summary: `ویرایش فرم اختصاصی «${target.formTitle}» به شماره ${target.docNo}`,
+    });
+    store.saveImmediate();
+    res.json({ submission: target });
+  });
+
+  app.delete('/api/custom-forms/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const store = activeProjectStore();
+    const list = store.db.customFormSubmissions || [];
+    const idx = list.findIndex((s) => s.id === req.params.id);
+    if (idx === -1) {
+      res.status(404).json({ error: errMsg(req, 'سند یافت نشد', 'Submission not found') });
+      return;
+    }
+    const [removed] = list.splice(idx, 1);
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'DELETE_CUSTOM_FORM',
+      scope: 'customForm',
+      targetId: removed.id,
+      summary: `حذف فرم اختصاصی «${removed.formTitle}» به شماره ${removed.docNo}`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true });
   });
 
   // ---------------- AUTH & PREFERENCES ----------------

@@ -13,6 +13,7 @@ import {
   CornerUpLeft,
   Eye,
   FileCheck2,
+  FilePlus2,
   FileText,
   FolderTree,
   Globe,
@@ -22,6 +23,7 @@ import {
   LogOut,
   Menu,
   Moon,
+  Palette,
   Plus,
   Scale,
   Search,
@@ -55,6 +57,8 @@ export type NavTabKey =
   | 'balance'
   | 'stocktake'
   | 'storageLabel'
+  | 'customForms'
+  | 'employers'
   | 'search'
   | 'categories'
   | 'trash'
@@ -120,11 +124,13 @@ export const Layout: React.FC<LayoutProps> = ({
         { key: 'balance', label: t.nav.balance, icon: <Scale className="w-4 h-4" /> },
         { key: 'stocktake', label: t.nav.stocktake, icon: <ClipboardCheck className="w-4 h-4" /> },
         { key: 'storageLabel', label: t.nav.storageLabel, icon: <Tag className="w-4 h-4" /> },
+        { key: 'customForms', label: t.nav.customForms, icon: <FilePlus2 className="w-4 h-4" /> },
       ],
     },
     {
       groupLabel: t.navGroups.admin,
       items: [
+        { key: 'employers', label: t.nav.employers, icon: <Palette className="w-4 h-4" /> },
         { key: 'search', label: t.nav.search, icon: <Search className="w-4 h-4" /> },
         { key: 'categories', label: t.nav.categories, icon: <FolderTree className="w-4 h-4" /> },
         { key: 'trash', label: t.nav.trash, icon: <Trash2 className="w-4 h-4" /> },
@@ -186,9 +192,13 @@ export const Layout: React.FC<LayoutProps> = ({
                   {activeProject?.name || (isFa ? 'پروژه پیش‌فرض' : 'Default Project')}
                 </div>
                 <div className="text-[10px] text-[var(--accent-primary)] truncate">
-                  {isFa
-                    ? `کارفرما: ${activeEmployer.id === 'custom' ? activeEmployer.shortName : activeEmployer.nameFa}`
-                    : `Client: ${activeEmployer.id === 'custom' ? activeEmployer.shortName : activeEmployer.nameEn}`}
+                  {activeEmployer.isConfigured
+                    ? isFa
+                      ? `کارفرما: ${activeEmployer.shortName || activeEmployer.nameFa}`
+                      : `Client: ${activeEmployer.shortName || activeEmployer.nameEn}`
+                    : isFa
+                      ? 'کارفرما: تعیین‌نشده (حالت خام)'
+                      : 'Employer: Unassigned (Raw)'}
                 </div>
               </div>
             </div>
@@ -368,7 +378,14 @@ export const Layout: React.FC<LayoutProps> = ({
         onClose={() => setChangePwOpen(false)}
       />
 
-      <ProjectManagerModal open={projectModalOpen} onClose={() => setProjectModalOpen(false)} />
+      <ProjectManagerModal
+        open={projectModalOpen}
+        onClose={() => setProjectModalOpen(false)}
+        onOpenEmployersPage={() => {
+          onTabChange('employers');
+          setMobileMenuOpen(false);
+        }}
+      />
     </div>
   );
 };

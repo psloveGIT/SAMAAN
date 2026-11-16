@@ -4,9 +4,13 @@ import { CheckCircle2, CornerUpLeft, Pencil, Printer, Trash2, X } from 'lucide-r
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 import type {
   DetailedComputed,
   DocumentLineItem,
@@ -44,7 +48,8 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '08-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'smr');
+  const formCode = design.docCode;
   const displayProjectName = doc.projectName?.trim() || activeProject?.name || '..................';
 
   const detailedById = useMemo(() => {
@@ -63,7 +68,7 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
   return (
     <div
       dir="rtl"
-      className="samaan-a4-landscape"
+      className={design.orientation === 'portrait' ? 'samaan-a4-portrait' : 'samaan-a4-landscape'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -73,69 +78,13 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
       }}
     >
       {/* Upper Main Frame */}
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Row (Unified white strip with no vertical dividers) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '130px 1fr 130px',
-            alignItems: 'center',
-            borderBottom: '1.5px solid #000000',
-            padding: '5px 10px',
-          }}
-        >
-          {/* Right: Stacked MAPNA MD1 Logo */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            <EmployerFormLogo employer={activeEmployer} height={54} />
-            <div
-              style={{
-                fontSize: '7.5px',
-                fontWeight: 700,
-                marginTop: '3px',
-                color: '#334155',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {activeEmployer.imsSubtitle}
-            </div>
-          </div>
-
-          {/* Center: Form Title */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              lineHeight: 1.55,
-              padding: '2px 8px',
-            }}
-          >
-            <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              {activeEmployer.companyFullName}
-            </div>
-            <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {displayProjectName}
-            </div>
-            <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
-              فرم ارجاع قطعات، کالا و تجهیزات مازاد
-            </div>
-            <div dir="ltr" style={{ fontSize: '12px', fontWeight: 700, marginTop: '2px' }}>
-              Surplus Material Return Form
-            </div>
-          </div>
-
-          <div />
-        </div>
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={`پروژه ${displayProjectName}`}
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Metadata Strip Row 1 (3 bordered cells RTL: شماره بسته خرید | تامین کننده | جزیره) */}
         <div
@@ -428,6 +377,14 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
           </div>
         </div>
 
+        {(design.template?.signatures?.length || !design.showSignatures) && (
+          <OfficialFormSignatures
+            signatures={design.signatures}
+            showSignatures={design.showSignatures}
+            borderColor={design.accentColor}
+          />
+        )}
+
         {/* QA Control Note inside bottom of lower frame */}
         <div
           style={{
@@ -437,7 +394,8 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
             textAlign: 'left',
           }}
         >
-          توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.
+          {design.template?.introText ||
+            'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.'}
         </div>
       </div>
 
@@ -453,10 +411,10 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
           fontWeight: 700,
         }}
       >
-        <div>رونوشت: معاونت تأمین تجهیزات، پیمانکار نصب، دفتر فنی</div>
-        {formCode && (
+        <div>{design.template?.footerCopyText || 'رونوشت: معاونت تأمین تجهیزات، پیمانکار نصب، دفتر فنی'}</div>
+        {(formCode || design.revisionText) && (
           <div dir="ltr" className="tabular-nums">
-            {formCode}
+            {[formCode, design.revisionText].filter(Boolean).join(' · ')}
           </div>
         )}
       </div>
@@ -521,9 +479,11 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
       if (type === 'smr_contractor') {
         return isFa ? 'ارجاع / برگشت به انبار پیمانکار (SMR Contractor)' : 'SMR Contractor Return';
       }
-      return isFa ? 'ارجاع قطعات و کالا از پیمانکار به مپنا (SMR MAPNA)' : 'SMR Return to MAPNA';
+      return isFa
+        ? `ارجاع قطعات و کالا از پیمانکار به ${activeEmployer.isConfigured ? activeEmployer.shortName : 'انبار اصلی'} (SMR Main)`
+        : 'SMR Return to Main Warehouse';
     },
-    [isFa],
+    [isFa, activeEmployer.isConfigured, activeEmployer.shortName],
   );
 
   const smrDocuments = useMemo(

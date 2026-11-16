@@ -10,9 +10,13 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -41,7 +45,8 @@ interface OfficialRepSheetProps {
 
 const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '10-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'substitution');
+  const formCode = design.docCode;
   const displayProjectName = rec.projectName?.trim() || activeProject?.name || '...............................';
   const unitDisplay = rec.unit?.trim() || '..................';
   const origPackageText = [rec.shipmentNo, rec.packageNo].filter(Boolean).join(' / ');
@@ -147,7 +152,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
   return (
     <div
       dir="rtl"
-      className="samaan-a4-portrait"
+      className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -157,93 +162,39 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
       }}
     >
       {/* Unified Outer Box */}
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Row (Single unified white strip with no vertical lines) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '118px 1fr 170px',
-            alignItems: 'stretch',
-            borderBottom: '1.5px solid #000000',
-            padding: '6px 10px',
-          }}
-        >
-          {/* Right: Stacked MAPNA MD1 Logo */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            <EmployerFormLogo employer={activeEmployer} height={54} />
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={`پروژه ${displayProjectName}`}
+          leftMetaSlot={
             <div
               style={{
-                fontSize: '7.5px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                fontSize: '10px',
                 fontWeight: 700,
-                marginTop: '3px',
-                color: '#334155',
-                whiteSpace: 'nowrap',
+                textAlign: 'right',
+                gap: '6px',
               }}
             >
-              {activeEmployer.imsSubtitle}
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px' }}>
+                <span>شماره جایگزینی:</span>
+                <span dir="ltr" className="tabular-nums">
+                  {rec.docNo}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px' }}>
+                <span>تاریخ:</span>
+                <span dir="ltr" className="tabular-nums">
+                  {formatDate(rec.date)}
+                </span>
+              </div>
             </div>
-          </div>
-
-          {/* Center: Form Title */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              lineHeight: 1.55,
-              padding: '2px 8px',
-            }}
-          >
-            <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              {activeEmployer.companyFullName}
-            </div>
-            <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {displayProjectName}
-            </div>
-            <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
-              جایگزینی
-            </div>
-            <div dir="ltr" style={{ fontSize: '11.5px', fontWeight: 700, marginTop: '2px' }}>
-              Replacement Form
-            </div>
-          </div>
-
-          {/* Left: شماره جایگزینی & تاریخ */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              padding: '6px 6px',
-              fontSize: '10px',
-              fontWeight: 700,
-              textAlign: 'right',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px' }}>
-              <span>شماره جایگزینی:</span>
-              <span dir="ltr" className="tabular-nums">
-                {rec.docNo}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px' }}>
-              <span>تاریخ:</span>
-              <span dir="ltr" className="tabular-nums">
-                {formatDate(rec.date)}
-              </span>
-            </div>
-          </div>
-        </div>
+          }
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Metadata Row 1 (5 columns RTL: شماره قرارداد/درخواست خرید | سیستم | جزیره | واحد | تامین کننده) */}
         <div
@@ -435,6 +386,15 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
             می‌بایست پرداخت شوند.
           </div>
 
+          {(design.template?.signatures?.length || !design.showSignatures) ? (
+            <div style={{ marginTop: '16px' }}>
+              <OfficialFormSignatures
+                signatures={design.signatures}
+                showSignatures={design.showSignatures}
+                borderColor={design.accentColor}
+              />
+            </div>
+          ) : (
           <div
             style={{
               display: 'grid',
@@ -470,6 +430,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
               )}
             </div>
           </div>
+          )}
         </div>
 
         {/* QA Control Notice */}
@@ -482,7 +443,8 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
             textAlign: 'left',
           }}
         >
-          توجه : این فرم تحت کنترل واحد QA میباشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
+          {design.template?.introText ||
+            'توجه : این فرم تحت کنترل واحد QA میباشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.'}
         </div>
 
         {/* Bottom Footer Strip INSIDE outer frame */}
@@ -496,10 +458,10 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
             fontWeight: 700,
           }}
         >
-          <div>رونوشت: معاونت تامین ، فروشنده، پیمانکار نصب</div>
-          {formCode && (
+          <div>{design.footerCopyText || 'رونوشت: معاونت تامین ، فروشنده، پیمانکار نصب'}</div>
+          {(formCode || design.revisionText) && (
             <div dir="ltr" className="tabular-nums">
-              {formCode}
+              {[formCode, design.revisionText].filter(Boolean).join(' · ')}
             </div>
           )}
         </div>

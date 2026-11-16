@@ -3,18 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   DEFAULT_EMPLOYER_ID,
-  isValidEmployerId,
   sanitizeEmployerConfig,
+  sanitizeEmployerProfile,
 } from '../shared/employers.ts';
 import type {
   AuditLogEntry,
   CategoryGroupKey,
   CategoryStore,
+  CustomFormSubmission,
   DatabaseSnapshot,
   DetailedComputed,
   DetailedEntry,
   EmployerCustomConfig,
   EmployerId,
+  EmployerProfile,
   GcvDocumentRecord,
   GeneralEntry,
   MaterialEstimateRecord,
@@ -56,6 +58,7 @@ export interface PersistedDatabase {
   mivDocuments: MivDocumentRecord[];
   materialEstimates: MaterialEstimateRecord[];
   periodicInspections: PeriodicInspectionRecord[];
+  customFormSubmissions: CustomFormSubmission[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -97,6 +100,7 @@ function createEmptyDb(): PersistedDatabase {
     mivDocuments: [],
     materialEstimates: [],
     periodicInspections: [],
+    customFormSubmissions: [],
   };
 }
 
@@ -162,6 +166,7 @@ export class SamaanStore {
         mivDocuments: Array.isArray(parsed.mivDocuments) ? parsed.mivDocuments : [],
         materialEstimates: Array.isArray(parsed.materialEstimates) ? parsed.materialEstimates : [],
         periodicInspections: Array.isArray(parsed.periodicInspections) ? parsed.periodicInspections : [],
+        customFormSubmissions: Array.isArray(parsed.customFormSubmissions) ? parsed.customFormSubmissions : [],
       };
     } catch (err) {
       console.error('Failed to load local database file, starting fresh:', err);
@@ -516,6 +521,7 @@ export class SamaanStore {
       mivDocuments: this.db.mivDocuments,
       materialEstimates: this.db.materialEstimates,
       periodicInspections: this.db.periodicInspections,
+      customFormSubmissions: this.db.customFormSubmissions,
     };
   }
 
@@ -541,6 +547,7 @@ export class SamaanStore {
     this.db.mivDocuments = Array.isArray(snapshot.mivDocuments) ? snapshot.mivDocuments : [];
     this.db.materialEstimates = Array.isArray(snapshot.materialEstimates) ? snapshot.materialEstimates : [];
     this.db.periodicInspections = Array.isArray(snapshot.periodicInspections) ? snapshot.periodicInspections : [];
+    this.db.customFormSubmissions = Array.isArray(snapshot.customFormSubmissions) ? snapshot.customFormSubmissions : [];
     this.renumberScope('general');
     this.renumberScope('detailed');
     this.renumberScope('transit');
@@ -559,6 +566,7 @@ export class SamaanStore {
 interface ProjectRegistryData {
   authSecret: string;
   projects: ProjectInfo[];
+  employers: EmployerProfile[];
 }
 
 function sanitizeProjectId(raw: string): string {
@@ -580,17 +588,23 @@ export class ProjectManager {
       }
       if (fs.existsSync(PROJECTS_REGISTRY_FILE)) {
         const parsed = JSON.parse(fs.readFileSync(PROJECTS_REGISTRY_FILE, 'utf8')) as Partial<ProjectRegistryData>;
+        const employers: EmployerProfile[] = Array.isArray(parsed.employers)
+          ? parsed.employers
+              .map(sanitizeEmployerProfile)
+              .filter((e): e is EmployerProfile => Boolean(e))
+          : [];
         const rawList = Array.isArray(parsed.projects) && parsed.projects.length > 0
           ? parsed.projects
           : [{ id: 'default', name: 'پروژه پیش‌فرض', code: '', employerId: DEFAULT_EMPLOYER_ID, createdAt: new Date().toISOString() }];
         const projects: ProjectInfo[] = rawList.map((p) => ({
           ...p,
-          employerId: isValidEmployerId(p.employerId) ? p.employerId : DEFAULT_EMPLOYER_ID,
+          employerId: typeof p.employerId === 'string' ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
           employerConfig: sanitizeEmployerConfig(p.employerConfig),
         }));
         return {
           authSecret: parsed.authSecret || crypto.randomBytes(32).toString('hex'),
           projects,
+          employers,
         };
       }
     } catch (err) {
@@ -607,6 +621,7 @@ export class ProjectManager {
           createdAt: new Date().toISOString(),
         },
       ],
+      employers: [],
     };
     this.saveRegistryData(initial);
     return initial;
@@ -677,11 +692,12 @@ export class ProjectManager {
         .slice(0, 20) || 'project';
     const rand = crypto.randomBytes(3).toString('hex');
     const id = `proj-${baseSlug}-${rand}`;
+    const empId = typeof params.employerId === 'string' ? params.employerId.trim() : DEFAULT_EMPLOYER_ID;
     const info: ProjectInfo = {
       id,
       name: cleanName,
       code: cleanCode,
-      employerId: isValidEmployerId(params.employerId) ? params.employerId : DEFAULT_EMPLOYER_ID,
+      employerId: empId,
       employerConfig: sanitizeEmployerConfig(params.employerConfig),
       createdAt: new Date().toISOString(),
     };
@@ -714,8 +730,8 @@ export class ProjectManager {
     if (params.code !== undefined) {
       target.code = normKey(params.code);
     }
-    if (params.employerId !== undefined && isValidEmployerId(params.employerId)) {
-      target.employerId = params.employerId;
+    if (params.employerId !== undefined) {
+      target.employerId = typeof params.employerId === 'string' ? params.employerId.trim() : '';
     }
     if (params.employerConfig !== undefined) {
       target.employerConfig = sanitizeEmployerConfig(params.employerConfig);
@@ -741,6 +757,61 @@ export class ProjectManager {
       console.error('Failed to delete project DB file:', err);
     }
     return { ok: true };
+  }
+
+  // ---------------- EMPLOYER REGISTRY CRUD ----------------
+  public listEmployers(): EmployerProfile[] {
+    return [...(this.registry.employers || [])];
+  }
+
+  public getEmployer(id: string): EmployerProfile | undefined {
+    const clean = (id || '').trim();
+    return (this.registry.employers || []).find((e) => e.id === clean);
+  }
+
+  public createEmployer(raw: unknown): EmployerProfile | null {
+    const id = `emp-${crypto.randomBytes(4).toString('hex')}`;
+    const sanitized = sanitizeEmployerProfile({ ...(raw as object), id });
+    if (!sanitized) return null;
+    if (!this.registry.employers) this.registry.employers = [];
+    this.registry.employers.push(sanitized);
+    this.saveRegistryData(this.registry);
+    return sanitized;
+  }
+
+  public updateEmployer(id: string, raw: unknown): EmployerProfile | null {
+    const clean = (id || '').trim();
+    const list = this.registry.employers || [];
+    const idx = list.findIndex((e) => e.id === clean);
+    if (idx === -1) return null;
+    const prev = list[idx];
+    const merged = {
+      ...prev,
+      ...(raw as object),
+      id: prev.id,
+      createdAt: prev.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    const sanitized = sanitizeEmployerProfile(merged);
+    if (!sanitized) return null;
+    list[idx] = sanitized;
+    this.saveRegistryData(this.registry);
+    return sanitized;
+  }
+
+  public deleteEmployer(id: string): boolean {
+    const clean = (id || '').trim();
+    const list = this.registry.employers || [];
+    const idx = list.findIndex((e) => e.id === clean);
+    if (idx === -1) return false;
+    list.splice(idx, 1);
+    for (const p of this.registry.projects) {
+      if (p.employerId === clean) {
+        p.employerId = '';
+      }
+    }
+    this.saveRegistryData(this.registry);
+    return true;
   }
 }
 

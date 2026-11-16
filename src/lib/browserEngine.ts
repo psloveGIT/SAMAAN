@@ -30,20 +30,22 @@ import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
 import { isValidDigitsOnly } from '../shared/validation.ts';
 import {
   DEFAULT_EMPLOYER_ID,
-  isValidEmployerId,
   sanitizeEmployerConfig,
+  sanitizeEmployerProfile,
 } from '../shared/employers.ts';
 import type {
   AuditLogEntry,
   CalendarMode,
   CategoryGroupKey,
   CategoryStore,
+  CustomFormSubmission,
   DatabaseSnapshot,
   DetailedComputed,
   DetailedEntry,
   DocumentLineItem,
   EmployerCustomConfig,
   EmployerId,
+  EmployerProfile,
   GcvDocumentRecord,
   GeneralEntry,
   MaterialEstimateRecord,
@@ -90,6 +92,7 @@ interface StaticDatabase {
   mivDocuments: MivDocumentRecord[];
   materialEstimates: MaterialEstimateRecord[];
   periodicInspections: PeriodicInspectionRecord[];
+  customFormSubmissions: CustomFormSubmission[];
 }
 
 const DB_NAME = 'samaan_static_db';
@@ -97,6 +100,7 @@ const DB_VERSION = 1;
 const STORE_NAME = 'state';
 const RECORD_KEY = 'primary';
 const PROJECTS_REGISTRY_KEY = 'projects_registry';
+const EMPLOYERS_REGISTRY_KEY = 'employers_registry';
 const DEFAULT_PROJECT_ID = 'default';
 
 const DEFAULT_PREFERENCES: UserPreferences = {
@@ -140,11 +144,13 @@ function createEmptyDb(): StaticDatabase {
     mivDocuments: [],
     materialEstimates: [],
     periodicInspections: [],
+    customFormSubmissions: [],
   };
 }
 
 const cachedDbs = new Map<string, StaticDatabase>();
 let cachedProjects: ProjectInfo[] | null = null;
+let cachedEmployers: EmployerProfile[] | null = null;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -177,7 +183,7 @@ async function getProjects(): Promise<ProjectInfo[]> {
   if (Array.isArray(loaded) && loaded.length > 0) {
     cachedProjects = loaded.map((p) => ({
       ...p,
-      employerId: isValidEmployerId(p.employerId) ? p.employerId : DEFAULT_EMPLOYER_ID,
+      employerId: typeof p.employerId === 'string' ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
       employerConfig: sanitizeEmployerConfig(p.employerConfig),
     }));
     if (!cachedProjects.some((p) => p.id === DEFAULT_PROJECT_ID)) {
@@ -210,6 +216,38 @@ async function saveProjects(list: ProjectInfo[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const tx = idb.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).put(list, PROJECTS_REGISTRY_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  idb.close();
+}
+
+async function getEmployers(): Promise<EmployerProfile[]> {
+  if (cachedEmployers) return cachedEmployers;
+  const idb = await openDb();
+  const loaded = await new Promise<EmployerProfile[] | null>((resolve, reject) => {
+    const tx = idb.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(EMPLOYERS_REGISTRY_KEY);
+    req.onsuccess = () => resolve((req.result as EmployerProfile[]) || null);
+    req.onerror = () => reject(req.error);
+  });
+  idb.close();
+  if (Array.isArray(loaded)) {
+    cachedEmployers = loaded
+      .map(sanitizeEmployerProfile)
+      .filter((e): e is EmployerProfile => Boolean(e));
+    return cachedEmployers;
+  }
+  cachedEmployers = [];
+  return cachedEmployers;
+}
+
+async function saveEmployers(list: EmployerProfile[]): Promise<void> {
+  cachedEmployers = list;
+  const idb = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = idb.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(list, EMPLOYERS_REGISTRY_KEY);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -272,6 +310,7 @@ async function getDb(projectId = DEFAULT_PROJECT_ID): Promise<StaticDatabase> {
         mivDocuments: Array.isArray(loaded.mivDocuments) ? loaded.mivDocuments : [],
         materialEstimates: Array.isArray(loaded.materialEstimates) ? loaded.materialEstimates : [],
         periodicInspections: Array.isArray(loaded.periodicInspections) ? loaded.periodicInspections : [],
+        customFormSubmissions: Array.isArray(loaded.customFormSubmissions) ? loaded.customFormSubmissions : [],
       }
     : empty;
   renumberScope(hydrated, 'general');
@@ -640,7 +679,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const cleanName = normKey(String(body.name || ''));
     const cleanCode = normKey(String(body.code || ''));
     const rawEmployerId = body.employerId;
-    const employerId: EmployerId = isValidEmployerId(rawEmployerId) ? rawEmployerId : DEFAULT_EMPLOYER_ID;
+    const employerId: EmployerId = typeof rawEmployerId === 'string' ? rawEmployerId.trim() : DEFAULT_EMPLOYER_ID;
     const employerConfig = sanitizeEmployerConfig(body.employerConfig as EmployerCustomConfig | undefined);
     const copyUsers = Boolean(body.copyUsers && currentUserObj);
     if (!cleanName) {
@@ -698,8 +737,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (body.code !== undefined) {
       targetProj.code = normKey(String(body.code || '')) || undefined;
     }
-    if (body.employerId !== undefined && isValidEmployerId(body.employerId)) {
-      targetProj.employerId = body.employerId;
+    if (body.employerId !== undefined) {
+      targetProj.employerId = typeof body.employerId === 'string' ? body.employerId.trim() : '';
     }
     if (body.employerConfig !== undefined) {
       targetProj.employerConfig = sanitizeEmployerConfig(body.employerConfig as EmployerCustomConfig | undefined);
@@ -731,6 +770,182 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     await saveProjects(updatedList);
     await deleteProjectDb(targetId);
     return { ok: true, projects: updatedList } as T;
+  }
+
+  // ---------------- EMPLOYERS & FORM TEMPLATES ----------------
+  if (pathname === '/api/employers' && method === 'GET') {
+    const employers = await getEmployers();
+    return { employers } as T;
+  }
+
+  if (pathname === '/api/employers' && method === 'POST') {
+    if (db.users.length > 0 && (!currentUserObj || !['admin', 'operator'].includes(currentUserObj.role))) {
+      throw new StaticEngineError(
+        errMsg('دسترسی برای ایجاد کارفرما مجاز نیست', 'Permission denied to create employer'),
+        currentUserObj ? 403 : 401,
+      );
+    }
+    const employers = await getEmployers();
+    const id = `emp-${makeId().replace(/-/g, '').slice(0, 10)}`;
+    const created = sanitizeEmployerProfile({ ...body, id });
+    if (!created) {
+      throw new StaticEngineError(errMsg('نام کارفرما الزامی است', 'Employer name is required'), 400);
+    }
+    const updated = [...employers, created];
+    await saveEmployers(updated);
+    return { employer: created, employers: updated } as T;
+  }
+
+  if (pathname.startsWith('/api/employers/') && method === 'PATCH') {
+    if (db.users.length > 0 && (!currentUserObj || !['admin', 'operator'].includes(currentUserObj.role))) {
+      throw new StaticEngineError(
+        errMsg('دسترسی برای ویرایش کارفرما مجاز نیست', 'Permission denied to update employer'),
+        currentUserObj ? 403 : 401,
+      );
+    }
+    const targetId = pathname.split('/').pop()!;
+    const employers = await getEmployers();
+    const idx = employers.findIndex((e) => e.id === targetId);
+    if (idx === -1) {
+      throw new StaticEngineError(errMsg('کارفرما یافت نشد', 'Employer not found'), 404);
+    }
+    const prev = employers[idx];
+    const sanitized = sanitizeEmployerProfile({
+      ...prev,
+      ...body,
+      id: prev.id,
+      createdAt: prev.createdAt,
+      updatedAt: new Date().toISOString(),
+    });
+    if (!sanitized) {
+      throw new StaticEngineError(errMsg('نام کارفرما نامعتبر است', 'Invalid employer data'), 400);
+    }
+    const updatedList = [...employers];
+    updatedList[idx] = sanitized;
+    await saveEmployers(updatedList);
+    return { employer: sanitized, employers: updatedList } as T;
+  }
+
+  if (pathname.startsWith('/api/employers/') && method === 'DELETE') {
+    if (db.users.length > 0 && (!currentUserObj || currentUserObj.role !== 'admin')) {
+      throw new StaticEngineError(
+        errMsg('حذف کارفرما فقط توسط مدیر کل مجاز است', 'Only administrators can delete an employer'),
+        currentUserObj ? 403 : 401,
+      );
+    }
+    const targetId = pathname.split('/').pop()!;
+    const employers = await getEmployers();
+    if (!employers.some((e) => e.id === targetId)) {
+      throw new StaticEngineError(errMsg('کارفرما یافت نشد', 'Employer not found'), 404);
+    }
+    const updatedList = employers.filter((e) => e.id !== targetId);
+    await saveEmployers(updatedList);
+    const projects = await getProjects();
+    let changedProj = false;
+    const nextProjects = projects.map((p) => {
+      if (p.employerId === targetId) {
+        changedProj = true;
+        return { ...p, employerId: '' };
+      }
+      return p;
+    });
+    if (changedProj) {
+      await saveProjects(nextProjects);
+    }
+    return { ok: true, employers: updatedList, projects: nextProjects } as T;
+  }
+
+  // ---------------- CUSTOM FORM SUBMISSIONS ----------------
+  if (pathname === '/api/custom-forms' && method === 'GET') {
+    requireAuth();
+    const formIdFilter = normKey(query.get('formId'));
+    const q = normKey(query.get('q'));
+    const submissions = (db.customFormSubmissions || []).filter((sub) => {
+      if (formIdFilter && sub.formId !== formIdFilter) return false;
+      if (q) {
+        return matchSearch([sub.formTitle, sub.docNo, sub.packingListNo, sub.notes, ...Object.values(sub.fieldValues || {})], q);
+      }
+      return true;
+    });
+    const packings = Array.from(
+      new Set([
+        ...db.general.map((g) => normKey(g.packingListNo)).filter(Boolean),
+        ...db.detailed.map((d) => normKey(d.shipmentNo)).filter(Boolean),
+      ]),
+    );
+    return {
+      submissions: [...submissions].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+      generalEntries: db.general,
+      detailedItems: db.detailed.map(computeDetailedEntry),
+      packings,
+    } as T;
+  }
+
+  if (pathname === '/api/custom-forms' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const formId = normKey(String(body.formId || ''));
+    const formTitle = normKey(String(body.formTitle || ''));
+    const docNo = normKey(String(body.docNo || ''));
+    const date = normKey(String(body.date || ''));
+    if (!formId || !docNo) {
+      throw new StaticEngineError(errMsg('فرم و شماره سند الزامی است', 'Form ID and document number are required'), 400);
+    }
+    const now = new Date().toISOString();
+    const record: CustomFormSubmission = {
+      id: makeId(),
+      formId,
+      formTitle: formTitle || formId,
+      docNo,
+      date: date || now.slice(0, 10),
+      packingListNo: normKey(String(body.packingListNo || '')),
+      fieldValues: (body.fieldValues && typeof body.fieldValues === 'object' ? body.fieldValues : {}) as Record<string, string>,
+      rows: (Array.isArray(body.rows) ? body.rows : []) as Array<Record<string, string>>,
+      notes: normKey(String(body.notes || '')),
+      createdAt: now,
+      updatedAt: now,
+      createdBy: u.username,
+    };
+    if (!db.customFormSubmissions) db.customFormSubmissions = [];
+    db.customFormSubmissions.push(record);
+    addAudit(db, sanitizeUser(u), 'CREATE_CUSTOM_FORM', 'customForm', record.id, `ثبت فرم اختصاصی «${record.formTitle}» (${record.docNo})`);
+    await saveActiveDb();
+    return { submission: record } as T;
+  }
+
+  if (pathname.startsWith('/api/custom-forms/') && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const targetId = pathname.split('/').pop()!;
+    const list = db.customFormSubmissions || [];
+    const target = list.find((s) => s.id === targetId);
+    if (!target) {
+      throw new StaticEngineError(errMsg('سند یافت نشد', 'Submission not found'), 404);
+    }
+    if (body.docNo !== undefined) target.docNo = normKey(String(body.docNo || ''));
+    if (body.date !== undefined) target.date = normKey(String(body.date || ''));
+    if (body.packingListNo !== undefined) target.packingListNo = normKey(String(body.packingListNo || ''));
+    if (body.fieldValues && typeof body.fieldValues === 'object') {
+      target.fieldValues = body.fieldValues as Record<string, string>;
+    }
+    if (Array.isArray(body.rows)) target.rows = body.rows as Array<Record<string, string>>;
+    if (body.notes !== undefined) target.notes = normKey(String(body.notes || ''));
+    target.updatedAt = new Date().toISOString();
+    addAudit(db, sanitizeUser(u), 'UPDATE_CUSTOM_FORM', 'customForm', target.id, `ویرایش فرم اختصاصی «${target.formTitle}» (${target.docNo})`);
+    await saveActiveDb();
+    return { submission: target } as T;
+  }
+
+  if (pathname.startsWith('/api/custom-forms/') && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const targetId = pathname.split('/').pop()!;
+    const list = db.customFormSubmissions || [];
+    const idx = list.findIndex((s) => s.id === targetId);
+    if (idx === -1) {
+      throw new StaticEngineError(errMsg('سند یافت نشد', 'Submission not found'), 404);
+    }
+    const [removed] = list.splice(idx, 1);
+    addAudit(db, sanitizeUser(u), 'DELETE_CUSTOM_FORM', 'customForm', removed.id, `حذف فرم اختصاصی «${removed.formTitle}» (${removed.docNo})`);
+    await saveActiveDb();
+    return { ok: true } as T;
   }
 
   // ---------------- AUTH ----------------
@@ -1193,8 +1408,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         if (isMapnaMinutesTaken(db, cleanMapnaMinutes) || batchMapnaMinutes.has(lowerKey)) {
           throw new StaticEngineError(
             errMsg(
-              `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است.`,
-              `MAPNA Entry Minutes No. "${cleanMapnaMinutes}" already exists.`,
+              `شماره صورتجلسه ورود انبار «${cleanMapnaMinutes}» تکراری است.`,
+              `Warehouse Entry Minutes No. "${cleanMapnaMinutes}" already exists.`,
             ),
             409,
             'DUPLICATE_MAPNA_MINUTES',
@@ -1292,8 +1507,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (cleanMin && isMapnaMinutesTaken(db, cleanMin, item.id)) {
         throw new StaticEngineError(
           errMsg(
-            `شماره صورتجلسه ورود مپنا «${cleanMin}» تکراری است.`,
-            `MAPNA Entry Minutes No. "${cleanMin}" already exists.`,
+            `شماره صورتجلسه ورود انبار «${cleanMin}» تکراری است.`,
+            `Warehouse Entry Minutes No. "${cleanMin}" already exists.`,
           ),
           409,
           'DUPLICATE_MAPNA_MINUTES',
@@ -1963,8 +2178,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (g.mapnaEntryMinutesNo && isMapnaMinutesTaken(db, g.mapnaEntryMinutesNo)) {
         throw new StaticEngineError(
           errMsg(
-            `شماره صورتجلسه ورود مپنا «${g.mapnaEntryMinutesNo}» در حال حاضر در سیستم فعال است و امکان بازیابی مستقیم وجود ندارد.`,
-            `MAPNA Entry Minutes No. "${g.mapnaEntryMinutesNo}" is already active and cannot be restored directly.`,
+            `شماره صورتجلسه ورود انبار «${g.mapnaEntryMinutesNo}» در حال حاضر در سیستم فعال است و امکان بازیابی مستقیم وجود ندارد.`,
+            `Warehouse Entry Minutes No. "${g.mapnaEntryMinutesNo}" is already active and cannot be restored directly.`,
           ),
           409,
         );
@@ -2827,8 +3042,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (qty > comp.mapnaInventory) {
         throw new StaticEngineError(
           errMsg(
-            `مقدار تحویلی (${qty}) بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`,
-            `Delivered qty (${qty}) exceeds MAPNA stock (${comp.mapnaInventory}).`,
+            `مقدار تحویلی (${qty}) بیشتر از موجودی انبار اصلی (${comp.mapnaInventory}) است.`,
+            `Delivered qty (${qty}) exceeds Main Warehouse stock (${comp.mapnaInventory}).`,
           ),
           400,
         );
@@ -2943,8 +3158,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (qty > comp.mapnaInventory) {
         throw new StaticEngineError(
           errMsg(
-            `مقدار تحویلی (${qty}) بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`,
-            `Delivered qty (${qty}) exceeds MAPNA stock (${comp.mapnaInventory}).`,
+            `مقدار تحویلی (${qty}) بیشتر از موجودی انبار اصلی (${comp.mapnaInventory}) است.`,
+            `Delivered qty (${qty}) exceeds Main Warehouse stock (${comp.mapnaInventory}).`,
           ),
           400,
         );
@@ -3099,8 +3314,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (docType === 'miv_mapna' && qty > comp.mapnaInventory) {
         throw new StaticEngineError(
           errMsg(
-            `تعداد (${qty}) از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
-            `Qty (${qty}) exceeds MAPNA stock (${comp.mapnaInventory}).`,
+            `تعداد (${qty}) از موجودی انبار اصلی (${comp.mapnaInventory}) بیشتر است.`,
+            `Qty (${qty}) exceeds Main Warehouse stock (${comp.mapnaInventory}).`,
           ),
           400,
         );
@@ -3262,8 +3477,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (nextDocType === 'miv_mapna' && qty > comp.mapnaInventory) {
         throw new StaticEngineError(
           errMsg(
-            `تعداد (${qty}) از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
-            `Qty (${qty}) exceeds MAPNA stock (${comp.mapnaInventory}).`,
+            `تعداد (${qty}) از موجودی انبار اصلی (${comp.mapnaInventory}) بیشتر است.`,
+            `Qty (${qty}) exceeds Main Warehouse stock (${comp.mapnaInventory}).`,
           ),
           400,
         );
@@ -4439,6 +4654,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       mivDocuments: db.mivDocuments,
       materialEstimates: db.materialEstimates,
       periodicInspections: db.periodicInspections,
+      customFormSubmissions: db.customFormSubmissions,
     } as DatabaseSnapshot as T;
   }
 
@@ -4461,6 +4677,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.mivDocuments = Array.isArray(snap.mivDocuments) ? snap.mivDocuments : [];
     db.materialEstimates = Array.isArray(snap.materialEstimates) ? snap.materialEstimates : [];
     db.periodicInspections = Array.isArray(snap.periodicInspections) ? snap.periodicInspections : [];
+    db.customFormSubmissions = Array.isArray(snap.customFormSubmissions) ? snap.customFormSubmissions : [];
     renumberScope(db, 'general');
     renumberScope(db, 'detailed');
     renumberScope(db, 'transit');

@@ -10,6 +10,7 @@ import type {
   DatabaseSnapshot,
   EmployerCustomConfig,
   EmployerId,
+  EmployerProfile,
   Language,
   ProjectInfo,
   ThemeMode,
@@ -55,10 +56,15 @@ interface AppContextValue {
   prefs: UserPreferences;
   t: ReturnType<typeof getTranslations>;
   projects: ProjectInfo[];
+  employers: EmployerProfile[];
   activeProjectId: string;
   activeProject: ProjectInfo | null;
   activeEmployer: ResolvedEmployerProfile;
   refreshProjects: () => Promise<void>;
+  refreshEmployers: () => Promise<void>;
+  createEmployer: (input: Partial<EmployerProfile>) => Promise<EmployerProfile>;
+  updateEmployer: (id: string, input: Partial<EmployerProfile>) => Promise<EmployerProfile>;
+  deleteEmployer: (id: string) => Promise<void>;
   switchProject: (projectId: string) => Promise<void>;
   createProject: (input: {
     name: string;
@@ -102,6 +108,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [prefs, setPrefs] = useState<UserPreferences>(readStoredPrefs);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [employers, setEmployers] = useState<EmployerProfile[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string>(() => getActiveProjectId());
 
   const applyDocumentPrefs = useCallback((p: UserPreferences) => {
@@ -145,11 +152,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
+  const refreshEmployers = useCallback(async () => {
+    try {
+      const res = await apiRequest<{ employers: EmployerProfile[] }>('/api/employers');
+      setEmployers(res.employers || []);
+    } catch {
+      // Ignore initial employers fetch error
+    }
+  }, []);
+
   const refreshAuth = useCallback(async () => {
     setLoadingAuth(true);
     try {
-      const [projRes, data] = await Promise.all([
+      const [projRes, empRes, data] = await Promise.all([
         apiRequest<{ projects: ProjectInfo[]; activeProjectId: string }>('/api/projects').catch(() => null),
+        apiRequest<{ employers: EmployerProfile[] }>('/api/employers').catch(() => null),
         apiRequest<{ needsSetup: boolean; user: UserAccount | null }>('/api/auth/status'),
       ]);
       if (projRes) {
@@ -157,6 +174,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const resolved = projRes.activeProjectId || 'default';
         persistActiveProjectId(resolved);
         setActiveProjectIdState(resolved);
+      }
+      if (empRes) {
+        setEmployers(empRes.employers || []);
       }
       setNeedsSetup(data.needsSetup);
       setUser(data.user);
@@ -176,6 +196,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     refreshAuth();
   }, [refreshAuth]);
+
+  const createEmployer = useCallback(async (input: Partial<EmployerProfile>) => {
+    const res = await apiRequest<{ employer: EmployerProfile; employers: EmployerProfile[] }>('/api/employers', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    setEmployers(res.employers || []);
+    return res.employer;
+  }, []);
+
+  const updateEmployer = useCallback(async (id: string, input: Partial<EmployerProfile>) => {
+    const res = await apiRequest<{ employer: EmployerProfile; employers: EmployerProfile[] }>(
+      `/api/employers/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+    );
+    setEmployers(res.employers || []);
+    return res.employer;
+  }, []);
+
+  const deleteEmployer = useCallback(
+    async (id: string) => {
+      const res = await apiRequest<{ ok: boolean; employers: EmployerProfile[] }>(
+        `/api/employers/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+        },
+      );
+      setEmployers(res.employers || []);
+      await refreshProjects();
+    },
+    [refreshProjects],
+  );
 
   const switchProject = useCallback(
     async (projectId: string) => {
@@ -259,7 +314,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [projects, activeProjectId],
   );
 
-  const activeEmployer = useMemo(() => resolveEmployerProfile(activeProject), [activeProject]);
+  const activeEmployer = useMemo(
+    () => resolveEmployerProfile(activeProject, employers),
+    [activeProject, employers],
+  );
 
   const updatePrefs = useCallback(
     (patch: Partial<UserPreferences>) => {
@@ -343,10 +401,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prefs,
         t,
         projects,
+        employers,
         activeProjectId,
         activeProject,
         activeEmployer,
         refreshProjects,
+        refreshEmployers,
+        createEmployer,
+        updateEmployer,
+        deleteEmployer,
         switchProject,
         createProject,
         renameProject,

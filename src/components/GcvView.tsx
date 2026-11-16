@@ -4,9 +4,13 @@ import { CheckCircle2, FileCheck2, Pencil, Printer, Trash2, X } from 'lucide-rea
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 import type {
   DetailedComputed,
   DocumentLineItem,
@@ -69,7 +73,8 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '11-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'gcv');
+  const formCode = design.docCode;
   const displayProjectName = doc.projectName?.trim() || activeProject?.name || '..................';
 
   const detailedById = useMemo(() => {
@@ -90,7 +95,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
   return (
     <div
       dir="rtl"
-      className="samaan-a4-landscape"
+      className={design.orientation === 'portrait' ? 'samaan-a4-portrait' : 'samaan-a4-landscape'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -100,93 +105,39 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
       }}
     >
       {/* Upper Main Frame */}
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Row (Single unified row with no vertical divider lines) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '125px 1fr 195px',
-            alignItems: 'stretch',
-            borderBottom: '1.5px solid #000000',
-            padding: '5px 10px',
-          }}
-        >
-          {/* Right: Stacked MAPNA MD1 Logo */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            <EmployerFormLogo employer={activeEmployer} height={54} />
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={`پروژه ${displayProjectName}`}
+          leftMetaSlot={
             <div
               style={{
-                fontSize: '7.5px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                fontSize: '10px',
                 fontWeight: 700,
-                marginTop: '3px',
-                color: '#334155',
-                whiteSpace: 'nowrap',
+                textAlign: 'right',
+                gap: '6px',
               }}
             >
-              {activeEmployer.imsSubtitle}
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+                <span>شماره:</span>
+                <span dir="ltr" className="tabular-nums">
+                  {doc.receiptNo}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+                <span>تاریخ:</span>
+                <span dir="ltr" className="tabular-nums">
+                  {formatDate(doc.date)}
+                </span>
+              </div>
             </div>
-          </div>
-
-          {/* Center: Form Title */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              lineHeight: 1.55,
-              padding: '2px 8px',
-            }}
-          >
-            <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              {activeEmployer.companyFullName}
-            </div>
-            <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {displayProjectName}
-            </div>
-            <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '2px' }}>
-              رسید مصرف مستقیم کالا
-            </div>
-            <div dir="ltr" style={{ fontSize: '11.5px', fontWeight: 700, marginTop: '2px' }}>
-              Not-Stored Goods Consumption Voucher
-            </div>
-          </div>
-
-          {/* Left: Receipt No & Date */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              padding: '6px 6px',
-              fontSize: '10px',
-              fontWeight: 700,
-              textAlign: 'right',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
-              <span>شماره:</span>
-              <span dir="ltr" className="tabular-nums">
-                {doc.receiptNo}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
-              <span>تاریخ:</span>
-              <span dir="ltr" className="tabular-nums">
-                {formatDate(doc.date)}
-              </span>
-            </div>
-          </div>
-        </div>
+          }
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Metadata Strip Row 1 (5 columns RTL: درخواست خرید | تامین کننده | کارشناس خرید | شماره بسته خرید | Realised Note No.) */}
         <div
@@ -416,6 +367,13 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
         </div>
 
         {/* Row 3: 4 Equal Signature Boxes */}
+        {(design.template?.signatures?.length || !design.showSignatures) ? (
+          <OfficialFormSignatures
+            signatures={design.signatures}
+            showSignatures={design.showSignatures}
+            borderColor={design.accentColor}
+          />
+        ) : (
         <div
           style={{
             display: 'grid',
@@ -497,6 +455,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             </div>
           </div>
         </div>
+        )}
 
         {/* Row 4: QA Control Note inside bottom of Approval Frame */}
         <div
@@ -507,7 +466,8 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             textAlign: 'left',
           }}
         >
-          توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.
+          {design.template?.introText ||
+            'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.'}
         </div>
       </div>
 
@@ -523,10 +483,10 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           fontWeight: 700,
         }}
       >
-        <div>رونوشت: معاونت تامین ، امور مالی، واحد کنترل کالا و انبار، پیمانکار نصب</div>
-        {formCode && (
+        <div>{design.template?.footerCopyText || 'رونوشت: معاونت تامین ، امور مالی، واحد کنترل کالا و انبار، پیمانکار نصب'}</div>
+        {(formCode || design.revisionText) && (
           <div dir="ltr" className="tabular-nums">
-            {formCode}
+            {[formCode, design.revisionText].filter(Boolean).join(' · ')}
           </div>
         )}
       </div>
@@ -1230,8 +1190,8 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-semibold text-[var(--text-secondary)]">
                 {isFa
-                  ? 'اقلام آماده تحویل از موجودی مپنا (دارای بازرسی ثبت‌شده)'
-                  : 'Deliverable Items from MAPNA Stock (OPI Recorded)'}
+                  ? 'اقلام آماده تحویل از موجودی انبار اصلی (دارای بازرسی ثبت‌شده)'
+                  : 'Deliverable Items from Main Warehouse Stock (OPI Recorded)'}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <select
@@ -1279,8 +1239,8 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                     <tr>
                       <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                         {isFa
-                          ? 'موردی با موجودی مپنا و بازرسی ثبت‌شده یافت نشد.'
-                          : 'No items with available MAPNA inventory found.'}
+                          ? 'موردی با موجودی انبار و بازرسی ثبت‌شده یافت نشد.'
+                          : 'No items with available main inventory found.'}
                       </td>
                     </tr>
                   ) : (
@@ -1548,8 +1508,8 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         message={
           deleteTarget
             ? isFa
-              ? `آیا از حذف رسید شماره ${deleteTarget.receiptNo} اطمینان دارید؟ مقدار تحویلی به موجودی مپنا بازگردانده می‌شود.`
-              : `Delete GCV Receipt ${deleteTarget.receiptNo}? Delivered quantities will return to MAPNA inventory.`
+              ? `آیا از حذف رسید شماره ${deleteTarget.receiptNo} اطمینان دارید؟ مقدار تحویلی به موجودی انبار اصلی بازگردانده می‌شود.`
+              : `Delete GCV Receipt ${deleteTarget.receiptNo}? Delivered quantities will return to main inventory.`
             : ''
         }
         onConfirm={handleConfirmDelete}

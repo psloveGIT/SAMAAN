@@ -11,9 +11,13 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -176,13 +180,16 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
   const entryType = record.entryType || 'permanent';
   const goodsUsage = record.goodsUsage || 'project';
   const equipmentSupplyName = record.equipmentSupply || record.mapnaRep || '';
-  const formCode = getEmployerFormCode(activeEmployer, '15-01');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'siteEntry');
+  const formCode = design.docCode;
   const displayProjectName = record.projectName?.trim() || activeProject?.name || '..........';
 
   return (
     <div
       dir="rtl"
-      className="site-entry-official-sheet samaan-a4-portrait"
+      className={`site-entry-official-sheet ${
+        design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'
+      }`}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -191,60 +198,12 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
         boxSizing: 'border-box',
       }}
     >
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Block: Right Logo Box + Center/Left Title Box */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '124px 1fr',
-            borderBottom: '1.5px solid #000000',
-          }}
-        >
-          <div
-            style={{
-              borderLeft: '1.5px solid #000000',
-              padding: '6px 6px 4px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            <EmployerFormLogo employer={activeEmployer} height={56} />
-            <div
-              style={{
-                fontSize: '7.5px',
-                fontWeight: 700,
-                marginTop: '3px',
-                color: '#334155',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {activeEmployer.imsSubtitle}
-            </div>
-          </div>
-
-          <div
-            style={{
-              padding: '6px 12px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              lineHeight: 1.5,
-            }}
-          >
-            <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              {activeEmployer.companyFullName}
-            </div>
-            <div style={{ fontSize: '11.5px', fontWeight: 700, marginTop: '1px' }}>
-              پروژه {displayProjectName}
-            </div>
-            <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
-              صورتجلسه ورود کالا و تجهیزات به کارگاه
-            </div>
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={`پروژه ${displayProjectName}`}
+          extraCenterSlot={
             <div
               style={{
                 display: 'flex',
@@ -259,8 +218,9 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               <FormCheckSquare checked={entryType === 'permanent'} label="ورود دائم" />
               <FormCheckSquare checked={entryType === 'temporary'} label="ورود موقت" />
             </div>
-          </div>
-        </div>
+          }
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Release Note No & Arrival Notice No Strip */}
         <div
@@ -693,6 +653,13 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
         </div>
 
         {/* 5-Column Signatures Strip */}
+        {(design.template?.signatures?.length || !design.showSignatures) ? (
+          <OfficialFormSignatures
+            signatures={design.signatures}
+            showSignatures={design.showSignatures}
+            borderColor={design.accentColor}
+          />
+        ) : (
         <div
           className="samaan-keep-together"
           style={{
@@ -790,6 +757,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.employerRep || ''}</div>
           </div>
         </div>
+        )}
 
         {/* QA Explanatory Notes Box */}
         <div
@@ -800,18 +768,24 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             textAlign: 'right',
           }}
         >
-          <div>
-            توضیح 1 : واحد تامین تجهیزات و انبار در صورت لزوم می بایست تائیدیه واحدهای دفتر فنی، کنترل کیفیت و HSE را اخذ نماید.
-          </div>
-          <div>
-            توضیح 2 : درخصوص کالا و تجهیزاتی که مربوط به تجهیز کارگاه بوده و یا از نظر ایمنی مطابق نظر سرپرست HSE پروژه حائز اهمیت است کنترل و تایید واحد HSE الزامی می باشد.
-          </div>
-          <div>
-            توضیح 3 : تائیدکنترل کیفی به منزله تائید ورود کالا به کارگاه می باشد و به معنای تائید نهایی نیست ، مسئولیت اصلی کیفیت کالا از نظر ظاهری و انطباق با مشخصات در طول دوران ساخت ،نصب، راه اندازی و بهره برداری بر عهده مسئول اجرایی کار می باشد.
-          </div>
-          <div>
-            توضیح 4 : فرم مذکور میبایست توسط {activeEmployer.securityLabel} امضا و سپس ممهور گردد.
-          </div>
+          {design.template?.introText ? (
+            <div style={{ fontWeight: 600 }}>{design.template.introText}</div>
+          ) : (
+            <>
+              <div>
+                توضیح 1 : واحد تامین تجهیزات و انبار در صورت لزوم می بایست تائیدیه واحدهای دفتر فنی، کنترل کیفیت و HSE را اخذ نماید.
+              </div>
+              <div>
+                توضیح 2 : درخصوص کالا و تجهیزاتی که مربوط به تجهیز کارگاه بوده و یا از نظر ایمنی مطابق نظر سرپرست HSE پروژه حائز اهمیت است کنترل و تایید واحد HSE الزامی می باشد.
+              </div>
+              <div>
+                توضیح 3 : تائیدکنترل کیفی به منزله تائید ورود کالا به کارگاه می باشد و به معنای تائید نهایی نیست ، مسئولیت اصلی کیفیت کالا از نظر ظاهری و انطباق با مشخصات در طول دوران ساخت ،نصب، راه اندازی و بهره برداری بر عهده مسئول اجرایی کار می باشد.
+              </div>
+              <div>
+                توضیح 4 : فرم مذکور میبایست توسط {activeEmployer.securityLabel} امضا و سپس ممهور گردد.
+              </div>
+            </>
+          )}
           <div style={{ fontWeight: 700 }}>
             توجه : این فرم تحت کنترل واحد QA میباشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
           </div>
@@ -832,11 +806,12 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
         }}
       >
         <div>
-          رونوشت : 1- درخواست کننده / پیمانکار   2- {activeEmployer.equipmentSupplyLabel}   3- {activeEmployer.securityLabel}
+          {design.template?.footerCopyText ||
+            `رونوشت : 1- درخواست کننده / پیمانکار   2- ${activeEmployer.equipmentSupplyLabel}   3- ${activeEmployer.securityLabel}`}
         </div>
-        {formCode && (
+        {(formCode || design.revisionText) && (
           <div dir="ltr" className="tabular-nums">
-            {formCode}
+            {[formCode, design.revisionText].filter(Boolean).join(' · ')}
           </div>
         )}
       </div>

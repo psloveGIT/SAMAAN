@@ -39,7 +39,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
   const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
-  const periodicFormCode = getEmployerFormCode(activeEmployer, '07-03');
+  const periodicFormCode = getEmployerFormCode(activeEmployer, '07-03', 'stocktake');
 
   const [activeSection, setActiveSection] = useState<'stocktake' | 'periodic'>('stocktake');
   const [q, setQ] = useState('');

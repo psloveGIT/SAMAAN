@@ -4,9 +4,13 @@ import { CheckCircle2, ClipboardList, Pencil, Printer, Trash2, X } from 'lucide-
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 import type {
   DetailedComputed,
   DocumentLineItem,
@@ -44,7 +48,8 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '05-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'miv');
+  const formCode = design.docCode;
   const displayProjectName = doc.projectName?.trim() || activeProject?.name || '......................';
 
   const detailedById = useMemo(() => {
@@ -63,7 +68,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
   return (
     <div
       dir="rtl"
-      className="samaan-a4-landscape"
+      className={design.orientation === 'portrait' ? 'samaan-a4-portrait' : 'samaan-a4-landscape'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -73,94 +78,43 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
       }}
     >
       {/* Upper Main Frame */}
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Row (Unified white strip with no internal vertical lines) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '125px 1fr 185px',
-            alignItems: 'stretch',
-            borderBottom: '1.5px solid #000000',
-            padding: '5px 10px',
-          }}
-        >
-          {/* Right: Stacked Logo */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            <EmployerFormLogo employer={activeEmployer} height={54} />
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={`پروژه ${displayProjectName}`}
+          leftMetaSlot={
             <div
               style={{
-                fontSize: '7.5px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                fontSize: '10px',
                 fontWeight: 700,
-                marginTop: '3px',
-                color: '#334155',
-                whiteSpace: 'nowrap',
+                textAlign: 'right',
+                gap: '4px',
               }}
             >
-              {activeEmployer.imsSubtitle}
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+                <span>شماره:</span>
+                <span dir="ltr" className="tabular-nums">
+                  {doc.docNo}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+                <span>تاریخ:</span>
+                <span dir="ltr" className="tabular-nums">
+                  {formatDate(doc.date)}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+                <span>صفحه</span>
+                <span className="tabular-nums">1 &nbsp;&nbsp; از &nbsp;&nbsp; 1</span>
+              </div>
             </div>
-          </div>
-
-          {/* Center: Titles */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              lineHeight: 1.6,
-              padding: '2px 8px',
-            }}
-          >
-            <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              {activeEmployer.companyFullName}
-            </div>
-            <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {displayProjectName}
-            </div>
-            <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
-              درخواست کالا از انبار و حواله انبار
-            </div>
-          </div>
-
-          {/* Left: شماره / تاریخ / صفحه ... از ... */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              padding: '4px 6px',
-              fontSize: '10px',
-              fontWeight: 700,
-              textAlign: 'right',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
-              <span>شماره:</span>
-              <span dir="ltr" className="tabular-nums">
-                {doc.docNo}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
-              <span>تاریخ:</span>
-              <span dir="ltr" className="tabular-nums">
-                {formatDate(doc.date)}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
-              <span>صفحه</span>
-              <span className="tabular-nums">1 &nbsp;&nbsp; از &nbsp;&nbsp; 1</span>
-            </div>
-          </div>
-        </div>
+          }
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Metadata Strip Row (Continuous white strip without internal vertical borders) */}
         <div
@@ -524,6 +478,14 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
           </div>
         </div>
 
+        {(design.template?.signatures?.length || !design.showSignatures) && (
+          <OfficialFormSignatures
+            signatures={design.signatures}
+            showSignatures={design.showSignatures}
+            borderColor={design.accentColor}
+          />
+        )}
+
         {/* QA Control Note inside bottom of lower frame */}
         <div
           style={{
@@ -533,7 +495,8 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
             textAlign: 'left',
           }}
         >
-          توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمی باشد.
+          {design.template?.introText ||
+            'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمی باشد.'}
         </div>
       </div>
 
@@ -549,10 +512,13 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
           fontWeight: 700,
         }}
       >
-        <div>رونوشت: معاونت تأمین تجهیزات ، {activeEmployer.techOfficeLabel}، پیمانکار نصب</div>
-        {formCode && (
+        <div>
+          {design.template?.footerCopyText ||
+            `رونوشت: معاونت تأمین تجهیزات ، ${activeEmployer.techOfficeLabel}، پیمانکار نصب`}
+        </div>
+        {(formCode || design.revisionText) && (
           <div dir="ltr" className="tabular-nums">
-            {formCode}
+            {[formCode, design.revisionText].filter(Boolean).join(' · ')}
           </div>
         )}
       </div>
@@ -618,9 +584,11 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
       if (type === 'miv_contractor') {
         return isFa ? 'درخواست و حواله مصرف پیمانکار (MIV Contractor)' : 'MIV Contractor Issue';
       }
-      return isFa ? 'درخواست و حواله تحویل/مصرف مپنا (MIV MAPNA)' : 'MIV MAPNA Issue';
+      return isFa
+        ? `درخواست و حواله تحویل/مصرف ${activeEmployer.isConfigured ? activeEmployer.shortName : 'انبار اصلی'} (MIV Main)`
+        : 'MIV Main Stock Issue';
     },
-    [isFa],
+    [isFa, activeEmployer.isConfigured, activeEmployer.shortName],
   );
 
   const mivDocuments = useMemo(

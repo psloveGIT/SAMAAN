@@ -3,12 +3,20 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, ClipboardList, Pencil, Printer, RotateCcw, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { getEmployerFormCode, type ResolvedEmployerProfile } from '../shared/employers.ts';
+import {
+  getEmployerFormCode,
+  resolveBuiltInFormDesign,
+  type ResolvedEmployerProfile,
+} from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type { PeriodicInspectionAnswer, PeriodicInspectionRecord } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 
 interface ChecklistQuestionDef {
   key: string;
@@ -270,7 +278,8 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '07-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'stocktake');
+  const formCode = design.docCode;
   const displayProjectName = record.projectName?.trim() || activeProject?.name || '........';
   const pages = useMemo(() => {
     const docPages = getPeriodicInspectionPages(activeEmployer);
@@ -288,7 +297,7 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
   return (
     <div
       dir="rtl"
-      className="samaan-a4-landscape"
+      className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -311,89 +320,40 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
             }}
           >
             {/* Main Form Frame */}
-            <div style={{ border: '1.8px solid #000000', backgroundColor: '#ffffff' }}>
-              {/* Header Strip (No vertical lines, matching PDF) */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '125px 1fr 225px',
-                  alignItems: 'stretch',
-                  borderBottom: '1.5px solid #000000',
-                  padding: '5px 10px',
-                }}
-              >
-                {/* Right: Stacked MAPNA MD1 Logo */}
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    textAlign: 'center',
-                  }}
-                >
-                  <EmployerFormLogo employer={activeEmployer} height={54} />
+            <div style={{ border: `1.8px solid ${design.accentColor}`, backgroundColor: '#ffffff' }}>
+              <BuiltInSheetHeaderRow
+                employer={activeEmployer}
+                design={design}
+                projectTitle={`پروژه ${displayProjectName}`}
+                leftMetaSlot={
                   <div
                     style={{
-                      fontSize: '7.5px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      padding: '2px 4px',
+                      fontSize: '10.5px',
                       fontWeight: 700,
-                      color: '#334155',
-                      marginTop: '2px',
-                      whiteSpace: 'nowrap',
+                      textAlign: 'right',
+                      gap: '6px',
                     }}
                   >
-                    {activeEmployer.imsSubtitle}
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                      <span>سرپرست/مسئول تأمین تجهیزات:</span>
+                      <span className="bidi-plaintext" style={{ fontWeight: 600 }}>
+                        {record.supervisorName || ''}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+                      <span>تاریخ:</span>
+                      <span dir="ltr" className="tabular-nums" style={{ fontWeight: 600 }}>
+                        {record.inspectionDate ? formatDate(record.inspectionDate) : '/    /'}
+                      </span>
+                    </div>
                   </div>
-                </div>
-
-                {/* Center: Titles */}
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    textAlign: 'center',
-                    lineHeight: 1.55,
-                  }}
-                >
-                  <div style={{ fontSize: '12px', fontWeight: 700 }}>
-                    {activeEmployer.companyFullName}
-                  </div>
-                  <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-                    پروژه {displayProjectName}
-                  </div>
-                  <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '3px' }}>
-                    چک لیست بازدید ادواری انبار
-                  </div>
-                </div>
-
-                {/* Left: Supervisor & Date */}
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    padding: '4px 6px',
-                    fontSize: '10.5px',
-                    fontWeight: 700,
-                    textAlign: 'right',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
-                    <span>سرپرست/مسئول تأمین تجهیزات:</span>
-                    <span className="bidi-plaintext" style={{ fontWeight: 600 }}>
-                      {record.supervisorName || ''}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-                    <span>تاریخ:</span>
-                    <span dir="ltr" className="tabular-nums" style={{ fontWeight: 600 }}>
-                      {record.inspectionDate ? formatDate(record.inspectionDate) : '/    /'}
-                    </span>
-                  </div>
-                </div>
-              </div>
+                }
+              />
+              <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
               {/* Main 4-Column Checklist Table */}
               <table
@@ -528,6 +488,13 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
               {/* Page 5 Only: 3-Column Signatures & Legend Footnotes */}
               {page.hasSignaturesAndFootnotes && (
                 <>
+                  {(design.template?.signatures?.length || !design.showSignatures) ? (
+                    <OfficialFormSignatures
+                      signatures={design.signatures}
+                      showSignatures={design.showSignatures}
+                      borderColor={design.accentColor}
+                    />
+                  ) : (
                   <div
                     className="samaan-keep-together"
                     style={{
@@ -581,6 +548,7 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                       </div>
                     </div>
                   </div>
+                  )}
 
                   {/* Legend Footnotes (* and **) */}
                   <div
@@ -611,10 +579,11 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                   textAlign: 'right',
                 }}
               >
-                توجه : این فرم تحت کنترل واحد QA می‌باشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA می‌باشد.
+                {design.template?.introText ||
+                  'توجه : این فرم تحت کنترل واحد QA می‌باشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA می‌باشد.'}
               </div>
 
-              {/* Bottom Strip: رونوشت & Form Code MD1EX-FQP02/07-03 (All 5 Pages) */}
+              {/* Bottom Strip: رونوشت & Form Code */}
               <div
                 style={{
                   display: 'flex',
@@ -628,12 +597,12 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
                 <div>
                   رونوشت :{' '}
                   <span className="bidi-plaintext" style={{ fontWeight: 600 }}>
-                    {record.copyTo || ''}
+                    {record.copyTo || design.footerCopyText || ''}
                   </span>
                 </div>
-                {formCode && (
+                {(formCode || design.revisionText) && (
                   <div dir="ltr" className="tabular-nums">
-                    {formCode}
+                    {[formCode, design.revisionText].filter(Boolean).join(' · ')}
                   </div>
                 )}
               </div>

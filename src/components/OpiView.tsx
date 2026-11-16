@@ -12,9 +12,13 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -96,7 +100,8 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '02-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'opi');
+  const formCode = design.docCode;
   const displayProjectName = record.projectName?.trim() || activeProject?.name || '..................';
 
   const resolvedItems = useMemo(() => {
@@ -114,7 +119,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
   return (
     <div
       dir="rtl"
-      className="samaan-a4-portrait"
+      className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -124,96 +129,39 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
       }}
     >
       {/* Main Upper Frame */}
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Row */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 190px',
-            borderBottom: '1.5px solid #000000',
-          }}
-        >
-          {/* Right + Center: Logo + Centered Title */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '118px 1fr',
-              alignItems: 'center',
-              padding: '6px 8px',
-            }}
-          >
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={`پروژه ${displayProjectName}`}
+          leftMetaSlot={
             <div
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                textAlign: 'center',
+                justifyContent: 'space-between',
+                fontSize: '10px',
+                fontWeight: 700,
+                textAlign: 'right',
+                gap: '6px',
               }}
             >
-              <EmployerFormLogo employer={activeEmployer} height={56} />
-              <div
-                style={{
-                  fontSize: '7.5px',
-                  fontWeight: 700,
-                  marginTop: '3px',
-                  color: '#334155',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {activeEmployer.imsSubtitle}
+              <div>
+                <div>شماره دعوتنامه:</div>
+                <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                  {record.invitationNo}
+                </div>
+              </div>
+              <div>
+                <div>تاریخ:</div>
+                <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                  {formatDate(record.issueDate || record.date)}
+                </div>
               </div>
             </div>
-
-            <div
-              style={{
-                textAlign: 'center',
-                lineHeight: 1.55,
-                padding: '2px 8px',
-              }}
-            >
-              <div style={{ fontSize: '12px', fontWeight: 700 }}>
-                {activeEmployer.companyFullName}
-              </div>
-              <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-                پروژه {displayProjectName}
-              </div>
-              <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '2px' }}>
-                دعوتنامه گشایش و بازرسی بسته ها
-              </div>
-              <div dir="ltr" style={{ fontSize: '12px', fontWeight: 700 }}>
-                OPI Invitation
-              </div>
-            </div>
-          </div>
-
-          {/* Left Box: Invitation No & Issue Date */}
-          <div
-            style={{
-              borderRight: '1.5px solid #000000',
-              padding: '8px 10px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              fontSize: '10px',
-              fontWeight: 700,
-              textAlign: 'right',
-            }}
-          >
-            <div>
-              <div>شماره دعوتنامه:</div>
-              <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
-                {record.invitationNo}
-              </div>
-            </div>
-            <div>
-              <div>تاریخ:</div>
-              <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
-                {formatDate(record.issueDate || record.date)}
-              </div>
-            </div>
-          </div>
-        </div>
+          }
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Metadata Strip Row 1 */}
         <div
@@ -536,6 +484,13 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
           تایید کنندگان:
         </div>
 
+        {(design.template?.signatures?.length || !design.showSignatures) ? (
+          <OfficialFormSignatures
+            signatures={design.signatures}
+            showSignatures={design.showSignatures}
+            borderColor={design.accentColor}
+          />
+        ) : (
         <div
           style={{
             display: 'grid',
@@ -608,6 +563,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
             <div style={{ fontSize: '9px' }}>{record.employerRep || ''}</div>
           </div>
         </div>
+        )}
 
         <div
           style={{
@@ -631,10 +587,10 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
             fontWeight: 700,
           }}
         >
-          <div>رونوشت : معاونت تأمین تجهیزات ؛ کارفرما، مشاور، تامین کننده</div>
-          {formCode && (
+          <div>{design.template?.footerCopyText || 'رونوشت : معاونت تأمین تجهیزات ؛ کارفرما، مشاور، تامین کننده'}</div>
+          {(formCode || design.revisionText) && (
             <div dir="ltr" className="tabular-nums">
-              {formCode}
+              {[formCode, design.revisionText].filter(Boolean).join(' · ')}
             </div>
           )}
         </div>

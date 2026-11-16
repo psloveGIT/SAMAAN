@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import { CheckSquare, Eye, Printer, Square, Tag, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import type { DetailedComputed, GeneralEntry } from '../shared/types.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import { OfficialExtraMetaStrip } from './OfficialSheetHeader.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 const LABEL_META_STORAGE_KEY = 'samaan_storage_label_meta_v1';
@@ -51,8 +52,11 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
   compact = false,
 }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '14-01');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'storageLabel');
+  const formCode = design.docCode;
   const displayProjectName = meta.projectName.trim() || activeProject?.name || '.................';
+  const showPrimary = design.headerLayout !== 'minimal_no_logo' && Boolean(design.primaryLogo?.dataUrl);
+  const showSecondary = design.headerLayout === 'split_dual_logo' && Boolean(design.secondaryLogo?.dataUrl);
 
   const genMatch =
     generalEntries.find(
@@ -120,7 +124,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
   return (
     <div
       dir="ltr"
-      className="samaan-a4-portrait"
+      className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -130,24 +134,40 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
       }}
     >
       {/* Unified Outer Border Frame */}
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Row: Left 15% blank cell | Right 85% Title + Stacked MAPNA MD1 Logo */}
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        {/* Header Row: Left 15% cell | Right 85% Title + Logo(s) */}
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: '15% 85%',
-            borderBottom: '1.5px solid #000000',
+            borderBottom: `1.5px solid ${design.accentColor}`,
             minHeight: compact ? '78px' : '96px',
           }}
         >
-          {/* Left Blank Header Cell (exact match to PDF) */}
-          <div style={{ borderRight: '1.5px solid #000000' }} />
+          {/* Left Header Cell (secondary logo or primary when left_logo, otherwise blank) */}
+          <div
+            style={{
+              borderRight: `1.5px solid ${design.accentColor}`,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: compact ? '4px' : '6px',
+            }}
+          >
+            {design.headerLayout === 'left_logo' && showPrimary && (
+              <EmployerFormLogo employer={activeEmployer} logo={design.primaryLogo} height={compact ? 40 : 52} />
+            )}
+            {showSecondary && (
+              <EmployerFormLogo employer={activeEmployer} logo={design.secondaryLogo} height={compact ? 40 : 52} />
+            )}
+          </div>
 
-          {/* Right Header Area (Title Centered + Stacked Logo on Right) */}
+          {/* Right Header Area (Title Centered + Employer Logo on Right) */}
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '1fr 112px',
+              gridTemplateColumns: showPrimary && design.headerLayout !== 'left_logo' ? '1fr 112px' : '1fr',
               alignItems: 'center',
               padding: compact ? '5px 8px' : '7px 12px',
             }}
@@ -165,49 +185,60 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
                 paddingLeft: '8px',
               }}
             >
-              <div style={{ fontSize: compact ? '10.5px' : '12.5px', fontWeight: 700 }}>
-                {activeEmployer.companyFullName}
-              </div>
+              {design.companyTitle && (
+                <div style={{ fontSize: compact ? '10.5px' : '12.5px', fontWeight: 700 }}>
+                  {design.companyTitle}
+                </div>
+              )}
               <div style={{ fontSize: compact ? '10px' : '12px', fontWeight: 700 }}>
                 پروژه {displayProjectName}
               </div>
-              <div style={{ fontSize: compact ? '12.5px' : '14.5px', fontWeight: 800, marginTop: '1px' }}>
-                برچسب انبارش کالا
-              </div>
-              <div
-                dir="ltr"
-                style={{ fontSize: compact ? '11px' : '13px', fontWeight: 800, marginTop: '2px' }}
-              >
-                Storage Label
-              </div>
+              {design.titleFa && (
+                <div style={{ fontSize: compact ? '12.5px' : '14.5px', fontWeight: 800, marginTop: '1px' }}>
+                  {design.titleFa}
+                </div>
+              )}
+              {design.titleEn && (
+                <div
+                  dir="ltr"
+                  style={{ fontSize: compact ? '11px' : '13px', fontWeight: 800, marginTop: '2px' }}
+                >
+                  {design.titleEn}
+                </div>
+              )}
             </div>
 
-            {/* Right: Stacked Employer Logo */}
-            <div
-              dir="rtl"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                textAlign: 'center',
-              }}
-            >
-              <EmployerFormLogo employer={activeEmployer} height={compact ? 44 : 56} />
+            {/* Right: Employer Logo */}
+            {showPrimary && design.headerLayout !== 'left_logo' && (
               <div
+                dir="rtl"
                 style={{
-                  fontSize: compact ? '6.5px' : '7.5px',
-                  fontWeight: 700,
-                  color: '#334155',
-                  marginTop: '2px',
-                  whiteSpace: 'nowrap',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
                 }}
               >
-                {activeEmployer.imsSubtitle}
+                <EmployerFormLogo employer={activeEmployer} logo={design.primaryLogo} height={compact ? 44 : 56} />
+                {design.imsSubtitle && (
+                  <div
+                    style={{
+                      fontSize: compact ? '6.5px' : '7.5px',
+                      fontWeight: 700,
+                      color: '#334155',
+                      marginTop: '2px',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {design.imsSubtitle}
+                  </div>
+                )}
               </div>
-            </div>
+            )}
           </div>
         </div>
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Gray Metadata Row: Project | Warehouse */}
         <div
@@ -387,7 +418,8 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
             textAlign: 'left',
           }}
         >
-          Notice: This form is controlled by Q.A discipline and every change have to be with Q.A permission.
+          {design.template?.introText ||
+            'Notice: This form is controlled by Q.A discipline and every change have to be with Q.A permission.'}
         </div>
 
         {/* Bottom Form Code Row */}
@@ -406,9 +438,11 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
               textAlign: 'left',
             }}
           >
-            {formCode || '\u00A0'}
+            {[formCode, design.revisionText].filter(Boolean).join(' · ') || '\u00A0'}
           </div>
-          <div style={{ padding: compact ? '3px 8px' : '4px 8px' }} />
+          <div style={{ padding: compact ? '3px 8px' : '4px 8px', textAlign: 'right' }}>
+            {design.footerCopyText || ''}
+          </div>
         </div>
       </div>
     </div>

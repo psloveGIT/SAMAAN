@@ -3,13 +3,172 @@ export type CalendarMode = 'jalali' | 'gregorian';
 export type ThemeMode = 'light' | 'dark';
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
-export type EmployerId =
-  | 'mapna_md1'
-  | 'mapna_md2'
-  | 'mapna_md3'
-  | 'mapna_meco'
-  | 'tavanir'
-  | 'custom';
+export type EmployerId = string;
+
+export interface EmployerLogoAsset {
+  id: string;
+  label: string;
+  dataUrl: string;
+  isDefault?: boolean;
+}
+
+export type BuiltInFormKey =
+  | 'siteEntry'
+  | 'opi'
+  | 'opiMinutes'
+  | 'mer'
+  | 'gcv'
+  | 'miv'
+  | 'smr'
+  | 'substitution'
+  | 'balance'
+  | 'stocktake'
+  | 'storageLabel';
+
+export type FormHeaderLayout =
+  | 'classic_right_logo'
+  | 'split_dual_logo'
+  | 'left_logo'
+  | 'minimal_no_logo';
+
+export type FormPaperOrientation = 'portrait' | 'landscape';
+
+export interface FormColumnOverride {
+  key: string;
+  label?: string;
+  visible?: boolean;
+}
+
+export interface FormSignatureBox {
+  id: string;
+  label: string;
+  subtitle?: string;
+}
+
+export interface FormExtraField {
+  id: string;
+  label: string;
+  defaultValue?: string;
+}
+
+export interface EmployerFormTemplate {
+  formKey: BuiltInFormKey;
+  enabled?: boolean;
+  titleFa?: string;
+  titleEn?: string;
+  companyTitleOverride?: string;
+  imsSubtitleOverride?: string;
+  docCode?: string;
+  hideDocCode?: boolean;
+  revisionText?: string;
+  headerLayout?: FormHeaderLayout;
+  primaryLogoId?: string;
+  secondaryLogoId?: string;
+  accentColor?: string;
+  orientation?: FormPaperOrientation;
+  introText?: string;
+  footerCopyText?: string;
+  columnOverrides?: FormColumnOverride[];
+  extraMetaFields?: FormExtraField[];
+  signatures?: FormSignatureBox[];
+  showSignatures?: boolean;
+}
+
+export interface CustomFormFieldDef {
+  id: string;
+  label: string;
+  fieldType: 'text' | 'date' | 'number' | 'checkbox';
+  dataBinding?:
+    | 'none'
+    | 'projectName'
+    | 'packingListNo'
+    | 'supplier'
+    | 'arrivalDate'
+    | 'island'
+    | 'system'
+    | 'unit';
+  defaultValue?: string;
+}
+
+export interface CustomFormColumnDef {
+  id: string;
+  label: string;
+  widthPercent?: number;
+  dataBinding?:
+    | 'none'
+    | 'rowNo'
+    | 'description'
+    | 'itemCode'
+    | 'packageNo'
+    | 'qty'
+    | 'unit'
+    | 'remarks';
+}
+
+export interface CustomEmployerForm {
+  id: string;
+  titleFa: string;
+  titleEn?: string;
+  docCode?: string;
+  revisionText?: string;
+  imsSubtitle?: string;
+  headerLayout: FormHeaderLayout;
+  primaryLogoId?: string;
+  secondaryLogoId?: string;
+  orientation: FormPaperOrientation;
+  accentColor?: string;
+  headerFields: CustomFormFieldDef[];
+  hasTable: boolean;
+  tableColumns: CustomFormColumnDef[];
+  defaultRowCount?: number;
+  bodyText?: string;
+  signatures: FormSignatureBox[];
+  footerNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomFormSubmission {
+  id: string;
+  formId: string;
+  formTitle: string;
+  docNo: string;
+  date: string;
+  packingListNo?: string;
+  fieldValues: Record<string, string>;
+  rows: Array<Record<string, string>>;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface EmployerProfile {
+  id: string;
+  nameFa: string;
+  nameEn?: string;
+  companyFullName: string;
+  companyFullNameEn?: string;
+  shortName: string;
+  badgeCode?: string;
+  imsSubtitle?: string;
+  docCodePrefix?: string;
+  hideDocCodes?: boolean;
+  securityLabel?: string;
+  equipmentSupplyLabel?: string;
+  techOfficeLabel?: string;
+  installationLabel?: string;
+  inspectorLabel?: string;
+  address?: string;
+  phone?: string;
+  contractRef?: string;
+  notes?: string;
+  logos: EmployerLogoAsset[];
+  formTemplates: Partial<Record<BuiltInFormKey, EmployerFormTemplate>>;
+  customForms: CustomEmployerForm[];
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface EmployerCustomConfig {
   companyFullName?: string;
@@ -567,6 +726,8 @@ export interface AuditLogEntry {
     | 'balance'
     | 'stocktake'
     | 'periodicInspection'
+    | 'customForm'
+    | 'employer'
     | 'trash'
     | 'category'
     | 'import'
@@ -640,4 +801,5 @@ export interface DatabaseSnapshot {
   mivDocuments?: MivDocumentRecord[];
   materialEstimates?: MaterialEstimateRecord[];
   periodicInspections?: PeriodicInspectionRecord[];
+  customFormSubmissions?: CustomFormSubmission[];
 }

@@ -3,10 +3,14 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, FileSpreadsheet, Printer, Scale, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { getEmployerFormCode } from '../shared/employers.ts';
+import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { roundQty, toNum } from '../shared/formulas.ts';
 import type { DetailedComputed, GeneralEntry, MaterialEstimateRecord } from '../shared/types.ts';
-import { EmployerFormLogo } from './EmployerFormLogo.tsx';
+import {
+  BuiltInSheetHeaderRow,
+  OfficialExtraMetaStrip,
+  OfficialFormSignatures,
+} from './OfficialSheetHeader.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
@@ -57,7 +61,8 @@ interface OfficialBmrSheetProps {
 
 const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, meta }) => {
   const { activeEmployer, activeProject } = useApp();
-  const formCode = getEmployerFormCode(activeEmployer, '09-03');
+  const design = resolveBuiltInFormDesign(activeEmployer, 'balance');
+  const formCode = design.docCode;
   const displayProjectName = meta.projectName.trim() || activeProject?.name || '..................';
 
   const estimateLookup = useMemo(() => {
@@ -99,7 +104,7 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
   return (
     <div
       dir="rtl"
-      className="samaan-a4-landscape"
+      className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -109,69 +114,13 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
       }}
     >
       {/* Upper Main Frame */}
-      <div style={{ border: '1.8px solid #000000' }}>
-        {/* Header Row (Unified white strip with no internal vertical dividers) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '130px 1fr 130px',
-            alignItems: 'center',
-            borderBottom: '1.5px solid #000000',
-            padding: '5px 10px',
-          }}
-        >
-          {/* Right: Stacked MAPNA MD1 Logo */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            <EmployerFormLogo employer={activeEmployer} height={54} />
-            <div
-              style={{
-                fontSize: '7.5px',
-                fontWeight: 700,
-                marginTop: '3px',
-                color: '#334155',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {activeEmployer.imsSubtitle}
-            </div>
-          </div>
-
-          {/* Center: Form Title */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              lineHeight: 1.55,
-              padding: '2px 8px',
-            }}
-          >
-            <div style={{ fontSize: '12px', fontWeight: 700 }}>
-              {activeEmployer.companyFullName}
-            </div>
-            <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-              پروژه {displayProjectName}
-            </div>
-            <div style={{ fontSize: '14.5px', fontWeight: 800, marginTop: '2px' }}>
-              گزارش موازنه و کنترل مصرف مواد
-            </div>
-            <div dir="ltr" style={{ fontSize: '11.5px', fontWeight: 700, marginTop: '2px' }}>
-              Balance of Material Report
-            </div>
-          </div>
-
-          <div />
-        </div>
+      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+        <BuiltInSheetHeaderRow
+          employer={activeEmployer}
+          design={design}
+          projectTitle={`پروژه ${displayProjectName}`}
+        />
+        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
 
         {/* Metadata Strip Row 1 (4 bordered cells RTL: سیستم | جزیره | واحد | پروژه) */}
         <div
@@ -400,6 +349,14 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
           امضاء
         </div>
 
+        {(design.template?.signatures?.length || !design.showSignatures) ? (
+          <OfficialFormSignatures
+            signatures={design.signatures}
+            showSignatures={design.showSignatures}
+            borderColor={design.accentColor}
+          />
+        ) : (
+        <>
         {/* Row 2: 5 Role Headers RTL (centered) */}
         <div
           style={{
@@ -509,6 +466,8 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
             </div>
           </div>
         </div>
+        </>
+        )}
 
         {/* Row 4: QA Control Note */}
         <div
@@ -520,7 +479,8 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
             textAlign: 'left',
           }}
         >
-          توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.
+          {design.template?.introText ||
+            'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.'}
         </div>
 
         {/* Row 5: Footer Strip INSIDE outer box */}
@@ -534,10 +494,10 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
             fontWeight: 700,
           }}
         >
-          <div>رونوشت: معاونت تامین ، پیمانکار نصب، دفتر فنی</div>
-          {formCode && (
+          <div>{design.footerCopyText || 'رونوشت: معاونت تامین ، پیمانکار نصب، دفتر فنی'}</div>
+          {(formCode || design.revisionText) && (
             <div dir="ltr" className="tabular-nums">
-              {formCode}
+              {[formCode, design.revisionText].filter(Boolean).join(' · ')}
             </div>
           )}
         </div>

@@ -5,8 +5,10 @@ import { AuthGate } from './components/AuthGate.tsx';
 import { BackupView } from './components/BackupView.tsx';
 import { BalanceView } from './components/BalanceView.tsx';
 import { CategoryManagerView } from './components/CategoryManagerView.tsx';
+import { CustomFormsRunnerView } from './components/CustomFormsRunnerView.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
 import { DetailedView } from './components/DetailedView.tsx';
+import { EmployersStudioView } from './components/EmployersStudioView.tsx';
 import { GcvView } from './components/GcvView.tsx';
 import { GeneralView } from './components/GeneralView.tsx';
 import { GlobalSearchView } from './components/GlobalSearchView.tsx';
@@ -219,6 +221,16 @@ const SamaanWorkspace: React.FC = () => {
           {activeTab === 'storageLabel' && (
             <StorageLabelView refreshSignal={refreshSignal} />
           )}
+
+          {activeTab === 'customForms' && (
+            <CustomFormsRunnerView
+              refreshSignal={refreshSignal}
+              onDataChanged={bumpRefresh}
+              onOpenEmployerStudio={() => setActiveTab('employers')}
+            />
+          )}
+
+          {activeTab === 'employers' && <EmployersStudioView />}
 
           {activeTab === 'search' && (
             <GlobalSearchView onJumpToDetailed={jumpToDetailed} />
