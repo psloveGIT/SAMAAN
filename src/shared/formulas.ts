@@ -1,7 +1,10 @@
+import { getTodayIso } from './jalali.ts';
 import type {
   DetailedComputed,
   DetailedEntry,
+  ExpiringChemicalNotice,
   GeneralEntry,
+  IslandPackingCount,
   SelectionFormulaSummary,
   TransitEntry,
 } from './types.ts';
@@ -13,6 +16,64 @@ export function roundQty(n: number): number {
 export function toNum(val: number | null | undefined): number {
   if (val === null || val === undefined || !Number.isFinite(val)) return 0;
   return val;
+}
+
+const CLOSED_STATUS_REGEX =
+  /^(بسته|تکمیل|بسته‌شده|خاتمه|خاتمه‌یافته|مختومه|closed|close|done|resolved|completed|approved)$/i;
+
+export function isMerOpen(entry: Pick<DetailedEntry, 'merNo' | 'merStatus'>): boolean {
+  const no = (entry.merNo || '').trim();
+  const st = (entry.merStatus || '').trim();
+  if (!no && !st) return false;
+  if (!st) return Boolean(no);
+  return !CLOSED_STATUS_REGEX.test(st);
+}
+
+export function isRepOpen(entry: Pick<DetailedEntry, 'repNo' | 'repStatus'>): boolean {
+  const no = (entry.repNo || '').trim();
+  const st = (entry.repStatus || '').trim();
+  if (!no && !st) return false;
+  if (!st) return Boolean(no);
+  return !CLOSED_STATUS_REGEX.test(st);
+}
+
+function daysBetweenIso(fromIso: string, toIso: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromIso) || !/^\d{4}-\d{2}-\d{2}$/.test(toIso)) {
+    return null;
+  }
+  const fromMs = Date.parse(`${fromIso}T00:00:00Z`);
+  const toMs = Date.parse(`${toIso}T00:00:00Z`);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return null;
+  return Math.ceil((toMs - fromMs) / (1000 * 60 * 60 * 24));
+}
+
+export function getExpiringChemicals(
+  entries: DetailedEntry[],
+  thresholdDays = 30,
+  todayIso: string = getTodayIso(),
+): ExpiringChemicalNotice[] {
+  const alerts: ExpiringChemicalNotice[] = [];
+  for (const d of entries) {
+    const isChemical = d.itemCategory === 'chemicals' || Boolean((d.chemicalType || '').trim());
+    const expIso = (d.expirationDate || '').trim();
+    if (!isChemical || !expIso) continue;
+    const days = daysBetweenIso(todayIso, expIso);
+    if (days !== null && days <= thresholdDays) {
+      alerts.push({
+        id: d.id,
+        shipmentNo: d.shipmentNo || '',
+        packageNo: d.packageNo || '',
+        itemNo: d.itemNo || '',
+        description: d.description || d.generalDescription || '',
+        chemicalType: d.chemicalType || '',
+        productionDate: d.productionDate || '',
+        expirationDate: expIso,
+        daysRemaining: days,
+      });
+    }
+  }
+  alerts.sort((a, b) => a.daysRemaining - b.daysRemaining);
+  return alerts;
 }
 
 export function computeDetailedEntry(entry: DetailedEntry): DetailedComputed {
@@ -93,7 +154,14 @@ export function computeSelectionFormulaSummary(params: {
     smrMapnaQtySum: 0,
     mivMapnaQtySum: 0,
     transitAmountSum: 0,
+    packingsByIsland: [],
+    openMerCount: 0,
+    openRepCount: 0,
+    shortageOrDamagedCount: 0,
+    expiringChemicals: [],
   };
+
+  const islandPackingsMap = new Map<string, { packings: Set<string>; rowCount: number }>();
 
   for (const g of general) {
     summary.grossWeightSum = roundQty(summary.grossWeightSum + toNum(g.grossWeight));
@@ -102,6 +170,29 @@ export function computeSelectionFormulaSummary(params: {
       summary.weighbridgeWeightSum + toNum(g.weighbridgeWeight),
     );
     summary.freightCostSum = roundQty(summary.freightCostSum + toNum(g.freightCost));
+
+    const island = (g.island || '').trim() || 'سایر';
+    const pk = (g.packingListNo || '').trim().toLowerCase() || g.id;
+    let bucket = islandPackingsMap.get(island);
+    if (!bucket) {
+      bucket = { packings: new Set<string>(), rowCount: 0 };
+      islandPackingsMap.set(island, bucket);
+    }
+    bucket.packings.add(pk);
+    bucket.rowCount += 1;
+  }
+
+  if (general.length > 0) {
+    const byIsland: IslandPackingCount[] = [];
+    for (const [island, info] of islandPackingsMap.entries()) {
+      byIsland.push({
+        island,
+        packingCount: info.packings.size,
+        rowCount: info.rowCount,
+      });
+    }
+    byIsland.sort((a, b) => b.packingCount - a.packingCount || b.rowCount - a.rowCount);
+    summary.packingsByIsland = byIsland;
   }
 
   for (const d of detailed) {
@@ -126,6 +217,20 @@ export function computeSelectionFormulaSummary(params: {
     );
     summary.smrMapnaQtySum = roundQty(summary.smrMapnaQtySum + toNum(d.smrMapnaQty));
     summary.mivMapnaQtySum = roundQty(summary.mivMapnaQtySum + toNum(d.mivMapnaQty));
+
+    if (isMerOpen(d)) {
+      summary.openMerCount = (summary.openMerCount || 0) + 1;
+    }
+    if (isRepOpen(d)) {
+      summary.openRepCount = (summary.openRepCount || 0) + 1;
+    }
+    if (d.hasShortage || d.hasDamaged) {
+      summary.shortageOrDamagedCount = (summary.shortageOrDamagedCount || 0) + 1;
+    }
+  }
+
+  if (detailed.length > 0) {
+    summary.expiringChemicals = getExpiringChemicals(detailed, 30);
   }
 
   for (const t of transit) {

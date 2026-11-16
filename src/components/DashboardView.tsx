@@ -2,14 +2,21 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowUpRight,
+  ClipboardList,
   FileSpreadsheet,
+  FlaskConical,
   PackageCheck,
   Plus,
+  Scale,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest } from '../lib/api.ts';
 import { formatMonthLabel } from '../shared/jalali.ts';
-import type { DetailedComputed, SelectionFormulaSummary } from '../shared/types.ts';
+import type {
+  DetailedComputed,
+  ExpiringChemicalNotice,
+  SelectionFormulaSummary,
+} from '../shared/types.ts';
 import type { NavTabKey } from './Layout.tsx';
 
 interface AnalyticsPayload {
@@ -22,8 +29,14 @@ interface AnalyticsPayload {
     closedPackings: number;
     shortageItemsCount: number;
     damagedItemsCount: number;
+    openMerCount?: number;
+    openRepCount?: number;
+    expiringChemicalsCount?: number;
   };
-  totals: SelectionFormulaSummary;
+  totals: SelectionFormulaSummary & {
+    grossWeightTons?: number;
+    netWeightTons?: number;
+  };
   transitByStatus: { status: string; count: number }[];
   byIsland: {
     name: string;
@@ -41,6 +54,9 @@ interface AnalyticsPayload {
   }[];
   topShortages: DetailedComputed[];
   topDamaged: DetailedComputed[];
+  openMerItems?: DetailedComputed[];
+  openRepItems?: DetailedComputed[];
+  expiringChemicals?: ExpiringChemicalNotice[];
 }
 
 interface DashboardViewProps {
@@ -69,8 +85,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       .finally(() => setLoading(false));
   }, [prefs.calendar, refreshSignal]);
 
-  const fmt = (n: number) =>
-    n.toLocaleString(isFa ? 'fa-IR' : 'en-US', { maximumFractionDigits: 2 });
+  const fmt = (n: number, maxFrac = 2) =>
+    n.toLocaleString(isFa ? 'fa-IR' : 'en-US', { maximumFractionDigits: maxFrac });
 
   if (loading && !data) {
     return (
@@ -124,12 +140,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   if (!data) return null;
 
+  const grossTons = data.totals.grossWeightTons ?? (data.totals.grossWeightSum || 0) / 1000;
+  const netTons = data.totals.netWeightTons ?? (data.totals.netWeightSum || 0) / 1000;
+  const openMerCount = data.counts.openMerCount ?? data.totals.openMerCount ?? 0;
+  const openRepCount = data.counts.openRepCount ?? data.totals.openRepCount ?? 0;
+  const openMerItems = data.openMerItems || [];
+  const openRepItems = data.openRepItems || [];
+  const expiringChemicals = data.expiringChemicals || data.totals.expiringChemicals || [];
+
   const maxTrendVal = Math.max(
     1,
     ...data.monthlyTrend.map((m) => m.generalRows + m.detailedRows),
   );
 
-  const kpis: { label: string; value: string; sub?: string; tone?: 'danger' | 'accent' }[] = [
+  const kpis: { label: string; value: string; sub?: string; tone?: 'danger' | 'warning' | 'accent' }[] = [
     {
       label: isFa ? 'پکینگ لیست‌های یکتا' : 'Unique Packing Lists',
       value: fmt(data.counts.uniquePackings),
@@ -153,42 +177,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     {
       label: isFa ? 'اقلام متریال' : 'Detailed Material Lines',
       value: fmt(data.counts.detailedRows),
-      sub:
-        data.counts.transitRows > 0
-          ? isFa
-            ? `${fmt(data.counts.transitRows)} مورد در راه`
-            : `${fmt(data.counts.transitRows)} in-transit`
-          : undefined,
     },
     {
-      label: t.headers.mapnaInventory,
-      value: fmt(data.totals.mapnaInventorySum),
-      sub:
-        data.totals.contractorInventorySum > 0
-          ? `${t.headers.contractorInventory}: ${fmt(data.totals.contractorInventorySum)}`
-          : undefined,
+      label: isFa ? 'جمع وزن ناخالص / خالص (تن)' : 'Gross / Net Weight (Tons)',
+      value: `${fmt(grossTons, 3)} ${isFa ? 'تن' : 't'}`,
+      sub: isFa
+        ? `وزن خالص: ${fmt(netTons, 3)} تن`
+        : `Net Weight: ${fmt(netTons, 3)} tons`,
       tone: 'accent',
     },
-    ...(data.counts.shortageItemsCount > 0
-      ? [
-          {
-            label: isFa ? 'اقلام دارای کسری' : 'Items with Shortage',
-            value: fmt(data.counts.shortageItemsCount),
-            sub: `${t.headers.shortage}: ${fmt(data.totals.shortageSum)}`,
-            tone: 'danger' as const,
-          },
-        ]
-      : []),
-    ...(data.counts.damagedItemsCount > 0
-      ? [
-          {
-            label: isFa ? 'اقلام آسیب‌دیده' : 'Damaged Items',
-            value: fmt(data.counts.damagedItemsCount),
-            sub: `${t.headers.damagedQty}: ${fmt(data.totals.damagedQtySum)}`,
-            tone: 'danger' as const,
-          },
-        ]
-      : []),
+    {
+      label: isFa ? 'اقلام دارای کسری' : 'Items with Shortage',
+      value: fmt(data.counts.shortageItemsCount),
+      sub:
+        data.counts.shortageItemsCount > 0
+          ? isFa
+            ? `${fmt(data.counts.shortageItemsCount)} ردیف دارای کسری`
+            : `${fmt(data.counts.shortageItemsCount)} shortage rows`
+          : isFa
+            ? 'بدون کسری فعال'
+            : 'No active shortages',
+      tone: data.counts.shortageItemsCount > 0 ? 'danger' : undefined,
+    },
+    {
+      label: isFa ? 'وضعیت MER باز / REP باز' : 'Open MER / Open REP',
+      value: `${fmt(openMerCount)} / ${fmt(openRepCount)}`,
+      sub: isFa
+        ? `MER باز: ${fmt(openMerCount)} · REP باز: ${fmt(openRepCount)}`
+        : `MER Open: ${fmt(openMerCount)} · REP Open: ${fmt(openRepCount)}`,
+      tone: openMerCount + openRepCount > 0 ? 'warning' : undefined,
+    },
   ];
 
   return (
@@ -205,9 +223,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               className={`mt-2 text-2xl font-bold tabular-nums ${
                 k.tone === 'danger'
                   ? 'text-[var(--status-danger)]'
-                  : k.tone === 'accent'
-                    ? 'text-[var(--accent-primary)]'
-                    : 'text-[var(--text-primary)]'
+                  : k.tone === 'warning'
+                    ? 'text-[var(--status-warning)]'
+                    : k.tone === 'accent'
+                      ? 'text-[var(--accent-primary)]'
+                      : 'text-[var(--text-primary)]'
               }`}
             >
               {k.value}
@@ -218,6 +238,56 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         ))}
       </div>
+
+      {/* Chemical Expiration Warning Alert */}
+      {expiringChemicals.length > 0 && (
+        <div className="rounded-xl border border-[var(--status-danger)] bg-[var(--status-danger-bg)] p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
+              <FlaskConical className="w-4 h-4 shrink-0" />
+              <span>
+                {isFa
+                  ? `هشدار انقضای مواد شیمیایی (${fmt(expiringChemicals.length)} قلم زیر یک ماه تا انقضاء)`
+                  : `Chemical Expiration Warnings (${fmt(expiringChemicals.length)} item(s) < 1 month)`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('detailed')}
+              className="text-xs font-semibold text-[var(--status-danger)] hover:underline flex items-center gap-1"
+            >
+              <span>{isFa ? 'بررسی در جزئیات' : 'Review in Detailed'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {expiringChemicals.slice(0, 6).map((chem) => (
+              <button
+                key={chem.id}
+                type="button"
+                onClick={() => onInspectDetailedShipment(chem.shipmentNo)}
+                className="p-2.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--status-danger)]/30 text-start hover:bg-[var(--bg-subtle)]/70 flex items-center justify-between gap-2 text-xs transition-colors"
+              >
+                <div className="min-w-0">
+                  <div className="font-bold truncate">{chem.chemicalType || chem.description}</div>
+                  <div className="text-[11px] text-[var(--text-muted)] tabular-nums" dir="ltr">
+                    {chem.shipmentNo} · {chem.packageNo || '-'} · #{chem.itemNo || '-'}
+                  </div>
+                </div>
+                <span className="shrink-0 px-2 py-0.5 rounded bg-[var(--status-danger)] text-white text-[11px] font-bold tabular-nums">
+                  {chem.daysRemaining < 0
+                    ? isFa
+                      ? `منقضی (${fmt(Math.abs(chem.daysRemaining))} روز)`
+                      : `Expired`
+                    : isFa
+                      ? `${fmt(chem.daysRemaining)} روز`
+                      : `${fmt(chem.daysRemaining)}d`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Main Analytics Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -274,7 +344,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </div>
 
-        {/* Transit Pipeline & Totals */}
+        {/* Transit Pipeline & Tonnage Weight / Freight Totals */}
         <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-5">
           <div>
             <h3 className="text-sm font-bold mb-3">
@@ -297,23 +367,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
           </div>
 
-          {(data.totals.grossWeightSum > 0 || data.totals.freightCostSum > 0) && (
+          {(grossTons > 0 || netTons > 0 || data.totals.freightCostSum > 0) && (
             <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2 text-xs">
-              <h4 className="font-bold text-[var(--text-primary)]">
-                {isFa ? 'خلاصه وزن و حمل' : 'Weight & Freight Totals'}
+              <h4 className="font-bold text-[var(--text-primary)] flex items-center gap-1.5">
+                <Scale className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <span>{isFa ? 'خلاصه وزن (به تن) و حمل' : 'Weight Summary (Tons) & Freight'}</span>
               </h4>
-              {data.totals.grossWeightSum > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-[var(--text-muted)]">{t.headers.grossWeight}</span>
-                  <span className="font-semibold tabular-nums">{fmt(data.totals.grossWeightSum)}</span>
-                </div>
-              )}
-              {data.totals.netWeightSum > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-[var(--text-muted)]">{t.headers.netWeight}</span>
-                  <span className="font-semibold tabular-nums">{fmt(data.totals.netWeightSum)}</span>
-                </div>
-              )}
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)]">
+                  {isFa ? 'جمع وزن ناخالص' : 'Total Gross Weight'}
+                </span>
+                <span className="font-semibold tabular-nums">
+                  {fmt(grossTons, 3)} {isFa ? 'تن' : 'Tons'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)]">
+                  {isFa ? 'جمع وزن خالص' : 'Total Net Weight'}
+                </span>
+                <span className="font-semibold tabular-nums">
+                  {fmt(netTons, 3)} {isFa ? 'تن' : 'Tons'}
+                </span>
+              </div>
               {data.totals.freightCostSum > 0 && (
                 <div className="flex justify-between">
                   <span className="text-[var(--text-muted)]">{t.headers.freightCost}</span>
@@ -327,12 +402,111 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Island Breakdown Table (Hides empty columns/zeroes cleanly) */}
+      {/* Open MER & Open REP Monitoring Panels */}
+      {(openMerItems.length > 0 || openRepItems.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {openMerItems.length > 0 && (
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
+                  <ClipboardList className="w-4 h-4" />
+                  <span>
+                    {isFa
+                      ? `وضعیت MER باز (${fmt(openMerCount)} قلم)`
+                      : `Open MER Items (${fmt(openMerCount)})`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('detailed')}
+                  className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+                >
+                  <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="divide-y divide-[var(--border-subtle)]">
+                {openMerItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onInspectDetailedShipment(item.shipmentNo)}
+                    className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold truncate bidi-plaintext">
+                        {item.description || item.generalDescription}
+                      </div>
+                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                        <span dir="ltr">{item.shipmentNo}</span>
+                        {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
+                        {item.merNo && <span dir="ltr">· MER: {item.merNo}</span>}
+                      </div>
+                    </div>
+                    <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold">
+                      {item.merStatus || (isFa ? 'باز' : 'Open')}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {openRepItems.length > 0 && (
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
+                  <ClipboardList className="w-4 h-4" />
+                  <span>
+                    {isFa
+                      ? `وضعیت REP باز (${fmt(openRepCount)} قلم)`
+                      : `Open REP Items (${fmt(openRepCount)})`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('detailed')}
+                  className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+                >
+                  <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="divide-y divide-[var(--border-subtle)]">
+                {openRepItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onInspectDetailedShipment(item.shipmentNo)}
+                    className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold truncate bidi-plaintext">
+                        {item.description || item.generalDescription}
+                      </div>
+                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                        <span dir="ltr">{item.shipmentNo}</span>
+                        {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
+                        {item.repNo && <span dir="ltr">· REP: {item.repNo}</span>}
+                      </div>
+                    </div>
+                    <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold">
+                      {item.repStatus || (isFa ? 'باز' : 'Open')}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Island Breakdown Table */}
       {data.byIsland.length > 0 && (
         <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
             <h3 className="text-sm font-bold">
-              {isFa ? 'تفکیک موجودی بر اساس جزیره' : 'Inventory by Island'}
+              {isFa ? 'تفکیک اقلام و موجودی بر اساس جزیره' : 'Breakdown by Island'}
             </h3>
           </div>
           <div className="overflow-x-auto">
@@ -345,10 +519,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </th>
                   <th className="py-2.5 px-4 text-end font-semibold">
                     {isFa ? 'ردیف‌های جزئیات' : 'Detailed Rows'}
-                  </th>
-                  <th className="py-2.5 px-4 text-end font-semibold">{t.headers.mapnaInventory}</th>
-                  <th className="py-2.5 px-4 text-end font-semibold">
-                    {t.headers.contractorInventory}
                   </th>
                   {data.byIsland.some((i) => i.shortageQty > 0) && (
                     <th className="py-2.5 px-4 text-end font-semibold text-[var(--status-danger)]">
@@ -367,12 +537,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <td className="py-2.5 px-4 text-end tabular-nums">
                       {isl.detailedCount > 0 ? fmt(isl.detailedCount) : ''}
                     </td>
-                    <td className="py-2.5 px-4 text-end tabular-nums font-medium text-[var(--accent-primary)]">
-                      {isl.mapnaStock > 0 ? fmt(isl.mapnaStock) : ''}
-                    </td>
-                    <td className="py-2.5 px-4 text-end tabular-nums">
-                      {isl.contractorStock > 0 ? fmt(isl.contractorStock) : ''}
-                    </td>
                     {data.byIsland.some((i) => i.shortageQty > 0) && (
                       <td className="py-2.5 px-4 text-end tabular-nums font-semibold text-[var(--status-danger)]">
                         {isl.shortageQty > 0 ? fmt(isl.shortageQty) : ''}
@@ -386,7 +550,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
-      {/* Shortage & Damaged Alerts (Only rendered when items exist, hiding empty fields) */}
+      {/* Shortage & Damaged Alerts */}
       {(data.topShortages.length > 0 || data.topDamaged.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {data.topShortages.length > 0 && (

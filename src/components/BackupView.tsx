@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Columns3,
   Download,
   FileSpreadsheet,
   HardDrive,
@@ -19,11 +20,20 @@ import {
   saveSnapshotToIndexedDb,
 } from '../lib/indexedDbBackup.ts';
 import type { LocalBackupSnapshotRecord } from '../lib/indexedDbBackup.ts';
+import type { ImportColumnDef } from '../shared/csvParser.ts';
 import { parseSpreadsheetFile } from '../shared/spreadsheetImport.ts';
 import type { DatabaseSnapshot } from '../shared/types.ts';
 
 interface BackupViewProps {
   onRestored: () => void;
+}
+
+interface ColumnInspectionPayload {
+  scope: 'general' | 'detailed' | 'transit';
+  dataStartIndex: number;
+  fileColumns: Array<{ index: number; header: string; samples: string[] }>;
+  targetFields: ImportColumnDef[];
+  mapping: Record<string, number>;
 }
 
 interface PreviewResponse {
@@ -34,6 +44,8 @@ interface PreviewResponse {
   duplicateRecordsCount: number;
   duplicateSamples: string[];
   sample: Record<string, unknown>[];
+  parsedRows?: Record<string, unknown>[];
+  columnInspection?: ColumnInspectionPayload;
 }
 
 interface CommitResponse {
@@ -48,6 +60,60 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function editableFieldsForScope(scope: 'general' | 'detailed' | 'transit'): string[] {
+  if (scope === 'general') {
+    return [
+      'packingListNo',
+      'packageNo',
+      'packageType',
+      'itemCount',
+      'itemDescription',
+      'supplier',
+      'dispatchLocation',
+      'arrivalDate',
+      'island',
+      'system',
+      'subSystem',
+      'unit',
+      'grossWeight',
+      'netWeight',
+      'vehicleNo',
+      'freightCost',
+    ];
+  }
+  if (scope === 'detailed') {
+    return [
+      'shipmentNo',
+      'packageNo',
+      'itemNo',
+      'generalDescription',
+      'description',
+      'size',
+      'itemCode',
+      'packingQty',
+      'actualQty',
+      'countingUnit',
+      'itemCategory',
+      'chemicalType',
+      'productionDate',
+      'expirationDate',
+      'arrivalDate',
+    ];
+  }
+  return [
+    'packingListNo',
+    'packageNo',
+    'overallStatus',
+    'arrivalDate',
+    'supplier',
+    'dispatchLocation',
+    'itemDescription',
+    'releaseNetNo',
+    'billOfLadingNo',
+    'amount',
+  ];
 }
 
 export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
@@ -69,6 +135,10 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const [assumedCalendar, setAssumedCalendar] = useState<'jalali' | 'gregorian'>('jalali');
   const [duplicatePolicy, setDuplicatePolicy] = useState<'replace' | 'skip'>('skip');
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const [columnMapping, setColumnMapping] = useState<Record<string, number> | null>(null);
+  const [editedRows, setEditedRows] = useState<Record<string, unknown>[]>([]);
+  const [mappingExpanded, setMappingExpanded] = useState(true);
+  const [rowsConfirmed, setRowsConfirmed] = useState(false);
   const [importResult, setImportResult] = useState<CommitResponse | null>(null);
   const [importing, setImporting] = useState(false);
 
@@ -90,6 +160,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       matrix: string[][],
       scopeVal: 'auto' | 'general' | 'detailed' | 'transit',
       calVal: 'jalali' | 'gregorian',
+      explicitMapping?: Record<string, number>,
     ) => {
       if (!matrix || matrix.length === 0) return;
       try {
@@ -99,9 +170,13 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
             matrix,
             scope: scopeVal === 'auto' ? undefined : scopeVal,
             assumedCalendar: calVal,
+            ...(explicitMapping ? { columnMapping: explicitMapping } : {}),
           }),
         });
         setPreview(res);
+        setColumnMapping(res.columnInspection?.mapping || explicitMapping || null);
+        setEditedRows(res.parsedRows || res.sample || []);
+        setRowsConfirmed(false);
       } catch (err) {
         if (err instanceof ApiError) notify('error', err.message);
       }
@@ -115,6 +190,9 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     if (!file) return;
     setImportResult(null);
     setPreview(null);
+    setColumnMapping(null);
+    setEditedRows([]);
+    setRowsConfirmed(false);
     try {
       const parsed = await parseSpreadsheetFile(file);
       setFileName(parsed.fileName);
@@ -138,6 +216,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const handleSheetChange = async (nextSheet: string) => {
     setSelectedSheet(nextSheet);
     setImportResult(null);
+    setColumnMapping(null);
     const matrix = sheetsMap[nextSheet] || [];
     await runPreview(matrix, importScope, assumedCalendar);
   };
@@ -148,27 +227,70 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   ) => {
     setImportScope(nextScope);
     setAssumedCalendar(nextCal);
+    setColumnMapping(null);
     const matrix = sheetsMap[selectedSheet] || [];
     if (matrix.length > 0) {
       await runPreview(matrix, nextScope, nextCal);
     }
   };
 
+  const handleMappingChange = async (fieldKey: string, colIdx: number) => {
+    if (!preview) return;
+    const nextMap: Record<string, number> = {
+      ...(columnMapping || preview.columnInspection?.mapping || {}),
+      [fieldKey]: colIdx,
+    };
+    setColumnMapping(nextMap);
+    const matrix = sheetsMap[selectedSheet] || [];
+    if (matrix.length > 0) {
+      await runPreview(matrix, preview.scope, assumedCalendar, nextMap);
+    }
+  };
+
+  const handleCellEdit = (rowIndex: number, key: string, value: string, isNumeric?: boolean) => {
+    setEditedRows((prev) =>
+      prev.map((row, i) => {
+        if (i !== rowIndex) return row;
+        if (isNumeric) {
+          const cleaned = value.trim();
+          return { ...row, [key]: cleaned === '' ? null : Number(cleaned) };
+        }
+        return { ...row, [key]: value };
+      }),
+    );
+  };
+
+  const handleRemovePreviewRow = (rowIndex: number) => {
+    setEditedRows((prev) => prev.filter((_, i) => i !== rowIndex));
+  };
+
   const handleCommitImport = async () => {
     const matrix = sheetsMap[selectedSheet] || [];
-    if (matrix.length === 0) return;
+    if (matrix.length === 0 && editedRows.length === 0) return;
     setImporting(true);
     try {
+      const targetScope = preview?.scope || (importScope === 'auto' ? undefined : importScope);
       const res = await apiRequest<CommitResponse>('/api/import/commit', {
         method: 'POST',
         body: JSON.stringify({
           matrix,
-          scope: importScope === 'auto' ? undefined : importScope,
+          scope: targetScope,
           assumedCalendar,
           duplicateRecordPolicy: duplicatePolicy,
+          ...(columnMapping ? { columnMapping } : {}),
+          ...(editedRows.length > 0 ? { editedRows } : {}),
         }),
       });
       setImportResult(res);
+      // Clear active preview & file buffers immediately so newly committed rows are NOT re-flagged as duplicates
+      setPreview(null);
+      setEditedRows([]);
+      setColumnMapping(null);
+      setRowsConfirmed(false);
+      setFileName('');
+      setSheetNames([]);
+      setSelectedSheet('');
+      setSheetsMap({});
       notify(
         'success',
         isFa
@@ -177,7 +299,6 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       );
       triggerAutoSnapshot(`Import (${res.scope})`);
       onRestored();
-      await runPreview(matrix, importScope, assumedCalendar);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
@@ -191,6 +312,9 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setSelectedSheet('');
     setSheetsMap({});
     setPreview(null);
+    setColumnMapping(null);
+    setEditedRows([]);
+    setRowsConfirmed(false);
     setImportResult(null);
   };
 
@@ -259,9 +383,16 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     }
   };
 
+  const inspection = preview?.columnInspection;
+  const activeFieldDefs = inspection
+    ? editableFieldsForScope(preview.scope)
+        .map((k) => inspection.targetFields.find((tf) => tf.key === k))
+        .filter((tf): tf is ImportColumnDef => Boolean(tf))
+    : [];
+
   return (
-    <div className="max-w-5xl space-y-6">
-      {/* Section 1: Data Import from Excel / CSV / JSON with duplicate detection */}
+    <div className="max-w-6xl space-y-6">
+      {/* Section 1: Data Import from Excel / CSV / JSON with column mapping, pre-commit review, & duplicate handling */}
       {canImport && (
         <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -276,8 +407,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
               </h3>
               <p className="text-xs text-[var(--text-secondary)] mt-1">
                 {isFa
-                  ? 'بارگذاری فایل‌های اکسل (.xlsx / .xls)، CSV، TSV یا JSON به همراه شناسایی هوشمند داده‌های تکراری (انتخاب جایگزینی یا رد کردن).'
-                  : 'Upload Excel (.xlsx / .xls), CSV, TSV, or JSON files with duplicate detection (Replace or Skip).'}
+                  ? 'انتخاب فایل ورودی، بررسی و تطبیق دقیق ستون‌ها (شامل تفکیک شرح کلی و شرح)، ویرایش پیش از ثبت و مدیریت داده‌های تکراری.'
+                  : 'Upload Excel, CSV, TSV, or JSON files, confirm column mappings, edit rows before commit, and resolve duplicates.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -365,7 +496,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           </div>
 
           {fileName && preview && (
-            <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-3">
+            <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="font-semibold">
                   {isFa ? `پیش‌نمایش فایل: ${fileName}` : `Preview: ${fileName}`} ·{' '}
@@ -377,13 +508,87 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                         : isFa ? 'در راه' : 'In-Transit'}
                   </span>
                 </div>
-                <div className="text-[var(--text-secondary)] tabular-nums">
-                  {isFa
-                    ? `${preview.totalRows.toLocaleString('fa-IR')} ردیف معتبر یافت شد`
-                    : `${preview.totalRows} valid row(s) detected`}
+                <div className="flex items-center gap-3">
+                  <span className="text-[var(--text-secondary)] tabular-nums">
+                    {isFa
+                      ? `${editedRows.length.toLocaleString('fa-IR')} ردیف آماده ثبت`
+                      : `${editedRows.length} row(s) ready`}
+                  </span>
+                  {inspection && (
+                    <button
+                      type="button"
+                      onClick={() => setMappingExpanded((v) => !v)}
+                      className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-medium flex items-center gap-1"
+                    >
+                      <Columns3 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                      <span>{isFa ? 'تطبیق ستون‌ها' : 'Column Mapping'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
+              {/* Interactive Column Mapping Confirmation Form */}
+              {inspection && mappingExpanded && (
+                <div className="p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-bold text-[var(--text-primary)]">
+                        {isFa
+                          ? 'تایید و اصلاح تطبیق ستون‌های فایل با فیلدهای نرم‌افزار'
+                          : 'Verify & Adjust Source Column Mapping'}
+                      </div>
+                      <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                        {isFa
+                          ? 'در صورت متفاوت بودن نام ستون‌ها در فایل شما، ستون متناظر را از فهرست هر فیلد انتخاب کنید تا داده‌ها دقیقاً در جای درست ثبت شوند.'
+                          : 'If column headers differ in your file, select the matching file column for each system field.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto p-1">
+                    {inspection.targetFields.map((tf) => {
+                      const mappedIdx = (columnMapping || inspection.mapping)[tf.key] ?? -1;
+                      return (
+                        <div
+                          key={tf.key}
+                          className={`p-2 rounded-lg border text-[11px] space-y-1 ${
+                            tf.required && mappedIdx < 0
+                              ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)]/40'
+                              : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]'
+                          }`}
+                        >
+                          <div className="font-semibold flex items-center justify-between gap-1">
+                            <span>
+                              {isFa ? tf.labelFa : tf.labelEn}
+                              {tf.required ? ' *' : ''}
+                            </span>
+                            {mappedIdx >= 0 && (
+                              <span className="text-[10px] text-[var(--status-success)]">✓</span>
+                            )}
+                          </div>
+                          <select
+                            value={mappedIdx}
+                            onChange={(e) => handleMappingChange(tf.key, Number(e.target.value))}
+                            className="w-full h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
+                          >
+                            <option value={-1}>
+                              {isFa ? '-- بدون نگاشت (نادیده گرفتن) --' : '-- Unmapped (Ignore) --'}
+                            </option>
+                            {inspection.fileColumns.map((fc) => (
+                              <option key={fc.index} value={fc.index}>
+                                {isFa ? `ستون ${fc.index + 1}` : `Col ${fc.index + 1}`}: {fc.header}
+                                {fc.samples[0] ? ` (${fc.samples[0].slice(0, 22)})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Duplicate Warning */}
               {preview.duplicateRecordsCount > 0 && (
                 <div className="p-3.5 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-2.5 text-xs">
                   <div className="flex items-start gap-2">
@@ -429,10 +634,93 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2">
+              {/* Pre-Import Editable Rows Review Table */}
+              {editedRows.length > 0 && activeFieldDefs.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-bold text-[var(--text-primary)]">
+                      {isFa
+                        ? 'فرم بررسی، ویرایش و تایید ستون‌های داده‌ها پیش از ثبت'
+                        : 'Pre-Import Row Review & Editing Table'}
+                    </span>
+                    <span className="text-[11px] text-[var(--text-muted)]">
+                      {isFa
+                        ? `نمایش ${Math.min(editedRows.length, 30).toLocaleString('fa-IR')} از ${editedRows.length.toLocaleString('fa-IR')} ردیف (قابل ویرایش مستقیم)`
+                        : `Showing first ${Math.min(editedRows.length, 30)} of ${editedRows.length} rows (editable)`}
+                    </span>
+                  </div>
+
+                  <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-auto max-h-80">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
+                        <tr>
+                          <th className="py-2 px-2">#</th>
+                          {activeFieldDefs.map((tf) => (
+                            <th key={tf.key} className="py-2 px-2 whitespace-nowrap font-semibold">
+                              {isFa ? tf.labelFa : tf.labelEn}
+                            </th>
+                          ))}
+                          <th className="py-2 px-2">{isFa ? 'حذف' : 'Remove'}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border-subtle)]">
+                        {editedRows.slice(0, 30).map((row, rIdx) => (
+                          <tr key={rIdx} className="hover:bg-[var(--bg-subtle)]/40">
+                            <td className="py-1.5 px-2 tabular-nums text-[var(--text-muted)]">
+                              {rIdx + 1}
+                            </td>
+                            {activeFieldDefs.map((tf) => {
+                              const rawVal = row[tf.key];
+                              const strVal = rawVal === null || rawVal === undefined ? '' : String(rawVal);
+                              return (
+                                <td key={tf.key} className="py-1 px-1.5 min-w-[110px]">
+                                  <input
+                                    type={tf.isNumeric ? 'number' : 'text'}
+                                    step={tf.isNumeric ? 'any' : undefined}
+                                    value={strVal}
+                                    onChange={(e) => handleCellEdit(rIdx, tf.key, e.target.value, tf.isNumeric)}
+                                    className="w-full h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                                  />
+                                </td>
+                              );
+                            })}
+                            <td className="py-1 px-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePreviewRow(rIdx)}
+                                className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                                title={isFa ? 'حذف ردیف از ورود' : 'Remove row'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Explicit Confirmation Checkbox & Commit Button */}
+              <div className="pt-2 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+                <label className="inline-flex items-center gap-2 text-xs font-medium cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rowsConfirmed}
+                    onChange={(e) => setRowsConfirmed(e.target.checked)}
+                    className="rounded border-[var(--border-strong)]"
+                  />
+                  <span>
+                    {isFa
+                      ? 'تایید می‌کنم ستون‌ها و مقادیر پیش‌نمایش بررسی شده و در ستون‌های صحیح قرار دارند.'
+                      : 'I confirm that column mappings and values above have been reviewed and are accurate.'}
+                  </span>
+                </label>
+
                 <button
                   type="button"
-                  disabled={importing || preview.totalRows === 0}
+                  disabled={importing || editedRows.length === 0 || !rowsConfirmed}
                   onClick={handleCommitImport}
                   className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
                 >
@@ -449,8 +737,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
               <CheckCircle2 className="w-4 h-4 text-[var(--status-success)] shrink-0" />
               <span className="font-semibold tabular-nums">
                 {isFa
-                  ? `نتیجه بارگذاری: ${importResult.imported.toLocaleString('fa-IR')} ردیف جدید · ${importResult.replaced.toLocaleString('fa-IR')} جایگزین‌شده · ${importResult.skipped.toLocaleString('fa-IR')} رد شده`
-                  : `Result: ${importResult.imported} imported · ${importResult.replaced} replaced · ${importResult.skipped} skipped`}
+                  ? `نتیجه بارگذاری با موفقیت ثبت شد: ${importResult.imported.toLocaleString('fa-IR')} ردیف جدید · ${importResult.replaced.toLocaleString('fa-IR')} جایگزین‌شده · ${importResult.skipped.toLocaleString('fa-IR')} رد شده`
+                  : `Import succeeded: ${importResult.imported} imported · ${importResult.replaced} replaced · ${importResult.skipped} skipped`}
               </span>
             </div>
           )}

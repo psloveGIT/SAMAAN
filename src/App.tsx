@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
+import { registerSW } from 'virtual:pwa-register';
 import { AuthGate } from './components/AuthGate.tsx';
 import { BackupView } from './components/BackupView.tsx';
 import { BalanceView } from './components/BalanceView.tsx';
@@ -13,6 +14,7 @@ import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
 import { MaterialEstimationView } from './components/MaterialEstimationView.tsx';
 import { MivView } from './components/MivView.tsx';
+import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { OpiMinutesView } from './components/OpiMinutesView.tsx';
 import { OpiView } from './components/OpiView.tsx';
 import { PackingWizardModal } from './components/PackingWizardModal.tsx';
@@ -73,6 +75,12 @@ const SamaanWorkspace: React.FC = () => {
     loadCategories();
   }, [loadCategories, refreshSignal, activeProjectId]);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      registerSW({ immediate: true });
+    }
+  }, []);
+
   const openNewPacking = (packingNo = '') => {
     setTransitPrefill(null);
     setPrefillPackingNo(packingNo);
@@ -101,7 +109,7 @@ const SamaanWorkspace: React.FC = () => {
 
   if (loadingAuth) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-canvas)] text-sm text-[var(--text-muted)]">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-[var(--bg-canvas)] text-sm text-[var(--text-muted)]">
         {t.controls.loading}
       </div>
     );
@@ -265,6 +273,7 @@ const SamaanWorkspace: React.FC = () => {
           ))}
         </div>
       )}
+      <OfflineIndicator />
     </>
   );
 };

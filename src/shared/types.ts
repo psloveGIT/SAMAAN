@@ -156,6 +156,10 @@ export interface DetailedEntry {
   stocktakeInfo: string; // انبار گردانی / تاریخ تولید
   stocktakeStatus?: string; // وضعیت انبارگردانی
   stocktakeDate?: string; // تاریخ وضعیت انبارگردانی
+  itemCategory?: '' | 'special_tools' | 'chemicals' | 'spare_parts'; // نوع قلم: ابزار مخصوص / مواد شیمیایی / لوازم یدکی
+  chemicalType?: string; // نوع ماده شیمیایی
+  productionDate?: string; // تاریخ تولید ماده شیمیایی (ISO YYYY-MM-DD)
+  expirationDate?: string; // تاریخ انقضاء ماده شیمیایی (ISO YYYY-MM-DD)
   shortageBackfills: ShortageBackfillRecord[]; // Later deliveries filling کسری
   createdAt: string;
   updatedAt: string;
@@ -572,6 +576,24 @@ export interface AuditLogEntry {
   summary: string;
 }
 
+export interface ExpiringChemicalNotice {
+  id: string;
+  shipmentNo: string;
+  packageNo: string;
+  itemNo: string;
+  description: string;
+  chemicalType: string;
+  productionDate: string;
+  expirationDate: string;
+  daysRemaining: number;
+}
+
+export interface IslandPackingCount {
+  island: string;
+  packingCount: number;
+  rowCount: number;
+}
+
 export interface SelectionFormulaSummary {
   count: number;
   grossWeightSum: number;
@@ -592,6 +614,11 @@ export interface SelectionFormulaSummary {
   smrMapnaQtySum: number;
   mivMapnaQtySum: number;
   transitAmountSum: number;
+  packingsByIsland?: IslandPackingCount[];
+  openMerCount?: number;
+  openRepCount?: number;
+  shortageOrDamagedCount?: number;
+  expiringChemicals?: ExpiringChemicalNotice[];
 }
 
 export interface DatabaseSnapshot {

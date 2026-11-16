@@ -119,7 +119,7 @@ export interface IranianPlateParts {
 }
 
 /**
- * Parses a plate string such as "60 ایران 985 ع 14" (left-to-right).
+ * Parses a plate string such as "60 ایران 985 ع 14" (or partial input like "60 ایران ع").
  */
 export function parseIranianPlate(raw: string | undefined): IranianPlateParts {
   const s = normalizeDigits((raw || '').trim());
@@ -143,6 +143,27 @@ export function parseIranianPlate(raw: string | undefined): IranianPlateParts {
       letter: alt[2],
       right2: alt[1],
     };
+  }
+  // Permissive partial parse: e.g. "60|985|ع|14" or "60 ایران 985 ع" or "60 ایران ع"
+  const tokens = s.replace(/\s+/g, ' ').split(' ');
+  const iranIdx = tokens.findIndex((t) => /^(ایران|iran|ir)$/i.test(t));
+  if (iranIdx !== -1) {
+    const before = tokens.slice(0, iranIdx).join('');
+    const after = tokens.slice(iranIdx + 1);
+    const digitsBefore = sanitizeDigitsOnly(before).slice(0, 2);
+    let mid3 = '';
+    let letter = 'ع';
+    let right2 = '';
+    for (const tok of after) {
+      if (!mid3 && /^\d{1,3}$/.test(tok) && after.indexOf(tok) === 0) {
+        mid3 = tok.slice(0, 3);
+      } else if (/^[\u0600-\u06FF]+|[A-Za-z]+$/.test(tok) && !/^\d+$/.test(tok)) {
+        letter = tok;
+      } else if (/^\d+$/.test(tok)) {
+        right2 = tok.slice(0, 2);
+      }
+    }
+    return { left2: digitsBefore, mid3, letter, right2 };
   }
   return { left2: '', mid3: '', letter: 'ع', right2: '' };
 }

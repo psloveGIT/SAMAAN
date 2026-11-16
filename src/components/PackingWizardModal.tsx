@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -60,6 +60,21 @@ interface PackingCheckResult {
   closedBy: string | null;
   mapnaMinutesTaken?: boolean;
   nextSuggestedRowNo: string;
+  linkedTransit?: {
+    packingListNo: string;
+    supplier: string;
+    dispatchLocation: string;
+    arrivalDate: string;
+    releaseNetNo: string;
+    releaseNetDate: string;
+    billOfLadingNo: string;
+    system: string;
+    subSystem: string;
+    unit: string;
+    packageNo: string;
+    itemDescription: string;
+    amount: number | null;
+  } | null;
 }
 
 interface PackingWizardModalProps {
@@ -126,6 +141,8 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [smartOpen, setSmartOpen] = useState(false);
+  const lastAutoFilledPkRef = useRef<string>('');
+  const releaseEditedRef = useRef<boolean>(false);
 
   // Post-save "Go to Detailed?" prompt
   const [savedNavigationPrompt, setSavedNavigationPrompt] = useState<{
@@ -142,6 +159,8 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     setIsContinuation(Boolean(prefillPackingNo));
     setAcknowledgeClosed(false);
     setSmartOpen(false);
+    lastAutoFilledPkRef.current = prefillFromTransit?.packingListNo || '';
+    releaseEditedRef.current = false;
 
     const pkInit = prefillFromTransit?.packingListNo || prefillPackingNo || '';
     const arrInit = prefillFromTransit?.arrivalDate || getTodayIso();
@@ -202,6 +221,24 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
             setMapnaDuplicateError(t.packing.mapnaMinutesDuplicateError);
           } else {
             setMapnaDuplicateError('');
+          }
+          if (
+            trimmed &&
+            res.existsInTransit &&
+            res.linkedTransit &&
+            lastAutoFilledPkRef.current !== trimmed
+          ) {
+            lastAutoFilledPkRef.current = trimmed;
+            const tr = res.linkedTransit;
+            if (!releaseEditedRef.current && tr.releaseNetNo) {
+              setReleaseNo(tr.releaseNetNo);
+              if (tr.releaseNetDate) {
+                setReleaseDate(tr.releaseNetDate);
+              }
+            }
+            if (tr.supplier) setSupplier((prev) => prev || tr.supplier);
+            if (tr.dispatchLocation) setDispatchLocation((prev) => prev || tr.dispatchLocation);
+            if (tr.billOfLadingNo) setBillOfLadingNo((prev) => prev || tr.billOfLadingNo);
           }
         })
         .catch(() => {});
@@ -758,7 +795,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                     type="text"
                     dir={isFa && !releaseNo ? 'rtl' : 'ltr'}
                     value={releaseNo}
-                    onChange={(e) => setReleaseNo(e.target.value)}
+                    onChange={(e) => {
+                      releaseEditedRef.current = true;
+                      setReleaseNo(e.target.value);
+                    }}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !releaseNo ? 'text-right' : 'text-left'
                     }`}

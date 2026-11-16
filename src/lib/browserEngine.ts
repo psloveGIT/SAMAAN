@@ -1,5 +1,6 @@
 import {
   detectCsvScope,
+  inspectMatrixColumns,
   makeId,
   parseCsvMatrix,
   parseDetailedCsv,
@@ -10,18 +11,22 @@ import type { ImportScope } from '../shared/csvParser.ts';
 import {
   computeDetailedEntry,
   computeSelectionFormulaSummary,
+  getExpiringChemicals,
+  isMerOpen,
+  isRepOpen,
   roundQty,
   toNum,
 } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
-import { sortDetailedEntries, sortGeneralEntries } from '../shared/sorting.ts';
+import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../shared/sorting.ts';
 import {
   matchesCustomFilters,
   matchesMultiPacking,
   parseCustomFiltersParam,
   parsePackingNosParam,
 } from '../shared/customFilters.ts';
+import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
 import { isValidDigitsOnly } from '../shared/validation.ts';
 import {
   DEFAULT_EMPLOYER_ID,
@@ -233,8 +238,8 @@ function renumberScope(db: StaticDatabase, scope: 'general' | 'detailed' | 'tran
     }
     return;
   }
-  const total = db.transit.length;
-  for (let i = 0; i < total; i += 1) {
+  db.transit = sortTransitEntries(db.transit);
+  for (let i = 0; i < db.transit.length; i += 1) {
     db.transit[i].rowNo = String(i + 1);
   }
 }
@@ -421,13 +426,17 @@ function addAudit(
 function syncTransitArrival(db: StaticDatabase, packingNo: string, user: UserAccount): number {
   const pk = normKey(packingNo);
   if (!pk) return 0;
+  const genArrival = db.general.find((g) => normKey(g.packingListNo) === pk && normKey(g.arrivalDate))?.arrivalDate || '';
   let updated = 0;
   const now = new Date().toISOString();
   for (const t of db.transit) {
     if (normKey(t.packingListNo) === pk) {
       const st = normKey(t.overallStatus);
-      if (st !== 'رسیده' && st.toLowerCase() !== 'arrived') {
-        t.overallStatus = 'رسیده';
+      const needsStatus = st !== 'رسیده' && st.toLowerCase() !== 'arrived';
+      const needsDate = Boolean(genArrival && normKey(t.arrivalDate) !== normKey(genArrival));
+      if (needsStatus || needsDate) {
+        if (needsStatus) t.overallStatus = 'رسیده';
+        if (genArrival) t.arrivalDate = genArrival;
         t.linkedGeneralPackingNo = pk;
         t.updatedAt = now;
         updated += 1;
@@ -435,13 +444,14 @@ function syncTransitArrival(db: StaticDatabase, packingNo: string, user: UserAcc
     }
   }
   if (updated > 0) {
+    renumberScope(db, 'transit');
     addAudit(
       db,
       user,
       'AUTO_TRANSIT_ARRIVED',
       'transit',
       pk,
-      `تغییر خودکار وضعیت کلی ${updated} ردیف در راه برای پکینگ لیست ${pk} به «رسیده»`,
+      `به‌روزرسانی خودکار وضعیت «رسیده» و تاریخ ورود برای ${updated} ردیف در راه (پکینگ ${pk})`,
     );
   }
   return updated;
@@ -965,6 +975,24 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     );
     const meta = packingNo ? db.packingMeta[packingNo] : undefined;
     const linkedGeneral = packingNo ? getGeneralSharedInfo(db, packingNo, packageNo) : null;
+    const tFirst = transitMatches[0];
+    const linkedTransit = tFirst
+      ? {
+          packingListNo: tFirst.packingListNo,
+          packageNo: tFirst.packageNo,
+          arrivalDate: tFirst.arrivalDate,
+          releaseNetNo: tFirst.releaseNetNo,
+          releaseNetDate: tFirst.releaseNetDate,
+          supplier: tFirst.supplier,
+          dispatchLocation: tFirst.dispatchLocation,
+          system: tFirst.system,
+          subSystem: tFirst.subSystem,
+          unit: tFirst.unit,
+          billOfLadingNo: tFirst.billOfLadingNo,
+          amount: tFirst.amount,
+          itemDescription: tFirst.itemDescription,
+        }
+      : null;
 
     return {
       packingNo,
@@ -983,6 +1011,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       itemNoTaken: packingNo && itemNo ? isDetailedItemNoTaken(db, packingNo, packageNo, itemNo, excludeId) : false,
       nextSuggestedItemNo: packingNo ? getNextSuggestedItemNo(db, packingNo, packageNo) : '1',
       linkedGeneral,
+      linkedTransit,
       lastDetailedDefaults: getLastDetailedDefaults(db),
       rowNoTaken: false,
       nextSuggestedRowNo: nextSuggestedRowNo(db, scope),
@@ -1364,6 +1393,108 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { ok: true, trashedDetailedCount } as T;
   }
 
+  if (pathname === '/api/general/bulk' && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const patch = (body.patch || {}) as Partial<GeneralEntry>;
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('شناسه ردیف‌ها الزامی است', 'Row IDs are required'), 400);
+    }
+    const idSet = new Set(ids);
+    const cleanPatch: Record<string, unknown> = {};
+    const stringFields: (keyof GeneralEntry)[] = [
+      'arrivalDate', 'releaseNo', 'releaseDate', 'supplier', 'dispatchLocation',
+      'employerEntryMinutesNo', 'packageType', 'island', 'system', 'subSystem',
+      'unit', 'billOfLadingNo', 'vehicleNo', 'opiInvitationNo', 'opiInvitationDate', 'driverName',
+    ];
+    for (const k of stringFields) {
+      if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
+        cleanPatch[k] = normKey(String(patch[k]));
+      }
+    }
+    if (cleanPatch.employerEntryMinutesNo && !isValidDigitsOnly(String(cleanPatch.employerEntryMinutesNo))) {
+      throw new StaticEngineError(errMsg('شماره صورتجلسه کارفرما فقط باید شامل عدد باشد.', 'Employer Entry Minutes No. must contain digits only.'), 400);
+    }
+    if (patch.freightCost !== undefined && patch.freightCost !== null && Number.isFinite(Number(patch.freightCost))) {
+      cleanPatch.freightCost = Number(patch.freightCost);
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    const touchedPackings = new Set<string>();
+    for (const g of db.general) {
+      if (!idSet.has(g.id)) continue;
+      Object.assign(g, cleanPatch, { updatedAt: now });
+      if (g.packingListNo) touchedPackings.add(g.packingListNo);
+      updatedCount += 1;
+    }
+    renumberScope(db, 'general');
+    rebuildCategories(db);
+    let transitUpdated = 0;
+    for (const pk of touchedPackings) {
+      transitUpdated += syncTransitArrival(db, pk, sanitizeUser(u));
+    }
+    addAudit(db, sanitizeUser(u), 'BULK_UPDATE_GENERAL', 'general', `${updatedCount} rows`, `ویرایش گروهی ${updatedCount} ردیف در ثبت کلی تجهیزات`);
+    await saveActiveDb();
+    return { ok: true, updatedCount, transitUpdated } as T;
+  }
+
+  if (pathname === '/api/general/bulk-delete' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const cascadeDetailed = Boolean(body.cascadeDetailed);
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('هیچ ردیفی برای حذف انتخاب نشده است', 'No rows selected for deletion'), 400);
+    }
+    const idSet = new Set(ids);
+    const now = new Date().toISOString();
+    const deletedBy = u.fullName || u.username;
+    const removedRows: GeneralEntry[] = [];
+    db.general = db.general.filter((g) => {
+      if (idSet.has(g.id)) {
+        removedRows.push(g);
+        return false;
+      }
+      return true;
+    });
+    for (const removed of removedRows) {
+      db.trash.unshift({
+        id: makeId(),
+        scope: 'general',
+        deletedAt: now,
+        deletedBy,
+        targetLabel: `${removed.packingListNo || '-'} (${removed.packageNo || '-'})`,
+        data: removed,
+      });
+    }
+    let trashedDetailedCount = 0;
+    if (cascadeDetailed && removedRows.length > 0) {
+      const pairs = new Set(removedRows.map((r) => `${normKey(r.packingListNo).toLowerCase()}::${normKey(r.packageNo).toLowerCase()}`));
+      const packingsNoPkg = new Set(removedRows.filter((r) => !normKey(r.packageNo)).map((r) => normKey(r.packingListNo).toLowerCase()));
+      db.detailed = db.detailed.filter((d) => {
+        const pk = normKey(d.shipmentNo).toLowerCase();
+        const pkg = normKey(d.packageNo).toLowerCase();
+        if (pairs.has(`${pk}::${pkg}`) || packingsNoPkg.has(pk)) {
+          trashedDetailedCount += 1;
+          db.trash.unshift({
+            id: makeId(),
+            scope: 'detailed',
+            deletedAt: now,
+            deletedBy,
+            targetLabel: `${d.shipmentNo} / ${d.packageNo || '-'} / #${d.itemNo || d.rowNo}`,
+            data: d,
+          });
+          return false;
+        }
+        return true;
+      });
+      if (trashedDetailedCount > 0) renumberScope(db, 'detailed');
+    }
+    renumberScope(db, 'general');
+    addAudit(db, sanitizeUser(u), 'BULK_DELETE_GENERAL', 'general', `${removedRows.length} rows`, `حذف گروهی ${removedRows.length} ردیف از ثبت کلی`);
+    await saveActiveDb();
+    return { ok: true, deletedCount: removedRows.length, trashedDetailedCount } as T;
+  }
+
   // ---------------- DETAILED ----------------
   if (pathname === '/api/detailed' && method === 'GET') {
     requireAuth();
@@ -1402,7 +1533,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         d.itemCode, d.mtoRef, d.supplier, d.origin, d.island, d.system, d.subSystem, d.unit,
         d.opiNo, d.merNo, d.repNo, d.materialBalanceNo, d.balanceStatus, d.gcvReceiptNo,
         d.receiver, d.mivContractorNo, d.smrContractorNo, d.smrMapnaNo, d.mivMapnaNo,
-        d.storageLocation, d.stocktakeStatus,
+        d.storageLocation, d.stocktakeStatus, d.chemicalType || '', d.itemCategory || '',
       ], q)) continue;
       const comp = computeDetailedEntry(d);
       if (!matchesCustomFilters(comp as unknown as Record<string, unknown>, customFilters)) continue;
@@ -1511,6 +1642,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       stocktakeInfo: normKey(rawDet.stocktakeInfo),
       stocktakeStatus: normKey(rawDet.stocktakeStatus),
       stocktakeDate: normKey(rawDet.stocktakeDate),
+      itemCategory: rawDet.itemCategory || '',
+      chemicalType: normKey(rawDet.chemicalType),
+      productionDate: normKey(rawDet.productionDate),
+      expirationDate: normKey(rawDet.expirationDate),
       shortageBackfills: [],
       createdAt: now,
       updatedAt: now,
@@ -1620,6 +1755,73 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { ok: true } as T;
   }
 
+  if (pathname === '/api/detailed/bulk' && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const patch = (body.patch || {}) as Partial<DetailedEntry>;
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('شناسه ردیف‌ها الزامی است', 'Row IDs are required'), 400);
+    }
+    const idSet = new Set(ids);
+    const cleanPatch: Record<string, unknown> = {};
+    const stringFields: (keyof DetailedEntry)[] = [
+      'arrivalDate', 'supplier', 'origin', 'island', 'system', 'subSystem', 'unit',
+      'countingUnit', 'storageLocation', 'receiver', 'notes', 'itemCategory',
+      'chemicalType', 'productionDate', 'expirationDate', 'merStatus', 'repStatus', 'balanceStatus',
+    ];
+    for (const k of stringFields) {
+      if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
+        cleanPatch[k] = normKey(String(patch[k]));
+      }
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    for (const d of db.detailed) {
+      if (!idSet.has(d.id)) continue;
+      Object.assign(d, cleanPatch, { updatedAt: now });
+      updatedCount += 1;
+    }
+    renumberScope(db, 'detailed');
+    rebuildCategories(db);
+    addAudit(db, sanitizeUser(u), 'BULK_UPDATE_DETAILED', 'detailed', `${updatedCount} rows`, `ویرایش گروهی ${updatedCount} ردیف در ثبت جزئیات تجهیزات`);
+    await saveActiveDb();
+    return { ok: true, updatedCount } as T;
+  }
+
+  if (pathname === '/api/detailed/bulk-delete' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('هیچ ردیفی برای حذف انتخاب نشده است', 'No rows selected for deletion'), 400);
+    }
+    const idSet = new Set(ids);
+    const now = new Date().toISOString();
+    const deletedBy = u.fullName || u.username;
+    const removedRows: DetailedEntry[] = [];
+    db.detailed = db.detailed.filter((d) => {
+      if (idSet.has(d.id)) {
+        removedRows.push(d);
+        return false;
+      }
+      return true;
+    });
+    for (const removed of removedRows) {
+      db.trash.unshift({
+        id: makeId(),
+        scope: 'detailed',
+        deletedAt: now,
+        deletedBy,
+        targetLabel: `${removed.shipmentNo} / ${removed.packageNo || '-'} / #${removed.itemNo || removed.rowNo}`,
+        data: removed,
+      });
+    }
+    renumberScope(db, 'detailed');
+    rebuildCategories(db);
+    addAudit(db, sanitizeUser(u), 'BULK_DELETE_DETAILED', 'detailed', `${removedRows.length} rows`, `حذف گروهی ${removedRows.length} ردیف از ثبت جزئیات`);
+    await saveActiveDb();
+    return { ok: true, deletedCount: removedRows.length } as T;
+  }
+
   // ---------------- TRANSIT ----------------
   if (pathname === '/api/transit' && method === 'GET') {
     requireAuth();
@@ -1693,6 +1895,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const { rowNo: _ignoredRow, ...patch } = body;
     Object.assign(item, { ...patch, rowNo: item.rowNo, updatedAt: new Date().toISOString() });
+    renumberScope(db, 'transit');
     rebuildCategories(db);
     addAudit(db, sanitizeUser(u), 'UPDATE_TRANSIT', 'transit', item.packingListNo || item.rowNo, `ویرایش محموله در راه`);
     await saveActiveDb();
@@ -3943,9 +4146,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : parseCsvMatrix(csvText);
     const detectedScope = (body.scope as ImportScope | undefined) || detectCsvScope(matrix) || 'general';
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
+    const columnMapping = body.columnMapping as Record<string, number> | undefined;
+    const columnInspection = inspectMatrixColumns(matrix, detectedScope);
+    const activeMapping = columnMapping || columnInspection.mapping;
 
     if (detectedScope === 'general') {
-      const parsed = parseGeneralCsv(matrix, cal, u.username);
+      const parsed = parseGeneralCsv(matrix, cal, u.username, activeMapping);
       const duplicateRowNos = parsed.rows.filter((r) => r.rowNo && isRowNoTaken(db, 'general', r.rowNo)).length;
       const existingKeys = new Set(db.general.map(generalDupKey).filter(Boolean));
       const duplicateRecords = parsed.rows.filter((r) => {
@@ -3960,10 +4166,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         duplicateRecordsCount: duplicateRecords.length,
         duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.packingListNo || '-'} / ${r.packageNo || r.mapnaEntryMinutesNo || '-'}`),
         sample: parsed.rows.slice(0, 5),
+        parsedRows: parsed.rows,
+        columnInspection: { ...columnInspection, mapping: activeMapping },
       } as T;
     }
     if (detectedScope === 'detailed') {
-      const parsed = parseDetailedCsv(matrix, cal, u.username);
+      const parsed = parseDetailedCsv(matrix, cal, u.username, activeMapping);
       const duplicateRowNos = parsed.rows.filter((r) => r.rowNo && isRowNoTaken(db, 'detailed', r.rowNo)).length;
       const existingKeys = new Set(db.detailed.map(detailedDupKey).filter(Boolean));
       const duplicateRecords = parsed.rows.filter((r) => {
@@ -3978,9 +4186,11 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         duplicateRecordsCount: duplicateRecords.length,
         duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.shipmentNo || '-'} / ${r.packageNo || '-'} / #${r.itemNo || '-'}`),
         sample: parsed.rows.slice(0, 5),
+        parsedRows: parsed.rows,
+        columnInspection: { ...columnInspection, mapping: activeMapping },
       } as T;
     }
-    const parsed = parseTransitCsv(matrix, cal, u.username);
+    const parsed = parseTransitCsv(matrix, cal, u.username, activeMapping);
     const existingKeys = new Set(db.transit.map(transitDupKey).filter(Boolean));
     const duplicateRecords = parsed.rows.filter((r) => {
       const k = transitDupKey(r);
@@ -3994,6 +4204,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       duplicateRecordsCount: duplicateRecords.length,
       duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.packingListNo || '-'} / ${r.packageNo || '-'}`),
       sample: parsed.rows.slice(0, 5),
+      parsedRows: parsed.rows,
+      columnInspection: { ...columnInspection, mapping: activeMapping },
     } as T;
   }
 
@@ -4001,8 +4213,11 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const csvText = String(body.csvText || '');
     const rawMatrix = body.matrix as string[][] | undefined;
+    const editedRows = Array.isArray(body.editedRows) ? (body.editedRows as Record<string, unknown>[]) : undefined;
+    const columnMapping = body.columnMapping as Record<string, number> | undefined;
     const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : parseCsvMatrix(csvText);
-    const targetScope = (body.scope as ImportScope | undefined) || detectCsvScope(matrix) || 'general';
+    const hasEdited = Boolean(editedRows && editedRows.length > 0);
+    const targetScope = (body.scope as ImportScope | undefined) || (matrix.length > 0 ? detectCsvScope(matrix) : null) || 'general';
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
     const dupPolicy: 'replace' | 'skip' = body.duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
 
@@ -4014,13 +4229,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const now = new Date().toISOString();
 
     if (targetScope === 'general') {
-      const parsed = parseGeneralCsv(matrix, cal, u.username);
+      const parsedRows = hasEdited
+        ? (editedRows as Omit<GeneralEntry, 'id'>[])
+        : parseGeneralCsv(matrix, cal, u.username, columnMapping).rows;
       const existingByKey = new Map<string, GeneralEntry>();
       for (const g of db.general) {
         const k = generalDupKey(g);
         if (k) existingByKey.set(k, g);
       }
-      for (const r of parsed.rows) {
+      for (const r of parsedRows) {
         const k = generalDupKey(r);
         const existing = k ? existingByKey.get(k) : undefined;
         if (existing) {
@@ -4040,7 +4257,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           if (r.packingListNo) touchedPackings.add(r.packingListNo);
           continue;
         }
-        const created: GeneralEntry = { ...r, id: makeId() };
+        const created: GeneralEntry = { ...r, createdAt: r.createdAt || now, updatedAt: now, createdBy: r.createdBy || u.username, id: makeId() };
         if (k) existingByKey.set(k, created);
         if (r.packingListNo) touchedPackings.add(r.packingListNo);
         db.general.push(created);
@@ -4048,13 +4265,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       }
       renumberScope(db, 'general');
     } else if (targetScope === 'detailed') {
-      const parsed = parseDetailedCsv(matrix, cal, u.username);
+      const parsedRows = hasEdited
+        ? (editedRows as Omit<DetailedEntry, 'id'>[])
+        : parseDetailedCsv(matrix, cal, u.username, columnMapping).rows;
       const existingByKey = new Map<string, DetailedEntry>();
       for (const d of db.detailed) {
         const k = detailedDupKey(d);
         if (k) existingByKey.set(k, d);
       }
-      for (const r of parsed.rows) {
+      for (const r of parsedRows) {
         const k = detailedDupKey(r);
         const existing = k ? existingByKey.get(k) : undefined;
         const genDesc = r.generalDescription
@@ -4079,7 +4298,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
           continue;
         }
-        const created: DetailedEntry = { ...r, generalDescription: genDesc, id: makeId() };
+        const created: DetailedEntry = {
+          ...r,
+          generalDescription: genDesc,
+          shortageBackfills: r.shortageBackfills || [],
+          createdAt: r.createdAt || now,
+          updatedAt: now,
+          createdBy: r.createdBy || u.username,
+          id: makeId(),
+        };
         if (k) existingByKey.set(k, created);
         if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
         db.detailed.push(created);
@@ -4087,13 +4314,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       }
       renumberScope(db, 'detailed');
     } else {
-      const parsed = parseTransitCsv(matrix, cal, u.username);
+      const parsedRows = hasEdited
+        ? (editedRows as Omit<TransitEntry, 'id'>[])
+        : parseTransitCsv(matrix, cal, u.username, columnMapping).rows;
       const existingByKey = new Map<string, TransitEntry>();
       for (const t of db.transit) {
         const k = transitDupKey(t);
         if (k) existingByKey.set(k, t);
       }
-      for (const r of parsed.rows) {
+      for (const r of parsedRows) {
         const pk = normKey(r.packingListNo);
         const arrived = pk && (db.general.some((g) => normKey(g.packingListNo) === pk) || db.detailed.some((d) => normKey(d.shipmentNo) === pk));
         const k = transitDupKey(r);
@@ -4118,6 +4347,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         }
         const created: TransitEntry = {
           ...r,
+          createdAt: r.createdAt || now,
+          updatedAt: now,
+          createdBy: r.createdBy || u.username,
           id: makeId(),
           overallStatus: arrived ? 'رسیده' : r.overallStatus,
           linkedGeneralPackingNo: arrived ? pk : undefined,
@@ -4147,13 +4379,16 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
 
   if (pathname === '/api/ai/extract-equipment' && method === 'POST') {
     requireAuth(['admin', 'operator']);
-    throw new StaticEngineError(
-      errMsg(
-        'اسکن هوشمند اسناد و دستورات صوتی نیازمند اتصال به سرور اصلی نرم‌افزار است (حالت استاتیک فقط ورود فایل اکسل/CSV را پشتیبانی می‌کند).',
-        'AI document scan and voice commands require the Node server runtime (static mode supports Excel/CSV file import directly).',
-      ),
-      501,
-    );
+    const target = (body.target as 'general' | 'detailed') || 'general';
+    const mode = (body.mode as 'file' | 'scan' | 'voice') || 'voice';
+    const textData = typeof body.textData === 'string' ? body.textData : '';
+    const base64Data = typeof body.base64Data === 'string' ? body.base64Data : '';
+    const mimeType = typeof body.mimeType === 'string' ? body.mimeType : '';
+    if (!textData && !base64Data) {
+      throw new StaticEngineError(errMsg('داده‌ای برای تحلیل ارسال نشده است', 'No input data provided for extraction'), 400);
+    }
+    const result = extractEquipmentOffline({ target, mode, textData, base64Data, mimeType });
+    return { result } as T;
   }
 
   // ---------------- AUDIT & BACKUP ----------------

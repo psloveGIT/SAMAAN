@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Edit3,
@@ -110,6 +110,26 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [ackClosedEdit, setAckClosedEdit] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<GeneralRowView | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
+
+  // Bulk Edit / Bulk Delete
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkPatch, setBulkPatch] = useState({
+    arrivalDate: '',
+    supplier: '',
+    dispatchLocation: '',
+    island: '',
+    system: '',
+    subSystem: '',
+    unit: '',
+    releaseNo: '',
+    releaseDate: '',
+    billOfLadingNo: '',
+    vehicleNo: '',
+    driverName: '',
+  });
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteCascade, setBulkDeleteCascade] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -384,6 +404,82 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     }
   };
 
+  const handleBulkEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedRows.length === 0) return;
+    const cleanPatch: Record<string, string> = {};
+    for (const [k, v] of Object.entries(bulkPatch)) {
+      if (typeof v === 'string' && v.trim()) {
+        cleanPatch[k] = v.trim();
+      }
+    }
+    if (Object.keys(cleanPatch).length === 0) {
+      notify('error', isFa ? 'حداقل یک فیلد را برای ویرایش گروهی پر کنید.' : 'Enter at least one field to update.');
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await apiRequest<{ ok: boolean; updatedCount: number }>('/api/general/bulk', {
+        method: 'PATCH',
+        body: JSON.stringify({ ids: selectedRows.map((r) => r.id), patch: cleanPatch }),
+      });
+      notify(
+        'success',
+        isFa
+          ? `ویرایش گروهی برای ${res.updatedCount.toLocaleString('fa-IR')} ردیف انجام شد.`
+          : `Updated ${res.updatedCount} rows.`,
+      );
+      setBulkEditOpen(false);
+      setBulkPatch({
+        arrivalDate: '', supplier: '', dispatchLocation: '', island: '', system: '', subSystem: '',
+        unit: '', releaseNo: '', releaseDate: '', billOfLadingNo: '', vehicleNo: '', driverName: '',
+      });
+      setSelectedMap({});
+      triggerAutoSnapshot('Bulk Edit General');
+      onDataChanged();
+      loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkDeleteConfirm = async () => {
+    if (selectedRows.length === 0) return;
+    setBulkBusy(true);
+    try {
+      const res = await apiRequest<{ ok: boolean; deletedCount: number; trashedDetailedCount?: number }>(
+        '/api/general/bulk-delete',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            ids: selectedRows.map((r) => r.id),
+            cascadeDetailed: bulkDeleteCascade,
+          }),
+        },
+      );
+      notify(
+        'success',
+        isFa
+          ? `${res.deletedCount.toLocaleString('fa-IR')} ردیف به سطل بازیافت منتقل شد${
+              res.trashedDetailedCount ? ` (${res.trashedDetailedCount} ردیف جزئیات نیز حذف شد)` : ''
+            }.`
+          : `Moved ${res.deletedCount} row(s) to Recycle Bin.`,
+      );
+      setBulkDeleteOpen(false);
+      setBulkDeleteCascade(false);
+      setSelectedMap({});
+      triggerAutoSnapshot('Bulk Delete General');
+      onDataChanged();
+      loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   const editPackageTypeOptions = isFa ? PACKAGE_TYPE_OPTIONS_FA : PACKAGE_TYPE_OPTIONS_EN;
 
   return (
@@ -516,6 +612,35 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         />
       )}
 
+      {/* Bulk Operations Bar */}
+      {canEdit && selectedRows.length > 0 && (
+        <div className="rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <span className="font-bold text-[var(--accent-primary)] tabular-nums">
+            {isFa
+              ? `${selectedRows.length.toLocaleString('fa-IR')} ردیف انتخاب شده است`
+              : `${selectedRows.length} row(s) selected`}
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkEditOpen(true)}
+              className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold flex items-center gap-1.5"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'ویرایش گروهی' : 'Bulk Edit'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkDeleteOpen(true)}
+              className="h-8 px-3 rounded-lg bg-[var(--status-danger)] text-white font-semibold flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'حذف گروهی' : 'Bulk Delete'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Table */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
         <div className="overflow-x-auto">
@@ -531,7 +656,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   />
                 </th>
                 <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
-                  {isFa ? 'وضعیت پکینگ / جزئیات' : 'Status / Link'}
+                  {isFa ? 'وضعیت اتمام پکینگ / جزئیات' : 'Packing Completion / Details'}
                 </th>
                 {visibleColumns.map((col) => (
                   <th
@@ -566,9 +691,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   <tr
                     key={row.id}
                     onClick={() => setInspected(row)}
-                    className={`cursor-pointer hover:bg-[var(--bg-subtle)]/60 transition-colors ${
-                      row.hasLinkedShortage ? 'bg-[var(--status-danger-bg)]/40' : ''
-                    }`}
+                    className="cursor-pointer hover:bg-[var(--bg-subtle)]/60 transition-colors"
                   >
                     <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
                       <input
@@ -579,16 +702,15 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     </td>
                     <td className="py-2 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
-                        {row.packingClosed && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-medium">
+                        {row.packingClosed ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--status-success-bg)] text-[var(--status-success)] text-[11px] font-semibold">
                             <Lock className="w-3 h-3" />
                             <span>{t.packing.closedBadge}</span>
                           </span>
-                        )}
-                        {row.hasLinkedShortage && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[11px] font-semibold">
-                            <AlertTriangle className="w-3 h-3" />
-                            <span>{t.shortage.hasShortageBadge}</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[11px] font-medium">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>{isFa ? 'باز / در جریان' : 'Open / Active'}</span>
                           </span>
                         )}
                         <button
@@ -1296,6 +1418,162 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Edit Modal */}
+      {bulkEditOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
+              <h3 className="text-sm font-bold tabular-nums">
+                {isFa
+                  ? `ویرایش گروهی (${selectedRows.length.toLocaleString('fa-IR')} ردیف)`
+                  : `Bulk Edit (${selectedRows.length} rows)`}
+              </h3>
+              <button type="button" onClick={() => setBulkEditOpen(false)}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleBulkEditSubmit} className="p-6 overflow-y-auto space-y-4">
+              <p className="text-xs text-[var(--text-secondary)]">
+                {isFa
+                  ? 'فقط فیلدهایی که مقدار آن‌ها را وارد کنید در تمام ردیف‌های انتخاب‌شده به‌روزرسانی می‌شوند؛ فیلدهای خالی بدون تغییر باقی می‌مانند.'
+                  : 'Only fields you fill in will be updated across all selected rows; empty fields remain unchanged.'}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <JalaliDateInput
+                  label={t.headers.arrivalDate}
+                  value={bulkPatch.arrivalDate}
+                  onChange={(v) => setBulkPatch((p) => ({ ...p, arrivalDate: v }))}
+                />
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.supplier}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.supplier}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, supplier: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.dispatchLocation}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.dispatchLocation}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, dispatchLocation: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.island}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.island}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, island: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.system}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.system}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, system: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.subSystem}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.subSystem}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, subSystem: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.unit}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.unit}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, unit: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.driverName}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.driverName}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, driverName: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+              </div>
+              <div className="pt-3 border-t border-[var(--border-subtle)] flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkEditOpen(false)}
+                  className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium"
+                >
+                  {t.controls.cancel}
+                </button>
+                <button
+                  type="submit"
+                  disabled={bulkBusy}
+                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
+                >
+                  {isFa ? 'تأیید و اعمال تغییرات گروهی' : 'Confirm & Apply'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {bulkDeleteOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+            <h3 className="text-sm font-bold text-[var(--status-danger)]">
+              {isFa ? 'تأیید حذف گروهی ردیف‌ها' : 'Confirm Bulk Deletion'}
+            </h3>
+            <p className="text-xs text-[var(--text-primary)]">
+              {isFa
+                ? `آیا از انتقال ${selectedRows.length.toLocaleString('fa-IR')} ردیف انتخاب‌شده به سطل بازیافت مطمئن هستید؟`
+                : `Are you sure you want to move ${selectedRows.length} selected row(s) to the Recycle Bin?`}
+            </p>
+            <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={bulkDeleteCascade}
+                onChange={(e) => setBulkDeleteCascade(e.target.checked)}
+              />
+              <span>
+                {isFa
+                  ? 'حذف ردیف‌های جزئیات مرتبط با این پکینگ‌ها'
+                  : 'Also delete linked detailed equipment rows'}
+              </span>
+            </label>
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkDeleteOpen(false)}
+                className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium"
+              >
+                {t.controls.cancel}
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={handleBulkDeleteConfirm}
+                className="h-9 px-5 rounded-lg bg-[var(--status-danger)] text-white text-xs font-semibold disabled:opacity-50"
+              >
+                {isFa ? 'تأیید حذف گروهی' : 'Confirm Delete'}
+              </button>
+            </div>
           </div>
         </div>
       )}

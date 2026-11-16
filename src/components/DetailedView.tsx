@@ -3,20 +3,23 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Cog,
   Edit3,
   Eye,
   EyeOff,
+  FlaskConical,
   Link2,
   PackagePlus,
   Plus,
   Sparkles,
   Trash2,
+  Wrench,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { type CustomFieldFilter, DETAILED_FILTER_FIELDS } from '../shared/customFilters.ts';
-import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
+import { computeSelectionFormulaSummary, isMerOpen, isRepOpen } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import type {
@@ -145,7 +148,20 @@ function emptyDetailedDraft(): Partial<DetailedEntry> {
     stocktakeInfo: '',
     stocktakeStatus: '',
     stocktakeDate: '',
+    itemCategory: '',
+    chemicalType: '',
+    productionDate: '',
+    expirationDate: '',
   };
+}
+
+function getChemDaysRemaining(expIso?: string): number | null {
+  if (!expIso || !/^\d{4}-\d{2}-\d{2}$/.test(expIso.trim())) return null;
+  const todayIso = getTodayIso();
+  const fromMs = Date.parse(`${todayIso}T00:00:00Z`);
+  const toMs = Date.parse(`${expIso.trim()}T00:00:00Z`);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return null;
+  return Math.ceil((toMs - fromMs) / (1000 * 60 * 60 * 24));
 }
 
 const COUNTING_UNIT_SUGGESTIONS = ['PC', 'PCs', 'SET', 'M', 'KG', 'BOX', 'ROLL', 'PAIR'];
@@ -202,6 +218,29 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
   // Safe Delete Confirmation
   const [deleteTarget, setDeleteTarget] = useState<DetailedComputed | null>(null);
+
+  // Bulk Edit / Bulk Delete
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkPatch, setBulkPatch] = useState({
+    arrivalDate: '',
+    supplier: '',
+    origin: '',
+    island: '',
+    system: '',
+    subSystem: '',
+    unit: '',
+    storageLocation: '',
+    receiver: '',
+    countingUnit: '',
+    itemCategory: '' as '' | 'standard' | 'special_tools' | 'chemicals' | 'spare_parts',
+    chemicalType: '',
+    productionDate: '',
+    expirationDate: '',
+    merStatus: '',
+    repStatus: '',
+  });
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Shortage Backfill Modal
   const [backfillTarget, setBackfillTarget] = useState<DetailedComputed | null>(null);
@@ -502,6 +541,16 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'stocktakeStatus', header: t.headers.stocktakeStatus, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeStatus || '' },
       { key: 'stocktakeDate', header: t.headers.stocktakeDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeDate || '' },
       { key: 'stocktakeInfo', header: t.headers.stocktakeInfo, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeInfo },
+      {
+        key: 'itemCategory',
+        header: t.headers.itemCategory,
+        hideInTable: true,
+        get: (r: DetailedComputed) =>
+          r.itemCategory ? t.itemCategories[r.itemCategory] : '',
+      },
+      { key: 'chemicalType', header: t.headers.chemicalType, hideInTable: true, get: (r: DetailedComputed) => r.chemicalType || '' },
+      { key: 'productionDate', header: t.headers.productionDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.productionDate || '' },
+      { key: 'expirationDate', header: t.headers.expirationDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.expirationDate || '' },
       { key: 'notes', header: t.headers.notes, get: (r: DetailedComputed) => r.notes },
     ],
     [t],
@@ -585,14 +634,37 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       return;
     }
 
+    if (draft.itemCategory === 'chemicals' && !draft.chemicalType?.trim() && !draft.expirationDate?.trim()) {
+      setRowError(
+        isFa
+          ? 'برای مواد شیمیایی حداقل نوع ماده شیمیایی یا تاریخ انقضاء را وارد کنید.'
+          : 'For chemicals, please enter chemical type or expiration date.',
+      );
+      return;
+    }
+
     const finalGenDesc = draft.generalDescription?.trim()
       ? formatGeneralDescriptionCase(draft.generalDescription)
       : inferGeneralDescription(draft.description || '');
 
+    const isChem = draft.itemCategory === 'chemicals';
+    const itemCategoryVal = draft.itemCategory || '';
+    const chemTypeVal = isChem ? (draft.chemicalType || '').trim() : '';
+    const prodDateVal = isChem ? (draft.productionDate || '').trim() : '';
+    const expDateVal = isChem ? (draft.expirationDate || '').trim() : '';
+
     setSaving(true);
     try {
       if (editingId) {
-        const payload = { ...draft, generalDescription: finalGenDesc, acknowledgeClosed: ackClosed };
+        const payload = {
+          ...draft,
+          generalDescription: finalGenDesc,
+          itemCategory: itemCategoryVal,
+          chemicalType: chemTypeVal,
+          productionDate: prodDateVal,
+          expirationDate: expDateVal,
+          acknowledgeClosed: ackClosed,
+        };
         delete payload.rowNo;
         await apiRequest(`/api/detailed/${editingId}`, {
           method: 'PATCH',
@@ -622,6 +694,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           unit: draft.unit,
           storageLocation: draft.storageLocation,
           receiver: draft.receiver,
+          itemCategory: itemCategoryVal,
+          chemicalType: chemTypeVal,
+          productionDate: prodDateVal,
+          expirationDate: expDateVal,
           notes: draft.notes,
           acknowledgeClosed: ackClosed,
         };
@@ -746,6 +822,79 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     }
   };
 
+  const handleBulkEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedRows.length === 0) return;
+    const cleanPatch: Record<string, string> = {};
+    for (const [k, v] of Object.entries(bulkPatch)) {
+      if (k === 'itemCategory') {
+        if (v === 'standard') cleanPatch[k] = '';
+        else if (v) cleanPatch[k] = v;
+        continue;
+      }
+      if (typeof v === 'string' && v.trim()) {
+        cleanPatch[k] = v.trim();
+      }
+    }
+    if (Object.keys(cleanPatch).length === 0) {
+      notify('error', isFa ? 'حداقل یک فیلد را برای ویرایش گروهی پر کنید.' : 'Enter at least one field to update.');
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await apiRequest<{ ok: boolean; updatedCount: number }>('/api/detailed/bulk', {
+        method: 'PATCH',
+        body: JSON.stringify({ ids: selectedRows.map((r) => r.id), patch: cleanPatch }),
+      });
+      notify(
+        'success',
+        isFa
+          ? `ویرایش گروهی برای ${res.updatedCount.toLocaleString('fa-IR')} ردیف انجام شد.`
+          : `Updated ${res.updatedCount} rows.`,
+      );
+      setBulkEditOpen(false);
+      setBulkPatch({
+        arrivalDate: '', supplier: '', origin: '', island: '', system: '', subSystem: '',
+        unit: '', storageLocation: '', receiver: '', countingUnit: '', itemCategory: '',
+        chemicalType: '', productionDate: '', expirationDate: '', merStatus: '', repStatus: '',
+      });
+      setSelectedMap({});
+      triggerAutoSnapshot('Bulk Edit Detailed');
+      onDataChanged();
+      loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkDeleteConfirm = async () => {
+    if (selectedRows.length === 0) return;
+    setBulkBusy(true);
+    try {
+      const res = await apiRequest<{ ok: boolean; deletedCount: number }>('/api/detailed/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ ids: selectedRows.map((r) => r.id) }),
+      });
+      notify(
+        'success',
+        isFa
+          ? `${res.deletedCount.toLocaleString('fa-IR')} ردیف به سطل بازیافت منتقل شد.`
+          : `Moved ${res.deletedCount} row(s) to Recycle Bin.`,
+      );
+      setBulkDeleteOpen(false);
+      setSelectedMap({});
+      triggerAutoSnapshot('Bulk Delete Detailed');
+      onDataChanged();
+      loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   const toggleRow = (row: DetailedComputed) => {
     setSelectedMap((prev) => {
       const next = { ...prev };
@@ -798,6 +947,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         mtoRef: first.mtoRef || prev.mtoRef || '',
         packingQty: first.packingQty ?? prev.packingQty ?? null,
         countingUnit: first.countingUnit || prev.countingUnit || 'PC',
+        itemCategory: first.itemCategory || prev.itemCategory || '',
+        chemicalType: first.chemicalType || prev.chemicalType || '',
+        productionDate: first.productionDate || prev.productionDate || '',
+        expirationDate: first.expirationDate || prev.expirationDate || '',
         notes: first.notes || prev.notes || '',
       }));
       notify('success', isFa ? 'اطلاعات آیتم در فرم جایگذاری شد.' : 'Item populated into form.');
@@ -838,6 +991,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             actualQty: null,
             damagedQty: null,
             countingUnit: it.countingUnit || draft.countingUnit || 'PC',
+            itemCategory: it.itemCategory || '',
+            chemicalType: it.chemicalType || '',
+            productionDate: it.productionDate || '',
+            expirationDate: it.expirationDate || '',
             island: draft.island,
             system: draft.system,
             subSystem: draft.subSystem,
@@ -1013,6 +1170,35 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         />
       )}
 
+      {/* Bulk Operations Bar */}
+      {canEdit && selectedRows.length > 0 && (
+        <div className="rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <span className="font-bold text-[var(--accent-primary)] tabular-nums">
+            {isFa
+              ? `${selectedRows.length.toLocaleString('fa-IR')} ردیف انتخاب شده است`
+              : `${selectedRows.length} row(s) selected`}
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkEditOpen(true)}
+              className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold flex items-center gap-1.5"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'ویرایش گروهی' : 'Bulk Edit'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkDeleteOpen(true)}
+              className="h-8 px-3 rounded-lg bg-[var(--status-danger)] text-white font-semibold flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'حذف گروهی' : 'Bulk Delete'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Detailed Table */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
         <div className="overflow-x-auto">
@@ -1025,6 +1211,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     checked={items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]))}
                     onChange={toggleAllOnPage}
                   />
+                </th>
+                <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
+                  {isFa ? 'وضعیت / دسته‌بندی' : 'Status / Class'}
                 </th>
                 {visibleColumns.map((col) => (
                   <th
@@ -1044,18 +1233,22 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 2} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={visibleColumns.length + 3} className="py-12 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 2} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={visibleColumns.length + 3} className="py-12 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
               ) : (
-                items.map((row) => (
+                items.map((row) => {
+                  const chemDays = row.itemCategory === 'chemicals' ? getChemDaysRemaining(row.expirationDate) : null;
+                  const merOpen = isMerOpen(row);
+                  const repOpen = isRepOpen(row);
+                  return (
                   <tr
                     key={row.id}
                     onClick={() => setInspected(row)}
@@ -1069,6 +1262,62 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         checked={Boolean(selectedMap[row.id])}
                         onChange={() => toggleRow(row)}
                       />
+                    </td>
+                    <td className="py-2 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {row.hasShortage && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[10px] font-bold">
+                            <AlertTriangle className="w-3 h-3" />
+                            <span>{t.shortage.hasShortageBadge}</span>
+                          </span>
+                        )}
+                        {row.hasDamaged && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[10px] font-bold">
+                            <span>{t.shortage.hasDamagedBadge}</span>
+                          </span>
+                        )}
+                        {merOpen && (
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[10px] font-bold">
+                            MER {isFa ? 'باز' : 'Open'}
+                          </span>
+                        )}
+                        {repOpen && (
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[10px] font-bold">
+                            REP {isFa ? 'باز' : 'Open'}
+                          </span>
+                        )}
+                        {row.itemCategory === 'special_tools' && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[10px] font-semibold">
+                            <Wrench className="w-3 h-3" />
+                            <span>{t.itemCategories.special_tools}</span>
+                          </span>
+                        )}
+                        {row.itemCategory === 'spare_parts' && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[10px] font-semibold">
+                            <Cog className="w-3 h-3" />
+                            <span>{t.itemCategories.spare_parts}</span>
+                          </span>
+                        )}
+                        {row.itemCategory === 'chemicals' && (
+                          <span
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                              chemDays !== null && chemDays <= 30
+                                ? 'bg-[var(--status-danger)] text-white'
+                                : 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                            }`}
+                          >
+                            <FlaskConical className="w-3 h-3" />
+                            <span>
+                              {t.itemCategories.chemicals}
+                              {chemDays !== null && chemDays <= 30
+                                ? chemDays < 0
+                                  ? ` (${isFa ? 'منقضی' : 'Exp'})`
+                                  : ` (${chemDays}d)`
+                                : ''}
+                            </span>
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {visibleColumns.map((col) => {
@@ -1154,7 +1403,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1892,6 +2142,72 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </div>
               </div>
 
+              {/* Specialized Item Classification (Special Tools, Chemicals, Spare Parts) */}
+              <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-[var(--text-primary)]">
+                    {isFa
+                      ? 'مشخصات تخصصی قلم (ابزار مخصوص / مواد شیمیایی / لوازم یدکی)'
+                      : 'Specialized Item Classification (Tools / Chemicals / Spare Parts)'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  {(
+                    [
+                      { key: '', label: t.itemCategories.standard },
+                      { key: 'special_tools', label: t.itemCategories.special_tools },
+                      { key: 'chemicals', label: t.itemCategories.chemicals },
+                      { key: 'spare_parts', label: t.itemCategories.spare_parts },
+                    ] as const
+                  ).map((opt) => {
+                    const active = (draft.itemCategory || '') === opt.key;
+                    return (
+                      <button
+                        key={opt.key || 'std'}
+                        type="button"
+                        onClick={() => setDraft((prev) => ({ ...prev, itemCategory: opt.key }))}
+                        className={`h-9 px-3 rounded-lg border font-semibold text-xs transition-colors ${
+                          active
+                            ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {draft.itemCategory === 'chemicals' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-[var(--border-subtle)]/70">
+                    <div>
+                      <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                        {t.headers.chemicalType} *
+                      </label>
+                      <input
+                        type="text"
+                        dir={!draft.chemicalType ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                        value={draft.chemicalType || ''}
+                        onChange={(e) => setDraft({ ...draft, chemicalType: e.target.value })}
+                        placeholder={isFa ? 'مثلاً روغن توربین / اسید / رزین...' : 'e.g. Resin, Solvent, Inhibitor...'}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext"
+                      />
+                    </div>
+                    <JalaliDateInput
+                      label={t.headers.productionDate}
+                      value={draft.productionDate || ''}
+                      onChange={(v) => setDraft({ ...draft, productionDate: v })}
+                    />
+                    <JalaliDateInput
+                      label={t.headers.expirationDate}
+                      value={draft.expirationDate || ''}
+                      onChange={(v) => setDraft({ ...draft, expirationDate: v })}
+                    />
+                  </div>
+                )}
+              </div>
+
               {editingId ? (
                 <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] text-[var(--text-secondary)] space-y-1">
                   <div className="font-semibold text-[var(--text-primary)]">
@@ -1953,6 +2269,170 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Bulk Edit Modal */}
+      {bulkEditOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
+              <h3 className="text-sm font-bold tabular-nums">
+                {isFa
+                  ? `ویرایش گروهی (${selectedRows.length.toLocaleString('fa-IR')} ردیف)`
+                  : `Bulk Edit (${selectedRows.length} rows)`}
+              </h3>
+              <button type="button" onClick={() => setBulkEditOpen(false)}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleBulkEditSubmit} className="p-6 overflow-y-auto space-y-4">
+              <p className="text-xs text-[var(--text-secondary)]">
+                {isFa
+                  ? 'فقط فیلدهایی که مقدار آن‌ها را وارد کنید در تمام ردیف‌های انتخاب‌شده به‌روزرسانی می‌شوند.'
+                  : 'Only fields you fill in will be updated across all selected rows.'}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <JalaliDateInput
+                  label={t.headers.arrivalDate}
+                  value={bulkPatch.arrivalDate}
+                  onChange={(v) => setBulkPatch((p) => ({ ...p, arrivalDate: v }))}
+                />
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.storageLocation}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.storageLocation}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, storageLocation: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.island}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.island}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, island: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.system}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.system}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, system: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.merStatus}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.merStatus}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, merStatus: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.repStatus}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.repStatus}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, repStatus: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.itemCategory}</label>
+                  <select
+                    value={bulkPatch.itemCategory}
+                    onChange={(e) =>
+                      setBulkPatch((p) => ({
+                        ...p,
+                        itemCategory: e.target.value as typeof bulkPatch.itemCategory,
+                      }))
+                    }
+                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  >
+                    <option value="">{isFa ? '-- بدون تغییر --' : '-- No Change --'}</option>
+                    <option value="standard">{t.itemCategories.standard}</option>
+                    <option value="special_tools">{t.itemCategories.special_tools}</option>
+                    <option value="chemicals">{t.itemCategories.chemicals}</option>
+                    <option value="spare_parts">{t.itemCategories.spare_parts}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.chemicalType}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.chemicalType}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, chemicalType: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <JalaliDateInput
+                  label={t.headers.productionDate}
+                  value={bulkPatch.productionDate}
+                  onChange={(v) => setBulkPatch((p) => ({ ...p, productionDate: v }))}
+                />
+                <JalaliDateInput
+                  label={t.headers.expirationDate}
+                  value={bulkPatch.expirationDate}
+                  onChange={(v) => setBulkPatch((p) => ({ ...p, expirationDate: v }))}
+                />
+              </div>
+              <div className="pt-3 border-t border-[var(--border-subtle)] flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkEditOpen(false)}
+                  className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium"
+                >
+                  {t.controls.cancel}
+                </button>
+                <button
+                  type="submit"
+                  disabled={bulkBusy}
+                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
+                >
+                  {isFa ? 'تأیید و اعمال تغییرات گروهی' : 'Confirm & Apply'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {bulkDeleteOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+            <h3 className="text-sm font-bold text-[var(--status-danger)]">
+              {isFa ? 'تأیید حذف گروهی ردیف‌ها' : 'Confirm Bulk Deletion'}
+            </h3>
+            <p className="text-xs text-[var(--text-primary)]">
+              {isFa
+                ? `آیا از انتقال ${selectedRows.length.toLocaleString('fa-IR')} ردیف انتخاب‌شده به سطل بازیافت مطمئن هستید؟`
+                : `Are you sure you want to move ${selectedRows.length} selected row(s) to the Recycle Bin?`}
+            </p>
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkDeleteOpen(false)}
+                className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium"
+              >
+                {t.controls.cancel}
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={handleBulkDeleteConfirm}
+                className="h-9 px-5 rounded-lg bg-[var(--status-danger)] text-white text-xs font-semibold disabled:opacity-50"
+              >
+                {isFa ? 'تأیید حذف گروهی' : 'Confirm Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <PrintReportModal
         open={printOpen}

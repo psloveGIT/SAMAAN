@@ -3,6 +3,132 @@ import type { CalendarMode, DetailedEntry, GeneralEntry, TransitEntry } from './
 
 export type ImportScope = 'general' | 'detailed' | 'transit';
 
+export interface ImportColumnDef {
+  key: string;
+  labelFa: string;
+  labelEn: string;
+  required?: boolean;
+  isDate?: boolean;
+  isNumeric?: boolean;
+}
+
+export const GENERAL_IMPORT_COLUMNS: ImportColumnDef[] = [
+  { key: 'rowNo', labelFa: 'ردیف', labelEn: 'Row No.' },
+  { key: 'arrivalDate', labelFa: 'تاریخ ورود', labelEn: 'Arrival Date', isDate: true },
+  { key: 'releaseNo', labelFa: 'شماره Release Note', labelEn: 'Release Note No.' },
+  { key: 'releaseDate', labelFa: 'تاریخ Release Note', labelEn: 'Release Note Date', isDate: true },
+  { key: 'supplier', labelFa: 'تامین کننده', labelEn: 'Supplier', required: true },
+  { key: 'dispatchLocation', labelFa: 'محل ارسال', labelEn: 'Dispatch Location', required: true },
+  { key: 'employerEntryMinutesNo', labelFa: 'شماره صورتجلسه کارفرما', labelEn: 'Employer Entry Minutes No.' },
+  { key: 'mapnaEntryMinutesNo', labelFa: 'شماره صورتجلسه مپنا', labelEn: 'MAPNA Entry Minutes No.' },
+  { key: 'packingListNo', labelFa: 'شماره پکینگ لیست', labelEn: 'Packing List No.', required: true },
+  { key: 'packageNo', labelFa: 'شماره نگله', labelEn: 'Package No.', required: true },
+  { key: 'packageType', labelFa: 'نوع بسته‌بندی', labelEn: 'Package Type' },
+  { key: 'itemCount', labelFa: 'تعداد اقلام نگله', labelEn: 'Package Item Count', isNumeric: true },
+  { key: 'itemDescription', labelFa: 'شرح کالا', labelEn: 'Item Description', required: true },
+  { key: 'island', labelFa: 'جزیره', labelEn: 'Island' },
+  { key: 'system', labelFa: 'سیستم', labelEn: 'System' },
+  { key: 'subSystem', labelFa: 'ساب سیستم', labelEn: 'Sub-System' },
+  { key: 'unit', labelFa: 'واحد', labelEn: 'Unit' },
+  { key: 'grossWeight', labelFa: 'وزن ناخالص (kg)', labelEn: 'Gross Weight (kg)', isNumeric: true },
+  { key: 'netWeight', labelFa: 'وزن خالص (kg)', labelEn: 'Net Weight (kg)', isNumeric: true },
+  { key: 'lengthCm', labelFa: 'طول (متر)', labelEn: 'Length (m)', isNumeric: true },
+  { key: 'widthCm', labelFa: 'عرض (متر)', labelEn: 'Width (m)', isNumeric: true },
+  { key: 'heightCm', labelFa: 'ارتفاع (متر)', labelEn: 'Height (m)', isNumeric: true },
+  { key: 'billOfLadingNo', labelFa: 'شماره بارنامه', labelEn: 'Waybill No.' },
+  { key: 'vehicleNo', labelFa: 'شماره خودرو', labelEn: 'Vehicle No.' },
+  { key: 'weighbridgeWeight', labelFa: 'وزن باسکول (kg)', labelEn: 'Weighbridge Weight (kg)', isNumeric: true },
+  { key: 'freightCost', labelFa: 'کرایه حمل (ریال)', labelEn: 'Freight Cost (IRR)', isNumeric: true },
+  { key: 'opiInvitationNo', labelFa: 'شماره دعوتنامه OPI', labelEn: 'OPI Invitation No.' },
+  { key: 'opiInvitationDate', labelFa: 'تاریخ دعوتنامه OPI', labelEn: 'OPI Invitation Date', isDate: true },
+  { key: 'driverName', labelFa: 'نام راننده', labelEn: 'Driver Name' },
+];
+
+export const DETAILED_IMPORT_COLUMNS: ImportColumnDef[] = [
+  { key: 'rowNo', labelFa: 'ردیف', labelEn: 'Row No.' },
+  { key: 'arrivalDate', labelFa: 'تاریخ ورود', labelEn: 'Arrival Date', isDate: true },
+  { key: 'supplier', labelFa: 'تامین کننده', labelEn: 'Supplier' },
+  { key: 'origin', labelFa: 'مبدا', labelEn: 'Origin' },
+  { key: 'shipmentNo', labelFa: 'شماره محموله / پکینگ', labelEn: 'Shipment / Packing No.', required: true },
+  { key: 'packageNo', labelFa: 'شماره نگله', labelEn: 'Package No.' },
+  { key: 'itemNo', labelFa: 'شماره آیتم', labelEn: 'Item No.', required: true },
+  { key: 'generalDescription', labelFa: 'شرح کلی', labelEn: 'General Description' },
+  { key: 'description', labelFa: 'شرح', labelEn: 'Description', required: true },
+  { key: 'size', labelFa: 'سایز', labelEn: 'Size' },
+  { key: 'itemCode', labelFa: 'کد کالا', labelEn: 'Item Code' },
+  { key: 'itemCategory', labelFa: 'دسته‌بندی تخصصی قلم', labelEn: 'Item Classification' },
+  { key: 'chemicalType', labelFa: 'نوع ماده شیمیایی', labelEn: 'Chemical Type' },
+  { key: 'productionDate', labelFa: 'تاریخ تولید', labelEn: 'Production Date', isDate: true },
+  { key: 'expirationDate', labelFa: 'تاریخ انقضاء', labelEn: 'Expiration Date', isDate: true },
+  { key: 'packingQty', labelFa: 'مقدار پکینگ', labelEn: 'Packing Qty', isNumeric: true },
+  { key: 'actualQty', labelFa: 'مقدار واقعی', labelEn: 'Actual Qty', isNumeric: true },
+  { key: 'damagedQty', labelFa: 'آسیب دیده', labelEn: 'Damaged Qty', isNumeric: true },
+  { key: 'mtoRef', labelFa: 'MTO', labelEn: 'MTO' },
+  { key: 'repNo', labelFa: 'شماره REP', labelEn: 'REP No.' },
+  { key: 'repStatus', labelFa: 'وضعیت REP', labelEn: 'REP Status' },
+  { key: 'repDescription', labelFa: 'توضیحات REP', labelEn: 'REP Description' },
+  { key: 'countingUnit', labelFa: 'واحد شمارش', labelEn: 'Counting Unit' },
+  { key: 'island', labelFa: 'جزیره', labelEn: 'Island' },
+  { key: 'system', labelFa: 'سیستم', labelEn: 'System' },
+  { key: 'subSystem', labelFa: 'ساب سیستم', labelEn: 'Sub-System' },
+  { key: 'unit', labelFa: 'واحد', labelEn: 'Unit' },
+  { key: 'opiNo', labelFa: 'شماره OPI', labelEn: 'OPI No.' },
+  { key: 'opiDate', labelFa: 'تاریخ OPI', labelEn: 'OPI Date', isDate: true },
+  { key: 'merNo', labelFa: 'شماره MER', labelEn: 'MER No.' },
+  { key: 'merStatus', labelFa: 'وضعیت MER', labelEn: 'MER Status' },
+  { key: 'notes', labelFa: 'توضیحات', labelEn: 'Notes' },
+  { key: 'materialBalanceNo', labelFa: 'شماره بالانس متریال', labelEn: 'Material Balance No.' },
+  { key: 'balanceStatus', labelFa: 'وضعیت بالانس', labelEn: 'Balance Status' },
+  { key: 'storageLocation', labelFa: 'محل نگهداری', labelEn: 'Storage Location' },
+  { key: 'gcvReceiptNo', labelFa: 'شماره رسید', labelEn: 'Receipt No.' },
+  { key: 'receiver', labelFa: 'تحویل گیرنده', labelEn: 'Receiver' },
+  { key: 'gcvDeliveredQty', labelFa: 'مقدار تحویل شده GCV', labelEn: 'GCV Delivered Qty', isNumeric: true },
+  { key: 'mivContractorNo', labelFa: 'شماره MIV پیمانکار', labelEn: 'MIV Contractor No.' },
+  { key: 'mivContractorDate', labelFa: 'تاریخ MIV پیمانکار', labelEn: 'MIV Contractor Date', isDate: true },
+  { key: 'mivContractorQty', labelFa: 'مقدار MIV پیمانکار', labelEn: 'MIV Contractor Qty', isNumeric: true },
+  { key: 'smrContractorNo', labelFa: 'شماره SMR پیمانکار', labelEn: 'SMR Contractor No.' },
+  { key: 'smrContractorDate', labelFa: 'تاریخ SMR پیمانکار', labelEn: 'SMR Contractor Date', isDate: true },
+  { key: 'smrContractorQty', labelFa: 'مقدار SMR پیمانکار', labelEn: 'SMR Contractor Qty', isNumeric: true },
+  { key: 'smrContractorNote', labelFa: 'توضیحات SMR پیمانکار', labelEn: 'SMR Contractor Note' },
+  { key: 'smrMapnaNo', labelFa: 'شماره SMR مپنا', labelEn: 'SMR MAPNA No.' },
+  { key: 'smrMapnaDate', labelFa: 'تاریخ SMR مپنا', labelEn: 'SMR MAPNA Date', isDate: true },
+  { key: 'smrMapnaQty', labelFa: 'مقدار SMR مپنا', labelEn: 'SMR MAPNA Qty', isNumeric: true },
+  { key: 'smrMapnaNote', labelFa: 'توضیحات SMR مپنا', labelEn: 'SMR MAPNA Note' },
+  { key: 'mivMapnaNo', labelFa: 'شماره MIV مپنا', labelEn: 'MIV MAPNA No.' },
+  { key: 'mivMapnaDate', labelFa: 'تاریخ MIV مپنا', labelEn: 'MIV MAPNA Date', isDate: true },
+  { key: 'mivMapnaQty', labelFa: 'مقدار MIV مپنا', labelEn: 'MIV MAPNA Qty', isNumeric: true },
+  { key: 'stocktakeInfo', labelFa: 'انبار گردانی', labelEn: 'Stocktake Info' },
+];
+
+export const TRANSIT_IMPORT_COLUMNS: ImportColumnDef[] = [
+  { key: 'arrivalDate', labelFa: 'تاریخ ورود', labelEn: 'Arrival Date', isDate: true },
+  { key: 'overallStatus', labelFa: 'وضعیت کلی', labelEn: 'Overall Status' },
+  { key: 'inspectionRequest', labelFa: 'درخواست بازرسی', labelEn: 'Inspection Request' },
+  { key: 'releaseNetNo', labelFa: 'شماره رلیزنت', labelEn: 'Release Net No.' },
+  { key: 'releaseNetDate', labelFa: 'تاریخ رلیزنت', labelEn: 'Release Net Date', isDate: true },
+  { key: 'mapnaShippingNotice', labelFa: 'اعلام حمل به مپنا', labelEn: 'MAPNA Shipping Notice' },
+  { key: 'interimNo', labelFa: 'شماره علی الحساب', labelEn: 'Interim No.' },
+  { key: 'interimDate', labelFa: 'تاریخ علی الحساب', labelEn: 'Interim Date', isDate: true },
+  { key: 'supplier', labelFa: 'تامین کننده', labelEn: 'Supplier' },
+  { key: 'dispatchLocation', labelFa: 'محل ارسال', labelEn: 'Dispatch Location' },
+  { key: 'packingListNo', labelFa: 'شماره پکینگ لیست', labelEn: 'Packing List No.', required: true },
+  { key: 'packageNo', labelFa: 'شماره نگله', labelEn: 'Package No.' },
+  { key: 'itemDescription', labelFa: 'شرح کالا', labelEn: 'Item Description' },
+  { key: 'system', labelFa: 'سیستم', labelEn: 'System' },
+  { key: 'subSystem', labelFa: 'ساب سیستم', labelEn: 'Sub-System' },
+  { key: 'unit', labelFa: 'واحد', labelEn: 'Unit' },
+  { key: 'equipmentSupplyCode', labelFa: 'کد تامین تجهیزات', labelEn: 'Equipment Supply Code' },
+  { key: 'carrierContractor', labelFa: 'پیمانکار حمل', labelEn: 'Carrier Contractor' },
+  { key: 'billOfLadingNo', labelFa: 'شماره بارنامه', labelEn: 'Waybill No.' },
+  { key: 'amount', labelFa: 'مبلغ (ریال)', labelEn: 'Amount (IRR)', isNumeric: true },
+];
+
+export function getImportColumnsForScope(scope: ImportScope): ImportColumnDef[] {
+  if (scope === 'general') return GENERAL_IMPORT_COLUMNS;
+  if (scope === 'detailed') return DETAILED_IMPORT_COLUMNS;
+  return TRANSIT_IMPORT_COLUMNS;
+}
+
 export function makeId(): string {
   if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
@@ -76,6 +202,7 @@ function cleanStr(val: string | undefined): string {
 function parseNum(val: string | undefined): number | null {
   const raw = normalizeDigits((val || '').trim())
     .replace(/,/g, '')
+    .replace(/،/g, '')
     .replace(/٬/g, '')
     .trim();
   if (!raw || raw === '-' || raw === '—') return null;
@@ -84,7 +211,16 @@ function parseNum(val: string | undefined): number | null {
 }
 
 function normalizeHeaderText(h: string): string {
-  return (h || '').replace(/\s+/g, ' ').trim();
+  return (h || '').replace(/\u200c/g, ' ').replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeItemCategory(raw: string | undefined): DetailedEntry['itemCategory'] {
+  const s = normalizeHeaderText(raw || '').toLowerCase();
+  if (!s) return '';
+  if (s.includes('شیمی') || s.includes('chemical')) return 'chemicals';
+  if (s.includes('ابزار') || s.includes('tool')) return 'special_tools';
+  if (s.includes('یدک') || s.includes('spare')) return 'spare_parts';
+  return '';
 }
 
 export function detectCsvScope(matrix: string[][]): ImportScope | null {
@@ -106,6 +242,7 @@ export function detectCsvScope(matrix: string[][]): ImportScope | null {
     previewText.includes('مقدار پکینگ') ||
     previewText.includes('شماره بالانس متریال') ||
     previewText.includes('شماره رسید') ||
+    previewText.includes('شرح کلی') ||
     previewText.includes('packing qty') ||
     previewText.includes('item code')
   ) {
@@ -113,6 +250,7 @@ export function detectCsvScope(matrix: string[][]): ImportScope | null {
   }
   if (
     previewText.includes('در دست حمل') ||
+    previewText.includes('در دست ارسال') ||
     previewText.includes('رلیزنت') ||
     previewText.includes('علی الحساب') ||
     previewText.includes('overall status')
@@ -125,7 +263,7 @@ export function detectCsvScope(matrix: string[][]): ImportScope | null {
 function findDataStartAndHeaders(
   matrix: string[][],
   scope: ImportScope,
-): { headerMap: Record<string, number>; dataStartIndex: number } {
+): { headerMap: Record<string, number>; combinedCols: string[]; dataStartIndex: number } {
   const headerRows = matrix.slice(0, Math.min(6, matrix.length));
   const combinedCols: string[] = [];
   const maxCols = Math.max(...headerRows.map((r) => r.length), 0);
@@ -152,7 +290,6 @@ function findDataStartAndHeaders(
   }
 
   if (dataStartIndex <= 0) {
-    // Fallback for single-row header spreadsheets
     const row0Text = (matrix[0] || []).join(' ').toLowerCase();
     const looksLikeHeader =
       row0Text.includes('پکینگ') ||
@@ -162,8 +299,12 @@ function findDataStartAndHeaders(
       row0Text.includes('تاریخ') ||
       row0Text.includes('date') ||
       row0Text.includes('supplier') ||
-      row0Text.includes('تامین');
-    dataStartIndex = looksLikeHeader ? 1 : 4;
+      row0Text.includes('تامین') ||
+      row0Text.includes('تأمین') ||
+      row0Text.includes('محموله') ||
+      row0Text.includes('آیتم') ||
+      row0Text.includes('item');
+    dataStartIndex = looksLikeHeader ? 1 : Math.min(4, Math.max(1, matrix.length - 1));
   }
 
   const headerSlice = matrix.slice(0, dataStartIndex);
@@ -180,113 +321,356 @@ function findDataStartAndHeaders(
     if (h) headerMap[h] = c;
   }
 
-  return { headerMap, dataStartIndex };
+  return { headerMap, combinedCols, dataStartIndex };
 }
 
+interface FindColOptions {
+  fallbackIndex?: number;
+  excludeSubstrings?: string[];
+}
+
+/**
+ * Resolves column index cleanly using exact-segment matching BEFORE substring matching,
+ * and enforces excludeSubstrings (e.g., "شرح" never accidentally matches "شرح کلی").
+ */
 function findCol(
   combinedCols: string[],
   candidates: string[],
-  fallbackIndex?: number,
+  optionsOrFallback?: number | FindColOptions,
 ): number {
+  const opts: FindColOptions =
+    typeof optionsOrFallback === 'number'
+      ? { fallbackIndex: optionsOrFallback }
+      : optionsOrFallback || {};
+  const excludes = (opts.excludeSubstrings || []).map((e) => normalizeHeaderText(e).toLowerCase());
+
+  const isExcluded = (header: string): boolean => {
+    if (excludes.length === 0) return false;
+    const hLow = header.toLowerCase();
+    return excludes.some((ex) => hLow.includes(ex));
+  };
+
+  // Pass 1: exact segment match (separated by ' | ') or exact full header match
   for (const cand of candidates) {
-    const cLower = cand.toLowerCase();
-    const idx = combinedCols.findIndex((h) => h.toLowerCase().includes(cLower));
-    if (idx !== -1) return idx;
+    const cNorm = normalizeHeaderText(cand).toLowerCase();
+    if (!cNorm) continue;
+    const exactIdx = combinedCols.findIndex((h) => {
+      if (!h || isExcluded(h)) return false;
+      const hNorm = normalizeHeaderText(h).toLowerCase();
+      if (hNorm === cNorm) return true;
+      const segs = hNorm.split('|').map((s) => s.trim());
+      return segs.includes(cNorm);
+    });
+    if (exactIdx !== -1) return exactIdx;
   }
-  return fallbackIndex !== undefined ? fallbackIndex : -1;
+
+  // Pass 2: substring match respecting exclusions
+  for (const cand of candidates) {
+    const cNorm = normalizeHeaderText(cand).toLowerCase();
+    if (!cNorm) continue;
+    const subIdx = combinedCols.findIndex((h) => {
+      if (!h || isExcluded(h)) return false;
+      return normalizeHeaderText(h).toLowerCase().includes(cNorm);
+    });
+    if (subIdx !== -1) return subIdx;
+  }
+
+  return opts.fallbackIndex !== undefined ? opts.fallbackIndex : -1;
+}
+
+function resolveIdx(
+  explicitMapping: Record<string, number> | undefined,
+  key: string,
+  autoIdx: number,
+): number {
+  if (explicitMapping && Object.prototype.hasOwnProperty.call(explicitMapping, key)) {
+    const val = explicitMapping[key];
+    return typeof val === 'number' && Number.isInteger(val) && val >= 0 ? val : -1;
+  }
+  return autoIdx;
+}
+
+function getAutoGeneralMapping(combinedCols: string[]): Record<string, number> {
+  return {
+    rowNo: findCol(combinedCols, ['ردیف', 'row no', 'row'], 0),
+    arrivalDate: findCol(combinedCols, ['تاریخ ورود', 'arrival date'], 1),
+    releaseNo: findCol(combinedCols, ['شماره رلیز', 'release note', 'release no'], 2),
+    releaseDate: findCol(combinedCols, ['تاریخ release', 'تاریخ رلیز', 'release date', 'تاریخ'], {
+      fallbackIndex: 3,
+      excludeSubstrings: ['ورود', 'دعوتنامه', 'opi'],
+    }),
+    supplier: findCol(combinedCols, ['تامین کننده', 'تأمین کننده', 'supplier'], 4),
+    dispatchLocation: findCol(combinedCols, ['محل ارسال', 'dispatch location'], 5),
+    employerEntryMinutesNo: findCol(combinedCols, ['صورتجلسه کارفرما', 'کارفرما', 'employer'], 6),
+    mapnaEntryMinutesNo: findCol(combinedCols, ['صورتجلسه مپنا', 'مپنا', 'mapna'], 7),
+    packingListNo: findCol(combinedCols, ['شماره پکینگ لیست', 'پکینگ لیست', 'packing list'], 8),
+    packageNo: findCol(combinedCols, ['شماره نگله', 'package no'], 9),
+    packageType: findCol(combinedCols, ['نوع بسته بندی', 'نوع بسته‌بندی', 'package type'], -1),
+    itemCount: findCol(combinedCols, ['تعداد اقلام نگله', 'تعداد اقلام', 'item count'], -1),
+    itemDescription: findCol(combinedCols, ['شرح کالا', 'item description', 'شرح'], 10),
+    island: findCol(combinedCols, ['جزیره', 'island'], 11),
+    system: findCol(combinedCols, ['سیستم', 'system'], { fallbackIndex: 12, excludeSubstrings: ['ساب', 'sub'] }),
+    subSystem: findCol(combinedCols, ['ساب سیستم', 'sub-system', 'subsystem'], 13),
+    unit: findCol(combinedCols, ['واحد', 'unit'], { fallbackIndex: 14, excludeSubstrings: ['شمارش', 'counting'] }),
+    grossWeight: findCol(combinedCols, ['ناخالص', 'gross weight'], 15),
+    netWeight: findCol(combinedCols, ['خالص', 'net weight'], { fallbackIndex: 16, excludeSubstrings: ['ناخالص', 'gross'] }),
+    lengthCm: findCol(combinedCols, ['طول', 'length'], 17),
+    widthCm: findCol(combinedCols, ['عرض', 'width'], 18),
+    heightCm: findCol(combinedCols, ['ارتفاع', 'height'], 19),
+    billOfLadingNo: findCol(combinedCols, ['شماره بارنامه', 'بارنامه', 'waybill'], 20),
+    vehicleNo: findCol(combinedCols, ['شماره خودرو', 'پلاک', 'vehicle'], 21),
+    weighbridgeWeight: findCol(combinedCols, ['وزن باسکول', 'weighbridge'], 22),
+    freightCost: findCol(combinedCols, ['مبلغ کرایه حمل', 'کرایه حمل', 'freight'], 23),
+    opiInvitationNo: findCol(combinedCols, ['شماره دعوتنامه opi', 'opi invitation no'], 24),
+    opiInvitationDate: findCol(combinedCols, ['تاریخ دعوتنامه opi', 'opi invitation date'], 25),
+    driverName: findCol(combinedCols, ['نام راننده', 'راننده', 'driver'], 26),
+  };
+}
+
+function getAutoDetailedMapping(combinedCols: string[]): Record<string, number> {
+  const hasRahkaran = combinedCols.some((h) => h.includes('کد راهکاران'));
+  const offset = hasRahkaran ? 0 : -1;
+
+  return {
+    rowNo: findCol(combinedCols, ['ردیف', 'row no'], 0),
+    arrivalDate: findCol(combinedCols, ['تاریخ ورود', 'arrival date'], 1),
+    supplier: findCol(combinedCols, ['تامین کننده', 'تأمین کننده', 'supplier'], 2),
+    origin: findCol(combinedCols, ['مبدا', 'مبدأ', 'origin'], 3),
+    shipmentNo: findCol(combinedCols, ['شماره محموله', 'شماره پکینگ لیست', 'shipment no', 'packing list'], 4),
+    packageNo: findCol(combinedCols, ['شماره نگله', 'package no'], 5),
+    itemNo: findCol(combinedCols, ['شماره آیتم', 'item no'], 6),
+    generalDescription: findCol(combinedCols, ['شرح کلی', 'general description'], 7),
+    description: findCol(combinedCols, ['شرح کالا', 'شرح', 'description'], {
+      fallbackIndex: 8,
+      excludeSubstrings: ['شرح کلی', 'general description', 'توضیحات'],
+    }),
+    size: findCol(combinedCols, ['سایز', 'size'], 9),
+    itemCode: findCol(combinedCols, ['کد کالا', 'item code'], 10),
+    itemCategory: findCol(combinedCols, ['دسته بندی تخصصی', 'نوع قلم', 'item classification', 'item category'], -1),
+    chemicalType: findCol(combinedCols, ['نوع ماده شیمیایی', 'ماده شیمیایی', 'chemical type'], -1),
+    productionDate: findCol(combinedCols, ['تاریخ تولید', 'production date'], -1),
+    expirationDate: findCol(combinedCols, ['تاریخ انقضا', 'تاریخ انقضاء', 'expiration date', 'expiry'], -1),
+    packingQty: findCol(combinedCols, ['مقدار پکینگ', 'packing qty'], 12 + offset),
+    actualQty: findCol(combinedCols, ['مقدار واقعی', 'actual qty'], 13 + offset),
+    damagedQty: findCol(combinedCols, ['آسیب دیده', 'damaged qty'], -1),
+    mtoRef: findCol(combinedCols, ['mto'], -1),
+    repNo: findCol(combinedCols, ['شماره rep', 'rep no'], 16 + offset),
+    repStatus: findCol(combinedCols, ['وضعیت rep', 'rep status'], 17 + offset),
+    repDescription: findCol(combinedCols, ['توضیحات rep', 'rep description'], 18 + offset),
+    countingUnit: findCol(combinedCols, ['واحد شمارش', 'counting unit'], 19 + offset),
+    island: findCol(combinedCols, ['جزیره', 'island'], 20 + offset),
+    system: findCol(combinedCols, ['سیستم', 'system'], { fallbackIndex: 21 + offset, excludeSubstrings: ['ساب', 'sub'] }),
+    subSystem: findCol(combinedCols, ['ساب سیستم', 'sub-system', 'subsystem'], 22 + offset),
+    unit: findCol(combinedCols, ['واحد', 'unit'], {
+      fallbackIndex: 23 + offset,
+      excludeSubstrings: ['شمارش', 'counting'],
+    }),
+    opiNo: findCol(combinedCols, ['شماره opi', 'opi no'], 24 + offset),
+    opiDate: findCol(combinedCols, ['تاریخ opi', 'opi date'], 25 + offset),
+    merNo: findCol(combinedCols, ['شماره mer', 'mer no'], 26 + offset),
+    merStatus: findCol(combinedCols, ['وضعیت mer', 'mer status'], 27 + offset),
+    notes: findCol(combinedCols, ['توضیحات', 'notes'], {
+      fallbackIndex: 28 + offset,
+      excludeSubstrings: ['rep', 'smr'],
+    }),
+    balanceStatus: findCol(combinedCols, ['وضعیت بالانس', 'balance status'], 29 + offset),
+    storageLocation: findCol(combinedCols, ['محل نگهداری', 'storage location'], 30 + offset),
+    gcvReceiptNo: findCol(combinedCols, ['شماره رسید', 'gcv', 'receipt no'], 31 + offset),
+    receiver: findCol(combinedCols, ['تحویل گیرنده', 'receiver'], 32 + offset),
+    gcvDeliveredQty: findCol(combinedCols, ['مقدار تحویل شده gcv', 'مقدار تحویل شده', 'gcv delivered'], 33 + offset),
+    mivContractorNo: findCol(combinedCols, ['شماره miv پیمانکار', 'miv پیمانکار', 'شماره miv'], {
+      fallbackIndex: 35 + offset,
+      excludeSubstrings: ['مپنا', 'mapna'],
+    }),
+    mivContractorDate: 36 + offset,
+    mivContractorQty: 37 + offset,
+    smrContractorNo: 39 + offset,
+    smrContractorDate: 40 + offset,
+    smrContractorQty: 41 + offset,
+    smrContractorNote: 42 + offset,
+    materialBalanceNo: findCol(combinedCols, ['شماره بالانس متریال', 'material balance no'], 43 + offset),
+    smrMapnaNo: 44 + offset,
+    smrMapnaDate: 45 + offset,
+    smrMapnaQty: 46 + offset,
+    smrMapnaNote: 47 + offset,
+    mivMapnaNo: 48 + offset,
+    mivMapnaDate: 49 + offset,
+    mivMapnaQty: 50 + offset,
+    stocktakeInfo: findCol(combinedCols, ['انبار گردانی', 'انبارگردانی', 'stocktake'], 51 + offset),
+  };
+}
+
+function getAutoTransitMapping(combinedCols: string[]): Record<string, number> {
+  return {
+    arrivalDate: findCol(combinedCols, ['تاریخ ورود', 'arrival date'], 0),
+    overallStatus: findCol(combinedCols, ['وضعیت کلی', 'overall status'], 1),
+    inspectionRequest: findCol(combinedCols, ['درخواست بازرسی', 'inspection request'], 2),
+    releaseNetNo: findCol(combinedCols, ['شماره رلیزنت', 'release net no'], 3),
+    releaseNetDate: findCol(combinedCols, ['تاریخ رلیزنت', 'release net date'], 4),
+    mapnaShippingNotice: findCol(combinedCols, ['اعلام حمل به مپنا', 'shipping notice'], 5),
+    interimNo: findCol(combinedCols, ['شماره علی الحساب', 'interim no'], 6),
+    interimDate: findCol(combinedCols, ['تاریخ علی الحساب', 'interim date'], 7),
+    supplier: findCol(combinedCols, ['تامین کننده', 'تأمین کننده', 'supplier'], 8),
+    dispatchLocation: findCol(combinedCols, ['محل ارسال', 'dispatch location'], 9),
+    packingListNo: findCol(combinedCols, ['شماره پکینگ لیست', 'packing list'], 10),
+    packageNo: findCol(combinedCols, ['شماره نگله', 'package no'], 11),
+    itemDescription: findCol(combinedCols, ['شرح کالا', 'item description'], 12),
+    system: findCol(combinedCols, ['سیستم', 'system'], { fallbackIndex: 13, excludeSubstrings: ['ساب', 'sub'] }),
+    subSystem: findCol(combinedCols, ['ساب سیستم', 'sub-system'], 14),
+    unit: findCol(combinedCols, ['واحد', 'unit'], 15),
+    equipmentSupplyCode: findCol(combinedCols, ['کد تامین تجهیزات', 'supply code'], 16),
+    carrierContractor: findCol(combinedCols, ['پیمانکار حمل', 'carrier contractor'], 17),
+    billOfLadingNo: findCol(combinedCols, ['شماره بارنامه', 'waybill'], 18),
+    amount: findCol(combinedCols, ['مبلغ', 'amount'], 19),
+  };
+}
+
+export interface InspectedMatrixColumns {
+  scope: ImportScope;
+  dataStartIndex: number;
+  fileColumns: { index: number; header: string; samples: string[] }[];
+  targetFields: ImportColumnDef[];
+  mapping: Record<string, number>;
+}
+
+export function inspectMatrixColumns(
+  matrix: string[][],
+  explicitScope?: ImportScope,
+): InspectedMatrixColumns {
+  const scope = explicitScope || detectCsvScope(matrix) || 'general';
+  const { combinedCols, dataStartIndex } = findDataStartAndHeaders(matrix, scope);
+  const maxCols = Math.max(
+    combinedCols.length,
+    ...matrix.slice(0, Math.min(20, matrix.length)).map((r) => r.length),
+    0,
+  );
+  const paddedCols: string[] = [];
+  for (let c = 0; c < maxCols; c += 1) {
+    paddedCols[c] = combinedCols[c] || '';
+  }
+
+  const autoMap =
+    scope === 'general'
+      ? getAutoGeneralMapping(paddedCols)
+      : scope === 'detailed'
+        ? getAutoDetailedMapping(paddedCols)
+        : getAutoTransitMapping(paddedCols);
+
+  const sanitizedMap: Record<string, number> = {};
+  for (const [k, idx] of Object.entries(autoMap)) {
+    sanitizedMap[k] = idx >= 0 && idx < maxCols ? idx : -1;
+  }
+
+  const fileColumns = Array.from({ length: maxCols }, (_, c) => {
+    const samples: string[] = [];
+    for (let r = dataStartIndex; r < Math.min(matrix.length, dataStartIndex + 3); r += 1) {
+      const val = cleanStr(matrix[r]?.[c]);
+      if (val) samples.push(val);
+    }
+    return {
+      index: c,
+      header: paddedCols[c] || `ستون ${c + 1}`,
+      samples,
+    };
+  });
+
+  return {
+    scope,
+    dataStartIndex,
+    fileColumns,
+    targetFields: getImportColumnsForScope(scope),
+    mapping: sanitizedMap,
+  };
 }
 
 export function parseGeneralCsv(
   matrix: string[][],
   assumedCalendar: CalendarMode,
   createdBy: string,
+  explicitMapping?: Record<string, number>,
 ): { rows: Omit<GeneralEntry, 'id'>[]; skippedEmpty: number } {
-  const { dataStartIndex } = findDataStartAndHeaders(matrix, 'general');
-  const headerSlice = matrix.slice(0, dataStartIndex);
+  const { dataStartIndex, combinedCols } = findDataStartAndHeaders(matrix, 'general');
   const maxCols = Math.max(...matrix.slice(0, Math.min(20, matrix.length)).map((r) => r.length), 28);
-  const combinedCols: string[] = [];
-  for (let c = 0; c < maxCols; c += 1) {
-    combinedCols[c] = headerSlice
-      .map((r) => normalizeHeaderText(r[c] || ''))
-      .filter((t) => t && !/^\d+$/.test(t))
-      .join(' | ');
-  }
+  const paddedCols = [...combinedCols];
+  while (paddedCols.length < maxCols) paddedCols.push('');
+  const auto = getAutoGeneralMapping(paddedCols);
+  const col = (k: string) => resolveIdx(explicitMapping, k, auto[k] ?? -1);
 
-  const idxRowNo = findCol(combinedCols, ['ردیف', 'row no', 'row'], 0);
-  const idxArrivalDate = findCol(combinedCols, ['تاریخ ورود', 'arrival date'], 1);
-  const idxReleaseNo = findCol(combinedCols, ['شماره رلیز', 'release note', 'release no'], 2);
-  const idxReleaseDate = findCol(combinedCols, ['| تاریخ', 'تاریخ Release', 'release date', 'تاریخ'], 3);
-  const idxSupplier = findCol(combinedCols, ['تامین کننده', 'تأمین کننده', 'supplier'], 4);
-  const idxDispatch = findCol(combinedCols, ['محل ارسال', 'dispatch location'], 5);
-  const idxEmployerMin = findCol(combinedCols, ['کارفرما', 'employer'], 6);
-  const idxMapnaMin = findCol(combinedCols, ['مپنا', 'mapna'], 7);
-  const idxPackingList = findCol(combinedCols, ['شماره پکینگ لیست', 'packing list'], 8);
-  const idxPackageNo = findCol(combinedCols, ['شماره نگله', 'package no'], 9);
-  const idxPackageType = findCol(combinedCols, ['نوع بسته‌بندی', 'نوع بسته بندی', 'package type'], -1);
-  const idxItemCount = findCol(combinedCols, ['تعداد اقلام', 'item count'], -1);
-  const idxDesc = findCol(combinedCols, ['شرح کالا', 'item description'], 10);
-  const idxIsland = findCol(combinedCols, ['جزیره', 'island'], 11);
-  const idxSystem = findCol(combinedCols, ['سیستم', 'system'], 12);
-  const idxSubSystem = findCol(combinedCols, ['ساب سیستم', 'sub-system', 'subsystem'], 13);
-  const idxUnit = findCol(combinedCols, ['واحد', 'unit'], 14);
-  const idxGross = findCol(combinedCols, ['ناخالص', 'gross weight'], 15);
-  const idxNet = findCol(combinedCols, ['خالص', 'net weight'], 16);
-  const idxLen = findCol(combinedCols, ['طول', 'length'], 17);
-  const idxWidth = findCol(combinedCols, ['عرض', 'width'], 18);
-  const idxHeight = findCol(combinedCols, ['ارتفاع', 'height'], 19);
-  const idxWaybill = findCol(combinedCols, ['شماره بارنامه', 'waybill'], 20);
-  const idxVehicle = findCol(combinedCols, ['شماره خودرو', 'vehicle'], 21);
-  const idxWeighbridge = findCol(combinedCols, ['وزن باسکول', 'weighbridge'], 22);
-  const idxFreight = findCol(combinedCols, ['مبلغ کرایه حمل', 'freight'], 23);
-  const idxOpiNo = findCol(combinedCols, ['شماره دعوتنامه OPI', 'opi invitation no'], 24);
-  const idxOpiDate = findCol(combinedCols, ['تاریخ دعوتنامه OPI', 'opi invitation date'], 25);
-  const idxDriver = findCol(combinedCols, ['نام راننده', 'driver'], 26);
+  const idxRowNo = col('rowNo');
+  const idxArrivalDate = col('arrivalDate');
+  const idxReleaseNo = col('releaseNo');
+  const idxReleaseDate = col('releaseDate');
+  const idxSupplier = col('supplier');
+  const idxDispatch = col('dispatchLocation');
+  const idxEmployerMin = col('employerEntryMinutesNo');
+  const idxMapnaMin = col('mapnaEntryMinutesNo');
+  const idxPackingList = col('packingListNo');
+  const idxPackageNo = col('packageNo');
+  const idxPackageType = col('packageType');
+  const idxItemCount = col('itemCount');
+  const idxDesc = col('itemDescription');
+  const idxIsland = col('island');
+  const idxSystem = col('system');
+  const idxSubSystem = col('subSystem');
+  const idxUnit = col('unit');
+  const idxGross = col('grossWeight');
+  const idxNet = col('netWeight');
+  const idxLen = col('lengthCm');
+  const idxWidth = col('widthCm');
+  const idxHeight = col('heightCm');
+  const idxWaybill = col('billOfLadingNo');
+  const idxVehicle = col('vehicleNo');
+  const idxWeighbridge = col('weighbridgeWeight');
+  const idxFreight = col('freightCost');
+  const idxOpiNo = col('opiInvitationNo');
+  const idxOpiDate = col('opiInvitationDate');
+  const idxDriver = col('driverName');
 
   const now = new Date().toISOString();
   const rows: Omit<GeneralEntry, 'id'>[] = [];
   let skippedEmpty = 0;
 
   for (let r = dataStartIndex; r < matrix.length; r += 1) {
-    const line = matrix[r];
-    const packingListNo = cleanStr(line[idxPackingList]);
-    const itemDescription = cleanStr(line[idxDesc]);
-    const packageNo = cleanStr(line[idxPackageNo]);
+    const line = matrix[r] || [];
+    const packingListNo = idxPackingList >= 0 ? cleanStr(line[idxPackingList]) : '';
+    const itemDescription = idxDesc >= 0 ? cleanStr(line[idxDesc]) : '';
+    const packageNo = idxPackageNo >= 0 ? cleanStr(line[idxPackageNo]) : '';
     if (!packingListNo && !itemDescription && !packageNo) {
       skippedEmpty += 1;
       continue;
     }
 
-    const rawRowNo = normalizeDigits(cleanStr(line[idxRowNo]));
+    const rawRowNo = idxRowNo >= 0 ? normalizeDigits(cleanStr(line[idxRowNo])) : '';
     rows.push({
       rowNo: rawRowNo,
-      arrivalDate: parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar),
-      releaseNo: cleanStr(line[idxReleaseNo]),
-      releaseDate: parseFlexibleDateToIso(line[idxReleaseDate] || '', assumedCalendar),
-      supplier: cleanStr(line[idxSupplier]),
-      dispatchLocation: cleanStr(line[idxDispatch]),
-      employerEntryMinutesNo: cleanStr(line[idxEmployerMin]),
-      mapnaEntryMinutesNo: cleanStr(line[idxMapnaMin]),
+      arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
+      releaseNo: idxReleaseNo >= 0 ? cleanStr(line[idxReleaseNo]) : '',
+      releaseDate: idxReleaseDate >= 0 ? parseFlexibleDateToIso(line[idxReleaseDate] || '', assumedCalendar) : '',
+      supplier: idxSupplier >= 0 ? cleanStr(line[idxSupplier]) : '',
+      dispatchLocation: idxDispatch >= 0 ? cleanStr(line[idxDispatch]) : '',
+      employerEntryMinutesNo: idxEmployerMin >= 0 ? cleanStr(line[idxEmployerMin]) : '',
+      mapnaEntryMinutesNo: idxMapnaMin >= 0 ? cleanStr(line[idxMapnaMin]) : '',
       packingListNo,
       packageNo,
       packageType: idxPackageType >= 0 ? cleanStr(line[idxPackageType]) : '',
       itemCount: idxItemCount >= 0 ? parseNum(line[idxItemCount]) : null,
       itemDescription,
-      island: cleanStr(line[idxIsland]),
-      system: cleanStr(line[idxSystem]),
-      subSystem: cleanStr(line[idxSubSystem]),
-      unit: cleanStr(line[idxUnit]),
-      grossWeight: parseNum(line[idxGross]),
-      netWeight: parseNum(line[idxNet]),
-      lengthCm: parseNum(line[idxLen]),
-      widthCm: parseNum(line[idxWidth]),
-      heightCm: parseNum(line[idxHeight]),
-      billOfLadingNo: cleanStr(line[idxWaybill]),
-      vehicleNo: cleanStr(line[idxVehicle]),
-      weighbridgeWeight: parseNum(line[idxWeighbridge]),
-      freightCost: parseNum(line[idxFreight]),
-      opiInvitationNo: cleanStr(line[idxOpiNo]),
-      opiInvitationDate: parseFlexibleDateToIso(line[idxOpiDate] || '', assumedCalendar),
-      driverName: cleanStr(line[idxDriver]),
+      island: idxIsland >= 0 ? cleanStr(line[idxIsland]) : '',
+      system: idxSystem >= 0 ? cleanStr(line[idxSystem]) : '',
+      subSystem: idxSubSystem >= 0 ? cleanStr(line[idxSubSystem]) : '',
+      unit: idxUnit >= 0 ? cleanStr(line[idxUnit]) : '',
+      grossWeight: idxGross >= 0 ? parseNum(line[idxGross]) : null,
+      netWeight: idxNet >= 0 ? parseNum(line[idxNet]) : null,
+      lengthCm: idxLen >= 0 ? parseNum(line[idxLen]) : null,
+      widthCm: idxWidth >= 0 ? parseNum(line[idxWidth]) : null,
+      heightCm: idxHeight >= 0 ? parseNum(line[idxHeight]) : null,
+      billOfLadingNo: idxWaybill >= 0 ? cleanStr(line[idxWaybill]) : '',
+      vehicleNo: idxVehicle >= 0 ? cleanStr(line[idxVehicle]) : '',
+      weighbridgeWeight: idxWeighbridge >= 0 ? parseNum(line[idxWeighbridge]) : null,
+      freightCost: idxFreight >= 0 ? parseNum(line[idxFreight]) : null,
+      opiInvitationNo: idxOpiNo >= 0 ? cleanStr(line[idxOpiNo]) : '',
+      opiInvitationDate: idxOpiDate >= 0 ? parseFlexibleDateToIso(line[idxOpiDate] || '', assumedCalendar) : '',
+      driverName: idxDriver >= 0 ? cleanStr(line[idxDriver]) : '',
       createdAt: now,
       updatedAt: now,
       createdBy,
@@ -300,135 +684,141 @@ export function parseDetailedCsv(
   matrix: string[][],
   assumedCalendar: CalendarMode,
   createdBy: string,
+  explicitMapping?: Record<string, number>,
 ): { rows: Omit<DetailedEntry, 'id'>[]; skippedEmpty: number } {
-  const { dataStartIndex } = findDataStartAndHeaders(matrix, 'detailed');
-  const headerSlice = matrix.slice(0, dataStartIndex);
+  const { dataStartIndex, combinedCols } = findDataStartAndHeaders(matrix, 'detailed');
   const maxCols = Math.max(...matrix.slice(0, Math.min(20, matrix.length)).map((r) => r.length), 52);
-  const combinedCols: string[] = [];
-  for (let c = 0; c < maxCols; c += 1) {
-    combinedCols[c] = headerSlice
-      .map((r) => normalizeHeaderText(r[c] || ''))
-      .filter((t) => t && !/^\d+$/.test(t))
-      .join(' | ');
-  }
+  const paddedCols = [...combinedCols];
+  while (paddedCols.length < maxCols) paddedCols.push('');
+  const auto = getAutoDetailedMapping(paddedCols);
+  const col = (k: string) => resolveIdx(explicitMapping, k, auto[k] ?? -1);
 
-  const hasRahkaran = combinedCols.some((h) => h.includes('کد راهکاران'));
-  const offset = hasRahkaran ? 0 : -1;
-
-  const idxRowNo = findCol(combinedCols, ['ردیف'], 0);
-  const idxArrivalDate = findCol(combinedCols, ['تاریخ ورود'], 1);
-  const idxSupplier = findCol(combinedCols, ['تامین کننده'], 2);
-  const idxOrigin = findCol(combinedCols, ['مبدا'], 3);
-  const idxShipmentNo = findCol(combinedCols, ['شماره محموله'], 4);
-  const idxPackageNo = findCol(combinedCols, ['شماره نگله'], 5);
-  const idxItemNo = findCol(combinedCols, ['شماره آیتم'], 6);
-  const idxGenDesc = findCol(combinedCols, ['شرح کلی'], 7);
-  const idxDesc = findCol(combinedCols, ['| شرح'], 8);
-  const idxSize = findCol(combinedCols, ['سایز'], 9);
-  const idxItemCode = findCol(combinedCols, ['کد کالا'], 10);
-  const idxPackingQty = findCol(combinedCols, ['مقدار پکینگ'], 12 + offset);
-  const idxActualQty = findCol(combinedCols, ['مقدار واقعی'], 13 + offset);
-  const idxDamagedQty = findCol(combinedCols, ['آسیب دیده']);
-  const idxMto = findCol(combinedCols, ['MTO']);
-  const idxRepNo = findCol(combinedCols, ['شماره REP'], 16 + offset);
-  const idxRepStatus = findCol(combinedCols, ['وضعیت REP'], 17 + offset);
-  const idxRepDesc = findCol(combinedCols, ['توضیحات REP'], 18 + offset);
-  const idxCountingUnit = findCol(combinedCols, ['واحد شمارش'], 19 + offset);
-  const idxIsland = findCol(combinedCols, ['جزیره'], 20 + offset);
-  const idxSystem = findCol(combinedCols, ['سیستم'], 21 + offset);
-  const idxSubSystem = findCol(combinedCols, ['ساب سیستم'], 22 + offset);
-  const idxUnit = findCol(combinedCols, ['| واحد'], 23 + offset);
-  const idxOpiNo = findCol(combinedCols, ['شماره OPI'], 24 + offset);
-  const idxOpiDate = findCol(combinedCols, ['تاریخ OPI'], 25 + offset);
-  const idxMerNo = findCol(combinedCols, ['شماره MER'], 26 + offset);
-  const idxMerStatus = findCol(combinedCols, ['وضعیت MER'], 27 + offset);
-  const idxNotes = findCol(combinedCols, ['| توضیحات'], 28 + offset);
-  const idxBalanceStatus = findCol(combinedCols, ['وضعیت بالانس'], 29 + offset);
-  const idxStorageLoc = findCol(combinedCols, ['محل نگهداری'], 30 + offset);
-  const idxGcvNo = findCol(combinedCols, ['GCV'], 31 + offset);
-  const idxReceiver = findCol(combinedCols, ['تحویل گیرنده'], 32 + offset);
-  const idxGcvQty = findCol(combinedCols, ['GCV |', 'مقدار تحویل شده'], 33 + offset);
-  const idxMivConNo = findCol(combinedCols, ['پیمانکار', 'شماره MIV'], 35 + offset);
-  const idxMivConDate = 36 + offset;
-  const idxMivConQty = 37 + offset;
-  const idxSmrConNo = 39 + offset;
-  const idxSmrConDate = 40 + offset;
-  const idxSmrConQty = 41 + offset;
-  const idxSmrConNote = 42 + offset;
-  const idxBalNo = findCol(combinedCols, ['شماره بالانس متریال'], 43 + offset);
-  const idxSmrMapNo = 44 + offset;
-  const idxSmrMapDate = 45 + offset;
-  const idxSmrMapQty = 46 + offset;
-  const idxSmrMapNote = 47 + offset;
-  const idxMivMapNo = 48 + offset;
-  const idxMivMapDate = 49 + offset;
-  const idxMivMapQty = 50 + offset;
-  const idxStocktake = findCol(combinedCols, ['انبار گردانی', 'تاریخ تولید'], 51 + offset);
+  const idxRowNo = col('rowNo');
+  const idxArrivalDate = col('arrivalDate');
+  const idxSupplier = col('supplier');
+  const idxOrigin = col('origin');
+  const idxShipmentNo = col('shipmentNo');
+  const idxPackageNo = col('packageNo');
+  const idxItemNo = col('itemNo');
+  const idxGenDesc = col('generalDescription');
+  const idxDesc = col('description');
+  const idxSize = col('size');
+  const idxItemCode = col('itemCode');
+  const idxItemCategory = col('itemCategory');
+  const idxChemicalType = col('chemicalType');
+  const idxProductionDate = col('productionDate');
+  const idxExpirationDate = col('expirationDate');
+  const idxPackingQty = col('packingQty');
+  const idxActualQty = col('actualQty');
+  const idxDamagedQty = col('damagedQty');
+  const idxMto = col('mtoRef');
+  const idxRepNo = col('repNo');
+  const idxRepStatus = col('repStatus');
+  const idxRepDesc = col('repDescription');
+  const idxCountingUnit = col('countingUnit');
+  const idxIsland = col('island');
+  const idxSystem = col('system');
+  const idxSubSystem = col('subSystem');
+  const idxUnit = col('unit');
+  const idxOpiNo = col('opiNo');
+  const idxOpiDate = col('opiDate');
+  const idxMerNo = col('merNo');
+  const idxMerStatus = col('merStatus');
+  const idxNotes = col('notes');
+  const idxBalanceStatus = col('balanceStatus');
+  const idxStorageLoc = col('storageLocation');
+  const idxGcvNo = col('gcvReceiptNo');
+  const idxReceiver = col('receiver');
+  const idxGcvQty = col('gcvDeliveredQty');
+  const idxMivConNo = col('mivContractorNo');
+  const idxMivConDate = col('mivContractorDate');
+  const idxMivConQty = col('mivContractorQty');
+  const idxSmrConNo = col('smrContractorNo');
+  const idxSmrConDate = col('smrContractorDate');
+  const idxSmrConQty = col('smrContractorQty');
+  const idxSmrConNote = col('smrContractorNote');
+  const idxBalNo = col('materialBalanceNo');
+  const idxSmrMapNo = col('smrMapnaNo');
+  const idxSmrMapDate = col('smrMapnaDate');
+  const idxSmrMapQty = col('smrMapnaQty');
+  const idxSmrMapNote = col('smrMapnaNote');
+  const idxMivMapNo = col('mivMapnaNo');
+  const idxMivMapDate = col('mivMapnaDate');
+  const idxMivMapQty = col('mivMapnaQty');
+  const idxStocktake = col('stocktakeInfo');
 
   const now = new Date().toISOString();
   const rows: Omit<DetailedEntry, 'id'>[] = [];
   let skippedEmpty = 0;
 
   for (let r = dataStartIndex; r < matrix.length; r += 1) {
-    const line = matrix[r];
-    const shipmentNo = cleanStr(line[idxShipmentNo]);
-    const description = cleanStr(line[idxDesc]);
-    const generalDescription = cleanStr(line[idxGenDesc]);
+    const line = matrix[r] || [];
+    const shipmentNo = idxShipmentNo >= 0 ? cleanStr(line[idxShipmentNo]) : '';
+    const description = idxDesc >= 0 ? cleanStr(line[idxDesc]) : '';
+    const generalDescription = idxGenDesc >= 0 ? cleanStr(line[idxGenDesc]) : '';
     if (!shipmentNo && !description && !generalDescription) {
       skippedEmpty += 1;
       continue;
     }
 
+    const chemicalType = idxChemicalType >= 0 ? cleanStr(line[idxChemicalType]) : '';
+    const parsedCat = idxItemCategory >= 0 ? normalizeItemCategory(line[idxItemCategory]) : '';
+    const itemCategory = parsedCat || (chemicalType ? 'chemicals' : '');
+
     rows.push({
-      rowNo: normalizeDigits(cleanStr(line[idxRowNo])),
-      arrivalDate: parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar),
-      supplier: cleanStr(line[idxSupplier]),
-      origin: cleanStr(line[idxOrigin]),
+      rowNo: idxRowNo >= 0 ? normalizeDigits(cleanStr(line[idxRowNo])) : '',
+      arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
+      supplier: idxSupplier >= 0 ? cleanStr(line[idxSupplier]) : '',
+      origin: idxOrigin >= 0 ? cleanStr(line[idxOrigin]) : '',
       shipmentNo,
-      packageNo: cleanStr(line[idxPackageNo]),
-      itemNo: cleanStr(line[idxItemNo]),
+      packageNo: idxPackageNo >= 0 ? cleanStr(line[idxPackageNo]) : '',
+      itemNo: idxItemNo >= 0 ? cleanStr(line[idxItemNo]) : '',
       generalDescription,
       description,
-      size: cleanStr(line[idxSize]),
-      itemCode: cleanStr(line[idxItemCode]),
-      packingQty: parseNum(line[idxPackingQty]),
-      actualQty: parseNum(line[idxActualQty]),
+      size: idxSize >= 0 ? cleanStr(line[idxSize]) : '',
+      itemCode: idxItemCode >= 0 ? cleanStr(line[idxItemCode]) : '',
+      itemCategory,
+      chemicalType,
+      productionDate: idxProductionDate >= 0 ? parseFlexibleDateToIso(line[idxProductionDate] || '', assumedCalendar) : '',
+      expirationDate: idxExpirationDate >= 0 ? parseFlexibleDateToIso(line[idxExpirationDate] || '', assumedCalendar) : '',
+      packingQty: idxPackingQty >= 0 ? parseNum(line[idxPackingQty]) : null,
+      actualQty: idxActualQty >= 0 ? parseNum(line[idxActualQty]) : null,
       damagedQty: idxDamagedQty >= 0 ? parseNum(line[idxDamagedQty]) : null,
       mtoRef: idxMto >= 0 ? cleanStr(line[idxMto]) : '',
-      repNo: cleanStr(line[idxRepNo]),
-      repStatus: cleanStr(line[idxRepStatus]),
-      repDescription: cleanStr(line[idxRepDesc]),
-      countingUnit: cleanStr(line[idxCountingUnit]),
-      island: cleanStr(line[idxIsland]),
-      system: cleanStr(line[idxSystem]),
-      subSystem: cleanStr(line[idxSubSystem]),
-      unit: cleanStr(line[idxUnit]),
-      opiNo: cleanStr(line[idxOpiNo]),
-      opiDate: parseFlexibleDateToIso(line[idxOpiDate] || '', assumedCalendar),
-      merNo: cleanStr(line[idxMerNo]),
-      merStatus: cleanStr(line[idxMerStatus]),
-      notes: cleanStr(line[idxNotes]),
-      materialBalanceNo: cleanStr(line[idxBalNo]),
-      balanceStatus: cleanStr(line[idxBalanceStatus]),
-      storageLocation: cleanStr(line[idxStorageLoc]),
-      gcvReceiptNo: cleanStr(line[idxGcvNo]),
-      receiver: cleanStr(line[idxReceiver]),
-      gcvDeliveredQty: parseNum(line[idxGcvQty]),
-      mivContractorNo: cleanStr(line[idxMivConNo]),
-      mivContractorDate: parseFlexibleDateToIso(line[idxMivConDate] || '', assumedCalendar),
-      mivContractorQty: parseNum(line[idxMivConQty]),
-      smrContractorNo: cleanStr(line[idxSmrConNo]),
-      smrContractorDate: parseFlexibleDateToIso(line[idxSmrConDate] || '', assumedCalendar),
-      smrContractorQty: parseNum(line[idxSmrConQty]),
-      smrContractorNote: cleanStr(line[idxSmrConNote]),
-      smrMapnaNo: cleanStr(line[idxSmrMapNo]),
-      smrMapnaDate: parseFlexibleDateToIso(line[idxSmrMapDate] || '', assumedCalendar),
-      smrMapnaQty: parseNum(line[idxSmrMapQty]),
-      smrMapnaNote: cleanStr(line[idxSmrMapNote]),
-      mivMapnaNo: cleanStr(line[idxMivMapNo]),
-      mivMapnaDate: parseFlexibleDateToIso(line[idxMivMapDate] || '', assumedCalendar),
-      mivMapnaQty: parseNum(line[idxMivMapQty]),
-      stocktakeInfo: cleanStr(line[idxStocktake]),
+      repNo: idxRepNo >= 0 ? cleanStr(line[idxRepNo]) : '',
+      repStatus: idxRepStatus >= 0 ? cleanStr(line[idxRepStatus]) : '',
+      repDescription: idxRepDesc >= 0 ? cleanStr(line[idxRepDesc]) : '',
+      countingUnit: idxCountingUnit >= 0 ? cleanStr(line[idxCountingUnit]) : '',
+      island: idxIsland >= 0 ? cleanStr(line[idxIsland]) : '',
+      system: idxSystem >= 0 ? cleanStr(line[idxSystem]) : '',
+      subSystem: idxSubSystem >= 0 ? cleanStr(line[idxSubSystem]) : '',
+      unit: idxUnit >= 0 ? cleanStr(line[idxUnit]) : '',
+      opiNo: idxOpiNo >= 0 ? cleanStr(line[idxOpiNo]) : '',
+      opiDate: idxOpiDate >= 0 ? parseFlexibleDateToIso(line[idxOpiDate] || '', assumedCalendar) : '',
+      merNo: idxMerNo >= 0 ? cleanStr(line[idxMerNo]) : '',
+      merStatus: idxMerStatus >= 0 ? cleanStr(line[idxMerStatus]) : '',
+      notes: idxNotes >= 0 ? cleanStr(line[idxNotes]) : '',
+      materialBalanceNo: idxBalNo >= 0 ? cleanStr(line[idxBalNo]) : '',
+      balanceStatus: idxBalanceStatus >= 0 ? cleanStr(line[idxBalanceStatus]) : '',
+      storageLocation: idxStorageLoc >= 0 ? cleanStr(line[idxStorageLoc]) : '',
+      gcvReceiptNo: idxGcvNo >= 0 ? cleanStr(line[idxGcvNo]) : '',
+      receiver: idxReceiver >= 0 ? cleanStr(line[idxReceiver]) : '',
+      gcvDeliveredQty: idxGcvQty >= 0 ? parseNum(line[idxGcvQty]) : null,
+      mivContractorNo: idxMivConNo >= 0 ? cleanStr(line[idxMivConNo]) : '',
+      mivContractorDate: idxMivConDate >= 0 ? parseFlexibleDateToIso(line[idxMivConDate] || '', assumedCalendar) : '',
+      mivContractorQty: idxMivConQty >= 0 ? parseNum(line[idxMivConQty]) : null,
+      smrContractorNo: idxSmrConNo >= 0 ? cleanStr(line[idxSmrConNo]) : '',
+      smrContractorDate: idxSmrConDate >= 0 ? parseFlexibleDateToIso(line[idxSmrConDate] || '', assumedCalendar) : '',
+      smrContractorQty: idxSmrConQty >= 0 ? parseNum(line[idxSmrConQty]) : null,
+      smrContractorNote: idxSmrConNote >= 0 ? cleanStr(line[idxSmrConNote]) : '',
+      smrMapnaNo: idxSmrMapNo >= 0 ? cleanStr(line[idxSmrMapNo]) : '',
+      smrMapnaDate: idxSmrMapDate >= 0 ? parseFlexibleDateToIso(line[idxSmrMapDate] || '', assumedCalendar) : '',
+      smrMapnaQty: idxSmrMapQty >= 0 ? parseNum(line[idxSmrMapQty]) : null,
+      smrMapnaNote: idxSmrMapNote >= 0 ? cleanStr(line[idxSmrMapNote]) : '',
+      mivMapnaNo: idxMivMapNo >= 0 ? cleanStr(line[idxMivMapNo]) : '',
+      mivMapnaDate: idxMivMapDate >= 0 ? parseFlexibleDateToIso(line[idxMivMapDate] || '', assumedCalendar) : '',
+      mivMapnaQty: idxMivMapQty >= 0 ? parseNum(line[idxMivMapQty]) : null,
+      stocktakeInfo: idxStocktake >= 0 ? cleanStr(line[idxStocktake]) : '',
       shortageBackfills: [],
       createdAt: now,
       updatedAt: now,
@@ -443,17 +833,45 @@ export function parseTransitCsv(
   matrix: string[][],
   assumedCalendar: CalendarMode,
   createdBy: string,
+  explicitMapping?: Record<string, number>,
 ): { rows: Omit<TransitEntry, 'id'>[]; skippedEmpty: number } {
-  const { dataStartIndex } = findDataStartAndHeaders(matrix, 'transit');
+  const { dataStartIndex, combinedCols } = findDataStartAndHeaders(matrix, 'transit');
+  const maxCols = Math.max(...matrix.slice(0, Math.min(20, matrix.length)).map((r) => r.length), 20);
+  const paddedCols = [...combinedCols];
+  while (paddedCols.length < maxCols) paddedCols.push('');
+  const auto = getAutoTransitMapping(paddedCols);
+  const col = (k: string) => resolveIdx(explicitMapping, k, auto[k] ?? -1);
+
+  const idxArrivalDate = col('arrivalDate');
+  const idxOverallStatus = col('overallStatus');
+  const idxInspectionReq = col('inspectionRequest');
+  const idxReleaseNetNo = col('releaseNetNo');
+  const idxReleaseNetDate = col('releaseNetDate');
+  const idxShippingNotice = col('mapnaShippingNotice');
+  const idxInterimNo = col('interimNo');
+  const idxInterimDate = col('interimDate');
+  const idxSupplier = col('supplier');
+  const idxDispatch = col('dispatchLocation');
+  const idxPackingList = col('packingListNo');
+  const idxPackageNo = col('packageNo');
+  const idxItemDescription = col('itemDescription');
+  const idxSystem = col('system');
+  const idxSubSystem = col('subSystem');
+  const idxUnit = col('unit');
+  const idxSupplyCode = col('equipmentSupplyCode');
+  const idxCarrier = col('carrierContractor');
+  const idxWaybill = col('billOfLadingNo');
+  const idxAmount = col('amount');
+
   const now = new Date().toISOString();
   const rows: Omit<TransitEntry, 'id'>[] = [];
   let skippedEmpty = 0;
 
   for (let r = dataStartIndex; r < matrix.length; r += 1) {
-    const line = matrix[r];
-    const packingListNo = cleanStr(line[10]);
-    const itemDescription = cleanStr(line[12]);
-    const overallStatus = cleanStr(line[1]);
+    const line = matrix[r] || [];
+    const packingListNo = idxPackingList >= 0 ? cleanStr(line[idxPackingList]) : '';
+    const itemDescription = idxItemDescription >= 0 ? cleanStr(line[idxItemDescription]) : '';
+    const overallStatus = idxOverallStatus >= 0 ? cleanStr(line[idxOverallStatus]) : '';
     if (!packingListNo && !itemDescription && !overallStatus) {
       skippedEmpty += 1;
       continue;
@@ -461,26 +879,26 @@ export function parseTransitCsv(
 
     rows.push({
       rowNo: String(rows.length + 1),
-      arrivalDate: parseFlexibleDateToIso(line[0] || '', assumedCalendar),
+      arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
       overallStatus,
-      inspectionRequest: cleanStr(line[2]),
-      releaseNetNo: cleanStr(line[3]),
-      releaseNetDate: parseFlexibleDateToIso(line[4] || '', assumedCalendar),
-      mapnaShippingNotice: cleanStr(line[5]),
-      interimNo: cleanStr(line[6]),
-      interimDate: parseFlexibleDateToIso(line[7] || '', assumedCalendar),
-      supplier: cleanStr(line[8]),
-      dispatchLocation: cleanStr(line[9]),
+      inspectionRequest: idxInspectionReq >= 0 ? cleanStr(line[idxInspectionReq]) : '',
+      releaseNetNo: idxReleaseNetNo >= 0 ? cleanStr(line[idxReleaseNetNo]) : '',
+      releaseNetDate: idxReleaseNetDate >= 0 ? parseFlexibleDateToIso(line[idxReleaseNetDate] || '', assumedCalendar) : '',
+      mapnaShippingNotice: idxShippingNotice >= 0 ? cleanStr(line[idxShippingNotice]) : '',
+      interimNo: idxInterimNo >= 0 ? cleanStr(line[idxInterimNo]) : '',
+      interimDate: idxInterimDate >= 0 ? parseFlexibleDateToIso(line[idxInterimDate] || '', assumedCalendar) : '',
+      supplier: idxSupplier >= 0 ? cleanStr(line[idxSupplier]) : '',
+      dispatchLocation: idxDispatch >= 0 ? cleanStr(line[idxDispatch]) : '',
       packingListNo,
-      packageNo: cleanStr(line[11]),
+      packageNo: idxPackageNo >= 0 ? cleanStr(line[idxPackageNo]) : '',
       itemDescription,
-      system: cleanStr(line[13]),
-      subSystem: cleanStr(line[14]),
-      unit: cleanStr(line[15]),
-      equipmentSupplyCode: cleanStr(line[16]),
-      carrierContractor: cleanStr(line[17]),
-      billOfLadingNo: cleanStr(line[18]),
-      amount: parseNum(line[19]),
+      system: idxSystem >= 0 ? cleanStr(line[idxSystem]) : '',
+      subSystem: idxSubSystem >= 0 ? cleanStr(line[idxSubSystem]) : '',
+      unit: idxUnit >= 0 ? cleanStr(line[idxUnit]) : '',
+      equipmentSupplyCode: idxSupplyCode >= 0 ? cleanStr(line[idxSupplyCode]) : '',
+      carrierContractor: idxCarrier >= 0 ? cleanStr(line[idxCarrier]) : '',
+      billOfLadingNo: idxWaybill >= 0 ? cleanStr(line[idxWaybill]) : '',
+      amount: idxAmount >= 0 ? parseNum(line[idxAmount]) : null,
       createdAt: now,
       updatedAt: now,
       createdBy,

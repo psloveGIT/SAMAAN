@@ -2,10 +2,13 @@ import { normalizeDigits } from './jalali.ts';
 
 export type FilterOperator = 'contains' | 'equals' | 'not_equals' | 'gte' | 'lte' | 'not_empty';
 
+export type FilterConnector = 'AND' | 'OR';
+
 export interface CustomFieldFilter {
   field: string;
   op: FilterOperator;
   value: string;
+  connector?: FilterConnector;
 }
 
 export interface FilterFieldOption {
@@ -68,7 +71,13 @@ export const DETAILED_FILTER_FIELDS: FilterFieldOption[] = [
   { key: 'storageLocation', labelFa: 'محل نگهداری', labelEn: 'Storage Location' },
   { key: 'opiNo', labelFa: 'شماره OPI', labelEn: 'OPI No.' },
   { key: 'merNo', labelFa: 'شماره MER', labelEn: 'MER No.' },
+  { key: 'merStatus', labelFa: 'وضعیت MER', labelEn: 'MER Status' },
   { key: 'repNo', labelFa: 'شماره REP', labelEn: 'REP No.' },
+  { key: 'repStatus', labelFa: 'وضعیت REP', labelEn: 'REP Status' },
+  { key: 'itemCategory', labelFa: 'دسته‌بندی تخصصی قلم', labelEn: 'Item Classification' },
+  { key: 'chemicalType', labelFa: 'نوع ماده شیمیایی', labelEn: 'Chemical Type' },
+  { key: 'productionDate', labelFa: 'تاریخ تولید', labelEn: 'Production Date' },
+  { key: 'expirationDate', labelFa: 'تاریخ انقضاء', labelEn: 'Expiration Date' },
   { key: 'gcvReceiptNo', labelFa: 'شماره رسید', labelEn: 'Receipt No.' },
   { key: 'mivContractorNo', labelFa: 'شماره MIV', labelEn: 'MIV No.' },
   { key: 'materialBalanceNo', labelFa: 'شماره بالانس متریال', labelEn: 'Material Balance No.' },
@@ -125,6 +134,7 @@ export function parseCustomFiltersParam(raw: string | null | undefined): CustomF
         field: f.field.trim(),
         op: f.op || 'contains',
         value: String(f.value ?? '').trim(),
+        connector: f.connector === 'OR' ? ('OR' as const) : ('AND' as const),
       }))
       .filter((f) => f.op === 'not_empty' || f.value !== '');
   } catch {
@@ -142,40 +152,48 @@ export function matchesMultiPacking(
   return selectedPackings.some((p) => normalizeDigits(p).trim().toLowerCase() === val);
 }
 
+function evaluateSingleFilter(record: Record<string, unknown>, f: CustomFieldFilter): boolean {
+  const rawVal = record[f.field];
+  const strVal = rawVal === null || rawVal === undefined ? '' : String(rawVal).trim();
+  const normVal = normalizeDigits(strVal).toLowerCase();
+  const normTarget = normalizeDigits(f.value).toLowerCase().trim();
+
+  if (f.op === 'not_empty') {
+    return Boolean(strVal);
+  }
+  if (f.op === 'contains') {
+    return normVal.includes(normTarget);
+  }
+  if (f.op === 'equals') {
+    return normVal === normTarget;
+  }
+  if (f.op === 'not_equals') {
+    return normVal !== normTarget;
+  }
+  if (f.op === 'gte' || f.op === 'lte') {
+    const nVal = Number(normVal.replace(/[,،٬]/g, ''));
+    const nTarget = Number(normTarget.replace(/[,،٬]/g, ''));
+    if (!Number.isFinite(nVal) || !Number.isFinite(nTarget)) return false;
+    if (f.op === 'gte') return nVal >= nTarget;
+    return nVal <= nTarget;
+  }
+  return true;
+}
+
 export function matchesCustomFilters(
   record: Record<string, unknown>,
   filters: CustomFieldFilter[],
 ): boolean {
   if (!filters || filters.length === 0) return true;
-  for (const f of filters) {
-    const rawVal = record[f.field];
-    const strVal = rawVal === null || rawVal === undefined ? '' : String(rawVal).trim();
-    const normVal = normalizeDigits(strVal).toLowerCase();
-    const normTarget = normalizeDigits(f.value).toLowerCase().trim();
-
-    if (f.op === 'not_empty') {
-      if (!strVal) return false;
-      continue;
-    }
-    if (f.op === 'contains') {
-      if (!normVal.includes(normTarget)) return false;
-      continue;
-    }
-    if (f.op === 'equals') {
-      if (normVal !== normTarget) return false;
-      continue;
-    }
-    if (f.op === 'not_equals') {
-      if (normVal === normTarget) return false;
-      continue;
-    }
-    if (f.op === 'gte' || f.op === 'lte') {
-      const nVal = Number(normVal.replace(/[,،٬]/g, ''));
-      const nTarget = Number(normTarget.replace(/[,،٬]/g, ''));
-      if (!Number.isFinite(nVal) || !Number.isFinite(nTarget)) return false;
-      if (f.op === 'gte' && nVal < nTarget) return false;
-      if (f.op === 'lte' && nVal > nTarget) return false;
+  let acc = evaluateSingleFilter(record, filters[0]);
+  for (let i = 1; i < filters.length; i += 1) {
+    const f = filters[i];
+    const matched = evaluateSingleFilter(record, f);
+    if (f.connector === 'OR') {
+      acc = acc || matched;
+    } else {
+      acc = acc && matched;
     }
   }
-  return true;
+  return acc;
 }

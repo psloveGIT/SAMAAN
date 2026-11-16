@@ -33,7 +33,7 @@ import type {
 } from '../shared/types.ts';
 import { computeDetailedEntry } from '../shared/formulas.ts';
 import { normalizeDigits } from '../shared/jalali.ts';
-import { sortDetailedEntries, sortGeneralEntries } from '../shared/sorting.ts';
+import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../shared/sorting.ts';
 import type { StoredUser } from './auth.ts';
 
 export interface PersistedDatabase {
@@ -121,6 +121,7 @@ export class SamaanStore {
     this.db = this.loadFromDisk();
     this.renumberScope('general');
     this.renumberScope('detailed');
+    this.renumberScope('transit');
     this.rebuildIndexes();
   }
 
@@ -212,9 +213,9 @@ export class SamaanStore {
       }
       return;
     }
-    const total = this.db.transit.length;
-    for (let i = 0; i < total; i += 1) {
-      this.db.transit[i].rowNo = String(total - i);
+    sortTransitEntries(this.db.transit);
+    for (let i = 0; i < this.db.transit.length; i += 1) {
+      this.db.transit[i].rowNo = String(i + 1);
     }
   }
 
@@ -457,24 +458,35 @@ export class SamaanStore {
     const matches = this.transitByPacking.get(pk);
     if (!matches || matches.length === 0) return 0;
 
+    const genMatches = this.generalByPacking.get(pk) || [];
+    const genArrival = genMatches.find((g) => normKey(g.arrivalDate))?.arrivalDate || '';
+
     let updated = 0;
     const now = new Date().toISOString();
     for (const t of matches) {
       const st = normKey(t.overallStatus);
-      if (st !== 'رسیده' && st.toLowerCase() !== 'arrived') {
-        t.overallStatus = 'رسیده';
+      const needsStatus = st !== 'رسیده' && st.toLowerCase() !== 'arrived';
+      const needsDate = Boolean(genArrival && normKey(t.arrivalDate) !== normKey(genArrival));
+      if (needsStatus || needsDate) {
+        if (needsStatus) {
+          t.overallStatus = 'رسیده';
+        }
+        if (genArrival) {
+          t.arrivalDate = genArrival;
+        }
         t.linkedGeneralPackingNo = pk;
         t.updatedAt = now;
         updated += 1;
       }
     }
     if (updated > 0) {
+      this.renumberScope('transit');
       this.addAudit({
         user,
         action: 'AUTO_TRANSIT_ARRIVED',
         scope: 'transit',
         targetId: pk,
-        summary: `تغییر خودکار وضعیت کلی ${updated} ردیف در راه برای پکینگ لیست ${pk} به «رسیده»`,
+        summary: `به‌روزرسانی خودکار وضعیت «رسیده» و تاریخ ورود برای ${updated} ردیف در راه (پکینگ ${pk})`,
       });
     }
     return updated;
@@ -531,6 +543,7 @@ export class SamaanStore {
     this.db.periodicInspections = Array.isArray(snapshot.periodicInspections) ? snapshot.periodicInspections : [];
     this.renumberScope('general');
     this.renumberScope('detailed');
+    this.renumberScope('transit');
     this.rebuildIndexes();
     this.addAudit({
       user,

@@ -2,7 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronDown, Filter, Plus, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest } from '../lib/api.ts';
-import type { CustomFieldFilter, FilterFieldOption, FilterOperator } from '../shared/customFilters.ts';
+import type {
+  CustomFieldFilter,
+  FilterConnector,
+  FilterFieldOption,
+  FilterOperator,
+} from '../shared/customFilters.ts';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface MultiPackingAndFieldFilterProps {
@@ -31,6 +36,7 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
   const [expanded, setExpanded] = useState(false);
 
   // Draft condition state
+  const [draftConnector, setDraftConnector] = useState<FilterConnector>('AND');
   const [draftField, setDraftField] = useState<string>(fields[0]?.key || '');
   const [draftOp, setDraftOp] = useState<FilterOperator>('contains');
   const [draftVal, setDraftVal] = useState('');
@@ -68,13 +74,28 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
       field: draftField,
       op: draftOp,
       value: draftOp === 'not_empty' ? '' : draftVal.trim(),
+      connector: customFilters.length > 0 ? draftConnector : 'AND',
     };
     onChangeCustomFilters([...customFilters, next]);
     setDraftVal('');
   };
 
   const removeCustomFilter = (idx: number) => {
-    onChangeCustomFilters(customFilters.filter((_, i) => i !== idx));
+    const remaining = customFilters.filter((_, i) => i !== idx);
+    if (remaining.length > 0 && remaining[0].connector !== 'AND') {
+      remaining[0] = { ...remaining[0], connector: 'AND' };
+    }
+    onChangeCustomFilters(remaining);
+  };
+
+  const toggleConditionConnector = (idx: number) => {
+    onChangeCustomFilters(
+      customFilters.map((f, i) =>
+        i === idx
+          ? { ...f, connector: f.connector === 'OR' ? 'AND' : 'OR' }
+          : f,
+      ),
+    );
   };
 
   const opLabel = (op: FilterOperator) => {
@@ -207,8 +228,8 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
           <Filter className="w-3.5 h-3.5" />
           <span>
             {isFa
-              ? `فیلتر فیلدهای دلخواه${customFilters.length > 0 ? ` (${customFilters.length.toLocaleString('fa-IR')})` : ''}`
-              : `Custom Field Filters${customFilters.length > 0 ? ` (${customFilters.length})` : ''}`}
+              ? `فیلتر فیلدهای دلخواه (و / یا)${customFilters.length > 0 ? ` (${customFilters.length.toLocaleString('fa-IR')})` : ''}`
+              : `Custom Field Filters (AND/OR)${customFilters.length > 0 ? ` (${customFilters.length})` : ''}`}
           </span>
         </button>
 
@@ -249,23 +270,36 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
             </span>
           ))}
           {customFilters.map((f, idx) => (
-            <span
-              key={`${f.field}-${f.op}-${idx}`}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-            >
-              <span className="font-semibold text-[var(--text-primary)]">{fieldLabel(f.field)}</span>
-              <span className="text-[var(--text-muted)]">{opLabel(f.op)}</span>
-              {f.op !== 'not_empty' && (
-                <span className="font-semibold text-[var(--accent-primary)] bidi-plaintext">{f.value}</span>
+            <React.Fragment key={`${f.field}-${f.op}-${idx}`}>
+              {idx > 0 && (
+                <button
+                  type="button"
+                  onClick={() => toggleConditionConnector(idx)}
+                  title={isFa ? 'تغییر عملگر منطقی (و / یا)' : 'Toggle AND / OR'}
+                  className={`px-2 py-0.5 rounded-md border text-[11px] font-bold transition-colors ${
+                    f.connector === 'OR'
+                      ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
+                      : 'border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  }`}
+                >
+                  {f.connector === 'OR' ? (isFa ? 'یا (OR)' : 'OR') : isFa ? 'و (AND)' : 'AND'}
+                </button>
               )}
-              <button
-                type="button"
-                onClick={() => removeCustomFilter(idx)}
-                className="text-[var(--text-muted)] hover:text-[var(--status-danger)]"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs">
+                <span className="font-semibold text-[var(--text-primary)]">{fieldLabel(f.field)}</span>
+                <span className="text-[var(--text-muted)]">{opLabel(f.op)}</span>
+                {f.op !== 'not_empty' && (
+                  <span className="font-semibold text-[var(--accent-primary)] bidi-plaintext">{f.value}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeCustomFilter(idx)}
+                  className="text-[var(--text-muted)] hover:text-[var(--status-danger)]"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </span>
+            </React.Fragment>
           ))}
         </div>
       )}
@@ -273,6 +307,22 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
       {/* Custom field filter builder row */}
       {(expanded || !compact) && expanded && (
         <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] flex flex-wrap items-end gap-2">
+          {customFilters.length > 0 && (
+            <div className="min-w-[110px]">
+              <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                {isFa ? 'رابط منطقی' : 'Logic'}
+              </label>
+              <select
+                value={draftConnector}
+                onChange={(e) => setDraftConnector(e.target.value as FilterConnector)}
+                className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-semibold"
+              >
+                <option value="AND">{isFa ? 'و (AND)' : 'AND'}</option>
+                <option value="OR">{isFa ? 'یا (OR)' : 'OR'}</option>
+              </select>
+            </div>
+          )}
+
           <div className="min-w-[170px] flex-1">
             <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
               {isFa ? 'فیلد مورد نظر' : 'Field'}

@@ -109,6 +109,12 @@ html {
   color: var(--text-primary);
   font-family: "Vazirmatn", "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+body {
+  overflow-x: hidden;
+  min-height: 100dvh;
 }
 
 html[lang="en"] {

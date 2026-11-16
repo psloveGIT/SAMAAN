@@ -36,6 +36,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { getTodayIso } from '../shared/jalali.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { ProjectManagerModal } from './ProjectManagerModal.tsx';
+import { PWAInstallButton } from './PWAInstallButton.tsx';
 import { SamaanLogo } from './SamaanLogo.tsx';
 
 export type NavTabKey =
@@ -139,7 +140,7 @@ export const Layout: React.FC<LayoutProps> = ({
   const todayFormatted = formatDate(getTodayIso());
 
   return (
-    <div className="min-h-screen flex bg-[var(--bg-canvas)] text-[var(--text-primary)]">
+    <div className="min-h-[100dvh] flex bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       {/* Mobile Sidebar Backdrop */}
       {mobileMenuOpen && (
         <div
@@ -150,7 +151,7 @@ export const Layout: React.FC<LayoutProps> = ({
 
       {/* Sidebar Navigation */}
       <aside
-        className={`fixed lg:sticky top-0 z-50 h-screen w-64 shrink-0 border-e border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-col justify-between transition-transform duration-200 print:hidden ${
+        className={`fixed lg:sticky top-0 z-50 h-[100dvh] w-64 shrink-0 border-e border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-col justify-between transition-transform duration-200 print:hidden ${
           mobileMenuOpen
             ? 'translate-x-0'
             : prefs.language === 'fa'
@@ -343,12 +344,13 @@ export const Layout: React.FC<LayoutProps> = ({
             <span>{todayFormatted}</span>
           </div>
 
-          <div className="flex items-center shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <PWAInstallButton />
             {canEdit && (
               <button
                 type="button"
                 onClick={onOpenNewPacking}
-                className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+                className="h-9 px-3 sm:px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 <span>{t.controls.newPacking}</span>
