@@ -7,6 +7,7 @@ import { BalanceView } from './components/BalanceView.tsx';
 import { CategoryManagerView } from './components/CategoryManagerView.tsx';
 import { CustomFormsRunnerView } from './components/CustomFormsRunnerView.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
+import { DatabasePurgeView } from './components/DatabasePurgeView.tsx';
 import { DetailedView } from './components/DetailedView.tsx';
 import { EmployersStudioView } from './components/EmployersStudioView.tsx';
 import { GcvView } from './components/GcvView.tsx';
@@ -76,6 +77,12 @@ const SamaanWorkspace: React.FC = () => {
   useEffect(() => {
     loadCategories();
   }, [loadCategories, refreshSignal, activeProjectId]);
+
+  useEffect(() => {
+    if (user && user.role !== 'admin' && activeTab === 'databasePurge') {
+      setActiveTab('dashboard');
+    }
+  }, [user, activeTab]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
@@ -250,6 +257,10 @@ const SamaanWorkspace: React.FC = () => {
           {activeTab === 'usersAudit' && <UsersAuditView />}
 
           {activeTab === 'backup' && <BackupView onRestored={bumpRefresh} />}
+
+          {activeTab === 'databasePurge' && (
+            <DatabasePurgeView refreshSignal={refreshSignal} onPurged={bumpRefresh} />
+          )}
 
           <PackingWizardModal
             open={packingModalOpen}

@@ -824,3 +824,34 @@ export interface DatabaseSnapshot {
   periodicInspections?: PeriodicInspectionRecord[];
   customFormSubmissions?: CustomFormSubmission[];
 }
+
+export type PurgeableSectionKey =
+  | 'general'
+  | 'detailed'
+  | 'transit'
+  | 'siteEntryMinutes'
+  | 'opiInvitations'
+  | 'opiMinutes'
+  | 'osdrReports'
+  | 'gcvDocuments'
+  | 'mivDocuments'
+  | 'substitutions'
+  | 'materialEstimates'
+  | 'periodicInspections'
+  | 'customFormSubmissions'
+  | 'categories'
+  | 'trash'
+  | 'auditLogs';
+
+export interface DatabaseSectionSummaryItem {
+  key: PurgeableSectionKey;
+  count: number;
+}
+
+export interface DatabasePurgeResponse {
+  ok: boolean;
+  purgedSections: PurgeableSectionKey[];
+  deletedCounts: Partial<Record<PurgeableSectionKey, number>>;
+  totalDeleted: number;
+}
+

@@ -224,7 +224,7 @@ export class SamaanStore {
     }
   }
 
-  public rebuildIndexes(): void {
+  public rebuildIndexes(syncCategories = true): void {
     this.generalRowNos.clear();
     this.detailedRowNos.clear();
     this.transitRowNos.clear();
@@ -241,14 +241,16 @@ export class SamaanStore {
         list.push(g);
         this.generalByPacking.set(pk, list);
       }
-      this.registerCategoriesFromFields({
-        island: g.island,
-        system: g.system,
-        subSystem: g.subSystem,
-        unit: g.unit,
-        supplier: g.supplier,
-        dispatchLocation: g.dispatchLocation,
-      });
+      if (syncCategories) {
+        this.registerCategoriesFromFields({
+          island: g.island,
+          system: g.system,
+          subSystem: g.subSystem,
+          unit: g.unit,
+          supplier: g.supplier,
+          dispatchLocation: g.dispatchLocation,
+        });
+      }
     }
 
     for (const d of this.db.detailed) {
@@ -260,15 +262,17 @@ export class SamaanStore {
         list.push(d);
         this.detailedByPacking.set(pk, list);
       }
-      this.registerCategoriesFromFields({
-        island: d.island,
-        system: d.system,
-        subSystem: d.subSystem,
-        unit: d.unit,
-        supplier: d.supplier,
-        dispatchLocation: d.origin,
-        storageLocation: d.storageLocation,
-      });
+      if (syncCategories) {
+        this.registerCategoriesFromFields({
+          island: d.island,
+          system: d.system,
+          subSystem: d.subSystem,
+          unit: d.unit,
+          supplier: d.supplier,
+          dispatchLocation: d.origin,
+          storageLocation: d.storageLocation,
+        });
+      }
     }
 
     for (const t of this.db.transit) {
@@ -280,14 +284,16 @@ export class SamaanStore {
         list.push(t);
         this.transitByPacking.set(pk, list);
       }
-      this.registerCategoriesFromFields({
-        system: t.system,
-        subSystem: t.subSystem,
-        unit: t.unit,
-        supplier: t.supplier,
-        dispatchLocation: t.dispatchLocation,
-        carrierContractor: t.carrierContractor,
-      });
+      if (syncCategories) {
+        this.registerCategoriesFromFields({
+          system: t.system,
+          subSystem: t.subSystem,
+          unit: t.unit,
+          supplier: t.supplier,
+          dispatchLocation: t.dispatchLocation,
+          carrierContractor: t.carrierContractor,
+        });
+      }
     }
   }
 

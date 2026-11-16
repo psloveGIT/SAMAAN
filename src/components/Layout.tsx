@@ -11,6 +11,7 @@ import {
   ClipboardList,
   ClipboardSignature,
   CornerUpLeft,
+  DatabaseZap,
   Eye,
   FileCheck2,
   FilePlus2,
@@ -67,7 +68,8 @@ export type NavTabKey =
   | 'categories'
   | 'trash'
   | 'usersAudit'
-  | 'backup';
+  | 'backup'
+  | 'databasePurge';
 
 type NavGroupId = 'core' | 'operations' | 'planning' | 'admin';
 
@@ -189,10 +191,19 @@ export const Layout: React.FC<LayoutProps> = ({
           { key: 'trash', label: t.nav.trash, icon: <Trash2 className="w-4 h-4 shrink-0" /> },
           { key: 'usersAudit', label: t.nav.usersAudit, icon: <Shield className="w-4 h-4 shrink-0" /> },
           { key: 'backup', label: t.nav.backup, icon: <HardDriveDownload className="w-4 h-4 shrink-0" /> },
+          ...(user?.role === 'admin'
+            ? [
+                {
+                  key: 'databasePurge' as NavTabKey,
+                  label: t.nav.databasePurge,
+                  icon: <DatabaseZap className="w-4 h-4 shrink-0 text-[var(--status-danger)]" />,
+                },
+              ]
+            : []),
         ],
       },
     ],
-    [t],
+    [t, user?.role],
   );
 
   // Automatically expand the group that holds the currently active tab

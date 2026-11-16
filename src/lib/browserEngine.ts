@@ -59,6 +59,8 @@ import type {
   PackingStatusMeta,
   PeriodicInspectionRecord,
   ProjectInfo,
+  PurgeableSectionKey,
+  DatabaseSectionSummaryItem,
   ShortageBackfillRecord,
   SiteEntryMinutesRecord,
   SubstitutionRecord,
@@ -4878,6 +4880,204 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return {
       ok: true,
       counts: { general: db.general.length, detailed: db.detailed.length, transit: db.transit.length },
+    } as T;
+  }
+
+  if (pathname === '/api/database/sections-summary' && method === 'GET') {
+    requireAuth(['admin']);
+    const categoriesCount = Object.values(db.categories).reduce(
+      (sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0),
+      0,
+    );
+    const items: DatabaseSectionSummaryItem[] = [
+      { key: 'general', count: db.general.length },
+      { key: 'detailed', count: db.detailed.length },
+      { key: 'transit', count: db.transit.length },
+      { key: 'siteEntryMinutes', count: db.siteEntryMinutes.length },
+      { key: 'opiInvitations', count: db.opiInvitations.length },
+      { key: 'opiMinutes', count: db.opiMinutes.length },
+      { key: 'osdrReports', count: db.osdrReports.length },
+      { key: 'gcvDocuments', count: db.gcvDocuments.length },
+      { key: 'mivDocuments', count: db.mivDocuments.length },
+      { key: 'substitutions', count: db.substitutions.length },
+      { key: 'materialEstimates', count: db.materialEstimates.length },
+      { key: 'periodicInspections', count: db.periodicInspections.length },
+      { key: 'customFormSubmissions', count: db.customFormSubmissions.length },
+      { key: 'categories', count: categoriesCount },
+      { key: 'trash', count: db.trash.length },
+      { key: 'auditLogs', count: db.auditLogs.length },
+    ];
+    return { items } as T;
+  }
+
+  if (pathname === '/api/database/purge' && method === 'POST') {
+    const u = requireAuth(['admin']);
+    const rawSections = Array.isArray(body.sections) ? (body.sections as PurgeableSectionKey[]) : [];
+    const wipeAll = Boolean(body.wipeAll);
+    const confirmationText = String(body.confirmationText || '');
+
+    const allKeys: PurgeableSectionKey[] = [
+      'general',
+      'detailed',
+      'transit',
+      'siteEntryMinutes',
+      'opiInvitations',
+      'opiMinutes',
+      'osdrReports',
+      'gcvDocuments',
+      'mivDocuments',
+      'substitutions',
+      'materialEstimates',
+      'periodicInspections',
+      'customFormSubmissions',
+      'categories',
+      'trash',
+      'auditLogs',
+    ];
+    const validKeySet = new Set<string>(allKeys);
+    const selected: PurgeableSectionKey[] = wipeAll
+      ? [...allKeys]
+      : Array.from(new Set(rawSections.filter((k): k is PurgeableSectionKey => validKeySet.has(k))));
+
+    if (selected.length === 0) {
+      throw new StaticEngineError(errMsg('حداقل یک بخش برای حذف انتخاب کنید.', 'Select at least one section to purge.'), 400);
+    }
+
+    const normConfirm = confirmationText
+      .replace(/\u200c/g, ' ')
+      .replace(/ي/g, 'ی')
+      .replace(/ك/g, 'ک')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const upperConfirm = normConfirm.toUpperCase();
+    const isFullWipe = wipeAll || selected.length === allKeys.length;
+    const validConfirm = isFullWipe
+      ? normConfirm === 'حذف کل دیتابیس' || upperConfirm === 'DELETE ALL'
+      : normConfirm === 'حذف اطلاعات' || upperConfirm === 'DELETE' || normConfirm === 'حذف کل دیتابیس' || upperConfirm === 'DELETE ALL';
+
+    if (!validConfirm) {
+      throw new StaticEngineError(
+        errMsg(
+          isFullWipe
+            ? 'عبارت امنیتی اشتباه است. برای حذف کل دیتابیس باید «حذف کل دیتابیس» یا «DELETE ALL» را تایپ کنید.'
+            : 'عبارت امنیتی اشتباه است. برای تایید حذف باید «حذف اطلاعات» یا «DELETE» را تایپ کنید.',
+          isFullWipe
+            ? 'Invalid confirmation phrase. Type "DELETE ALL" to wipe all sections.'
+            : 'Invalid confirmation phrase. Type "DELETE" to confirm section purge.',
+        ),
+        400,
+      );
+    }
+
+    const deletedCounts: Partial<Record<PurgeableSectionKey, number>> = {};
+    let totalDeleted = 0;
+
+    for (const sec of selected) {
+      switch (sec) {
+        case 'general':
+          deletedCounts.general = db.general.length;
+          totalDeleted += db.general.length;
+          db.general = [];
+          db.packingMeta = {};
+          break;
+        case 'detailed':
+          deletedCounts.detailed = db.detailed.length;
+          totalDeleted += db.detailed.length;
+          db.detailed = [];
+          break;
+        case 'transit':
+          deletedCounts.transit = db.transit.length;
+          totalDeleted += db.transit.length;
+          db.transit = [];
+          break;
+        case 'siteEntryMinutes':
+          deletedCounts.siteEntryMinutes = db.siteEntryMinutes.length;
+          totalDeleted += db.siteEntryMinutes.length;
+          db.siteEntryMinutes = [];
+          break;
+        case 'opiInvitations':
+          deletedCounts.opiInvitations = db.opiInvitations.length;
+          totalDeleted += db.opiInvitations.length;
+          db.opiInvitations = [];
+          break;
+        case 'opiMinutes':
+          deletedCounts.opiMinutes = db.opiMinutes.length;
+          totalDeleted += db.opiMinutes.length;
+          db.opiMinutes = [];
+          break;
+        case 'osdrReports':
+          deletedCounts.osdrReports = db.osdrReports.length;
+          totalDeleted += db.osdrReports.length;
+          db.osdrReports = [];
+          break;
+        case 'gcvDocuments':
+          deletedCounts.gcvDocuments = db.gcvDocuments.length;
+          totalDeleted += db.gcvDocuments.length;
+          db.gcvDocuments = [];
+          break;
+        case 'mivDocuments':
+          deletedCounts.mivDocuments = db.mivDocuments.length;
+          totalDeleted += db.mivDocuments.length;
+          db.mivDocuments = [];
+          break;
+        case 'substitutions':
+          deletedCounts.substitutions = db.substitutions.length;
+          totalDeleted += db.substitutions.length;
+          db.substitutions = [];
+          break;
+        case 'materialEstimates':
+          deletedCounts.materialEstimates = db.materialEstimates.length;
+          totalDeleted += db.materialEstimates.length;
+          db.materialEstimates = [];
+          break;
+        case 'periodicInspections':
+          deletedCounts.periodicInspections = db.periodicInspections.length;
+          totalDeleted += db.periodicInspections.length;
+          db.periodicInspections = [];
+          break;
+        case 'customFormSubmissions':
+          deletedCounts.customFormSubmissions = db.customFormSubmissions.length;
+          totalDeleted += db.customFormSubmissions.length;
+          db.customFormSubmissions = [];
+          break;
+        case 'categories': {
+          const catCount = Object.values(db.categories).reduce((s, arr) => s + arr.length, 0);
+          deletedCounts.categories = catCount;
+          totalDeleted += catCount;
+          db.categories = createEmptyCategories();
+          break;
+        }
+        case 'trash':
+          deletedCounts.trash = db.trash.length;
+          totalDeleted += db.trash.length;
+          db.trash = [];
+          break;
+        case 'auditLogs':
+          deletedCounts.auditLogs = db.auditLogs.length;
+          totalDeleted += db.auditLogs.length;
+          db.auditLogs = [];
+          break;
+      }
+    }
+
+    if (!selected.includes('categories')) {
+      rebuildCategories(db);
+    }
+    addAudit(
+      db,
+      sanitizeUser(u),
+      isFullWipe ? 'PURGE_ALL_DATABASE' : 'PURGE_DATABASE_SECTIONS',
+      'backup',
+      selected.join(','),
+      `پاکسازی امنیتی دیتابیس توسط مدیر کل (${selected.length} بخش، مجموع ${totalDeleted} رکورد حذف شد): ${selected.join('، ')}`,
+    );
+    await saveActiveDb();
+
+    return {
+      ok: true,
+      purgedSections: selected,
+      deletedCounts,
+      totalDeleted,
     } as T;
   }
 
