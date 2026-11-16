@@ -7,8 +7,9 @@ export const TRANSLATIONS = {
     brandCode: 'SAMAAN',
     navGroups: {
       core: 'ورود و موجودی انبار',
-      operations: 'فرم‌ها و عملیات',
-      admin: 'ابزارها و مدیریت',
+      operations: 'فرم‌ها و عملیات انبار',
+      planning: 'برآورد، کنترل و فرم‌ها',
+      admin: 'تنظیمات و نگهداری',
     },
     nav: {
       dashboard: 'داشبورد تحلیلی',
@@ -264,8 +265,9 @@ export const TRANSLATIONS = {
     brandCode: 'SAMAAN',
     navGroups: {
       core: 'Inventory Core',
-      operations: 'Workflows & Forms',
-      admin: 'Administration',
+      operations: 'Warehouse Forms',
+      planning: 'Control & Custom Forms',
+      admin: 'Settings & Tools',
     },
     nav: {
       dashboard: 'Analytics Dashboard',

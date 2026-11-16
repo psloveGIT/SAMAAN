@@ -737,6 +737,27 @@ export interface AuditLogEntry {
   summary: string;
 }
 
+export type ImportRejectionReasonCode =
+  | 'missing_required'
+  | 'duplicate_db'
+  | 'duplicate_in_file'
+  | 'invalid_data';
+
+export interface ImportRejectedRecord {
+  id: string;
+  scope: 'general' | 'detailed' | 'transit';
+  sourceRowIndex?: number;
+  reasonCode: ImportRejectionReasonCode;
+  reasonFa: string;
+  reasonEn: string;
+  existingSummary?: string;
+  canForceReplace?: boolean;
+  canForceAdd?: boolean;
+  canEditAndRetry?: boolean;
+  rawRow?: string[];
+  parsedRow: Record<string, unknown>;
+}
+
 export interface ExpiringChemicalNotice {
   id: string;
   shipmentNo: string;

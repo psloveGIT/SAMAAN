@@ -48,6 +48,7 @@ import type {
   EmployerProfile,
   GcvDocumentRecord,
   GeneralEntry,
+  ImportRejectedRecord,
   MaterialEstimateRecord,
   MivDocType,
   MivDocumentRecord,
@@ -4365,21 +4366,52 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const columnInspection = inspectMatrixColumns(matrix, detectedScope);
     const activeMapping = columnMapping || columnInspection.mapping;
 
+    const analyzeDuplicates = <ItemT,>(
+      rows: ItemT[],
+      existingArr: ItemT[],
+      keyFn: (item: ItemT) => string,
+      formatLabel: (item: ItemT) => string,
+    ) => {
+      const dbKeys = new Set(existingArr.map(keyFn).filter(Boolean));
+      const seenInFile = new Set<string>();
+      const dbDuplicates: ItemT[] = [];
+      const inFileDuplicates: ItemT[] = [];
+      for (const r of rows) {
+        const k = keyFn(r);
+        if (!k) continue;
+        if (dbKeys.has(k)) {
+          dbDuplicates.push(r);
+        } else if (seenInFile.has(k)) {
+          inFileDuplicates.push(r);
+        } else {
+          seenInFile.add(k);
+        }
+      }
+      const allDups = [...dbDuplicates, ...inFileDuplicates];
+      return {
+        duplicateDbCount: dbDuplicates.length,
+        duplicateInFileCount: inFileDuplicates.length,
+        duplicateRecordsCount: allDups.length,
+        duplicateSamples: allDups.slice(0, 5).map(formatLabel),
+      };
+    };
+
     if (detectedScope === 'general') {
       const parsed = parseGeneralCsv(matrix, cal, u.username, activeMapping);
       const duplicateRowNos = parsed.rows.filter((r) => r.rowNo && isRowNoTaken(db, 'general', r.rowNo)).length;
-      const existingKeys = new Set(db.general.map(generalDupKey).filter(Boolean));
-      const duplicateRecords = parsed.rows.filter((r) => {
-        const k = generalDupKey(r);
-        return Boolean(k && existingKeys.has(k));
-      });
+      const dupStats = analyzeDuplicates(
+        parsed.rows as GeneralEntry[],
+        db.general,
+        generalDupKey,
+        (r) => `${r.packingListNo || '-'} / ${r.packageNo || r.mapnaEntryMinutesNo || '-'}`,
+      );
       return {
         scope: 'general',
         totalRows: parsed.rows.length,
         skippedEmpty: parsed.skippedEmpty,
+        parseRejectedRows: parsed.rejectedRows,
         duplicateRowNos,
-        duplicateRecordsCount: duplicateRecords.length,
-        duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.packingListNo || '-'} / ${r.packageNo || r.mapnaEntryMinutesNo || '-'}`),
+        ...dupStats,
         sample: parsed.rows.slice(0, 5),
         parsedRows: parsed.rows,
         columnInspection: { ...columnInspection, mapping: activeMapping },
@@ -4388,36 +4420,38 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (detectedScope === 'detailed') {
       const parsed = parseDetailedCsv(matrix, cal, u.username, activeMapping);
       const duplicateRowNos = parsed.rows.filter((r) => r.rowNo && isRowNoTaken(db, 'detailed', r.rowNo)).length;
-      const existingKeys = new Set(db.detailed.map(detailedDupKey).filter(Boolean));
-      const duplicateRecords = parsed.rows.filter((r) => {
-        const k = detailedDupKey(r);
-        return Boolean(k && existingKeys.has(k));
-      });
+      const dupStats = analyzeDuplicates(
+        parsed.rows as DetailedEntry[],
+        db.detailed,
+        detailedDupKey,
+        (r) => `${r.shipmentNo || '-'} / ${r.packageNo || '-'} / #${r.itemNo || '-'}`,
+      );
       return {
         scope: 'detailed',
         totalRows: parsed.rows.length,
         skippedEmpty: parsed.skippedEmpty,
+        parseRejectedRows: parsed.rejectedRows,
         duplicateRowNos,
-        duplicateRecordsCount: duplicateRecords.length,
-        duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.shipmentNo || '-'} / ${r.packageNo || '-'} / #${r.itemNo || '-'}`),
+        ...dupStats,
         sample: parsed.rows.slice(0, 5),
         parsedRows: parsed.rows,
         columnInspection: { ...columnInspection, mapping: activeMapping },
       } as T;
     }
     const parsed = parseTransitCsv(matrix, cal, u.username, activeMapping);
-    const existingKeys = new Set(db.transit.map(transitDupKey).filter(Boolean));
-    const duplicateRecords = parsed.rows.filter((r) => {
-      const k = transitDupKey(r);
-      return Boolean(k && existingKeys.has(k));
-    });
+    const dupStats = analyzeDuplicates(
+      parsed.rows as TransitEntry[],
+      db.transit,
+      transitDupKey,
+      (r) => `${r.packingListNo || '-'} / ${r.packageNo || '-'}`,
+    );
     return {
       scope: 'transit',
       totalRows: parsed.rows.length,
       skippedEmpty: parsed.skippedEmpty,
+      parseRejectedRows: parsed.rejectedRows,
       duplicateRowNos: 0,
-      duplicateRecordsCount: duplicateRecords.length,
-      duplicateSamples: duplicateRecords.slice(0, 5).map((r) => `${r.packingListNo || '-'} / ${r.packageNo || '-'}`),
+      ...dupStats,
       sample: parsed.rows.slice(0, 5),
       parsedRows: parsed.rows,
       columnInspection: { ...columnInspection, mapping: activeMapping },
@@ -4435,30 +4469,82 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const targetScope = (body.scope as ImportScope | undefined) || (matrix.length > 0 ? detectCsvScope(matrix) : null) || 'general';
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
     const dupPolicy: 'replace' | 'skip' = body.duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const forceAdd = Boolean(body.forceAddDuplicates);
+    const collectParseRejects = body.includeParserRejections !== false && matrix.length > 0;
 
     let imported = 0;
     let replaced = 0;
     let skipped = 0;
+    let blankRowsSkipped = 0;
     let transitAutoArrived = 0;
     const touchedPackings = new Set<string>();
+    const rejectedRecords: ImportRejectedRecord[] = [];
     const now = new Date().toISOString();
 
     if (targetScope === 'general') {
+      const parseResult = matrix.length > 0
+        ? parseGeneralCsv(matrix, cal, u.username, columnMapping)
+        : { rows: [], skippedEmpty: 0, rejectedRows: [] };
+      blankRowsSkipped = parseResult.skippedEmpty;
+      if (collectParseRejects && parseResult.rejectedRows.length > 0) {
+        rejectedRecords.push(...parseResult.rejectedRows);
+        skipped += parseResult.rejectedRows.length;
+      }
       const parsedRows = hasEdited
         ? (editedRows as Omit<GeneralEntry, 'id'>[])
-        : parseGeneralCsv(matrix, cal, u.username, columnMapping).rows;
-      const existingByKey = new Map<string, GeneralEntry>();
+        : parseResult.rows;
+
+      const dbByKey = new Map<string, GeneralEntry>();
       for (const g of db.general) {
         const k = generalDupKey(g);
-        if (k) existingByKey.set(k, g);
+        if (k) dbByKey.set(k, g);
       }
-      for (const r of parsedRows) {
+      const batchByKey = new Map<string, GeneralEntry>();
+
+      parsedRows.forEach((r, idx) => {
+        const hasAnchor = Boolean(normKey(r.packingListNo) || normKey(r.packageNo) || normKey(r.itemDescription));
+        if (!hasAnchor && !forceAdd) {
+          skipped += 1;
+          rejectedRecords.push({
+            id: makeId(),
+            scope: 'general',
+            sourceRowIndex: idx + 1,
+            reasonCode: 'missing_required',
+            reasonFa: 'شماره پکینگ لیست، شماره نگله و شرح کالا همگی خالی هستند؛ ردیف برای جلوگیری از ثبت اطلاعات ناقص رد شد.',
+            reasonEn: 'Packing List No., Package No., and Item Description are all empty.',
+            canForceReplace: false,
+            canForceAdd: true,
+            canEditAndRetry: true,
+            parsedRow: r as unknown as Record<string, unknown>,
+          });
+          return;
+        }
         const k = generalDupKey(r);
-        const existing = k ? existingByKey.get(k) : undefined;
-        if (existing) {
+        const existingDb = k ? dbByKey.get(k) : undefined;
+        const existingBatch = !existingDb && k ? batchByKey.get(k) : undefined;
+        const existing = existingDb || existingBatch;
+        if (existing && !forceAdd) {
           if (dupPolicy === 'skip') {
             skipped += 1;
-            continue;
+            const labelKey = `${r.packingListNo || '-'} / ${r.packageNo || r.mapnaEntryMinutesNo || '-'}`;
+            rejectedRecords.push({
+              id: makeId(),
+              scope: 'general',
+              sourceRowIndex: idx + 1,
+              reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
+              reasonFa: existingDb
+                ? `رکورد با کلید «${labelKey}» قبلاً در دیتابیس (ردیف ${existingDb.rowNo || '-'}) ثبت شده است و با تنظیم «رد کردن تکراری‌ها» وارد نشد.`
+                : `رکورد با کلید «${labelKey}» بیش از یک بار درون همین فایل تکرار شده و نسخه تکراری آن رد شد.`,
+              reasonEn: existingDb
+                ? `Key "${labelKey}" already exists in database (Row ${existingDb.rowNo || '-'}) and was skipped.`
+                : `Key "${labelKey}" appeared earlier in the same file and was skipped.`,
+              existingSummary: `${existing.packingListNo || '-'} | نگله ${existing.packageNo || '-'} | ${existing.itemDescription || ''}`,
+              canForceReplace: true,
+              canForceAdd: true,
+              canEditAndRetry: true,
+              parsedRow: r as unknown as Record<string, unknown>,
+            });
+            return;
           }
           Object.assign(existing, {
             ...r,
@@ -4470,34 +4556,82 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           });
           replaced += 1;
           if (r.packingListNo) touchedPackings.add(r.packingListNo);
-          continue;
+          return;
         }
         const created: GeneralEntry = { ...r, createdAt: r.createdAt || now, updatedAt: now, createdBy: r.createdBy || u.username, id: makeId() };
-        if (k) existingByKey.set(k, created);
+        if (k && !forceAdd) batchByKey.set(k, created);
         if (r.packingListNo) touchedPackings.add(r.packingListNo);
         db.general.push(created);
         imported += 1;
-      }
+      });
       renumberScope(db, 'general');
     } else if (targetScope === 'detailed') {
+      const parseResult = matrix.length > 0
+        ? parseDetailedCsv(matrix, cal, u.username, columnMapping)
+        : { rows: [], skippedEmpty: 0, rejectedRows: [] };
+      blankRowsSkipped = parseResult.skippedEmpty;
+      if (collectParseRejects && parseResult.rejectedRows.length > 0) {
+        rejectedRecords.push(...parseResult.rejectedRows);
+        skipped += parseResult.rejectedRows.length;
+      }
       const parsedRows = hasEdited
         ? (editedRows as Omit<DetailedEntry, 'id'>[])
-        : parseDetailedCsv(matrix, cal, u.username, columnMapping).rows;
-      const existingByKey = new Map<string, DetailedEntry>();
+        : parseResult.rows;
+
+      const dbByKey = new Map<string, DetailedEntry>();
       for (const d of db.detailed) {
         const k = detailedDupKey(d);
-        if (k) existingByKey.set(k, d);
+        if (k) dbByKey.set(k, d);
       }
-      for (const r of parsedRows) {
+      const batchByKey = new Map<string, DetailedEntry>();
+
+      parsedRows.forEach((r, idx) => {
+        const hasAnchor = Boolean(normKey(r.shipmentNo) || normKey(r.description) || normKey(r.generalDescription));
+        if (!hasAnchor && !forceAdd) {
+          skipped += 1;
+          rejectedRecords.push({
+            id: makeId(),
+            scope: 'detailed',
+            sourceRowIndex: idx + 1,
+            reasonCode: 'missing_required',
+            reasonFa: 'شماره محموله/پکینگ، شرح کلی و شرح کالا همگی خالی هستند و ردیف رد شد.',
+            reasonEn: 'Shipment No., General Description, and Description are all empty.',
+            canForceReplace: false,
+            canForceAdd: true,
+            canEditAndRetry: true,
+            parsedRow: r as unknown as Record<string, unknown>,
+          });
+          return;
+        }
         const k = detailedDupKey(r);
-        const existing = k ? existingByKey.get(k) : undefined;
+        const existingDb = k ? dbByKey.get(k) : undefined;
+        const existingBatch = !existingDb && k ? batchByKey.get(k) : undefined;
+        const existing = existingDb || existingBatch;
         const genDesc = r.generalDescription
           ? formatGeneralDescriptionCase(r.generalDescription)
           : inferGeneralDescription(r.description);
-        if (existing) {
+        if (existing && !forceAdd) {
           if (dupPolicy === 'skip') {
             skipped += 1;
-            continue;
+            const labelKey = `${r.shipmentNo || '-'} / ${r.packageNo || '-'} / #${r.itemNo || '-'}`;
+            rejectedRecords.push({
+              id: makeId(),
+              scope: 'detailed',
+              sourceRowIndex: idx + 1,
+              reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
+              reasonFa: existingDb
+                ? `قلم با کلید «${labelKey}» قبلاً در دیتابیس (ردیف ${existingDb.rowNo || '-'}) وجود دارد و با سیاست «رد کردن تکراری‌ها» ثبت نشد.`
+                : `قلم با کلید «${labelKey}» در همین فایل تکرار شده است و نسخه تکراری آن رد شد.`,
+              reasonEn: existingDb
+                ? `Item "${labelKey}" already exists in database (Row ${existingDb.rowNo || '-'}) and was skipped.`
+                : `Item "${labelKey}" was duplicated inside the same file and skipped.`,
+              existingSummary: `${existing.shipmentNo || '-'} | نگله ${existing.packageNo || '-'} | آیتم ${existing.itemNo || '-'} | ${existing.description || ''}`,
+              canForceReplace: true,
+              canForceAdd: true,
+              canEditAndRetry: true,
+              parsedRow: r as unknown as Record<string, unknown>,
+            });
+            return;
           }
           Object.assign(existing, {
             ...r,
@@ -4511,7 +4645,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           });
           replaced += 1;
           if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
-          continue;
+          return;
         }
         const created: DetailedEntry = {
           ...r,
@@ -4522,30 +4656,78 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           createdBy: r.createdBy || u.username,
           id: makeId(),
         };
-        if (k) existingByKey.set(k, created);
+        if (k && !forceAdd) batchByKey.set(k, created);
         if (r.shipmentNo) touchedPackings.add(r.shipmentNo);
         db.detailed.push(created);
         imported += 1;
-      }
+      });
       renumberScope(db, 'detailed');
     } else {
+      const parseResult = matrix.length > 0
+        ? parseTransitCsv(matrix, cal, u.username, columnMapping)
+        : { rows: [], skippedEmpty: 0, rejectedRows: [] };
+      blankRowsSkipped = parseResult.skippedEmpty;
+      if (collectParseRejects && parseResult.rejectedRows.length > 0) {
+        rejectedRecords.push(...parseResult.rejectedRows);
+        skipped += parseResult.rejectedRows.length;
+      }
       const parsedRows = hasEdited
         ? (editedRows as Omit<TransitEntry, 'id'>[])
-        : parseTransitCsv(matrix, cal, u.username, columnMapping).rows;
-      const existingByKey = new Map<string, TransitEntry>();
+        : parseResult.rows;
+
+      const dbByKey = new Map<string, TransitEntry>();
       for (const t of db.transit) {
         const k = transitDupKey(t);
-        if (k) existingByKey.set(k, t);
+        if (k) dbByKey.set(k, t);
       }
-      for (const r of parsedRows) {
+      const batchByKey = new Map<string, TransitEntry>();
+
+      parsedRows.forEach((r, idx) => {
+        const hasAnchor = Boolean(normKey(r.packingListNo) || normKey(r.itemDescription) || normKey(r.overallStatus));
+        if (!hasAnchor && !forceAdd) {
+          skipped += 1;
+          rejectedRecords.push({
+            id: makeId(),
+            scope: 'transit',
+            sourceRowIndex: idx + 1,
+            reasonCode: 'missing_required',
+            reasonFa: 'شماره پکینگ لیست، شرح کالا و وضعیت کلی همگی خالی هستند و ردیف رد شد.',
+            reasonEn: 'Packing List No., Item Description, and Overall Status are all empty.',
+            canForceReplace: false,
+            canForceAdd: true,
+            canEditAndRetry: true,
+            parsedRow: r as unknown as Record<string, unknown>,
+          });
+          return;
+        }
         const pk = normKey(r.packingListNo);
         const arrived = pk && (db.general.some((g) => normKey(g.packingListNo) === pk) || db.detailed.some((d) => normKey(d.shipmentNo) === pk));
         const k = transitDupKey(r);
-        const existing = k ? existingByKey.get(k) : undefined;
-        if (existing) {
+        const existingDb = k ? dbByKey.get(k) : undefined;
+        const existingBatch = !existingDb && k ? batchByKey.get(k) : undefined;
+        const existing = existingDb || existingBatch;
+        if (existing && !forceAdd) {
           if (dupPolicy === 'skip') {
             skipped += 1;
-            continue;
+            const labelKey = `${r.packingListNo || '-'} / ${r.packageNo || '-'}`;
+            rejectedRecords.push({
+              id: makeId(),
+              scope: 'transit',
+              sourceRowIndex: idx + 1,
+              reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
+              reasonFa: existingDb
+                ? `محموله در راه با کلید «${labelKey}» قبلاً در دیتابیس ثبت شده و رد شد.`
+                : `محموله با کلید «${labelKey}» در همین فایل تکرار شده و نسخه تکراری آن رد شد.`,
+              reasonEn: existingDb
+                ? `In-transit key "${labelKey}" already exists in database and was skipped.`
+                : `In-transit key "${labelKey}" appeared earlier in the same file and was skipped.`,
+              existingSummary: `${existing.packingListNo || '-'} | نگله ${existing.packageNo || '-'} | ${existing.itemDescription || ''}`,
+              canForceReplace: true,
+              canForceAdd: true,
+              canEditAndRetry: true,
+              parsedRow: r as unknown as Record<string, unknown>,
+            });
+            return;
           }
           Object.assign(existing, {
             ...r,
@@ -4558,7 +4740,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
             updatedAt: now,
           });
           replaced += 1;
-          continue;
+          return;
         }
         const created: TransitEntry = {
           ...r,
@@ -4569,10 +4751,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           overallStatus: arrived ? 'رسیده' : r.overallStatus,
           linkedGeneralPackingNo: arrived ? pk : undefined,
         };
-        if (k) existingByKey.set(k, created);
+        if (k && !forceAdd) batchByKey.set(k, created);
         db.transit.push(created);
         imported += 1;
-      }
+      });
       renumberScope(db, 'transit');
     }
 
@@ -4583,13 +4765,22 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     addAudit(
       db,
       sanitizeUser(u),
-      'IMPORT_DATA',
+      forceAdd ? 'IMPORT_RECOVERY_FORCE_ADD' : 'IMPORT_DATA',
       'import',
       targetScope,
       `بارگذاری فایل (${targetScope}): ${imported} ردیف جدید، ${replaced} جایگزین، ${skipped} رد شد`,
     );
     await saveActiveDb();
-    return { scope: targetScope, imported, replaced, skipped, transitAutoArrived } as T;
+    return {
+      scope: targetScope,
+      imported,
+      replaced,
+      skipped,
+      parseRejectedCount: collectParseRejects ? rejectedRecords.filter((r) => r.reasonCode === 'missing_required').length : 0,
+      blankRowsSkipped,
+      transitAutoArrived,
+      rejectedRecords,
+    } as T;
   }
 
   if (pathname === '/api/ai/extract-equipment' && method === 'POST') {

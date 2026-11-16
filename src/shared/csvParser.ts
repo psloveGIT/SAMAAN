@@ -1,5 +1,11 @@
 import { normalizeDigits, parseFlexibleDateToIso } from './jalali.ts';
-import type { CalendarMode, DetailedEntry, GeneralEntry, TransitEntry } from './types.ts';
+import type {
+  CalendarMode,
+  DetailedEntry,
+  GeneralEntry,
+  ImportRejectedRecord,
+  TransitEntry,
+} from './types.ts';
 
 export type ImportScope = 'general' | 'detailed' | 'transit';
 
@@ -588,7 +594,7 @@ export function parseGeneralCsv(
   assumedCalendar: CalendarMode,
   createdBy: string,
   explicitMapping?: Record<string, number>,
-): { rows: Omit<GeneralEntry, 'id'>[]; skippedEmpty: number } {
+): { rows: Omit<GeneralEntry, 'id'>[]; skippedEmpty: number; rejectedRows: ImportRejectedRecord[] } {
   const { dataStartIndex, combinedCols } = findDataStartAndHeaders(matrix, 'general');
   const maxCols = Math.max(...matrix.slice(0, Math.min(20, matrix.length)).map((r) => r.length), 28);
   const paddedCols = [...combinedCols];
@@ -628,20 +634,23 @@ export function parseGeneralCsv(
 
   const now = new Date().toISOString();
   const rows: Omit<GeneralEntry, 'id'>[] = [];
+  const rejectedRows: ImportRejectedRecord[] = [];
   let skippedEmpty = 0;
 
   for (let r = dataStartIndex; r < matrix.length; r += 1) {
     const line = matrix[r] || [];
-    const packingListNo = idxPackingList >= 0 ? cleanStr(line[idxPackingList]) : '';
-    const itemDescription = idxDesc >= 0 ? cleanStr(line[idxDesc]) : '';
-    const packageNo = idxPackageNo >= 0 ? cleanStr(line[idxPackageNo]) : '';
-    if (!packingListNo && !itemDescription && !packageNo) {
+    const hasAnyValue = line.some((cell) => cleanStr(cell) !== '');
+    if (!hasAnyValue) {
       skippedEmpty += 1;
       continue;
     }
 
+    const packingListNo = idxPackingList >= 0 ? cleanStr(line[idxPackingList]) : '';
+    const itemDescription = idxDesc >= 0 ? cleanStr(line[idxDesc]) : '';
+    const packageNo = idxPackageNo >= 0 ? cleanStr(line[idxPackageNo]) : '';
     const rawRowNo = idxRowNo >= 0 ? normalizeDigits(cleanStr(line[idxRowNo])) : '';
-    rows.push({
+
+    const record: Omit<GeneralEntry, 'id'> = {
       rowNo: rawRowNo,
       arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
       releaseNo: idxReleaseNo >= 0 ? cleanStr(line[idxReleaseNo]) : '',
@@ -674,10 +683,29 @@ export function parseGeneralCsv(
       createdAt: now,
       updatedAt: now,
       createdBy,
-    });
+    };
+
+    if (!packingListNo && !itemDescription && !packageNo) {
+      rejectedRows.push({
+        id: makeId(),
+        scope: 'general',
+        sourceRowIndex: r + 1,
+        reasonCode: 'missing_required',
+        reasonFa: 'ردیف دارای مقادیر متنی/عددی در فایل است اما فیلدهای کلیدی (شماره پکینگ لیست، شماره نگله یا شرح کالا) خالی است یا ستون اشتباه نگاشت شده.',
+        reasonEn: 'Row contains non-empty cells but key identifiers (Packing List No., Package No., and Item Description) are all empty or mis-mapped.',
+        canForceReplace: false,
+        canForceAdd: true,
+        canEditAndRetry: true,
+        rawRow: line.map((c) => cleanStr(c)).filter(Boolean).slice(0, 8),
+        parsedRow: record as unknown as Record<string, unknown>,
+      });
+      continue;
+    }
+
+    rows.push(record);
   }
 
-  return { rows, skippedEmpty };
+  return { rows, skippedEmpty, rejectedRows };
 }
 
 export function parseDetailedCsv(
@@ -685,7 +713,7 @@ export function parseDetailedCsv(
   assumedCalendar: CalendarMode,
   createdBy: string,
   explicitMapping?: Record<string, number>,
-): { rows: Omit<DetailedEntry, 'id'>[]; skippedEmpty: number } {
+): { rows: Omit<DetailedEntry, 'id'>[]; skippedEmpty: number; rejectedRows: ImportRejectedRecord[] } {
   const { dataStartIndex, combinedCols } = findDataStartAndHeaders(matrix, 'detailed');
   const maxCols = Math.max(...matrix.slice(0, Math.min(20, matrix.length)).map((r) => r.length), 52);
   const paddedCols = [...combinedCols];
@@ -749,23 +777,26 @@ export function parseDetailedCsv(
 
   const now = new Date().toISOString();
   const rows: Omit<DetailedEntry, 'id'>[] = [];
+  const rejectedRows: ImportRejectedRecord[] = [];
   let skippedEmpty = 0;
 
   for (let r = dataStartIndex; r < matrix.length; r += 1) {
     const line = matrix[r] || [];
-    const shipmentNo = idxShipmentNo >= 0 ? cleanStr(line[idxShipmentNo]) : '';
-    const description = idxDesc >= 0 ? cleanStr(line[idxDesc]) : '';
-    const generalDescription = idxGenDesc >= 0 ? cleanStr(line[idxGenDesc]) : '';
-    if (!shipmentNo && !description && !generalDescription) {
+    const hasAnyValue = line.some((cell) => cleanStr(cell) !== '');
+    if (!hasAnyValue) {
       skippedEmpty += 1;
       continue;
     }
+
+    const shipmentNo = idxShipmentNo >= 0 ? cleanStr(line[idxShipmentNo]) : '';
+    const description = idxDesc >= 0 ? cleanStr(line[idxDesc]) : '';
+    const generalDescription = idxGenDesc >= 0 ? cleanStr(line[idxGenDesc]) : '';
 
     const chemicalType = idxChemicalType >= 0 ? cleanStr(line[idxChemicalType]) : '';
     const parsedCat = idxItemCategory >= 0 ? normalizeItemCategory(line[idxItemCategory]) : '';
     const itemCategory = parsedCat || (chemicalType ? 'chemicals' : '');
 
-    rows.push({
+    const record: Omit<DetailedEntry, 'id'> = {
       rowNo: idxRowNo >= 0 ? normalizeDigits(cleanStr(line[idxRowNo])) : '',
       arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
       supplier: idxSupplier >= 0 ? cleanStr(line[idxSupplier]) : '',
@@ -823,10 +854,29 @@ export function parseDetailedCsv(
       createdAt: now,
       updatedAt: now,
       createdBy,
-    });
+    };
+
+    if (!shipmentNo && !description && !generalDescription) {
+      rejectedRows.push({
+        id: makeId(),
+        scope: 'detailed',
+        sourceRowIndex: r + 1,
+        reasonCode: 'missing_required',
+        reasonFa: 'ردیف دارای داده است اما فیلدهای اصلی (شماره محموله/پکینگ، شرح یا شرح کلی) خالی هستند یا ستون اشتباه نگاشت شده‌اند.',
+        reasonEn: 'Row contains data but key identifiers (Shipment No., Description, and General Description) are empty or mis-mapped.',
+        canForceReplace: false,
+        canForceAdd: true,
+        canEditAndRetry: true,
+        rawRow: line.map((c) => cleanStr(c)).filter(Boolean).slice(0, 8),
+        parsedRow: record as unknown as Record<string, unknown>,
+      });
+      continue;
+    }
+
+    rows.push(record);
   }
 
-  return { rows, skippedEmpty };
+  return { rows, skippedEmpty, rejectedRows };
 }
 
 export function parseTransitCsv(
@@ -834,7 +884,7 @@ export function parseTransitCsv(
   assumedCalendar: CalendarMode,
   createdBy: string,
   explicitMapping?: Record<string, number>,
-): { rows: Omit<TransitEntry, 'id'>[]; skippedEmpty: number } {
+): { rows: Omit<TransitEntry, 'id'>[]; skippedEmpty: number; rejectedRows: ImportRejectedRecord[] } {
   const { dataStartIndex, combinedCols } = findDataStartAndHeaders(matrix, 'transit');
   const maxCols = Math.max(...matrix.slice(0, Math.min(20, matrix.length)).map((r) => r.length), 20);
   const paddedCols = [...combinedCols];
@@ -865,19 +915,22 @@ export function parseTransitCsv(
 
   const now = new Date().toISOString();
   const rows: Omit<TransitEntry, 'id'>[] = [];
+  const rejectedRows: ImportRejectedRecord[] = [];
   let skippedEmpty = 0;
 
   for (let r = dataStartIndex; r < matrix.length; r += 1) {
     const line = matrix[r] || [];
-    const packingListNo = idxPackingList >= 0 ? cleanStr(line[idxPackingList]) : '';
-    const itemDescription = idxItemDescription >= 0 ? cleanStr(line[idxItemDescription]) : '';
-    const overallStatus = idxOverallStatus >= 0 ? cleanStr(line[idxOverallStatus]) : '';
-    if (!packingListNo && !itemDescription && !overallStatus) {
+    const hasAnyValue = line.some((cell) => cleanStr(cell) !== '');
+    if (!hasAnyValue) {
       skippedEmpty += 1;
       continue;
     }
 
-    rows.push({
+    const packingListNo = idxPackingList >= 0 ? cleanStr(line[idxPackingList]) : '';
+    const itemDescription = idxItemDescription >= 0 ? cleanStr(line[idxItemDescription]) : '';
+    const overallStatus = idxOverallStatus >= 0 ? cleanStr(line[idxOverallStatus]) : '';
+
+    const record: Omit<TransitEntry, 'id'> = {
       rowNo: String(rows.length + 1),
       arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
       overallStatus,
@@ -902,8 +955,27 @@ export function parseTransitCsv(
       createdAt: now,
       updatedAt: now,
       createdBy,
-    });
+    };
+
+    if (!packingListNo && !itemDescription && !overallStatus) {
+      rejectedRows.push({
+        id: makeId(),
+        scope: 'transit',
+        sourceRowIndex: r + 1,
+        reasonCode: 'missing_required',
+        reasonFa: 'ردیف دارای داده است اما فیلدهای کلیدی (شماره پکینگ لیست، شرح کالا و وضعیت کلی) خالی هستند.',
+        reasonEn: 'Row contains data but key identifiers (Packing List No., Item Description, and Overall Status) are empty.',
+        canForceReplace: false,
+        canForceAdd: true,
+        canEditAndRetry: true,
+        rawRow: line.map((c) => cleanStr(c)).filter(Boolean).slice(0, 8),
+        parsedRow: record as unknown as Record<string, unknown>,
+      });
+      continue;
+    }
+
+    rows.push(record);
   }
 
-  return { rows, skippedEmpty };
+  return { rows, skippedEmpty, rejectedRows };
 }

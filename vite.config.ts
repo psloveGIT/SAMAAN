@@ -21,7 +21,7 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: 'samaan-warehouse-pwa',
-          name: 'SAMAAN | سامانه مدیریت انبارهای نیروگاهی سمان',
+          name: 'SAMAAN',
           short_name: 'SAMAAN',
           description: 'سمان - سامانه مدیریت انبارهای نیروگاهی | Power Plant Warehouse Management System',
           theme_color: '#0f766e',

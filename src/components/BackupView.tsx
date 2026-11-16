@@ -2,14 +2,18 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ClipboardList,
   Columns3,
   Download,
   FileSpreadsheet,
   HardDrive,
+  PlusCircle,
+  RefreshCw,
   RotateCcw,
   Save,
   Trash2,
   Upload,
+  XCircle,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError, isStaticFallbackMode } from '../lib/api.ts';
@@ -22,7 +26,11 @@ import {
 import type { LocalBackupSnapshotRecord } from '../lib/indexedDbBackup.ts';
 import type { ImportColumnDef } from '../shared/csvParser.ts';
 import { parseSpreadsheetFile } from '../shared/spreadsheetImport.ts';
-import type { DatabaseSnapshot } from '../shared/types.ts';
+import type {
+  DatabaseSnapshot,
+  ImportRejectedRecord,
+  ImportRejectionReasonCode,
+} from '../shared/types.ts';
 
 interface BackupViewProps {
   onRestored: () => void;
@@ -40,7 +48,10 @@ interface PreviewResponse {
   scope: 'general' | 'detailed' | 'transit';
   totalRows: number;
   skippedEmpty: number;
+  parseRejectedRows?: ImportRejectedRecord[];
   duplicateRowNos: number;
+  duplicateDbCount?: number;
+  duplicateInFileCount?: number;
   duplicateRecordsCount: number;
   duplicateSamples: string[];
   sample: Record<string, unknown>[];
@@ -53,7 +64,28 @@ interface CommitResponse {
   imported: number;
   replaced: number;
   skipped: number;
+  parseRejectedCount?: number;
+  blankRowsSkipped?: number;
   transitAutoArrived: number;
+  rejectedRecords?: ImportRejectedRecord[];
+}
+
+interface ImportLogSessionEntry {
+  id: string;
+  timestamp: string;
+  sourceLabel: string;
+  scope: 'general' | 'detailed' | 'transit';
+  imported: number;
+  replaced: number;
+  skipped: number;
+  blankRowsSkipped: number;
+  transitAutoArrived: number;
+  rejectedReasons: Array<{
+    sourceRowIndex?: number;
+    reasonCode: ImportRejectionReasonCode;
+    reasonText: string;
+    summary: string;
+  }>;
 }
 
 function formatBytes(bytes: number): string {
@@ -116,6 +148,48 @@ function editableFieldsForScope(scope: 'general' | 'detailed' | 'transit'): stri
   ];
 }
 
+function quickFixFieldsForRejectedScope(scope: 'general' | 'detailed' | 'transit'): {
+  key: string;
+  labelFa: string;
+  labelEn: string;
+}[] {
+  if (scope === 'general') {
+    return [
+      { key: 'packingListNo', labelFa: 'شماره پکینگ لیست', labelEn: 'Packing List No.' },
+      { key: 'packageNo', labelFa: 'شماره نگله', labelEn: 'Package No.' },
+      { key: 'itemDescription', labelFa: 'شرح کالا', labelEn: 'Item Description' },
+      { key: 'supplier', labelFa: 'تامین‌کننده', labelEn: 'Supplier' },
+    ];
+  }
+  if (scope === 'detailed') {
+    return [
+      { key: 'shipmentNo', labelFa: 'شماره محموله / پکینگ', labelEn: 'Shipment No.' },
+      { key: 'packageNo', labelFa: 'شماره نگله', labelEn: 'Package No.' },
+      { key: 'itemNo', labelFa: 'شماره آیتم', labelEn: 'Item No.' },
+      { key: 'description', labelFa: 'شرح کالا', labelEn: 'Description' },
+    ];
+  }
+  return [
+    { key: 'packingListNo', labelFa: 'شماره پکینگ لیست', labelEn: 'Packing List No.' },
+    { key: 'packageNo', labelFa: 'شماره نگله', labelEn: 'Package No.' },
+    { key: 'overallStatus', labelFa: 'وضعیت کلی', labelEn: 'Overall Status' },
+    { key: 'itemDescription', labelFa: 'شرح کالا', labelEn: 'Item Description' },
+  ];
+}
+
+function reasonBadgeText(code: ImportRejectionReasonCode, isFa: boolean): string {
+  switch (code) {
+    case 'duplicate_db':
+      return isFa ? 'تکراری در دیتابیس' : 'Duplicate in DB';
+    case 'duplicate_in_file':
+      return isFa ? 'تکراری درون فایل' : 'Duplicate in File';
+    case 'missing_required':
+      return isFa ? 'نقص فیلدهای کلیدی' : 'Missing Key Fields';
+    default:
+      return isFa ? 'داده نامعتبر' : 'Invalid Data';
+  }
+}
+
 export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const { prefs, user, notify, formatTimestamp, triggerAutoSnapshot, activeProjectId, activeProject } = useApp();
   const isFa = prefs.language === 'fa';
@@ -141,6 +215,58 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const [rowsConfirmed, setRowsConfirmed] = useState(false);
   const [importResult, setImportResult] = useState<CommitResponse | null>(null);
   const [importing, setImporting] = useState(false);
+
+  // Import Log & Rejected Records Recovery State (persisted per active project in sessionStorage)
+  const logsStorageKey = `samaan_import_logs_${activeProjectId}`;
+  const pendingStorageKey = `samaan_import_pending_${activeProjectId}`;
+
+  const [importLogs, setImportLogs] = useState<ImportLogSessionEntry[]>(() => {
+    try {
+      const raw = sessionStorage.getItem(logsStorageKey);
+      return raw ? (JSON.parse(raw) as ImportLogSessionEntry[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [pendingRejected, setPendingRejected] = useState<ImportRejectedRecord[]>(() => {
+    try {
+      const raw = sessionStorage.getItem(pendingStorageKey);
+      return raw ? (JSON.parse(raw) as ImportRejectedRecord[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [recoveringId, setRecoveringId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const rawLogs = sessionStorage.getItem(logsStorageKey);
+      const rawPend = sessionStorage.getItem(pendingStorageKey);
+      setImportLogs(rawLogs ? (JSON.parse(rawLogs) as ImportLogSessionEntry[]) : []);
+      setPendingRejected(rawPend ? (JSON.parse(rawPend) as ImportRejectedRecord[]) : []);
+    } catch {
+      setImportLogs([]);
+      setPendingRejected([]);
+    }
+  }, [logsStorageKey, pendingStorageKey]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(logsStorageKey, JSON.stringify(importLogs.slice(0, 15)));
+    } catch {
+      // ignore storage quota
+    }
+  }, [importLogs, logsStorageKey]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(pendingStorageKey, JSON.stringify(pendingRejected));
+    } catch {
+      // ignore storage quota
+    }
+  }, [pendingRejected, pendingStorageKey]);
 
   const loadSnapshots = useCallback(async () => {
     try {
@@ -264,9 +390,45 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setEditedRows((prev) => prev.filter((_, i) => i !== rowIndex));
   };
 
+  const recordLogSession = (
+    res: CommitResponse,
+    sourceLabel: string,
+    useFa: boolean,
+  ) => {
+    const rejected = res.rejectedRecords || [];
+    const entry: ImportLogSessionEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: new Date().toISOString(),
+      sourceLabel,
+      scope: res.scope,
+      imported: res.imported,
+      replaced: res.replaced,
+      skipped: res.skipped,
+      blankRowsSkipped: res.blankRowsSkipped || 0,
+      transitAutoArrived: res.transitAutoArrived,
+      rejectedReasons: rejected.map((r) => ({
+        sourceRowIndex: r.sourceRowIndex,
+        reasonCode: r.reasonCode,
+        reasonText: useFa ? r.reasonFa : r.reasonEn,
+        summary:
+          r.existingSummary ||
+          r.rawRow?.join(' | ') ||
+          String(
+            r.parsedRow.packingListNo ||
+              r.parsedRow.shipmentNo ||
+              r.parsedRow.itemDescription ||
+              r.parsedRow.description ||
+              '-',
+          ),
+      })),
+    };
+    setImportLogs((prev) => [entry, ...prev].slice(0, 15));
+  };
+
   const handleCommitImport = async () => {
     const matrix = sheetsMap[selectedSheet] || [];
     if (matrix.length === 0 && editedRows.length === 0) return;
+    const currentFile = fileName || (isFa ? 'فایل ورودی' : 'Uploaded File');
     setImporting(true);
     try {
       const targetScope = preview?.scope || (importScope === 'auto' ? undefined : importScope);
@@ -277,12 +439,16 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           scope: targetScope,
           assumedCalendar,
           duplicateRecordPolicy: duplicatePolicy,
+          includeParserRejections: true,
           ...(columnMapping ? { columnMapping } : {}),
           ...(editedRows.length > 0 ? { editedRows } : {}),
         }),
       });
       setImportResult(res);
-      // Clear active preview & file buffers immediately so newly committed rows are NOT re-flagged as duplicates
+      setPendingRejected(res.rejectedRecords || []);
+      recordLogSession(res, currentFile, isFa);
+
+      // Clear active preview & file buffers immediately so newly committed rows are NOT re-flagged
       setPreview(null);
       setEditedRows([]);
       setColumnMapping(null);
@@ -292,7 +458,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       setSelectedSheet('');
       setSheetsMap({});
       notify(
-        'success',
+        res.skipped > 0 ? 'info' : 'success',
         isFa
           ? `عملیات تکمیل شد: ${res.imported} جدید، ${res.replaced} جایگزین، ${res.skipped} رد شده.`
           : `Import completed: ${res.imported} imported, ${res.replaced} replaced, ${res.skipped} skipped.`,
@@ -304,6 +470,145 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     } finally {
       setImporting(false);
     }
+  };
+
+  // Inline editing inside the Rejection Log
+  const handleRejectedFieldChange = (id: string, key: string, value: string) => {
+    setPendingRejected((prev) =>
+      prev.map((rec) =>
+        rec.id === id
+          ? {
+              ...rec,
+              parsedRow: {
+                ...rec.parsedRow,
+                [key]: value,
+              },
+            }
+          : rec,
+      ),
+    );
+  };
+
+  // Recover a single rejected row (either Replace existing OR Force-Add as new)
+  const handleRecoverSingleRow = async (
+    rec: ImportRejectedRecord,
+    mode: 'replace' | 'force_add',
+  ) => {
+    setRecoveringId(rec.id);
+    try {
+      const res = await apiRequest<CommitResponse>('/api/import/commit', {
+        method: 'POST',
+        body: JSON.stringify({
+          matrix: [],
+          scope: rec.scope,
+          assumedCalendar,
+          duplicateRecordPolicy: mode === 'replace' ? 'replace' : 'skip',
+          forceAddDuplicates: mode === 'force_add',
+          includeParserRejections: false,
+          editedRows: [rec.parsedRow],
+        }),
+      });
+      if ((res.imported + res.replaced) > 0) {
+        setPendingRejected((prev) => prev.filter((item) => item.id !== rec.id));
+        recordLogSession(
+          res,
+          isFa
+            ? `بازثبت از لاگ (ردیف ${rec.sourceRowIndex || '-'})`
+            : `Recovered from log (Row ${rec.sourceRowIndex || '-'})`,
+          isFa,
+        );
+        notify(
+          'success',
+          mode === 'replace'
+            ? isFa ? 'رکورد در دیتابیس با مقادیر جدید جایگزین شد.' : 'Existing DB record replaced.'
+            : isFa ? 'رکورد با موفقیت به دیتابیس اضافه شد.' : 'Record added to database.',
+        );
+        triggerAutoSnapshot(`Recovery Import (${rec.scope})`);
+        onRestored();
+      } else {
+        notify(
+          'error',
+          isFa
+            ? 'ثبت رکورد انجام نشد. لطفاً فیلدهای کلیدی را بررسی کنید.'
+            : 'Could not import row. Check key fields.',
+        );
+      }
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setRecoveringId(null);
+    }
+  };
+
+  // Bulk recovery for all pending rejected items
+  const handleRecoverBulk = async (mode: 'replace_duplicates' | 'force_add_all') => {
+    const targets =
+      mode === 'replace_duplicates'
+        ? pendingRejected.filter((r) => r.canForceReplace)
+        : pendingRejected;
+    if (targets.length === 0) return;
+    setRecoveringId('__bulk__');
+    try {
+      const scopeGroups = new Map<'general' | 'detailed' | 'transit', ImportRejectedRecord[]>();
+      for (const item of targets) {
+        const arr = scopeGroups.get(item.scope) || [];
+        arr.push(item);
+        scopeGroups.set(item.scope, arr);
+      }
+      let totalAdded = 0;
+      let totalReplaced = 0;
+      const handledIds = new Set<string>();
+
+      for (const [grpScope, items] of scopeGroups.entries()) {
+        const res = await apiRequest<CommitResponse>('/api/import/commit', {
+          method: 'POST',
+          body: JSON.stringify({
+            matrix: [],
+            scope: grpScope,
+            assumedCalendar,
+            duplicateRecordPolicy: mode === 'replace_duplicates' ? 'replace' : 'skip',
+            forceAddDuplicates: mode === 'force_add_all',
+            includeParserRejections: false,
+            editedRows: items.map((x) => x.parsedRow),
+          }),
+        });
+        totalAdded += res.imported;
+        totalReplaced += res.replaced;
+        recordLogSession(
+          res,
+          mode === 'replace_duplicates'
+            ? isFa ? 'جایگزینی دسته‌جمعی رکوردهای رد شده' : 'Bulk Replace Rejected Rows'
+            : isFa ? 'افزودن دسته‌جمعی رکوردهای رد شده' : 'Bulk Force-Add Rejected Rows',
+          isFa,
+        );
+        if (res.imported + res.replaced > 0) {
+          items.forEach((x) => handledIds.add(x.id));
+        }
+      }
+
+      setPendingRejected((prev) => prev.filter((item) => !handledIds.has(item.id)));
+      notify(
+        'success',
+        isFa
+          ? `بازثبت گروهی انجام شد: ${totalAdded} ردیف جدید و ${totalReplaced} جایگزینی ثبت شد.`
+          : `Bulk recovery complete: ${totalAdded} added, ${totalReplaced} replaced.`,
+      );
+      triggerAutoSnapshot('Bulk Import Recovery');
+      onRestored();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setRecoveringId(null);
+    }
+  };
+
+  const handleDismissRejected = (id?: string) => {
+    if (!id) {
+      setPendingRejected([]);
+      notify('info', isFa ? 'رکوردهای رد شده نادیده گرفته شدند و به دیتابیس اضافه نشدند.' : 'Rejected records dismissed.');
+      return;
+    }
+    setPendingRejected((prev) => prev.filter((item) => item.id !== id));
   };
 
   const clearImportSelection = () => {
@@ -390,6 +695,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
         .filter((tf): tf is ImportColumnDef => Boolean(tf))
     : [];
 
+  const hasReplaceablePending = pendingRejected.some((r) => r.canForceReplace);
+
   return (
     <div className="max-w-6xl space-y-6">
       {/* Section 1: Data Import from Excel / CSV / JSON with column mapping, pre-commit review, & duplicate handling */}
@@ -407,8 +714,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
               </h3>
               <p className="text-xs text-[var(--text-secondary)] mt-1">
                 {isFa
-                  ? 'انتخاب فایل ورودی، بررسی و تطبیق دقیق ستون‌ها (شامل تفکیک شرح کلی و شرح)، ویرایش پیش از ثبت و مدیریت داده‌های تکراری.'
-                  : 'Upload Excel, CSV, TSV, or JSON files, confirm column mappings, edit rows before commit, and resolve duplicates.'}
+                  ? 'انتخاب فایل ورودی، بررسی و تطبیق دقیق ستون‌ها، ویرایش پیش از ثبت و مشاهده لاگ کامل رکوردهای رد شده با امکان بازثبت.'
+                  : 'Upload Excel, CSV, TSV, or JSON files, confirm column mappings, edit rows before commit, and manage rejected rows in the import log.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -588,6 +895,25 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                 </div>
               )}
 
+              {/* Parser Incomplete Rows Notice during Preview */}
+              {(preview.parseRejectedRows?.length || 0) > 0 && (
+                <div className="p-3.5 rounded-xl border border-[var(--status-danger)]/50 bg-[var(--status-danger-bg)]/50 space-y-1.5 text-xs">
+                  <div className="font-bold text-[var(--status-danger)] flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>
+                      {isFa
+                        ? `${preview.parseRejectedRows!.length.toLocaleString('fa-IR')} ردیف در فایل دارای مقدار بودند اما به دلیل خالی بودن فیلدهای کلیدی هنگام خواندن رد شدند.`
+                        : `${preview.parseRejectedRows!.length} non-empty row(s) missed required identifier fields during parsing.`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[var(--text-secondary)]">
+                    {isFa
+                      ? 'می‌توانید نگاشت ستون‌ها را در بالا اصلاح کنید؛ همچنین پس از ثبت فایل، این ردیف‌ها با دلیل دقیق در بخش «لاگ ورود» نمایش داده می‌شوند تا در صورت نیاز آن‌ها را ویرایش و اضافه کنید.'
+                      : 'You can adjust column mappings above, or review and fix them in the Import Log right after committing.'}
+                  </p>
+                </div>
+              )}
+
               {/* Duplicate Warning */}
               {preview.duplicateRecordsCount > 0 && (
                 <div className="p-3.5 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-2.5 text-xs">
@@ -596,8 +922,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     <div className="space-y-1">
                       <div className="font-bold text-[var(--status-warning)]">
                         {isFa
-                          ? `${preview.duplicateRecordsCount.toLocaleString('fa-IR')} رکورد تکراری با اطلاعات فعلی شناسایی شد.`
-                          : `${preview.duplicateRecordsCount} duplicate record(s) match existing database entries.`}
+                          ? `${preview.duplicateRecordsCount.toLocaleString('fa-IR')} رکورد تکراری شناسایی شد (${(preview.duplicateDbCount ?? preview.duplicateRecordsCount).toLocaleString('fa-IR')} مشابه دیتابیس، ${(preview.duplicateInFileCount ?? 0).toLocaleString('fa-IR')} تکراری درون همین فایل).`
+                          : `${preview.duplicateRecordsCount} duplicate record(s) found (${preview.duplicateDbCount ?? preview.duplicateRecordsCount} in DB, ${preview.duplicateInFileCount ?? 0} within file).`}
                       </div>
                       {preview.duplicateSamples.length > 0 && (
                         <div className="text-[11px] text-[var(--text-secondary)] tabular-nums" dir="ltr">
@@ -606,8 +932,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                       )}
                       <div className="text-[11px] text-[var(--text-primary)]">
                         {isFa
-                          ? 'لطفاً نحوه برخورد با رکوردهای تکراری را انتخاب کنید:'
-                          : 'Choose how to handle duplicate records:'}
+                          ? 'لطفاً نحوه برخورد با رکوردهای تکراری را انتخاب کنید (در صورت انتخاب «رد کردن»، جزئیات دقیق آن‌ها در لاگ پایین ثبت شده و قابل تصمیم‌گیری مجدد خواهد بود):'
+                          : 'Choose how to handle duplicates (skipped items appear in the Import Log for review and recovery):'}
                       </div>
                     </div>
                   </div>
@@ -628,7 +954,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                         checked={duplicatePolicy === 'skip'}
                         onChange={() => setDuplicatePolicy('skip')}
                       />
-                      <span>{isFa ? 'رد کردن ردیف‌های تکراری' : 'Skip duplicates'}</span>
+                      <span>{isFa ? 'رد کردن و ثبت در لاگ برای تصمیم‌گیری' : 'Skip & Log for Review'}</span>
                     </label>
                   </div>
                 </div>
@@ -720,7 +1046,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
 
                 <button
                   type="button"
-                  disabled={importing || editedRows.length === 0 || !rowsConfirmed}
+                  disabled={importing || (editedRows.length === 0 && (preview.parseRejectedRows?.length || 0) === 0) || !rowsConfirmed}
                   onClick={handleCommitImport}
                   className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
                 >
@@ -737,9 +1063,250 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
               <CheckCircle2 className="w-4 h-4 text-[var(--status-success)] shrink-0" />
               <span className="font-semibold tabular-nums">
                 {isFa
-                  ? `نتیجه بارگذاری با موفقیت ثبت شد: ${importResult.imported.toLocaleString('fa-IR')} ردیف جدید · ${importResult.replaced.toLocaleString('fa-IR')} جایگزین‌شده · ${importResult.skipped.toLocaleString('fa-IR')} رد شده`
-                  : `Import succeeded: ${importResult.imported} imported · ${importResult.replaced} replaced · ${importResult.skipped} skipped`}
+                  ? `نتیجه بارگذاری ثبت شد: ${importResult.imported.toLocaleString('fa-IR')} ردیف جدید · ${importResult.replaced.toLocaleString('fa-IR')} جایگزین‌شده · ${importResult.skipped.toLocaleString('fa-IR')} رد شده`
+                  : `Import completed: ${importResult.imported} imported · ${importResult.replaced} replaced · ${importResult.skipped} skipped`}
               </span>
+            </div>
+          )}
+
+          {/* Interactive Rejected Records Decision & Recovery Panel */}
+          {pendingRejected.length > 0 && (
+            <div className="p-4 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)]/60 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-bold text-[var(--status-warning)] flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>
+                      {isFa
+                        ? `${pendingRejected.length.toLocaleString('fa-IR')} رکورد از فایل به دلایل زیر به دیتابیس اضافه نشدند`
+                        : `${pendingRejected.length} record(s) from the uploaded file were rejected`}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--text-primary)] font-medium">
+                    {isFa
+                      ? 'با این داده‌های رد شده چه کار کنیم؟ می‌توانید دلیل هر ردیف را ببینید، فیلدهای آن را ویرایش کنید، به عنوان رکورد جدید به دیتابیس اضافه کنید، جایگزین کنید یا صرف‌نظر نمایید:'
+                      : 'What should be done with these rejected records? Inspect each reason below, edit fields if needed, force-add to database, replace existing rows, or dismiss:'}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {hasReplaceablePending && (
+                    <button
+                      type="button"
+                      disabled={Boolean(recoveringId)}
+                      onClick={() => handleRecoverBulk('replace_duplicates')}
+                      className="h-8 px-3 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                      <span>
+                        {isFa ? 'جایگزینی موارد تکراری در دیتابیس' : 'Replace Duplicate DB Rows'}
+                      </span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={Boolean(recoveringId)}
+                    onClick={() => handleRecoverBulk('force_add_all')}
+                    className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    <span>
+                      {isFa ? 'افزودن همه به عنوان رکورد جدید به دیتابیس' : 'Force-Add All to Database'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(recoveringId)}
+                    onClick={() => handleDismissRejected()}
+                    className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-medium flex items-center gap-1"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'عدم ثبت و بستن همه' : 'Dismiss All'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 max-h-[420px] overflow-y-auto pe-1">
+                {pendingRejected.map((rec) => {
+                  const fixFields = quickFixFieldsForRejectedScope(rec.scope);
+                  const isBusyRow = recoveringId === rec.id || recoveringId === '__bulk__';
+                  return (
+                    <div
+                      key={rec.id}
+                      className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] space-y-2.5 text-xs"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-primary)] font-bold tabular-nums text-[11px]">
+                            {isFa
+                              ? `ردیف ${rec.sourceRowIndex ? rec.sourceRowIndex.toLocaleString('fa-IR') : '-'}`
+                              : `Row #${rec.sourceRowIndex || '-'}`}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] font-semibold text-[11px]">
+                            {reasonBadgeText(rec.reasonCode, isFa)}
+                          </span>
+                          <span className="text-[11px] font-medium text-[var(--text-primary)]">
+                            {isFa ? rec.reasonFa : rec.reasonEn}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {rec.canForceReplace && (
+                            <button
+                              type="button"
+                              disabled={isBusyRow}
+                              onClick={() => handleRecoverSingleRow(rec, 'replace')}
+                              className="h-7 px-2.5 rounded-lg border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-[11px] font-semibold flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <RefreshCw className="w-3 h-3 text-[var(--accent-primary)]" />
+                              <span>{isFa ? 'جایگزینی' : 'Replace'}</span>
+                            </button>
+                          )}
+                          {rec.canForceAdd !== false && (
+                            <button
+                              type="button"
+                              disabled={isBusyRow}
+                              onClick={() => handleRecoverSingleRow(rec, 'force_add')}
+                              className="h-7 px-2.5 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)] text-[11px] font-semibold flex items-center gap-1 disabled:opacity-50 transition-colors"
+                            >
+                              <PlusCircle className="w-3 h-3" />
+                              <span>{isFa ? 'افزودن به دیتابیس' : 'Add to DB'}</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={isBusyRow}
+                            onClick={() => handleDismissRejected(rec.id)}
+                            className="h-7 px-2 rounded-lg text-[11px] text-[var(--text-muted)] hover:text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                            title={isFa ? 'صرف‌نظر کردن' : 'Dismiss'}
+                          >
+                            {isFa ? 'صرف‌نظر' : 'Dismiss'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {rec.existingSummary && (
+                        <div className="text-[11px] text-[var(--text-secondary)] bg-[var(--bg-canvas)] px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)]">
+                          <span className="font-semibold">
+                            {isFa ? 'رکورد مشابه موجود در دیتابیس: ' : 'Matching DB record: '}
+                          </span>
+                          <span className="bidi-plaintext">{rec.existingSummary}</span>
+                        </div>
+                      )}
+
+                      {rec.rawRow && rec.rawRow.length > 0 && (
+                        <div className="text-[11px] text-[var(--text-muted)] bg-[var(--bg-canvas)] px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)]">
+                          <span className="font-semibold">
+                            {isFa ? 'داده‌های خام خوانده‌شده از فایل: ' : 'Raw values from file: '}
+                          </span>
+                          <span className="bidi-plaintext">{rec.rawRow.join(' | ')}</span>
+                        </div>
+                      )}
+
+                      {rec.canEditAndRetry !== false && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-1">
+                          {fixFields.map((ff) => {
+                            const cur = rec.parsedRow[ff.key];
+                            const valStr = cur === null || cur === undefined ? '' : String(cur);
+                            return (
+                              <div key={ff.key}>
+                                <label className="block text-[10px] text-[var(--text-muted)] mb-0.5">
+                                  {isFa ? ff.labelFa : ff.labelEn}
+                                </label>
+                                <input
+                                  type="text"
+                                  value={valStr}
+                                  onChange={(e) => handleRejectedFieldChange(rec.id, ff.key, e.target.value)}
+                                  className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Import Audit Log History */}
+          {importLogs.length > 0 && (
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-[var(--text-primary)]">
+                  <ClipboardList className="w-4 h-4 text-[var(--accent-primary)]" />
+                  <span>
+                    {isFa
+                      ? `لاگ ورود اطلاعات از فایل (${importLogs.length.toLocaleString('fa-IR')})`
+                      : `Import Activity Log (${importLogs.length})`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setImportLogs([])}
+                  className="text-[11px] text-[var(--text-muted)] hover:text-[var(--status-danger)]"
+                >
+                  {isFa ? 'پاک کردن تاریخچه لاگ' : 'Clear Log'}
+                </button>
+              </div>
+              <div className="divide-y divide-[var(--border-subtle)] max-h-64 overflow-y-auto">
+                {importLogs.map((log) => (
+                  <div key={log.id} className="px-4 py-2.5 text-xs space-y-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-semibold text-[var(--text-primary)]">
+                        {log.sourceLabel} ·{' '}
+                        <span className="text-[var(--accent-primary)]">
+                          {log.scope === 'general'
+                            ? isFa ? 'جنرال' : 'General'
+                            : log.scope === 'detailed'
+                              ? isFa ? 'دیتیل' : 'Detailed'
+                              : isFa ? 'در راه' : 'In-Transit'}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                        {formatTimestamp(log.timestamp)}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-[var(--text-secondary)] tabular-nums flex flex-wrap gap-3">
+                      <span className="text-[var(--status-success)] font-medium">
+                        {isFa ? `ثبت جدید: ${log.imported}` : `Imported: ${log.imported}`}
+                      </span>
+                      <span>{isFa ? `جایگزین: ${log.replaced}` : `Replaced: ${log.replaced}`}</span>
+                      <span className={log.skipped > 0 ? 'text-[var(--status-danger)] font-medium' : ''}>
+                        {isFa ? `رد شده: ${log.skipped}` : `Rejected: ${log.skipped}`}
+                      </span>
+                      {log.blankRowsSkipped > 0 && (
+                        <span>
+                          {isFa ? `سطر خالی: ${log.blankRowsSkipped}` : `Blank: ${log.blankRowsSkipped}`}
+                        </span>
+                      )}
+                    </div>
+                    {log.rejectedReasons.length > 0 && (
+                      <div className="ps-3 border-s-2 border-[var(--status-danger)]/50 space-y-1 text-[11px] text-[var(--text-muted)]">
+                        {log.rejectedReasons.slice(0, 8).map((rr, i) => (
+                          <div key={i}>
+                            <span className="font-semibold text-[var(--text-primary)]">
+                              {isFa
+                                ? `ردیف ${rr.sourceRowIndex || '-'}`
+                                : `Row #${rr.sourceRowIndex || '-'}`}
+                              :
+                            </span>{' '}
+                            {rr.reasonText} ({rr.summary})
+                          </div>
+                        ))}
+                        {log.rejectedReasons.length > 8 && (
+                          <div>
+                            {isFa
+                              ? `... و ${(log.rejectedReasons.length - 8).toLocaleString('fa-IR')} مورد دیگر`
+                              : `... and ${log.rejectedReasons.length - 8} more`}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
