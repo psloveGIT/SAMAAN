@@ -43,13 +43,24 @@ import {
 } from './src/shared/formulas.ts';
 import { getMonthKeyFromIso, normalizeDigits } from './src/shared/jalali.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
+import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
 import {
   matchesCustomFilters,
   matchesMultiPacking,
   parseCustomFiltersParam,
   parsePackingNosParam,
 } from './src/shared/customFilters.ts';
-import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
+import {
+  buildDetailedDupKey,
+  buildGeneralDupKey,
+  buildTransitDupKey,
+  checkDateRangeMulti,
+  collectDistinctColumnValues,
+  matchesColFilters,
+  parseColFiltersParam,
+  resolveSiteEntryArrivalAndRelease,
+  sortRowsByColumn,
+} from './src/shared/tableQuery.ts';
 import { isValidDigitsOnly } from './src/shared/validation.ts';
 import type {
   CalendarMode,
@@ -109,11 +120,7 @@ function matchSearch(haystackParts: (string | number | null | undefined)[], q: s
 }
 
 function inDateRange(isoDate: string, fromDate: string, toDate: string): boolean {
-  if (!fromDate && !toDate) return true;
-  if (!isoDate) return false;
-  if (fromDate && isoDate < fromDate) return false;
-  if (toDate && isoDate > toDate) return false;
-  return true;
+  return checkDateRangeMulti(isoDate, fromDate, toDate);
 }
 
 function appendUniqueRef(existing: string, nextRef: string): string {
@@ -862,6 +869,25 @@ async function startServer() {
     res.json({ meta: store.db.packingMeta[packingNo] });
   });
 
+  // ---------------- EXCEL COLUMN DISTINCT VALUES ----------------
+  app.get('/api/column-values', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
+    const scope = String(req.query.scope || 'general');
+    const column = String(req.query.column || '').trim();
+    const calendar: CalendarMode = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
+    if (!column) {
+      res.json({ values: [] });
+      return;
+    }
+    const sourceRows: Record<string, unknown>[] =
+      scope === 'detailed'
+        ? (store.getDetailedComputedList() as unknown as Record<string, unknown>[])
+        : scope === 'transit'
+          ? (store.db.transit as unknown as Record<string, unknown>[])
+          : (store.db.general as unknown as Record<string, unknown>[]);
+    const values = collectDistinctColumnValues(sourceRows, column, calendar);
+    res.json({ values });
+  });
+
   // ---------------- GENERAL (کلی) ----------------
   app.get('/api/general', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
     const q = String(req.query.q || '');
@@ -873,12 +899,16 @@ async function startServer() {
     const packingListNo = normKey(String(req.query.packingListNo || ''));
     const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
     const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
+    const colFilters = parseColFiltersParam(String(req.query.colFilters || ''));
+    const calendar: CalendarMode = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
+    const sortBy = String(req.query.sortBy || '').trim();
+    const sortDir: 'asc' | 'desc' = req.query.sortDir === 'desc' ? 'desc' : 'asc';
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
     const page = Math.max(1, Number(req.query.page || 1));
     const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize || 50)));
 
-    const filtered = store.db.general.filter((g) => {
+    const filteredRaw = store.db.general.filter((g) => {
       if (island && g.island !== island) return false;
       if (system && g.system !== system) return false;
       if (subSystem && g.subSystem !== subSystem) return false;
@@ -887,6 +917,7 @@ async function startServer() {
       if (packingListNo && normKey(g.packingListNo) !== packingListNo) return false;
       if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
       if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
+      if (!matchesColFilters(g as unknown as Record<string, unknown>, colFilters, calendar)) return false;
       if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
       return matchSearch(
         [
@@ -912,6 +943,10 @@ async function startServer() {
         q,
       );
     });
+
+    const filtered = sortBy
+      ? sortRowsByColumn(filteredRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as GeneralEntry[]
+      : filteredRaw;
 
     const total = filtered.length;
     const start = (page - 1) * pageSize;
@@ -1034,21 +1069,6 @@ async function startServer() {
       }
 
       const cleanMapnaMinutes = normalizeDigits(normKey(raw.mapnaEntryMinutesNo));
-      if (cleanMapnaMinutes) {
-        const lowerKey = cleanMapnaMinutes.toLowerCase();
-        if (store.isMapnaMinutesTaken(cleanMapnaMinutes) || batchMapnaMinutes.has(lowerKey)) {
-          res.status(409).json({
-            code: 'DUPLICATE_MAPNA_MINUTES',
-            error: errMsg(
-              req,
-              `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است و قبلاً ثبت شده است.`,
-              `MAPNA Entry Minutes No. "${cleanMapnaMinutes}" already exists and must be unique.`,
-            ),
-          });
-          return;
-        }
-        batchMapnaMinutes.add(lowerKey);
-      }
 
       const cleanArrival = normKey(raw.arrivalDate);
       const cleanReleaseNo = normKey(raw.releaseNo);
@@ -1145,19 +1165,7 @@ async function startServer() {
     }
 
     if (patch.mapnaEntryMinutesNo !== undefined) {
-      const cleanMapnaMinutes = normalizeDigits(normKey(patch.mapnaEntryMinutesNo));
-      if (cleanMapnaMinutes && store.isMapnaMinutesTaken(cleanMapnaMinutes, item.id)) {
-        res.status(409).json({
-          code: 'DUPLICATE_MAPNA_MINUTES',
-          error: errMsg(
-            req,
-            `شماره صورتجلسه ورود مپنا «${cleanMapnaMinutes}» تکراری است.`,
-            `MAPNA Entry Minutes No. "${cleanMapnaMinutes}" already exists.`,
-          ),
-        });
-        return;
-      }
-      patch.mapnaEntryMinutesNo = cleanMapnaMinutes;
+      patch.mapnaEntryMinutesNo = normalizeDigits(normKey(patch.mapnaEntryMinutesNo));
     }
 
     if (patch.employerEntryMinutesNo !== undefined) {
@@ -1412,6 +1420,10 @@ async function startServer() {
     const packageNo = normKey(String(req.query.packageNo || ''));
     const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
     const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
+    const colFilters = parseColFiltersParam(String(req.query.colFilters || ''));
+    const calendar: CalendarMode = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
+    const sortBy = String(req.query.sortBy || '').trim();
+    const sortDir: 'asc' | 'desc' = req.query.sortDir === 'desc' ? 'desc' : 'asc';
     const shortageOnly = String(req.query.shortageOnly || '') === 'true';
     const damagedOnly = String(req.query.damagedOnly || '') === 'true';
     const fromDate = String(req.query.fromDate || '');
@@ -1419,7 +1431,7 @@ async function startServer() {
     const page = Math.max(1, Number(req.query.page || 1));
     const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize || 50)));
 
-    const computedAll: DetailedComputed[] = [];
+    const computedRaw: DetailedComputed[] = [];
     for (const d of store.db.detailed) {
       if (island && d.island !== island) continue;
       if (system && d.system !== system) continue;
@@ -1471,10 +1483,15 @@ async function startServer() {
       }
       const comp = computeDetailedEntry(d);
       if (!matchesCustomFilters(comp as unknown as Record<string, unknown>, customFilters)) continue;
+      if (!matchesColFilters(comp as unknown as Record<string, unknown>, colFilters, calendar)) continue;
       if (shortageOnly && !comp.hasShortage) continue;
       if (damagedOnly && !comp.hasDamaged) continue;
-      computedAll.push(comp);
+      computedRaw.push(comp);
     }
+
+    const computedAll = sortBy
+      ? (sortRowsByColumn(computedRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as DetailedComputed[])
+      : computedRaw;
 
     const total = computedAll.length;
     const start = (page - 1) * pageSize;
@@ -1824,17 +1841,22 @@ async function startServer() {
     const system = String(req.query.system || '');
     const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
     const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
+    const colFilters = parseColFiltersParam(String(req.query.colFilters || ''));
+    const calendar: CalendarMode = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
+    const sortBy = String(req.query.sortBy || '').trim();
+    const sortDir: 'asc' | 'desc' = req.query.sortDir === 'desc' ? 'desc' : 'asc';
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
     const page = Math.max(1, Number(req.query.page || 1));
     const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize || 50)));
 
-    const filtered = store.db.transit.filter((t) => {
+    const filteredRaw = store.db.transit.filter((t) => {
       if (status && t.overallStatus !== status) return false;
       if (supplier && t.supplier !== supplier) return false;
       if (system && t.system !== system) return false;
       if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
       if (!matchesCustomFilters(t as unknown as Record<string, unknown>, customFilters)) return false;
+      if (!matchesColFilters(t as unknown as Record<string, unknown>, colFilters, calendar)) return false;
       if (!inDateRange(t.arrivalDate, fromDate, toDate)) return false;
       return matchSearch(
         [
@@ -1857,6 +1879,10 @@ async function startServer() {
         q,
       );
     });
+
+    const filtered = sortBy
+      ? (sortRowsByColumn(filteredRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as TransitEntry[])
+      : filteredRaw;
 
     const total = filtered.length;
     const start = (page - 1) * pageSize;
@@ -2014,16 +2040,6 @@ async function startServer() {
 
     if (entry.scope === 'general') {
       const g = entry.data as GeneralEntry;
-      if (g.mapnaEntryMinutesNo && store.isMapnaMinutesTaken(g.mapnaEntryMinutesNo)) {
-        res.status(409).json({
-          error: errMsg(
-            req,
-            `شماره صورتجلسه ورود مپنا «${g.mapnaEntryMinutesNo}» در حال حاضر در سیستم فعال است و امکان بازیابی مستقیم وجود ندارد.`,
-            `MAPNA Entry Minutes No. "${g.mapnaEntryMinutesNo}" is already active and cannot be restored directly.`,
-          ),
-        });
-        return;
-      }
       store.db.trash.splice(idx, 1);
       store.db.general.unshift({ ...g, updatedAt: new Date().toISOString() });
       store.renumberScope('general');
@@ -2122,8 +2138,18 @@ async function startServer() {
   app.post('/api/site-entry', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const raw = req.body as Partial<SiteEntryMinutesRecord>;
     const cleanNo = normKey(raw.minutesNo);
-    const cleanDate = normKey(raw.date);
     const cleanPackings = Array.from(new Set((raw.packingListNos || []).map(normKey).filter(Boolean)));
+    const resolvedArrival = resolveSiteEntryArrivalAndRelease(
+      cleanPackings,
+      raw.releaseNoteNo,
+      store.db.general,
+      store.db.transit,
+    );
+    if (resolvedArrival.errorFa) {
+      res.status(400).json({ error: errMsg(req, resolvedArrival.errorFa, resolvedArrival.errorEn || resolvedArrival.errorFa) });
+      return;
+    }
+    const cleanDate = resolvedArrival.resolvedArrivalDate || normKey(raw.date);
     if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
       res.status(400).json({
         error: errMsg(
@@ -2164,14 +2190,14 @@ async function startServer() {
     const record: SiteEntryMinutesRecord = {
       id: makeId(),
       minutesNo: cleanNo,
-      releaseNoteNo: normKey(raw.releaseNoteNo),
+      releaseNoteNo: resolvedArrival.resolvedReleaseNoteNo,
       projectName: normKey(raw.projectName),
       entryType: raw.entryType === 'temporary' ? 'temporary' : 'permanent',
       goodsUsage:
         raw.goodsUsage === 'site_equip' || raw.goodsUsage === 'general' ? raw.goodsUsage : 'project',
       contractNo: normKey(raw.contractNo),
       date: cleanDate,
-      arrivalDate: normKey(raw.arrivalDate) || cleanDate,
+      arrivalDate: resolvedArrival.resolvedArrivalDate || normKey(raw.arrivalDate) || cleanDate,
       packingListNos: cleanPackings,
       supplier: normKey(raw.supplier),
       unit: normKey(raw.unit),
@@ -2220,10 +2246,20 @@ async function startServer() {
     }
     const raw = req.body as Partial<SiteEntryMinutesRecord>;
     const cleanNo = normKey(raw.minutesNo ?? rec.minutesNo);
-    const cleanDate = normKey(raw.date ?? rec.date);
     const cleanPackings = Array.from(
       new Set(((raw.packingListNos !== undefined ? raw.packingListNos : rec.packingListNos) || []).map(normKey).filter(Boolean)),
     );
+    const resolvedArrival = resolveSiteEntryArrivalAndRelease(
+      cleanPackings,
+      raw.releaseNoteNo !== undefined ? raw.releaseNoteNo : rec.releaseNoteNo,
+      store.db.general,
+      store.db.transit,
+    );
+    if (resolvedArrival.errorFa) {
+      res.status(400).json({ error: errMsg(req, resolvedArrival.errorFa, resolvedArrival.errorEn || resolvedArrival.errorFa) });
+      return;
+    }
+    const cleanDate = resolvedArrival.resolvedArrivalDate || normKey(raw.date ?? rec.date);
     if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
       res.status(400).json({
         error: errMsg(
@@ -2261,7 +2297,7 @@ async function startServer() {
         );
     }
     rec.minutesNo = cleanNo;
-    if (raw.releaseNoteNo !== undefined) rec.releaseNoteNo = normKey(raw.releaseNoteNo);
+    rec.releaseNoteNo = resolvedArrival.resolvedReleaseNoteNo;
     if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
     if (raw.entryType === 'permanent' || raw.entryType === 'temporary') rec.entryType = raw.entryType;
     if (raw.goodsUsage === 'project' || raw.goodsUsage === 'site_equip' || raw.goodsUsage === 'general') {
@@ -2269,7 +2305,7 @@ async function startServer() {
     }
     if (raw.contractNo !== undefined) rec.contractNo = normKey(raw.contractNo);
     rec.date = cleanDate;
-    if (raw.arrivalDate !== undefined) rec.arrivalDate = normKey(raw.arrivalDate) || cleanDate;
+    rec.arrivalDate = resolvedArrival.resolvedArrivalDate || normKey(raw.arrivalDate ?? rec.arrivalDate) || cleanDate;
     rec.packingListNos = cleanPackings;
     if (raw.supplier !== undefined) rec.supplier = normKey(raw.supplier);
     if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
@@ -4568,29 +4604,11 @@ async function startServer() {
   });
 
   // ---------------- SPREADSHEET / CSV / EXCEL IMPORT ----------------
-  const generalDupKey = (r: Pick<GeneralEntry, 'packingListNo' | 'packageNo' | 'mapnaEntryMinutesNo'>) => {
-    const pk = normalizeDigits(normKey(r.packingListNo)).toLowerCase();
-    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
-    const mp = normalizeDigits(normKey(r.mapnaEntryMinutesNo)).toLowerCase();
-    if (pk && pkg) return `pk:${pk}::pkg:${pkg}`;
-    if (mp) return `mp:${mp}`;
-    return '';
-  };
+  const generalDupKey = (r: Partial<GeneralEntry>) => buildGeneralDupKey(r);
 
-  const detailedDupKey = (r: Pick<DetailedEntry, 'shipmentNo' | 'packageNo' | 'itemNo'>) => {
-    const pk = normalizeDigits(normKey(r.shipmentNo)).toLowerCase();
-    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
-    const itm = normalizeDigits(normKey(r.itemNo)).toLowerCase();
-    if (pk && itm) return `sh:${pk}::pkg:${pkg}::itm:${itm}`;
-    return '';
-  };
+  const detailedDupKey = (r: Partial<DetailedEntry>) => buildDetailedDupKey(r);
 
-  const transitDupKey = (r: Pick<TransitEntry, 'packingListNo' | 'packageNo'>) => {
-    const pk = normalizeDigits(normKey(r.packingListNo)).toLowerCase();
-    const pkg = normalizeDigits(normKey(r.packageNo)).toLowerCase();
-    if (pk) return `tr:${pk}::pkg:${pkg}`;
-    return '';
-  };
+  const transitDupKey = (r: Partial<TransitEntry>) => buildTransitDupKey(r);
 
   app.post('/api/import/preview', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const { csvText, matrix: rawMatrix, scope, assumedCalendar, columnMapping } = req.body as {
@@ -5049,8 +5067,19 @@ async function startServer() {
     }
 
     store.rebuildIndexes();
-    for (const pk of touchedPackings) {
-      transitAutoArrived += store.syncTransitArrival(pk, sanitizeUser(req.currentUser!));
+    const actorName = req.currentUser!.fullName || req.currentUser!.username;
+    for (const pkRaw of touchedPackings) {
+      const cleanPk = normKey(pkRaw);
+      if (cleanPk && (targetScope === 'general' || targetScope === 'detailed') && !store.db.packingMeta[cleanPk]) {
+        store.db.packingMeta[cleanPk] = {
+          packingNo: cleanPk,
+          isClosed: true,
+          closedAt: now,
+          closedBy: actorName,
+          closureNote: 'بسته‌شدن پیش‌فرض هنگام ورود اطلاعات از فایل',
+        };
+      }
+      transitAutoArrived += store.syncTransitArrival(pkRaw, sanitizeUser(req.currentUser!));
     }
 
     store.addAudit({

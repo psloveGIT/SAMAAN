@@ -1,6 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
-import { useApp } from '../context/AppContext.tsx';
 import {
   formatIranianPlate,
   IRANIAN_PLATE_LETTERS,
@@ -20,12 +18,11 @@ export const IranianPlateInput: React.FC<IranianPlateInputProps> = ({
   onChange,
   disabled = false,
 }) => {
-  const { prefs } = useApp();
-  const isFa = prefs.language === 'fa';
-
   const [parts, setParts] = useState<IranianPlateParts>(() => parseIranianPlate(value));
   const lastEmittedRef = useRef<string>(value || '');
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const leftRef = useRef<HTMLInputElement | null>(null);
   const midRef = useRef<HTMLInputElement | null>(null);
   const letterRef = useRef<HTMLSelectElement | null>(null);
   const rightRef = useRef<HTMLInputElement | null>(null);
@@ -45,17 +42,26 @@ export const IranianPlateInput: React.FC<IranianPlateInputProps> = ({
     onChange(formatted);
   };
 
-  const handleClear = () => {
-    const empty: IranianPlateParts = { left2: '', mid3: '', letter: 'ع', right2: '' };
-    setParts(empty);
-    lastEmittedRef.current = '';
-    onChange('');
+  const advanceAfterPlate = () => {
+    const root = containerRef.current;
+    if (!root) return;
+    const scope = root.closest('form') || document.body;
+    const focusables = Array.from(
+      scope.querySelectorAll<HTMLElement>(
+        'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])',
+      ),
+    ).filter((el) => el.offsetParent !== null);
+    const rightIdx = rightRef.current ? focusables.indexOf(rightRef.current) : -1;
+    if (rightIdx >= 0 && rightIdx + 1 < focusables.length) {
+      focusables[rightIdx + 1]?.focus();
+    } else {
+      rightRef.current?.blur();
+    }
   };
-
-  const hasAnyValue = Boolean(parts.left2 || parts.mid3 || parts.right2 || value);
 
   return (
     <div
+      ref={containerRef}
       dir="ltr"
       className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] overflow-hidden focus-within:border-[var(--accent-primary)]"
     >
@@ -65,6 +71,7 @@ export const IranianPlateInput: React.FC<IranianPlateInputProps> = ({
       </div>
 
       <input
+        ref={leftRef}
         type="text"
         inputMode="numeric"
         maxLength={2}
@@ -94,6 +101,11 @@ export const IranianPlateInput: React.FC<IranianPlateInputProps> = ({
           const val = sanitizeDigitsOnly(e.target.value).slice(0, 3);
           commitParts({ ...parts, mid3: val });
           if (val.length === 3) letterRef.current?.focus();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Backspace' && parts.mid3.length === 0) {
+            leftRef.current?.focus();
+          }
         }}
         aria-label="Plate middle 3 digits"
         className="w-14 min-w-[3.25rem] px-1 h-full text-center text-sm font-bold text-[var(--text-primary)] tabular-nums bg-transparent focus:outline-none border-s border-e border-[var(--border-subtle)]"
@@ -130,21 +142,19 @@ export const IranianPlateInput: React.FC<IranianPlateInputProps> = ({
         onChange={(e) => {
           const val = sanitizeDigitsOnly(e.target.value).slice(0, 2);
           commitParts({ ...parts, right2: val });
+          if (val.length === 2) {
+            advanceAfterPlate();
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Backspace' && parts.right2.length === 0) {
+            midRef.current?.focus();
+          }
         }}
         aria-label="Plate right 2 digits"
-        className="w-12 min-w-[2.75rem] px-1 h-full text-center text-sm font-bold text-[var(--text-primary)] tabular-nums bg-transparent focus:outline-none border-s border-[var(--border-subtle)]"
+        className="w-12 min-w-[2.75rem] flex-1 px-1 h-full text-center text-sm font-bold text-[var(--text-primary)] tabular-nums bg-transparent focus:outline-none border-s border-[var(--border-subtle)]"
       />
-
-      {hasAnyValue && !disabled && (
-        <button
-          type="button"
-          onClick={handleClear}
-          title={isFa ? 'پاک کردن پلاک' : 'Clear plate'}
-          className="px-2 h-full flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] shrink-0"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
-      )}
     </div>
   );
 };
+

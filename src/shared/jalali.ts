@@ -136,25 +136,19 @@ export function normalizeDigits(input: string): string {
     .replace(/[\u0660-\u0669]/g, (c) => String(c.charCodeAt(0) - 0x0660));
 }
 
-/**
- * Parses Jalali (e.g. "03.10.15", "1403/10/15", "1403-10-15") or Gregorian ("2025-01-04", "2025/01/04")
- * into canonical ISO YYYY-MM-DD (Gregorian). Returns original trimmed string if non-date text (like "-").
- */
-export function parseFlexibleDateToIso(rawInput: string, assumedCalendar: CalendarMode = 'jalali'): string {
-  const cleaned = normalizeDigits((rawInput || '').trim());
+function normalizeSingleDateToIso(rawToken: string, assumedCalendar: CalendarMode = 'jalali'): string {
+  const cleaned = normalizeDigits((rawToken || '').trim());
   if (!cleaned || cleaned === '-' || cleaned === '—') return '';
 
-  // Already ISO YYYY-MM-DD (Gregorian > 1900)
   const parts = cleaned.split(/[./-]/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length !== 3) return rawInput.trim();
+  if (parts.length !== 3) return '';
 
   const nums = parts.map((p) => Number(p));
-  if (nums.some((n) => !Number.isFinite(n) || n <= 0)) return rawInput.trim();
+  if (nums.some((n) => !Number.isFinite(n) || n <= 0)) return '';
 
   let [y, m, d] = nums;
-  if (m > 12 || d > 31) return rawInput.trim();
+  if (m > 12 || d > 31) return '';
 
-  // Heuristic: 2-digit year like "03" -> 1403 (Jalali) or 2024 (if gregorian)
   if (y < 100) {
     if (assumedCalendar === 'jalali' || y <= 50) {
       y = 1400 + y;
@@ -165,18 +159,70 @@ export function parseFlexibleDateToIso(rawInput: string, assumedCalendar: Calend
     return `${y}-${pad2(m)}-${pad2(d)}`;
   }
 
-  // Jalali 4-digit year (1300-1599)
   if (y >= 1300 && y <= 1599) {
     const g = toGregorian(y, m, d);
     return `${g.gy}-${pad2(g.gm)}-${pad2(g.gd)}`;
   }
 
-  // Gregorian 4-digit year (1900-2200)
   if (y >= 1900 && y <= 2200) {
     return `${y}-${pad2(m)}-${pad2(d)}`;
   }
 
-  return rawInput.trim();
+  return '';
+}
+
+/**
+ * Replaces dot-separated dates inside arbitrary text (e.g. "04.09.23" -> "04/09/23")
+ * without disturbing decimal numbers.
+ */
+export function convertDotDatesToSlash(text: string): string {
+  if (!text) return '';
+  return text.replace(
+    /(^|[^\d.])(\d{2,4})\.(\d{1,2})\.(\d{1,2})(?!\d|\.)/g,
+    (_m, prefix: string, p1: string, p2: string, p3: string) =>
+      `${prefix}${p1}/${pad2(Number(normalizeDigits(p2)))}/${pad2(Number(normalizeDigits(p3)))}`,
+  );
+}
+
+/**
+ * Parses Jalali (e.g. "03.10.15", "1403/10/15", "1403-10-15") or Gregorian ("2025-01-04", "2025/01/04")
+ * or space/newline-separated multi-date cells (e.g. "04.09.23 04.09.22") into canonical ISO YYYY-MM-DD
+ * sorted ascending chronologically (oldest on top, newest at bottom) joined by "\n".
+ */
+export function parseFlexibleDateToIso(rawInput: string, assumedCalendar: CalendarMode = 'jalali'): string {
+  const cleaned = normalizeDigits((rawInput || '').trim());
+  if (!cleaned || cleaned === '-' || cleaned === '—') return '';
+
+  const single = normalizeSingleDateToIso(cleaned, assumedCalendar);
+  if (single) return single;
+
+  // Detect multiple date tokens separated by whitespace, newlines, commas, slashes/pipes
+  const datePattern = /\d{2,4}[./-]\d{1,2}[./-]\d{1,2}/g;
+  const matches = cleaned.match(datePattern);
+  if (matches && matches.length >= 2) {
+    const remainder = cleaned.replace(datePattern, '').replace(/[\s,،;|/\-]+/g, '').trim();
+    if (!remainder) {
+      const parsedList = matches
+        .map((tok) => normalizeSingleDateToIso(tok, assumedCalendar))
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      if (parsedList.length > 0) {
+        return parsedList.join('\n');
+      }
+    }
+  }
+
+  // Fallback for multi-line arbitrary values containing dot dates
+  return cleaned
+    .split(/\r?\n/)
+    .map((line) => {
+      const t = line.trim();
+      if (!t) return '';
+      const isoLine = normalizeSingleDateToIso(t, assumedCalendar);
+      return isoLine || convertDotDatesToSlash(t);
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
 export function isIsoDateString(val: string): boolean {
@@ -185,22 +231,68 @@ export function isIsoDateString(val: string): boolean {
 
 export function formatIsoDate(isoOrRaw: string, calendar: CalendarMode, shortJalali = false): string {
   const trimmed = (isoOrRaw || '').trim();
-  if (!trimmed || trimmed === '-') return '';
+  if (!trimmed || trimmed === '-' || trimmed === '—') return '';
 
-  let iso = trimmed;
-  if (!isIsoDateString(iso)) {
-    iso = parseFlexibleDateToIso(trimmed, 'jalali');
-    if (!isIsoDateString(iso)) return trimmed;
+  const formatSingleIso = (iso: string) => {
+    const [gy, gm, gd] = iso.split('-').map(Number);
+    if (calendar === 'gregorian') {
+      return `${gy}/${pad2(gm)}/${pad2(gd)}`;
+    }
+    const j = toJalali(gy, gm, gd);
+    const yearStr = shortJalali ? pad2(j.jy % 100) : String(j.jy);
+    return `${yearStr}/${pad2(j.jm)}/${pad2(j.jd)}`;
+  };
+
+  if (isIsoDateString(trimmed)) {
+    return formatSingleIso(trimmed);
   }
 
-  const [gy, gm, gd] = iso.split('-').map(Number);
-  if (calendar === 'gregorian') {
-    return `${gy}/${pad2(gm)}/${pad2(gd)}`;
+  const normalized = parseFlexibleDateToIso(trimmed, 'jalali');
+  const lines = normalized.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return '';
+
+  // Sort purely-date lines chronologically ascending so newest dates sit at the bottom
+  const allAreIso = lines.every((l) => isIsoDateString(l));
+  if (allAreIso) {
+    const sorted = [...lines].sort((a, b) => a.localeCompare(b));
+    return sorted.map(formatSingleIso).join('\n');
   }
 
-  const j = toJalali(gy, gm, gd);
-  const yearStr = shortJalali ? pad2(j.jy % 100) : String(j.jy);
-  return `${yearStr}/${pad2(j.jm)}/${pad2(j.jd)}`;
+  return lines
+    .map((line) => (isIsoDateString(line) ? formatSingleIso(line) : convertDotDatesToSlash(line)))
+    .join('\n');
+}
+
+export function formatMultiValueCell(
+  rawValue: string | number | null | undefined,
+  options: { isDate?: boolean; calendar: CalendarMode; lang: Language; shortJalali?: boolean },
+): string {
+  if (rawValue === null || rawValue === undefined) return '';
+  if (typeof rawValue === 'number') {
+    return rawValue.toLocaleString(options.lang === 'fa' ? 'fa-IR' : 'en-US');
+  }
+  const str = String(rawValue).trim();
+  if (!str || str === '-' || str === '—') return '';
+  if (options.isDate) {
+    return formatIsoDate(str, options.calendar, options.shortJalali);
+  }
+
+  // Stack multi-line or semicolon/double-space delimited multi-values vertically
+  const rawLines = str.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (rawLines.length > 1) {
+    return rawLines.map((line) => convertDotDatesToSlash(line)).join('\n');
+  }
+
+  // Also check if a single line contains 2+ standalone dates separated by space
+  const dateMatches = normalizeDigits(str).match(/\d{2,4}[./-]\d{1,2}[./-]\d{1,2}/g);
+  if (dateMatches && dateMatches.length >= 2) {
+    const rem = normalizeDigits(str).replace(/\d{2,4}[./-]\d{1,2}[./-]\d{1,2}/g, '').replace(/[\s,،;|/\-]+/g, '').trim();
+    if (!rem) {
+      return formatIsoDate(str, options.calendar, options.shortJalali);
+    }
+  }
+
+  return convertDotDatesToSlash(str);
 }
 
 export function formatTimestampByCalendar(

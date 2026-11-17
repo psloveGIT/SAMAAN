@@ -1,37 +1,38 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { registerSW } from 'virtual:pwa-register';
 import { AuthGate } from './components/AuthGate.tsx';
-import { BackupView } from './components/BackupView.tsx';
-import { BalanceView } from './components/BalanceView.tsx';
-import { CategoryManagerView } from './components/CategoryManagerView.tsx';
-import { CustomFormsRunnerView } from './components/CustomFormsRunnerView.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
-import { DatabasePurgeView } from './components/DatabasePurgeView.tsx';
-import { DetailedView } from './components/DetailedView.tsx';
-import { EmployersStudioView } from './components/EmployersStudioView.tsx';
-import { GcvView } from './components/GcvView.tsx';
-import { GeneralView } from './components/GeneralView.tsx';
-import { GlobalSearchView } from './components/GlobalSearchView.tsx';
 import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
-import { MaterialEstimationView } from './components/MaterialEstimationView.tsx';
-import { MivView } from './components/MivView.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
-import { OpiMinutesView } from './components/OpiMinutesView.tsx';
-import { OpiView } from './components/OpiView.tsx';
 import { PackingWizardModal } from './components/PackingWizardModal.tsx';
-import { SiteEntryMinutesView } from './components/SiteEntryMinutesView.tsx';
-import { SmrView } from './components/SmrView.tsx';
-import { StocktakeView } from './components/StocktakeView.tsx';
-import { StorageLabelView } from './components/StorageLabelView.tsx';
-import { SubstitutionView } from './components/SubstitutionView.tsx';
-import { TransitView } from './components/TransitView.tsx';
-import { TrashView } from './components/TrashView.tsx';
-import { UsersAuditView } from './components/UsersAuditView.tsx';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { apiRequest } from './lib/api.ts';
 import type { CategoryStore, TransitEntry } from './shared/types.ts';
+
+const BackupView = lazy(() => import('./components/BackupView.tsx').then((m) => ({ default: m.BackupView })));
+const BalanceView = lazy(() => import('./components/BalanceView.tsx').then((m) => ({ default: m.BalanceView })));
+const CategoryManagerView = lazy(() => import('./components/CategoryManagerView.tsx').then((m) => ({ default: m.CategoryManagerView })));
+const CustomFormsRunnerView = lazy(() => import('./components/CustomFormsRunnerView.tsx').then((m) => ({ default: m.CustomFormsRunnerView })));
+const DatabasePurgeView = lazy(() => import('./components/DatabasePurgeView.tsx').then((m) => ({ default: m.DatabasePurgeView })));
+const DetailedView = lazy(() => import('./components/DetailedView.tsx').then((m) => ({ default: m.DetailedView })));
+const EmployersStudioView = lazy(() => import('./components/EmployersStudioView.tsx').then((m) => ({ default: m.EmployersStudioView })));
+const GcvView = lazy(() => import('./components/GcvView.tsx').then((m) => ({ default: m.GcvView })));
+const GeneralView = lazy(() => import('./components/GeneralView.tsx').then((m) => ({ default: m.GeneralView })));
+const GlobalSearchView = lazy(() => import('./components/GlobalSearchView.tsx').then((m) => ({ default: m.GlobalSearchView })));
+const MaterialEstimationView = lazy(() => import('./components/MaterialEstimationView.tsx').then((m) => ({ default: m.MaterialEstimationView })));
+const MivView = lazy(() => import('./components/MivView.tsx').then((m) => ({ default: m.MivView })));
+const OpiMinutesView = lazy(() => import('./components/OpiMinutesView.tsx').then((m) => ({ default: m.OpiMinutesView })));
+const OpiView = lazy(() => import('./components/OpiView.tsx').then((m) => ({ default: m.OpiView })));
+const SiteEntryMinutesView = lazy(() => import('./components/SiteEntryMinutesView.tsx').then((m) => ({ default: m.SiteEntryMinutesView })));
+const SmrView = lazy(() => import('./components/SmrView.tsx').then((m) => ({ default: m.SmrView })));
+const StocktakeView = lazy(() => import('./components/StocktakeView.tsx').then((m) => ({ default: m.StocktakeView })));
+const StorageLabelView = lazy(() => import('./components/StorageLabelView.tsx').then((m) => ({ default: m.StorageLabelView })));
+const SubstitutionView = lazy(() => import('./components/SubstitutionView.tsx').then((m) => ({ default: m.SubstitutionView })));
+const TransitView = lazy(() => import('./components/TransitView.tsx').then((m) => ({ default: m.TransitView })));
+const TrashView = lazy(() => import('./components/TrashView.tsx').then((m) => ({ default: m.TrashView })));
+const UsersAuditView = lazy(() => import('./components/UsersAuditView.tsx').then((m) => ({ default: m.UsersAuditView })));
 
 const EMPTY_CATEGORIES: CategoryStore = {
   island: [],
@@ -141,6 +142,13 @@ const SamaanWorkspace: React.FC = () => {
           }}
           onOpenNewPacking={() => openNewPacking('')}
         >
+          <Suspense
+            fallback={
+              <div className="py-16 text-center text-xs text-[var(--text-muted)]">
+                {t.controls.loading}
+              </div>
+            }
+          >
           {activeTab === 'dashboard' && (
             <DashboardView
               refreshSignal={refreshSignal}
@@ -261,6 +269,7 @@ const SamaanWorkspace: React.FC = () => {
           {activeTab === 'databasePurge' && (
             <DatabasePurgeView refreshSignal={refreshSignal} onPurged={bumpRefresh} />
           )}
+          </Suspense>
 
           <PackingWizardModal
             open={packingModalOpen}

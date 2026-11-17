@@ -200,9 +200,21 @@ export function parseCsvMatrix(csvText: string): string[][] {
 }
 
 function cleanStr(val: string | undefined): string {
-  const s = (val || '').replace(/\s+/g, ' ').trim();
-  if (s === '-' || s === '—') return '';
-  return s;
+  const raw = val || '';
+  if (!raw.trim()) return '';
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .replace(/[^\S\r\n]+/g, ' ')
+        .trim()
+        .replace(/(^|[^\d.])(\d{2,4})\.(\d{1,2})\.(\d{1,2})(?!\d|\.)/g, (_m, prefix: string, p1: string, p2: string, p3: string) => {
+          const pad2 = (n: string) => (n.length === 1 ? `0${n}` : n);
+          return `${prefix}${p1}/${pad2(p2)}/${pad2(p3)}`;
+        }),
+    )
+    .filter((l) => l !== '' && l !== '-' && l !== '—');
+  return lines.join('\n');
 }
 
 function parseNum(val: string | undefined): number | null {

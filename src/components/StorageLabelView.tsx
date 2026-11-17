@@ -756,20 +756,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
         </div>
 
         {/* Official Header Metadata Fields */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-[var(--text-secondary)]">
-              {isFa ? 'نام پروژه (Project)' : 'Project Name'}
-            </label>
-            <input
-              type="text"
-              value={meta.projectName}
-              onChange={(e) => setMeta((p) => ({ ...p, projectName: e.target.value }))}
-              placeholder={isFa ? 'مثال: نیروگاه ...' : 'Project name...'}
-              className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-            />
-          </div>
-
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="space-y-1">
             <label className="text-[11px] font-medium text-[var(--text-secondary)]">
               {isFa ? 'نام انبار (Warehouse)' : 'Warehouse'}

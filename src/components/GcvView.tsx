@@ -505,7 +505,6 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
 
   const [receiptNo, setReceiptNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
-  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [receiver, setReceiver] = useState('');
   const [purchaseRequestNo, setPurchaseRequestNo] = useState('');
   const [supplier, setSupplier] = useState('');
@@ -652,7 +651,6 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
     setEditingDoc(null);
     setReceiptNo('');
     setDate(getTodayIso());
-    setProjectName('');
     setReceiver('');
     setPurchaseRequestNo('');
     setSupplier('');
@@ -677,7 +675,6 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
     setEditingDoc(doc);
     setReceiptNo(doc.receiptNo || '');
     setDate(doc.date || getTodayIso());
-    setProjectName(doc.projectName || '');
     setReceiver(doc.receiver || '');
     setPurchaseRequestNo(doc.purchaseRequestNo || '');
     setSupplier(doc.supplier || '');
@@ -733,7 +730,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
     const payload = {
       receiptNo,
       date,
-      projectName,
+      projectName: activeProject?.name || '',
       receiver,
       purchaseRequestNo,
       supplier,
@@ -944,20 +941,6 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               value={date}
               onChange={setDate}
             />
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'پروژه' : 'Project Name'}
-              </label>
-              <input
-                type="text"
-                dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder={isFa ? 'نام پروژه' : 'Project name'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">

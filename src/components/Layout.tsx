@@ -168,6 +168,8 @@ export const Layout: React.FC<LayoutProps> = ({
           { key: 'miv', label: t.nav.miv, icon: <ClipboardList className="w-4 h-4 shrink-0" /> },
           { key: 'smr', label: t.nav.smr, icon: <CornerUpLeft className="w-4 h-4 shrink-0" /> },
           { key: 'substitution', label: t.nav.substitution, icon: <ArrowLeftRight className="w-4 h-4 shrink-0" /> },
+          { key: 'balance', label: t.nav.balance, icon: <Scale className="w-4 h-4 shrink-0" /> },
+          { key: 'storageLabel', label: t.nav.storageLabel, icon: <Tag className="w-4 h-4 shrink-0" /> },
         ],
       },
       {
@@ -175,9 +177,7 @@ export const Layout: React.FC<LayoutProps> = ({
         groupLabel: t.navGroups.planning,
         items: [
           { key: 'materialEstimation', label: t.nav.materialEstimation, icon: <Calculator className="w-4 h-4 shrink-0" /> },
-          { key: 'balance', label: t.nav.balance, icon: <Scale className="w-4 h-4 shrink-0" /> },
           { key: 'stocktake', label: t.nav.stocktake, icon: <ClipboardCheck className="w-4 h-4 shrink-0" /> },
-          { key: 'storageLabel', label: t.nav.storageLabel, icon: <Tag className="w-4 h-4 shrink-0" /> },
           { key: 'customForms', label: t.nav.customForms, icon: <FilePlus2 className="w-4 h-4 shrink-0" /> },
         ],
       },
@@ -424,8 +424,7 @@ export const Layout: React.FC<LayoutProps> = ({
                         {group.groupLabel}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0 text-[10px] text-[var(--text-muted)] tabular-nums">
-                      {!isExpanded && <span>{group.items.length}</span>}
+                    <div className="flex items-center gap-1.5 shrink-0 text-[10px] text-[var(--text-muted)]">
                       <ChevronDown
                         className={`w-3.5 h-3.5 transition-transform duration-150 ${
                           isExpanded ? 'rotate-180' : ''

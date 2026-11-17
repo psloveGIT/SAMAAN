@@ -416,14 +416,14 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'کد پروژه (اختیاری)' : 'Code (Optional)'}
+                    {isFa ? 'کد پروژه / شماره قرارداد' : 'Project Code / Contract No.'}
                   </label>
                   <input
                     type="text"
                     dir="ltr"
                     value={newCode}
                     onChange={(e) => setNewCode(e.target.value)}
-                    placeholder="PP-01"
+                    placeholder="PP-01 / C-..."
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>

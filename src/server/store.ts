@@ -335,12 +335,8 @@ export class SamaanStore {
     return arr.some((item) => normKey(item.rowNo) === target && item.id !== excludeId);
   }
 
-  public isMapnaMinutesTaken(minutesNo: string, excludeId?: string): boolean {
-    const clean = normalizeDigits(normKey(minutesNo)).toLowerCase();
-    if (!clean) return false;
-    return this.db.general.some(
-      (g) => g.id !== excludeId && normalizeDigits(normKey(g.mapnaEntryMinutesNo)).toLowerCase() === clean,
-    );
+  public isMapnaMinutesTaken(_minutesNo: string, _excludeId?: string): boolean {
+    return false;
   }
 
   public isDetailedItemNoTaken(

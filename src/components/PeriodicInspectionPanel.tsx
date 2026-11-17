@@ -635,7 +635,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   refreshSignal,
   onDataChanged,
 }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeProject, activeEmployer } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
   const formCode = getEmployerFormCode(activeEmployer, '07-03');
@@ -649,7 +649,6 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   const [saving, setSaving] = useState(false);
 
   // Form states
-  const [projectName, setProjectName] = useState('');
   const [inspectionDate, setInspectionDate] = useState(getTodayIso());
   const [supervisorName, setSupervisorName] = useState('');
   const [inspectorsSignatory, setInspectorsSignatory] = useState('');
@@ -716,7 +715,6 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
 
   const resetForm = () => {
     setEditingRecord(null);
-    setProjectName('');
     setInspectionDate(getTodayIso());
     setSupervisorName('');
     setInspectorsSignatory('');
@@ -728,7 +726,6 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
 
   const startEdit = (rec: PeriodicInspectionRecord) => {
     setEditingRecord(rec);
-    setProjectName(rec.projectName || '');
     setInspectionDate(rec.inspectionDate);
     setSupervisorName(rec.supervisorName || '');
     setInspectorsSignatory(rec.inspectorsSignatory || '');
@@ -779,7 +776,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
       }));
 
       const payload = {
-        projectName,
+        projectName: activeProject?.name || '',
         inspectionDate,
         supervisorName,
         inspectorsSignatory,
@@ -964,21 +961,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
           </div>
 
           {/* Header Metadata */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'پروژه' : 'Project'}
-              </label>
-              <input
-                type="text"
-                dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder={isFa ? 'نام پروژه...' : 'Project name...'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <JalaliDateInput
               label={`${isFa ? 'تاریخ بازدید' : 'Inspection Date'} *`}
               value={inspectionDate}

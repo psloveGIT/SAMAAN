@@ -143,6 +143,57 @@ export interface CustomFormSubmission {
   createdBy: string;
 }
 
+export type UploadedFormFileType = 'excel' | 'word' | 'pdf' | 'image';
+
+export type UploadedFormDataSource =
+  | 'siteEntry'
+  | 'general'
+  | 'detailed'
+  | 'transit'
+  | 'manual';
+
+export interface UploadedFormPrintSettings {
+  orientation: FormPaperOrientation;
+  marginTopMm: number;
+  marginRightMm: number;
+  marginBottomMm: number;
+  marginLeftMm: number;
+  fontSizePt: number;
+  scalePercent: number;
+  showGridlines: boolean;
+  autoRowHeight: boolean;
+  minRowHeightPx: number;
+  fitToPageWidth: boolean;
+}
+
+export interface UploadedFormTableColumnBinding {
+  colIndex: number;
+  headerLabel: string;
+  fieldKey: string;
+}
+
+export interface EmployerUploadedForm {
+  id: string;
+  titleFa: string;
+  titleEn?: string;
+  formCode?: string;
+  fileName: string;
+  fileType: UploadedFormFileType;
+  mimeType: string;
+  fileDataBase64: string;
+  sheetName?: string;
+  detectedTokens?: string[];
+  tokenBindings?: Record<string, string>;
+  dataSource: UploadedFormDataSource;
+  printSettings: UploadedFormPrintSettings;
+  tableStartRowIndex?: number;
+  tableColumnBindings?: UploadedFormTableColumnBinding[];
+  primaryLogoId?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface EmployerProfile {
   id: string;
   nameFa: string;
@@ -166,6 +217,7 @@ export interface EmployerProfile {
   logos: EmployerLogoAsset[];
   formTemplates: Partial<Record<BuiltInFormKey, EmployerFormTemplate>>;
   customForms: CustomEmployerForm[];
+  uploadedForms?: EmployerUploadedForm[];
   createdAt: string;
   updatedAt: string;
 }

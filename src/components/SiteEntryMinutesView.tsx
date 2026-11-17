@@ -183,6 +183,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
   const design = resolveBuiltInFormDesign(activeEmployer, 'siteEntry');
   const formCode = design.docCode;
   const displayProjectName = record.projectName?.trim() || activeProject?.name || '..........';
+  const displayContractNo = record.contractNo?.trim() || activeProject?.code || '';
 
   return (
     <div
@@ -274,7 +275,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             <div>
               <span style={{ fontWeight: 700 }}>شماره قرارداد: </span>
               <span dir="ltr" className="tabular-nums">
-                {record.contractNo || ''}
+                {displayContractNo}
               </span>
             </div>
             <div>
@@ -833,15 +834,14 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
 
   const [minutesNo, setMinutesNo] = useState('');
   const [releaseNoteNo, setReleaseNoteNo] = useState('');
-  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [entryType, setEntryType] = useState<'permanent' | 'temporary'>('permanent');
   const [goodsUsage, setGoodsUsage] = useState<'project' | 'site_equip' | 'general'>('project');
-  const [contractNo, setContractNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
   const [arrivalDate, setArrivalDate] = useState(getTodayIso());
 
   const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
   const [packingSearch, setPackingSearch] = useState('');
+  const [showOlderPackings, setShowOlderPackings] = useState(false);
 
   const [supplier, setSupplier] = useState('');
   const [unit, setUnit] = useState('');
@@ -881,12 +881,77 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
     loadData();
   }, [loadData, refreshSignal]);
 
-  const filteredPackings = useMemo(() => {
-    const all = data?.packings || [];
+  // Compute packing metadata (arrivalDate & priority status within last 7 days)
+  const packingMetaInfo = useMemo(() => {
+    const todayIso = getTodayIso();
+    const todayMs = Date.parse(`${todayIso}T00:00:00Z`);
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const map = new Map<string, { arrivalDate: string; isRecent: boolean; sortKey: string }>();
+    const generalEntries = data?.generalEntries || [];
+
+    for (const pk of data?.packings || []) {
+      const matches = generalEntries.filter((g) => (g.packingListNo || '').trim() === pk);
+      const arrDates = matches.map((g) => (g.arrivalDate || '').trim()).filter(Boolean);
+      const primaryArrival = arrDates[0] || '';
+      let isRecent = false;
+
+      for (const g of matches) {
+        const arrStr = (g.arrivalDate || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(arrStr)) {
+          const ms = Date.parse(`${arrStr}T00:00:00Z`);
+          if (Number.isFinite(ms) && todayMs - ms <= sevenDaysMs && ms <= todayMs + 2 * 24 * 60 * 60 * 1000) {
+            isRecent = true;
+            break;
+          }
+        }
+        const createdStr = (g.createdAt || '').slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(createdStr)) {
+          const ms = Date.parse(`${createdStr}T00:00:00Z`);
+          if (Number.isFinite(ms) && todayMs - ms <= sevenDaysMs) {
+            isRecent = true;
+            break;
+          }
+        }
+      }
+
+      const sortKey = primaryArrival || matches[0]?.createdAt?.slice(0, 10) || '0000-00-00';
+      map.set(pk, { arrivalDate: primaryArrival, isRecent, sortKey });
+    }
+    return map;
+  }, [data]);
+
+  const { priorityPackings, olderPackings } = useMemo(() => {
+    const all = [...(data?.packings || [])];
     const needle = packingSearch.trim().toLowerCase();
-    if (!needle) return all;
-    return all.filter((p) => p.toLowerCase().includes(needle));
-  }, [data, packingSearch]);
+    const filtered = needle ? all.filter((p) => p.toLowerCase().includes(needle)) : all;
+
+    filtered.sort((a, b) => {
+      const ma = packingMetaInfo.get(a);
+      const mb = packingMetaInfo.get(b);
+      return (mb?.sortKey || '').localeCompare(ma?.sortKey || '') || b.localeCompare(a);
+    });
+
+    const recent: string[] = [];
+    const older: string[] = [];
+    for (const pk of filtered) {
+      const info = packingMetaInfo.get(pk);
+      if (info?.isRecent || selectedPackings.includes(pk)) {
+        recent.push(pk);
+      } else {
+        older.push(pk);
+      }
+    }
+    return { priorityPackings: recent, olderPackings: older };
+  }, [data, packingSearch, packingMetaInfo, selectedPackings]);
+
+  // Single arrival date enforced across selected packings
+  const lockedArrivalDate = useMemo(() => {
+    for (const pk of selectedPackings) {
+      const arr = packingMetaInfo.get(pk)?.arrivalDate;
+      if (arr) return arr;
+    }
+    return '';
+  }, [selectedPackings, packingMetaInfo]);
 
   const syncMetadataFromPackings = useCallback(
     (packings: string[]) => {
@@ -907,11 +972,15 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
         ...genMatches.map((g) => g.releaseNo),
         ...transitMatches.map((tr) => tr.releaseNetNo),
       ]);
-      const autoArrivalDate = genMatches.map((g) => (g.arrivalDate || '').trim()).find(Boolean) || getTodayIso();
+      const autoArrivalDate = genMatches.map((g) => (g.arrivalDate || '').trim()).find(Boolean) || '';
+      const resolvedDate = autoArrivalDate || getTodayIso();
 
       setMinutesNo(autoMinutesNo);
-      setReleaseNoteNo(autoReleaseNo);
-      setArrivalDate(autoArrivalDate);
+      setReleaseNoteNo(autoReleaseNo || (packings.length > 0 ? 'تأیید صورتجلسه‌ی ورود' : ''));
+      setArrivalDate(resolvedDate);
+      if (autoArrivalDate) {
+        setDate(autoArrivalDate);
+      }
       setSupplier(joinUnique([...genMatches.map((g) => g.supplier), ...detMatches.map((d) => d.supplier)]));
       setUnit(joinUnique([...genMatches.map((g) => g.unit), ...detMatches.map((d) => d.unit)]));
       setSystem(joinUnique([...genMatches.map((g) => g.system), ...detMatches.map((d) => d.system)]));
@@ -935,6 +1004,18 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
 
   const togglePacking = (pk: string) => {
     const isRemoving = selectedPackings.includes(pk);
+    if (!isRemoving) {
+      const candidateArr = packingMetaInfo.get(pk)?.arrivalDate || '';
+      if (lockedArrivalDate && candidateArr && candidateArr !== lockedArrivalDate) {
+        notify(
+          'warning',
+          isFa
+            ? `امکان انتخاب هم‌زمان پکینگ‌های با تاریخ ورود متفاوت وجود ندارد (${formatDate(lockedArrivalDate)} در برابر ${formatDate(candidateArr)}).`
+            : `Cannot select packings with different arrival dates.`,
+        );
+        return;
+      }
+    }
     const nextPackings = isRemoving
       ? selectedPackings.filter((x) => x !== pk)
       : [...selectedPackings, pk];
@@ -955,10 +1036,8 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
     setEditingRecord(null);
     setMinutesNo('');
     setReleaseNoteNo('');
-    setProjectName('');
     setEntryType('permanent');
     setGoodsUsage('project');
-    setContractNo('');
     setDate(getTodayIso());
     setArrivalDate(getTodayIso());
     setSelectedPackings([]);
@@ -981,11 +1060,9 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   const startEdit = (rec: SiteEntryMinutesRecord) => {
     setEditingRecord(rec);
     setMinutesNo(rec.minutesNo || '');
-    setReleaseNoteNo(rec.releaseNoteNo || '');
-    setProjectName(rec.projectName || '');
+    setReleaseNoteNo(rec.releaseNoteNo || 'تأیید صورتجلسه‌ی ورود');
     setEntryType(rec.entryType || 'permanent');
     setGoodsUsage(rec.goodsUsage || 'project');
-    setContractNo(rec.contractNo || '');
     setDate(rec.date || getTodayIso());
     setArrivalDate(rec.arrivalDate || rec.date || getTodayIso());
     setSelectedPackings(rec.packingListNos || []);
@@ -1055,15 +1132,17 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
       return;
     }
 
+    const effectiveDate = lockedArrivalDate || date;
+    const effectiveArrivalDate = lockedArrivalDate || arrivalDate;
     const payload = {
       minutesNo,
-      releaseNoteNo,
-      projectName,
+      releaseNoteNo: releaseNoteNo.trim() || 'تأیید صورتجلسه‌ی ورود',
+      projectName: activeProject?.name || '',
       entryType,
       goodsUsage,
-      contractNo,
-      date,
-      arrivalDate,
+      contractNo: activeProject?.code || '',
+      date: effectiveDate,
+      arrivalDate: effectiveArrivalDate,
       packingListNos: selectedPackings,
       supplier,
       unit,
@@ -1271,36 +1350,129 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
               />
             </div>
 
-            <div className="max-h-40 overflow-y-auto p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-              {filteredPackings.length === 0 ? (
-                <div className="col-span-full text-center py-4 text-xs text-[var(--text-muted)]">
+            <div className="max-h-48 overflow-y-auto p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-2.5">
+              {priorityPackings.length === 0 && olderPackings.length === 0 ? (
+                <div className="text-center py-4 text-xs text-[var(--text-muted)]">
                   {t.controls.noData}
                 </div>
               ) : (
-                filteredPackings.map((pk) => {
-                  const checked = selectedPackings.includes(pk);
-                  return (
-                    <label
-                      key={pk}
-                      className={`px-2.5 py-2 rounded-lg border text-xs cursor-pointer flex items-center gap-2 transition-colors ${
-                        checked
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => togglePacking(pk)}
-                      />
-                      <span dir="ltr" className="truncate tabular-nums">
-                        {pk}
-                      </span>
-                    </label>
-                  );
-                })
+                <>
+                  {priorityPackings.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-semibold text-[var(--accent-primary)]">
+                        {isFa
+                          ? `پکینگ‌های اولویت‌دار (ثبت‌شده از امروز تا ۷ روز گذشته — ${priorityPackings.length.toLocaleString('fa-IR')} مورد)`
+                          : `Priority Packings (Last 7 Days — ${priorityPackings.length})`}
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {priorityPackings.map((pk) => {
+                          const checked = selectedPackings.includes(pk);
+                          const info = packingMetaInfo.get(pk);
+                          const diffDate = Boolean(lockedArrivalDate && info?.arrivalDate && info.arrivalDate !== lockedArrivalDate && !checked);
+                          return (
+                            <label
+                              key={pk}
+                              title={info?.arrivalDate ? `${isFa ? 'تاریخ ورود:' : 'Arrival:'} ${formatDate(info.arrivalDate)}` : ''}
+                              className={`px-2.5 py-2 rounded-lg border text-xs flex flex-col gap-0.5 transition-colors ${
+                                diffDate
+                                  ? 'opacity-45 cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-subtle)]'
+                                  : checked
+                                    ? 'cursor-pointer border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                                    : 'cursor-pointer border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  disabled={diffDate}
+                                  checked={checked}
+                                  onChange={() => togglePacking(pk)}
+                                />
+                                <span dir="ltr" className="truncate tabular-nums">
+                                  {pk}
+                                </span>
+                              </div>
+                              {info?.arrivalDate && (
+                                <span className="text-[10px] text-[var(--text-muted)] ps-5 tabular-nums">
+                                  {formatDate(info.arrivalDate)}
+                                </span>
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {olderPackings.length > 0 && (
+                    <div className="space-y-1.5 pt-1 border-t border-[var(--border-subtle)]">
+                      <button
+                        type="button"
+                        onClick={() => setShowOlderPackings((v) => !v)}
+                        className="text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--accent-primary)] flex items-center gap-1"
+                      >
+                        <span>
+                          {showOlderPackings
+                            ? isFa
+                              ? `پنهان‌کردن پکینگ‌های قدیمی‌تر (${olderPackings.length.toLocaleString('fa-IR')})`
+                              : `Hide Older Packings (${olderPackings.length})`
+                            : isFa
+                              ? `نمایش پکینگ‌های قدیمی‌تر (${olderPackings.length.toLocaleString('fa-IR')} مورد)`
+                              : `Show Older Packings (${olderPackings.length})`}
+                        </span>
+                      </button>
+
+                      {(showOlderPackings || Boolean(packingSearch.trim()) || priorityPackings.length === 0) && (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                          {olderPackings.map((pk) => {
+                            const checked = selectedPackings.includes(pk);
+                            const info = packingMetaInfo.get(pk);
+                            const diffDate = Boolean(lockedArrivalDate && info?.arrivalDate && info.arrivalDate !== lockedArrivalDate && !checked);
+                            return (
+                              <label
+                                key={pk}
+                                title={info?.arrivalDate ? `${isFa ? 'تاریخ ورود:' : 'Arrival:'} ${formatDate(info.arrivalDate)}` : ''}
+                                className={`px-2.5 py-2 rounded-lg border text-xs flex flex-col gap-0.5 transition-colors ${
+                                  diffDate
+                                    ? 'opacity-45 cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-subtle)]'
+                                    : checked
+                                      ? 'cursor-pointer border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                                      : 'cursor-pointer border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    disabled={diffDate}
+                                    checked={checked}
+                                    onChange={() => togglePacking(pk)}
+                                  />
+                                  <span dir="ltr" className="truncate tabular-nums">
+                                    {pk}
+                                  </span>
+                                </div>
+                                {info?.arrivalDate && (
+                                  <span className="text-[10px] text-[var(--text-muted)] ps-5 tabular-nums">
+                                    {formatDate(info.arrivalDate)}
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
+            {lockedArrivalDate && (
+              <p className="text-[11px] text-[var(--text-muted)]">
+                {isFa
+                  ? `فقط پکینگ‌های دارای تاریخ ورود یکسان (${formatDate(lockedArrivalDate)}) قابل انتخاب هم‌زمان هستند.`
+                  : `Only packings sharing arrival date ${formatDate(lockedArrivalDate)} can be selected together.`}
+              </p>
+            )}
           </div>
 
           {/* Row 1: Core Notice Header & Dates */}
@@ -1328,59 +1500,40 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
               </label>
               <input
                 type="text"
-                dir={isFa && !releaseNoteNo ? 'rtl' : 'ltr'}
+                dir={!releaseNoteNo ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={releaseNoteNo}
                 onChange={(e) => setReleaseNoteNo(e.target.value)}
-                placeholder="RN-..."
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !releaseNoteNo ? 'text-right' : 'text-left'
-                }`}
+                placeholder="تأیید صورتجلسه‌ی ورود"
+                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
 
-            <JalaliDateInput
-              label={`${isFa ? 'تاریخ صورتجلسه' : 'Minutes Date'} *`}
-              value={date}
-              onChange={setDate}
-            />
+            <div>
+              <JalaliDateInput
+                label={`${isFa ? 'تاریخ صورتجلسه' : 'Minutes Date'} *`}
+                disabled={Boolean(lockedArrivalDate)}
+                value={lockedArrivalDate || date}
+                onChange={setDate}
+              />
+              {lockedArrivalDate && (
+                <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                  {isFa
+                    ? 'تاریخ صورتجلسه بر اساس تاریخ ورود پکینگ قفل شده است.'
+                    : 'Locked to the selected packing arrival date.'}
+                </p>
+              )}
+            </div>
 
             <JalaliDateInput
               label={isFa ? 'تاریخ ورود به کارگاه' : 'Arrival Date'}
-              value={arrivalDate}
+              disabled={Boolean(lockedArrivalDate)}
+              value={lockedArrivalDate || arrivalDate}
               onChange={setArrivalDate}
             />
           </div>
 
-          {/* Row 2: Project, Contract, Entry Type, Goods Usage, Condition */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'نام پروژه' : 'Project Name'}
-              </label>
-              <input
-                type="text"
-                dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder={isFa ? 'مثال: نیروگاه ...' : 'Project name'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره قرارداد' : 'Contract No.'}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !contractNo ? 'rtl' : 'ltr'}
-                value={contractNo}
-                onChange={(e) => setContractNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !contractNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
+          {/* Row 2: Entry Type, Goods Usage, Condition (Project & Contract inherited automatically) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">

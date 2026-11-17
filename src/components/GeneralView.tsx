@@ -15,8 +15,9 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { type CustomFieldFilter, GENERAL_FILTER_FIELDS } from '../shared/customFilters.ts';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
+import { formatMultiValueCell } from '../shared/jalali.ts';
+import { EMPTY_CELL_TOKEN } from '../shared/tableQuery.ts';
 import type {
   CategoryStore,
   GeneralEntry,
@@ -36,9 +37,9 @@ import {
   sanitizeDigitsOnly,
 } from '../shared/validation.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
+import { ExcelColumnFilter } from './ExcelColumnFilter.tsx';
 import { IranianPlateInput } from './IranianPlateInput.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
-import { MultiPackingAndFieldFilter } from './MultiPackingAndFieldFilter.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
@@ -86,10 +87,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [supplier, setSupplier] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
-  const [customFilters, setCustomFilters] = useState<CustomFieldFilter[]>([]);
+  const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
+  const [sortBy, setSortBy] = useState('');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc' | ''>('');
   const [page, setPage] = useState(1);
-  const [hideEmptyCols, setHideEmptyCols] = useState(true);
+  const [showExtraCols, setShowExtraCols] = useState(false);
 
   const [data, setData] = useState<GeneralListResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -145,8 +147,10 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         ...(supplier ? { supplier } : {}),
         ...(fromDate ? { fromDate } : {}),
         ...(toDate ? { toDate } : {}),
-        ...(selectedPackings.length > 0 ? { packingNos: JSON.stringify(selectedPackings) } : {}),
-        ...(customFilters.length > 0 ? { customFilters: JSON.stringify(customFilters) } : {}),
+        ...(Object.keys(colFilters).length > 0
+          ? { colFilters: JSON.stringify(colFilters), calendar: prefs.calendar }
+          : {}),
+        ...(sortBy && sortDir ? { sortBy, sortDir } : {}),
       });
       const res = await apiRequest<GeneralListResponse>(`/api/general?${params.toString()}`);
       setData(res);
@@ -155,7 +159,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [page, q, island, system, subSystem, unit, supplier, fromDate, toDate, selectedPackings, customFilters, notify]);
+  }, [page, q, island, system, subSystem, unit, supplier, fromDate, toDate, colFilters, prefs.calendar, sortBy, sortDir, notify]);
 
   useEffect(() => {
     loadData();
@@ -228,15 +232,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   );
 
   const visibleColumns = useMemo(() => {
-    const tableCols = columns.filter((col) => !col.hideInTable);
-    if (!hideEmptyCols || items.length === 0) return tableCols;
-    return tableCols.filter((col) =>
-      items.some((row) => {
-        const val = col.get(row);
-        return val !== null && val !== undefined && String(val).trim() !== '';
-      }),
-    );
-  }, [columns, items, hideEmptyCols]);
+    return showExtraCols ? columns : columns.filter((col) => !col.hideInTable);
+  }, [columns, showExtraCols]);
 
   const toggleRow = (row: GeneralRowView) => {
     setSelectedMap((prev) => {
@@ -500,15 +497,15 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setHideEmptyCols((v) => !v)}
+              onClick={() => setShowExtraCols((v) => !v)}
               className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
-                hideEmptyCols
+                showExtraCols
                   ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
                   : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
               }`}
             >
-              <EyeOff className="w-3.5 h-3.5" />
-              <span>{hideEmptyCols ? t.controls.hideEmptyCols : t.controls.showAllCols}</span>
+              {showExtraCols ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              <span>{showExtraCols ? t.controls.showAllCols : t.controls.hideEmptyCols}</span>
             </button>
 
             {canEdit && (
@@ -524,20 +521,74 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           </div>
         </div>
 
-        <MultiPackingAndFieldFilter
-          fields={GENERAL_FILTER_FIELDS}
-          selectedPackings={selectedPackings}
-          onChangePackings={(next) => {
-            setSelectedPackings(next);
-            setPage(1);
-          }}
-          customFilters={customFilters}
-          onChangeCustomFilters={(next) => {
-            setCustomFilters(next);
-            setPage(1);
-          }}
-          compact
-        />
+        {(Object.keys(colFilters).length > 0 || (sortBy && sortDir)) && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
+            <span className="font-semibold text-[var(--text-secondary)]">
+              {isFa ? 'فیلترهای فعال ستون‌ها:' : 'Active Column Filters:'}
+            </span>
+            {Object.entries(colFilters).map(([key, vals]) => {
+              const colDef = columns.find((c) => c.key === key);
+              const previewText = vals
+                .slice(0, 2)
+                .map((v) => (v === EMPTY_CELL_TOKEN ? (isFa ? '(خالی)' : '(Blank)') : v))
+                .join('، ');
+              return (
+                <span
+                  key={key}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-[var(--accent-primary)] font-medium"
+                >
+                  <span>
+                    {colDef?.header || key}: {previewText}
+                    {vals.length > 2 ? ` (+${(vals.length - 2).toLocaleString(isFa ? 'fa-IR' : 'en-US')})` : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setColFilters((prev) => {
+                        const next = { ...prev };
+                        delete next[key];
+                        return next;
+                      });
+                      setPage(1);
+                    }}
+                    className="hover:opacity-75"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              );
+            })}
+            {sortBy && sortDir && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                <span>
+                  {isFa ? 'مرتب‌سازی:' : 'Sort:'} {columns.find((c) => c.key === sortBy)?.header || sortBy} ({sortDir === 'asc' ? '↑' : '↓'})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSortBy('');
+                    setSortDir('');
+                    setPage(1);
+                  }}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setColFilters({});
+                setSortBy('');
+                setSortDir('');
+                setPage(1);
+              }}
+              className="px-2 py-0.5 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] font-semibold"
+            >
+              {isFa ? 'پاک‌کردن همه' : 'Clear All'}
+            </button>
+          </div>
+        )}
 
         {/* Category & Date Filters */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5">
@@ -665,7 +716,31 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       col.isNum ? 'text-end' : 'text-start'
                     }`}
                   >
-                    {col.header}
+                    <ExcelColumnFilter
+                      scope="general"
+                      colKey={col.key}
+                      label={col.header}
+                      calendar={prefs.calendar}
+                      lang={prefs.language}
+                      isNum={col.isNum}
+                      activeValues={colFilters[col.key]}
+                      sortDir={sortBy === col.key ? (sortDir || null) : null}
+                      refreshSignal={refreshSignal}
+                      onSortChange={(k, dir) => {
+                        setSortBy(dir ? k : '');
+                        setSortDir(dir || '');
+                        setPage(1);
+                      }}
+                      onApplyFilter={(k, vals) => {
+                        setColFilters((prev) => {
+                          const next = { ...prev };
+                          if (vals === undefined) delete next[k];
+                          else next[k] = vals;
+                          return next;
+                        });
+                        setPage(1);
+                      }}
+                    />
                   </th>
                 ))}
                 <th className="py-2.5 px-3 text-end font-semibold whitespace-nowrap">
@@ -729,15 +804,18 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
                     {visibleColumns.map((col) => {
                       const rawVal = col.get(row);
-                      const displayVal = col.isDate
-                        ? formatDate(String(rawVal || ''))
-                        : typeof rawVal === 'number'
+                      const displayVal =
+                        typeof rawVal === 'number'
                           ? rawVal.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                          : rawVal || '';
+                          : formatMultiValueCell(rawVal, {
+                              isDate: Boolean(col.isDate),
+                              calendar: prefs.calendar,
+                              lang: prefs.language,
+                            });
                       return (
                         <td
                           key={col.key}
-                          className={`py-2 px-3 whitespace-nowrap max-w-[260px] truncate tabular-nums bidi-plaintext ${
+                          className={`py-2 px-3 whitespace-pre-line align-top max-w-[280px] leading-relaxed tabular-nums bidi-plaintext ${
                             col.isNum ? 'text-end' : 'text-start'
                           }`}
                           title={String(displayVal)}
@@ -917,18 +995,21 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     })
                     .map((c) => {
                       const raw = c.get(inspected);
-                      const formatted = c.isDate
-                        ? formatDate(String(raw || ''))
-                        : typeof raw === 'number'
+                      const formatted =
+                        typeof raw === 'number'
                           ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                          : String(raw);
+                          : formatMultiValueCell(raw, {
+                              isDate: Boolean(c.isDate),
+                              calendar: prefs.calendar,
+                              lang: prefs.language,
+                            });
                       return (
                         <div
                           key={c.key}
                           className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
                         >
                           <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                          <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
+                          <div className="text-xs font-semibold mt-0.5 tabular-nums whitespace-pre-line break-words bidi-plaintext">
                             {formatted}
                           </div>
                         </div>
@@ -955,18 +1036,21 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       })
                       .map((c) => {
                         const raw = c.get(inspected);
-                        const formatted = c.isDate
-                          ? formatDate(String(raw || ''))
-                          : typeof raw === 'number'
+                        const formatted =
+                          typeof raw === 'number'
                             ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                            : String(raw);
+                            : formatMultiValueCell(raw, {
+                                isDate: Boolean(c.isDate),
+                                calendar: prefs.calendar,
+                                lang: prefs.language,
+                              });
                         return (
                           <div
                             key={c.key}
                             className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
                           >
                             <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                            <div className="text-xs font-semibold mt-0.5 tabular-nums break-words bidi-plaintext">
+                            <div className="text-xs font-semibold mt-0.5 tabular-nums whitespace-pre-line break-words bidi-plaintext">
                               {formatted}
                             </div>
                           </div>

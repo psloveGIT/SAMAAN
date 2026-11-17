@@ -209,7 +209,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px', lineHeight: 1.45 }}>
             <strong style={{ fontWeight: 700 }}>شماره قرارداد/ درخواست خرید: </strong>
             <span dir="ltr" className="tabular-nums">
-              {rec.contractNo || ''}
+              {rec.contractNo?.trim() || activeProject?.code || ''}
             </span>
           </div>
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
@@ -474,7 +474,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   refreshSignal,
   onDataChanged,
 }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer } = useApp();
+  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeProject, activeEmployer } = useApp();
   const formCode = getEmployerFormCode(activeEmployer, '10-03');
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
@@ -484,8 +484,6 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   const [docNo, setDocNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
-  const [projectName, setProjectName] = useState('');
-  const [contractNo, setContractNo] = useState('');
   const [system, setSystem] = useState('');
   const [island, setIsland] = useState('');
   const [unit, setUnit] = useState('');
@@ -592,9 +590,6 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     setIsland(found.island || genMatch?.island || '');
     setUnit(found.unit || genMatch?.unit || '');
     setSupplier(found.supplier || genMatch?.supplier || '');
-    if (found.mtoRef) {
-      setContractNo(found.mtoRef);
-    }
     if (found.receiver) {
       setInstallerContractor(found.receiver);
     }
@@ -609,7 +604,6 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   const resetForm = () => {
     setEditingRec(null);
     setDocNo('');
-    setContractNo('');
     setSystem('');
     setIsland('');
     setUnit('');
@@ -643,8 +637,6 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     setEditingRec(rec);
     setDocNo(rec.docNo);
     setDate(rec.date);
-    setProjectName(rec.projectName || '');
-    setContractNo(rec.contractNo || '');
     setSelectedItemId(rec.detailedId);
     setSystem(rec.system || '');
     setIsland(rec.island || '');
@@ -687,8 +679,8 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         docNo,
         date,
         detailedId: selectedItemId,
-        projectName,
-        contractNo,
+        projectName: activeProject?.name || '',
+        contractNo: activeProject?.code || '',
         system,
         island,
         unit,
@@ -914,35 +906,6 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
               value={date}
               onChange={setDate}
             />
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'پروژه' : 'Project Name'}
-              </label>
-              <input
-                type="text"
-                dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder={isFa ? 'نام پروژه' : 'Project name'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره قرارداد / درخواست خرید' : 'Contract / Req. No.'}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !contractNo ? 'rtl' : 'ltr'}
-                value={contractNo}
-                onChange={(e) => setContractNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !contractNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
           </div>
 
           {/* Row 2: Search & Original Item Selection */}

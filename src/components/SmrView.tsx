@@ -434,7 +434,6 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
   const [docType, setDocType] = useState<SmrOnlyType>('smr_contractor');
   const [docNo, setDocNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
-  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [purchasePackageNo, setPurchasePackageNo] = useState('');
   const [supplier, setSupplier] = useState('');
   const [islandSystem, setIslandSystem] = useState('');
@@ -658,7 +657,6 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
     setDocNo(doc.docNo);
     setDate(doc.date);
     setParty(doc.party || '');
-    setProjectName(doc.projectName || '');
     setPurchasePackageNo(doc.purchasePackageNo || '');
     setSupplier(doc.supplier || '');
     setIslandSystem(doc.islandSystem || '');
@@ -698,7 +696,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
         docNo,
         date,
         party,
-        projectName,
+        projectName: activeProject?.name || '',
         purchasePackageNo,
         supplier,
         islandSystem,
@@ -913,20 +911,6 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
               value={date}
               onChange={setDate}
             />
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'پروژه' : 'Project Name'}
-              </label>
-              <input
-                type="text"
-                dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder={isFa ? 'نام پروژه' : 'Project name'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">

@@ -5,7 +5,9 @@ import {
   Copy,
   Download,
   FilePlus2,
+  FileSpreadsheet,
   FileText,
+  FileUp,
   ImagePlus,
   LayoutTemplate,
   Plus,
@@ -20,6 +22,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { ApiError } from '../lib/api.ts';
 import {
   BUILT_IN_FORM_DEFINITIONS,
+  DEFAULT_UPLOADED_FORM_PRINT_SETTINGS,
   getBuiltInFormDefinition,
   resolveBuiltInFormDesign,
   resolveEmployerLogoById,
@@ -28,21 +31,26 @@ import {
 import type { ResolvedEmployerProfile } from '../shared/employers.ts';
 import type {
   BuiltInFormKey,
-  CustomEmployerForm,
-  CustomFormColumnDef,
-  CustomFormFieldDef,
   EmployerFormTemplate,
   EmployerLogoAsset,
   EmployerProfile,
+  EmployerUploadedForm,
   FormHeaderLayout,
-  FormSignatureBox,
+  UploadedFormDataSource,
+  UploadedFormPrintSettings,
 } from '../shared/types.ts';
+import {
+  parseExcelSheetModel,
+  parseUploadedFormFile,
+  SAMAAN_BINDABLE_FIELDS,
+} from '../shared/uploadedFormEngine.ts';
 import {
   OfficialExtraMetaStrip,
   OfficialFormFooter,
   OfficialFormHeader,
   OfficialFormSignatures,
 } from './OfficialSheetHeader.tsx';
+import { UploadedFormA4Sheet } from './UploadedFormA4Sheet.tsx';
 
 function createEmptyDraft(nameFa = ''): EmployerProfile {
   const now = new Date().toISOString();
@@ -69,6 +77,7 @@ function createEmptyDraft(nameFa = ''): EmployerProfile {
     logos: [],
     formTemplates: {},
     customForms: [],
+    uploadedForms: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -98,6 +107,7 @@ function toResolvedPreviewProfile(draft: EmployerProfile): ResolvedEmployerProfi
     logos: draft.logos || [],
     formTemplates: draft.formTemplates || {},
     customForms: draft.customForms || [],
+    uploadedForms: draft.uploadedForms || [],
     hideDocCodes: Boolean(draft.hideDocCodes),
   };
 }
@@ -180,7 +190,11 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
   });
   const [studioTab, setStudioTab] = useState<'profile' | 'builtin' | 'custom'>('profile');
   const [selectedFormKey, setSelectedFormKey] = useState<BuiltInFormKey>('siteEntry');
-  const [selectedCustomFormId, setSelectedCustomFormId] = useState<string>('');
+  const [selectedUploadedFormId, setSelectedUploadedFormId] = useState<string>(
+    () => employers[0]?.uploadedForms?.[0]?.id || '',
+  );
+  const [uploadingForm, setUploadingForm] = useState(false);
+  const [newTokenName, setNewTokenName] = useState('');
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -199,7 +213,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
   const selectEmployer = (emp: EmployerProfile) => {
     setSelectedId(emp.id);
     setDraft(structuredClone(emp));
-    setSelectedCustomFormId(emp.customForms?.[0]?.id || '');
+    setSelectedUploadedFormId(emp.uploadedForms?.[0]?.id || '');
     setDirty(false);
     setConfirmDeleteId(null);
   };
@@ -207,7 +221,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
   const startNewEmployer = () => {
     setSelectedId('__new__');
     setDraft(createEmptyDraft(''));
-    setSelectedCustomFormId('');
+    setSelectedUploadedFormId('');
     setStudioTab('profile');
     setDirty(true);
     setConfirmDeleteId(null);
@@ -415,71 +429,141 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     });
   };
 
-  const activeCustomForm =
-    draft.customForms.find((c) => c.id === selectedCustomFormId) || draft.customForms[0] || null;
+  const uploadedForms = draft.uploadedForms || [];
+  const activeUploadedForm =
+    uploadedForms.find((f) => f.id === selectedUploadedFormId) || uploadedForms[0] || null;
 
-  const createNewCustomForm = () => {
-    const now = new Date().toISOString();
-    const created: CustomEmployerForm = {
-      id: `cform-${Date.now()}`,
-      titleFa: isFa ? 'فرم اختصاصی جدید' : 'New Custom Form',
-      titleEn: 'Custom Power Plant Form',
-      docCode: draft.docCodePrefix ? `${draft.docCodePrefix}-CF-01` : '',
-      revisionText: 'Rev.00',
-      headerLayout: 'classic_right_logo',
-      primaryLogoId: draft.logos.find((l) => l.isDefault)?.id || draft.logos[0]?.id,
-      orientation: 'portrait',
-      accentColor: '#000000',
-      headerFields: [
-        { id: `hf-1`, label: 'نام پروژه / نیروگاه', fieldType: 'text', dataBinding: 'projectName' },
-        { id: `hf-2`, label: 'شماره پکینگ لیست', fieldType: 'text', dataBinding: 'packingListNo' },
-        { id: `hf-3`, label: 'تاریخ', fieldType: 'date', dataBinding: 'arrivalDate' },
-        { id: `hf-4`, label: 'تأمین‌کننده / پیمانکار', fieldType: 'text', dataBinding: 'supplier' },
-      ],
-      hasTable: true,
-      tableColumns: [
-        { id: 'col-1', label: 'ردیف', widthPercent: 7, dataBinding: 'rowNo' },
-        { id: 'col-2', label: 'شرح کالا / تجهیز', widthPercent: 38, dataBinding: 'description' },
-        { id: 'col-3', label: 'کد فنی', widthPercent: 16, dataBinding: 'itemCode' },
-        { id: 'col-4', label: 'تعداد', widthPercent: 10, dataBinding: 'qty' },
-        { id: 'col-5', label: 'واحد', widthPercent: 9, dataBinding: 'unit' },
-        { id: 'col-6', label: 'ملاحظات', widthPercent: 20, dataBinding: 'remarks' },
-      ],
-      defaultRowCount: 8,
-      bodyText: '',
-      signatures: [
-        { id: 'sig-1', label: 'تنظیم‌کننده / انباردار', subtitle: 'نام و امضاء' },
-        { id: 'sig-2', label: 'کنترل کیفیت (QC)', subtitle: 'نام و امضاء' },
-        { id: 'sig-3', label: 'نماینده کارفرما', subtitle: 'نام و امضاء' },
-      ],
-      footerNote: '',
-      createdAt: now,
-      updatedAt: now,
-    };
-    patchDraft((prev) => ({
-      ...prev,
-      customForms: [...(prev.customForms || []), created],
-    }));
-    setSelectedCustomFormId(created.id);
+  const activeExcelSheetMeta = useMemo(() => {
+    if (!activeUploadedForm || activeUploadedForm.fileType !== 'excel') return null;
+    try {
+      return parseExcelSheetModel(activeUploadedForm.fileDataBase64, activeUploadedForm.sheetName);
+    } catch {
+      return null;
+    }
+  }, [activeUploadedForm]);
+
+  const handleUploadCompanyFormFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploadingForm(true);
+    try {
+      const createdList: EmployerUploadedForm[] = [];
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        if (file.size > 8 * 1024 * 1024) {
+          notify('warning', isFa ? `حجم فایل ${file.name} بیش از ۸ مگابایت است.` : `${file.name} exceeds 8MB.`);
+          continue;
+        }
+        try {
+          const parsed = await parseUploadedFormFile(file, 'general');
+          createdList.push(parsed);
+        } catch (err) {
+          notify('error', err instanceof Error ? err.message : `خطا در خواندن ${file.name}`);
+        }
+      }
+      if (createdList.length > 0) {
+        patchDraft((prev) => ({
+          ...prev,
+          uploadedForms: [...(prev.uploadedForms || []), ...createdList],
+        }));
+        setSelectedUploadedFormId(createdList[0].id);
+        notify(
+          'success',
+          isFa
+            ? `${createdList.length} فرم رسمی شرکت اضافه شد. لطفاً دکمه «ذخیره تغییرات» را بزنید.`
+            : `Uploaded ${createdList.length} form(s). Remember to save.`,
+        );
+      }
+    } finally {
+      setUploadingForm(false);
+    }
   };
 
-  const patchCustomForm = (updater: (f: CustomEmployerForm) => CustomEmployerForm) => {
-    if (!activeCustomForm) return;
+  const patchUploadedForm = (updater: (f: EmployerUploadedForm) => EmployerUploadedForm) => {
+    if (!activeUploadedForm) return;
     patchDraft((prev) => ({
       ...prev,
-      customForms: prev.customForms.map((c) =>
-        c.id === activeCustomForm.id ? updater({ ...c, updatedAt: new Date().toISOString() }) : c,
+      uploadedForms: (prev.uploadedForms || []).map((f) =>
+        f.id === activeUploadedForm.id ? updater({ ...f, updatedAt: new Date().toISOString() }) : f,
       ),
     }));
   };
 
-  const deleteCustomForm = (id: string) => {
+  const patchUploadedPrintSettings = (patch: Partial<UploadedFormPrintSettings>) => {
+    patchUploadedForm((f) => ({
+      ...f,
+      printSettings: {
+        ...(f.printSettings || DEFAULT_UPLOADED_FORM_PRINT_SETTINGS),
+        ...patch,
+      },
+    }));
+  };
+
+  const deleteUploadedForm = (id: string) => {
     patchDraft((prev) => {
-      const remaining = prev.customForms.filter((c) => c.id !== id);
-      setSelectedCustomFormId(remaining[0]?.id || '');
-      return { ...prev, customForms: remaining };
+      const remaining = (prev.uploadedForms || []).filter((f) => f.id !== id);
+      setSelectedUploadedFormId(remaining[0]?.id || '');
+      return { ...prev, uploadedForms: remaining };
     });
   };
+
+  const samplePreviewData = useMemo(() => {
+    const headerTokens: Record<string, string> = {
+      projectName: activeProject?.name || 'نیروگاه نمونه (پیش‌نمایش)',
+      contractNo: activeProject?.code || draft.contractRef || 'CNT-1404',
+      employerName: draft.companyFullName || draft.nameFa || 'کارفرما',
+      todayDate: '1404/02/15',
+      docNo: activeUploadedForm?.formCode || 'FRM-001',
+      minutesNo: '404-012',
+      releaseNoteNo: 'RN-8841',
+      packingListNo: 'PK-1042-A',
+      packageNo: 'PKG-03',
+      arrivalDate: '1404/02/10',
+      supplier: 'شرکت تأمین‌کننده نمونه',
+      origin: 'بندرعباس',
+      island: 'جزیره توربین',
+      system: 'سیستم خنک‌کاری',
+      subSystem: 'پمپ‌های اصلی',
+      unit: 'واحد ۱',
+      waybillNo: 'BL-99412',
+      vehicleNo: '60 ایران 985 ع 14',
+      driverName: 'آقای رضایی',
+      grossWeight: '4,250',
+      netWeight: '3,980',
+      dimensions: '3.2 × 1.8 × 1.5',
+      overallStatus: 'تحویل در کارگاه',
+      remarks: 'تست خودکار تطبیق ارتفاع سطر با متن طولانی تجهیز جهت بررسی نمایش صحیح و چاپ A4 بدون برش متن در سلول',
+    };
+    const lineRows: Array<Record<string, string>> = [
+      {
+        ...headerTokens,
+        rowNo: '1',
+        itemNo: '001',
+        itemCode: 'TUR-VALV-402',
+        description:
+          'شیر کنترل فشار اصلی توربین بخار با فلنج کلاس ۶۰۰ و عملگر الکتریکی کامل همراه با متعلقات نصب و دفترچه راهنما',
+        packingQty: '2',
+        actualQty: '2',
+        countingUnit: 'دستگاه',
+        shortage: '0',
+        damagedQty: '0',
+        storageLocation: 'سالن A - ردیف ۳',
+      },
+      {
+        ...headerTokens,
+        rowNo: '2',
+        itemNo: '002',
+        itemCode: 'GSK-109',
+        description: 'واشر آب‌بندی فشار بالا',
+        packingQty: '10',
+        actualQty: '10',
+        countingUnit: 'عدد',
+        shortage: '0',
+        damagedQty: '0',
+        storageLocation: 'قفسه B12',
+      },
+    ];
+    return { headerTokens, lineRows };
+  }, [activeProject?.name, activeProject?.code, activeUploadedForm?.formCode, draft]);
 
   const logoSelectorGrid = (
     selectedLogoId: string | undefined,
@@ -633,8 +717,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                       </div>
                       <div className="text-[11px] text-[var(--text-muted)] tabular-nums truncate">
                         {emp.logos.length} {isFa ? 'لوگو' : 'logos'} · {customTplCount}{' '}
-                        {isFa ? 'قالب سفارشی' : 'templates'} · {emp.customForms.length}{' '}
-                        {isFa ? 'فرم اختصاصی' : 'custom'}
+                        {isFa ? 'قالب' : 'templates'} · {emp.uploadedForms?.length || 0}{' '}
+                        {isFa ? 'فرم آپلودی' : 'uploaded'}
                       </div>
                     </div>
                   </div>
@@ -763,8 +847,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
             },
             {
               key: 'custom' as const,
-              icon: <FilePlus2 className="w-3.5 h-3.5" />,
-              label: isFa ? '۳. سازنده فرم‌های اختصاصی جدید' : '3. Custom Form Builder',
+              icon: <FileUp className="w-3.5 h-3.5" />,
+              label: isFa ? '۳. فرم‌های آپلودی شرکتی (Word / Excel / PDF)' : '3. Uploaded Company Forms',
             },
           ].map((tab) => (
             <button
@@ -1552,336 +1636,527 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
           </div>
         )}
 
-        {/* Tab 3: Custom Standalone Form Builder */}
+        {/* Tab 3: Company Uploaded Forms (Excel, Word, PDF, Image) */}
         {studioTab === 'custom' && (
           <div className="p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-1.5">
-                {draft.customForms.map((cf) => (
+                {uploadedForms.map((uf) => (
                   <button
-                    key={cf.id}
+                    key={uf.id}
                     type="button"
-                    onClick={() => setSelectedCustomFormId(cf.id)}
+                    onClick={() => setSelectedUploadedFormId(uf.id)}
                     className={`h-8 px-3 rounded-lg border text-xs font-semibold flex items-center gap-1.5 ${
-                      activeCustomForm?.id === cf.id
+                      activeUploadedForm?.id === uf.id
                         ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
                         : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]'
                     }`}
                   >
-                    <FileText className="w-3.5 h-3.5" />
-                    <span>{cf.titleFa}</span>
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>{uf.titleFa}</span>
+                    <span className="text-[10px] opacity-80 uppercase font-mono">
+                      [{uf.fileType}]
+                    </span>
                   </button>
                 ))}
-                <button
-                  type="button"
-                  onClick={createNewCustomForm}
-                  className="h-8 px-3 rounded-lg border border-dashed border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold flex items-center gap-1"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'ایجاد فرم اختصاصی جدید' : 'New Custom Form'}</span>
-                </button>
+                <label className="h-8 px-3 rounded-lg border border-dashed border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer">
+                  <FileUp className="w-3.5 h-3.5" />
+                  <span>
+                    {uploadingForm
+                      ? isFa
+                        ? 'در حال پردازش...'
+                        : 'Parsing...'
+                      : isFa
+                        ? 'آپلود فرم شرکت (Word / Excel / PDF / تصویر)'
+                        : 'Upload Company Form'}
+                  </span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.xlsm,.csv,.docx,.doc,.pdf,.png,.jpg,.jpeg,.webp,.svg"
+                    multiple
+                    disabled={uploadingForm}
+                    className="hidden"
+                    onChange={(e) => {
+                      handleUploadCompanyFormFiles(e.target.files);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
               </div>
             </div>
 
-            {!activeCustomForm ? (
+            {!activeUploadedForm ? (
               <div className="p-8 rounded-xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-canvas)] text-center space-y-2">
+                <FileUp className="w-7 h-7 text-[var(--accent-primary)] mx-auto" />
                 <div className="text-xs font-bold text-[var(--text-primary)]">
-                  {isFa ? 'هنوز فرم اختصاصی جدیدی برای این کارفرما ساخته نشده است' : 'No custom forms created yet'}
-                </div>
-                <p className="text-xs text-[var(--text-muted)] max-w-lg mx-auto">
                   {isFa
-                    ? 'علاوه بر ویرایش فرم‌های استاندارد سامانه، می‌توانید فرم‌های کاملاً جدید متناسب با نیازهای خاص هر نیروگاه (با ستون‌ها، فیلدها، لوگوی انتخابی و کادر امضای دلخواه) بسازید.'
-                    : 'Create bespoke printable forms tailored to this plant with custom fields, columns, and logos.'}
+                    ? 'هنوز فرم رسمی شرکتی برای این کارفرما آپلود نشده است'
+                    : 'No official company forms uploaded yet'}
+                </div>
+                <p className="text-xs text-[var(--text-muted)] max-w-xl mx-auto leading-relaxed">
+                  {isFa
+                    ? 'فایل‌های آماده و کددار شرکت را با فرمت Excel (.xlsx)، Word (.docx)، PDF یا تصویر وارد کنید. می‌توانید متغیرهای {{نام_فیلد}} یا ستون‌های اکسل را به داده‌های سامانه متصل کرده، تنظیمات پرینت A4 و تطبیق خودکار ارتفاع سطر را کالیبره کنید.'
+                    : 'Upload official coded Excel, Word, PDF, or Image forms, bind SAMAAN fields, and calibrate A4 print settings with automatic Excel-style row height scaling.'}
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+                {/* Settings & Data Binding Panel */}
                 <div className="xl:col-span-6 space-y-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-4">
                   <div className="flex items-center justify-between pb-2 border-b border-[var(--border-subtle)]">
-                    <span className="text-xs font-bold">{activeCustomForm.titleFa}</span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold truncate">{activeUploadedForm.titleFa}</div>
+                      <div dir="ltr" className="text-[10.5px] font-mono text-[var(--text-muted)] truncate">
+                        {activeUploadedForm.fileName}
+                      </div>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => deleteCustomForm(activeCustomForm.id)}
-                      className="text-xs text-[var(--status-danger)] hover:underline flex items-center gap-1"
+                      onClick={() => deleteUploadedForm(activeUploadedForm.id)}
+                      className="text-xs text-[var(--status-danger)] hover:underline flex items-center gap-1 shrink-0"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span>{isFa ? 'حذف فرم' : 'Delete Form'}</span>
+                      <span>{isFa ? 'حذف فرم' : 'Remove'}</span>
                     </button>
                   </div>
 
+                  {/* Form Identity & Data Source */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
-                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                        {isFa ? 'عنوان فارسی فرم *' : 'Title (FA) *'}
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'عنوان فرم *' : 'Form Title *'}
                       </label>
                       <input
                         type="text"
-                        value={activeCustomForm.titleFa}
-                        onChange={(e) => patchCustomForm((f) => ({ ...f, titleFa: e.target.value }))}
-                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                        {isFa ? 'عنوان انگلیسی فرم' : 'Title (EN)'}
-                      </label>
-                      <input
-                        type="text"
-                        dir="ltr"
-                        value={activeCustomForm.titleEn || ''}
-                        onChange={(e) => patchCustomForm((f) => ({ ...f, titleEn: e.target.value }))}
-                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                        {isFa ? 'کد مدرک فرم' : 'Doc Code'}
-                      </label>
-                      <input
-                        type="text"
-                        dir="ltr"
-                        value={activeCustomForm.docCode || ''}
-                        onChange={(e) => patchCustomForm((f) => ({ ...f, docCode: e.target.value }))}
-                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                        {isFa ? 'بازنگری (Revision)' : 'Revision'}
-                      </label>
-                      <input
-                        type="text"
-                        dir="ltr"
-                        value={activeCustomForm.revisionText || ''}
-                        onChange={(e) => patchCustomForm((f) => ({ ...f, revisionText: e.target.value }))}
-                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                        {isFa ? 'چیدمان سربرگ' : 'Header Layout'}
-                      </label>
-                      <select
-                        value={activeCustomForm.headerLayout}
+                        value={activeUploadedForm.titleFa}
                         onChange={(e) =>
-                          patchCustomForm((f) => ({ ...f, headerLayout: e.target.value as FormHeaderLayout }))
+                          patchUploadedForm((f) => ({ ...f, titleFa: e.target.value }))
                         }
-                        className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                      >
-                        {LAYOUT_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {isFa ? opt.labelFa : opt.labelEn}
-                          </option>
-                        ))}
-                      </select>
+                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                      />
                     </div>
                     <div>
-                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                        {isFa ? 'جهت کاغذ (A4)' : 'Orientation'}
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'کد مدرک شرکت' : 'Company Form Code'}
+                      </label>
+                      <input
+                        type="text"
+                        dir="ltr"
+                        value={activeUploadedForm.formCode || ''}
+                        onChange={(e) =>
+                          patchUploadedForm((f) => ({ ...f, formCode: e.target.value }))
+                        }
+                        placeholder="FQP-WH-014"
+                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'منبع خواندن اطلاعات از سامانه' : 'Data Source Binding'}
                       </label>
                       <select
-                        value={activeCustomForm.orientation}
+                        value={activeUploadedForm.dataSource}
                         onChange={(e) =>
-                          patchCustomForm((f) => ({
+                          patchUploadedForm((f) => ({
                             ...f,
-                            orientation: e.target.value as 'portrait' | 'landscape',
+                            dataSource: e.target.value as UploadedFormDataSource,
                           }))
                         }
                         className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
                       >
-                        <option value="portrait">{isFa ? 'عمودی (Portrait)' : 'Portrait'}</option>
-                        <option value="landscape">{isFa ? 'افقی (Landscape)' : 'Landscape'}</option>
+                        <option value="general">{isFa ? 'ثبت کلی تجهیزات و پکینگ لیست' : 'General / Packing List'}</option>
+                        <option value="siteEntry">{isFa ? 'صورتجلسات ورود کالا به کارگاه' : 'Site Entry Minutes'}</option>
+                        <option value="detailed">{isFa ? 'ثبت جزئیات تجهیزات (اقلام)' : 'Detailed Equipment Items'}</option>
+                        <option value="transit">{isFa ? 'تجهیزات در راه' : 'In-Transit Equipment'}</option>
+                        <option value="manual">{isFa ? 'ورود دستی مقادیر در زمان پرینت' : 'Manual Entry Only'}</option>
                       </select>
                     </div>
-                  </div>
-
-                  {/* Primary & Secondary Logo Picker */}
-                  <div className="space-y-2">
-                    <label className="block text-[11px] font-bold text-[var(--text-primary)]">
-                      {isFa ? 'لوگوی انتخابی برای این فرم:' : 'Logo for Custom Form:'}
-                    </label>
-                    {logoSelectorGrid(activeCustomForm.primaryLogoId, (val) =>
-                      patchCustomForm((f) => ({ ...f, primaryLogoId: val })),
+                    {activeUploadedForm.fileType === 'excel' && activeExcelSheetMeta && (
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                          {isFa ? 'شیت فعال اکسل' : 'Active Worksheet'}
+                        </label>
+                        <select
+                          value={activeUploadedForm.sheetName || activeExcelSheetMeta.activeSheetName}
+                          onChange={(e) => {
+                            const nextSheet = e.target.value;
+                            const parsed = parseExcelSheetModel(activeUploadedForm.fileDataBase64, nextSheet);
+                            patchUploadedForm((f) => ({
+                              ...f,
+                              sheetName: nextSheet,
+                              detectedTokens: parsed.detectedTokens,
+                            }));
+                          }}
+                          dir="ltr"
+                          className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                        >
+                          {activeExcelSheetMeta.sheetNames.map((sn) => (
+                            <option key={sn} value={sn}>
+                              {sn}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     )}
                   </div>
 
-                  {activeCustomForm.headerLayout === 'split_dual_logo' && (
-                    <div className="space-y-2">
-                      <label className="block text-[11px] font-bold text-[var(--text-primary)]">
-                        {isFa ? 'لوگوی دوم (سمت مقابل):' : 'Secondary Logo:'}
+                  {/* Optional Company Logo Overlay */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-[var(--text-primary)]">
+                      {isFa ? 'افزودن لوگوی شرکت بالای فرم (اختیاری):' : 'Stamp Logo Header (Optional):'}
+                    </label>
+                    {logoSelectorGrid(
+                      activeUploadedForm.primaryLogoId || '__none__',
+                      (val) => patchUploadedForm((f) => ({ ...f, primaryLogoId: val })),
+                      false,
+                    )}
+                  </div>
+
+                  {/* A4 Print & Auto Row Height Calibration */}
+                  <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2.5">
+                    <div className="text-[11px] font-bold text-[var(--text-primary)]">
+                      {isFa ? 'تنظیمات چاپ، مقیاس A4 و اندازه خودکار سطرها:' : 'A4 Print & Auto-Fit Row Calibration:'}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
+                          {isFa ? 'جهت صفحه A4' : 'Orientation'}
+                        </label>
+                        <select
+                          value={activeUploadedForm.printSettings.orientation}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({
+                              orientation: e.target.value as 'portrait' | 'landscape',
+                            })
+                          }
+                          className="w-full h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
+                        >
+                          <option value="portrait">{isFa ? 'عمودی' : 'Portrait'}</option>
+                          <option value="landscape">{isFa ? 'افقی' : 'Landscape'}</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
+                          {isFa ? 'اندازه فونت (pt)' : 'Font (pt)'}
+                        </label>
+                        <input
+                          type="number"
+                          min={6}
+                          max={20}
+                          value={activeUploadedForm.printSettings.fontSizePt}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({
+                              fontSizePt: Math.min(20, Math.max(6, Number(e.target.value) || 10)),
+                            })
+                          }
+                          className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
+                          {isFa ? 'مقیاس چاپ (%)' : 'Scale (%)'}
+                        </label>
+                        <input
+                          type="number"
+                          min={40}
+                          max={150}
+                          value={activeUploadedForm.printSettings.scalePercent}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({
+                              scalePercent: Math.min(150, Math.max(40, Number(e.target.value) || 100)),
+                            })
+                          }
+                          className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
+                          {isFa ? 'حداقل ارتفاع سطر (px)' : 'Min Row H (px)'}
+                        </label>
+                        <input
+                          type="number"
+                          min={16}
+                          max={120}
+                          value={activeUploadedForm.printSettings.minRowHeightPx}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({
+                              minRowHeightPx: Math.min(120, Math.max(16, Number(e.target.value) || 24)),
+                            })
+                          }
+                          className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-4 gap-2">
+                      {(
+                        [
+                          { key: 'marginTopMm' as const, label: isFa ? 'حاشیه بالا (mm)' : 'Top mm' },
+                          { key: 'marginRightMm' as const, label: isFa ? 'حاشیه راست' : 'Right mm' },
+                          { key: 'marginBottomMm' as const, label: isFa ? 'حاشیه پایین' : 'Bottom mm' },
+                          { key: 'marginLeftMm' as const, label: isFa ? 'حاشیه چپ' : 'Left mm' },
+                        ]
+                      ).map((m) => (
+                        <div key={m.key}>
+                          <label className="block text-[10px] text-[var(--text-muted)] mb-1">{m.label}</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={40}
+                            value={activeUploadedForm.printSettings[m.key]}
+                            onChange={(e) =>
+                              patchUploadedPrintSettings({
+                                [m.key]: Math.min(40, Math.max(0, Number(e.target.value) || 0)),
+                              })
+                            }
+                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap gap-3 pt-1">
+                      <label className="flex items-center gap-1.5 text-[11px] cursor-pointer font-semibold text-[var(--accent-primary)]">
+                        <input
+                          type="checkbox"
+                          checked={activeUploadedForm.printSettings.autoRowHeight}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({ autoRowHeight: e.target.checked })
+                          }
+                        />
+                        <span>
+                          {isFa
+                            ? 'تغییر اندازه خودکار ارتفاع سطر متناسب با متن (مانند اکسل)'
+                            : 'Auto-fit row height to content (Excel AutoFit)'}
+                        </span>
                       </label>
-                      {logoSelectorGrid(
-                        activeCustomForm.secondaryLogoId || '__none__',
-                        (val) => patchCustomForm((f) => ({ ...f, secondaryLogoId: val })),
-                        false,
+                      <label className="flex items-center gap-1.5 text-[11px] cursor-pointer text-[var(--text-secondary)]">
+                        <input
+                          type="checkbox"
+                          checked={activeUploadedForm.printSettings.fitToPageWidth}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({ fitToPageWidth: e.target.checked })
+                          }
+                        />
+                        <span>{isFa ? 'تنظیم عرض در یک صفحه A4' : 'Fit to A4 Page Width'}</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 text-[11px] cursor-pointer text-[var(--text-secondary)]">
+                        <input
+                          type="checkbox"
+                          checked={activeUploadedForm.printSettings.showGridlines}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({ showGridlines: e.target.checked })
+                          }
+                        />
+                        <span>{isFa ? 'نمایش خطوط جدول' : 'Show Gridlines'}</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Placeholder {{Token}} -> SAMAAN Field Mappings */}
+                  {(activeUploadedForm.fileType === 'excel' || activeUploadedForm.fileType === 'word' || activeUploadedForm.fileType === 'image') && (
+                    <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-[var(--text-primary)]">
+                          {isFa
+                            ? 'اتصال متغیرهای {{...}} درون فایل به فیلدهای سمان:'
+                            : 'Template {{Placeholder}} Field Bindings:'}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            dir="ltr"
+                            value={newTokenName}
+                            onChange={(e) => setNewTokenName(e.target.value)}
+                            placeholder="token"
+                            className="w-24 h-6 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[10.5px] font-mono"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const tok = newTokenName.trim().replace(/^\{\{|\}\}$/g, '').trim();
+                              if (!tok) return;
+                              patchUploadedForm((f) => ({
+                                ...f,
+                                detectedTokens: Array.from(new Set([...(f.detectedTokens || []), tok])),
+                              }));
+                              setNewTokenName('');
+                            }}
+                            className="h-6 px-2 rounded border border-[var(--border-subtle)] text-[10.5px] font-semibold hover:bg-[var(--bg-subtle)]"
+                          >
+                            + {isFa ? 'افزودن' : 'Add'}
+                          </button>
+                        </div>
+                      </div>
+                      {(activeUploadedForm.detectedTokens || []).length === 0 ? (
+                        <div className="text-[10.5px] text-[var(--text-muted)]">
+                          {isFa
+                            ? 'در این فایل متغیر {{...}} یافت نشد. اگر داخل ورد یا اکسل متغیرهایی مثل {{packingListNo}} یا {{شماره پکینگ}} بگذارید، به‌صورت خودکار پر می‌شوند.'
+                            : 'No {{tokens}} detected in file. Use tokens like {{packingListNo}} inside Excel/Word for auto-fill.'}
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto pe-1">
+                          {(activeUploadedForm.detectedTokens || []).map((tok) => (
+                            <div key={tok} className="grid grid-cols-12 gap-1.5 items-center">
+                              <div dir="ltr" className="col-span-5 text-[11px] font-mono bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded px-2 py-1 truncate">
+                                {`{{${tok}}}`}
+                              </div>
+                              <select
+                                value={activeUploadedForm.tokenBindings?.[tok] || ''}
+                                onChange={(e) =>
+                                  patchUploadedForm((f) => ({
+                                    ...f,
+                                    tokenBindings: {
+                                      ...(f.tokenBindings || {}),
+                                      [tok]: e.target.value,
+                                    },
+                                  }))
+                                }
+                                className="col-span-6 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
+                              >
+                                <option value="">{isFa ? '-- تطبیق خودکار / دستی --' : '-- Auto / Manual --'}</option>
+                                {SAMAAN_BINDABLE_FIELDS.map((sf) => (
+                                  <option key={sf.key} value={sf.key}>
+                                    {isFa ? sf.labelFa : sf.labelEn}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  patchUploadedForm((f) => {
+                                    const nextBindings = { ...(f.tokenBindings || {}) };
+                                    delete nextBindings[tok];
+                                    return {
+                                      ...f,
+                                      detectedTokens: (f.detectedTokens || []).filter((x) => x !== tok),
+                                      tokenBindings: nextBindings,
+                                    };
+                                  })
+                                }
+                                className="col-span-1 text-[var(--status-danger)] flex justify-center"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
                   )}
 
-                  {/* Header Fields Builder */}
-                  <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold">
-                        {isFa ? 'فیلدهای مشخصات بالای فرم:' : 'Header Fields:'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          patchCustomForm((f) => ({
-                            ...f,
-                            headerFields: [
-                              ...f.headerFields,
-                              {
-                                id: `hf-${Date.now()}`,
-                                label: isFa ? 'فیلد جدید' : 'New Field',
-                                fieldType: 'text',
-                                dataBinding: 'none',
-                              },
-                            ],
-                          }))
-                        }
-                        className="h-6 px-2 rounded border border-[var(--border-subtle)] text-[10.5px] font-semibold flex items-center gap-1"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span>{isFa ? 'افزودن فیلد' : 'Add Field'}</span>
-                      </button>
-                    </div>
-                    {activeCustomForm.headerFields.map((hf, idx) => (
-                      <div key={hf.id} className="grid grid-cols-12 gap-1.5 items-center">
-                        <input
-                          type="text"
-                          value={hf.label}
-                          onChange={(e) =>
-                            patchCustomForm((f) => ({
-                              ...f,
-                              headerFields: f.headerFields.map((x, i) =>
-                                i === idx ? { ...x, label: e.target.value } : x,
-                              ),
-                            }))
-                          }
-                          className="col-span-6 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                        />
-                        <select
-                          value={hf.dataBinding || 'none'}
-                          onChange={(e) =>
-                            patchCustomForm((f) => ({
-                              ...f,
-                              headerFields: f.headerFields.map((x, i) =>
-                                i === idx
-                                  ? { ...x, dataBinding: e.target.value as CustomFormFieldDef['dataBinding'] }
-                                  : x,
-                              ),
-                            }))
-                          }
-                          className="col-span-5 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
-                        >
-                          <option value="none">{isFa ? 'ورود دستی' : 'Manual'}</option>
-                          <option value="projectName">{isFa ? 'اتصال: نام پروژه' : 'Bind: Project'}</option>
-                          <option value="packingListNo">{isFa ? 'اتصال: شماره پکینگ' : 'Bind: Packing No.'}</option>
-                          <option value="supplier">{isFa ? 'اتصال: تأمین‌کننده' : 'Bind: Supplier'}</option>
-                          <option value="arrivalDate">{isFa ? 'اتصال: تاریخ ورود' : 'Bind: Date'}</option>
-                          <option value="island">{isFa ? 'اتصال: جزیره' : 'Bind: Island'}</option>
-                          <option value="system">{isFa ? 'اتصال: سیستم' : 'Bind: System'}</option>
-                          <option value="unit">{isFa ? 'اتصال: واحد' : 'Bind: Unit'}</option>
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            patchCustomForm((f) => ({
-                              ...f,
-                              headerFields: f.headerFields.filter((_, i) => i !== idx),
-                            }))
-                          }
-                          className="col-span-1 text-[var(--status-danger)] flex justify-center"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                  {/* Excel Dynamic Table Row Insertion Config */}
+                  {activeUploadedForm.fileType === 'excel' && (
+                    <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-[var(--text-primary)]">
+                          {isFa ? 'تزریق خودکار ردیف اقلام در جدول اکسل:' : 'Excel Table Row Injection:'}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10.5px] text-[var(--text-secondary)]">
+                            {isFa ? 'شروع از ردیف:' : 'Start Row (1-based):'}
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={
+                              typeof activeUploadedForm.tableStartRowIndex === 'number'
+                                ? activeUploadedForm.tableStartRowIndex + 1
+                                : ''
+                            }
+                            placeholder="مثلاً 6"
+                            onChange={(e) => {
+                              const n = Number(e.target.value);
+                              patchUploadedForm((f) => ({
+                                ...f,
+                                tableStartRowIndex: Number.isFinite(n) && n >= 1 ? Math.floor(n) - 1 : undefined,
+                              }));
+                            }}
+                            className="w-16 h-6 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              patchUploadedForm((f) => {
+                                const list = f.tableColumnBindings || [];
+                                const nextCol = list.length > 0 ? Math.max(...list.map((c) => c.colIndex)) + 1 : 0;
+                                return {
+                                  ...f,
+                                  tableColumnBindings: [
+                                    ...list,
+                                    {
+                                      colIndex: nextCol,
+                                      headerLabel: `ستون ${nextCol + 1}`,
+                                      fieldKey: 'description',
+                                    },
+                                  ],
+                                };
+                              })
+                            }
+                            className="h-6 px-2 rounded border border-[var(--border-subtle)] text-[10.5px] font-semibold hover:bg-[var(--bg-subtle)]"
+                          >
+                            + {isFa ? 'ستون جدول' : 'Add Col Binding'}
+                          </button>
+                        </div>
                       </div>
-                    ))}
-                  </div>
-
-                  {/* Table Columns Builder */}
-                  <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
-                    <div className="flex items-center justify-between">
-                      <label className="flex items-center gap-2 text-[11px] font-bold cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={activeCustomForm.hasTable}
-                          onChange={(e) => patchCustomForm((f) => ({ ...f, hasTable: e.target.checked }))}
-                        />
-                        <span>{isFa ? 'ستون‌های جدول اقلام:' : 'Table Columns:'}</span>
-                      </label>
-                      {activeCustomForm.hasTable && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            patchCustomForm((f) => ({
-                              ...f,
-                              tableColumns: [
-                                ...f.tableColumns,
-                                {
-                                  id: `col-${Date.now()}`,
-                                  label: isFa ? 'ستون جدید' : 'New Column',
-                                  dataBinding: 'none',
-                                },
-                              ],
-                            }))
-                          }
-                          className="h-6 px-2 rounded border border-[var(--border-subtle)] text-[10.5px] font-semibold flex items-center gap-1"
-                        >
-                          <Plus className="w-3 h-3" />
-                          <span>{isFa ? 'افزودن ستون' : 'Add Col'}</span>
-                        </button>
-                      )}
-                    </div>
-                    {activeCustomForm.hasTable &&
-                      activeCustomForm.tableColumns.map((col, idx) => (
-                        <div key={col.id} className="grid grid-cols-12 gap-1.5 items-center">
+                      {(activeUploadedForm.tableColumnBindings || []).map((cb, idx) => (
+                        <div key={`${cb.colIndex}-${idx}`} className="grid grid-cols-12 gap-1.5 items-center">
+                          <input
+                            type="number"
+                            min={1}
+                            max={40}
+                            value={cb.colIndex + 1}
+                            onChange={(e) => {
+                              const nextIdx = Math.max(0, (Number(e.target.value) || 1) - 1);
+                              patchUploadedForm((f) => ({
+                                ...f,
+                                tableColumnBindings: (f.tableColumnBindings || []).map((item, i) =>
+                                  i === idx ? { ...item, colIndex: nextIdx } : item,
+                                ),
+                              }));
+                            }}
+                            title={isFa ? 'شماره ستون (از ۱)' : 'Column #'}
+                            className="col-span-2 h-7 px-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
+                          />
                           <input
                             type="text"
-                            value={col.label}
+                            value={cb.headerLabel}
                             onChange={(e) =>
-                              patchCustomForm((f) => ({
+                              patchUploadedForm((f) => ({
                                 ...f,
-                                tableColumns: f.tableColumns.map((x, i) =>
-                                  i === idx ? { ...x, label: e.target.value } : x,
+                                tableColumnBindings: (f.tableColumnBindings || []).map((item, i) =>
+                                  i === idx ? { ...item, headerLabel: e.target.value } : item,
                                 ),
                               }))
                             }
-                            className="col-span-6 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                            placeholder={isFa ? 'عنوان ستون' : 'Label'}
+                            className="col-span-4 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
                           />
                           <select
-                            value={col.dataBinding || 'none'}
+                            value={cb.fieldKey}
                             onChange={(e) =>
-                              patchCustomForm((f) => ({
+                              patchUploadedForm((f) => ({
                                 ...f,
-                                tableColumns: f.tableColumns.map((x, i) =>
-                                  i === idx
-                                    ? {
-                                        ...x,
-                                        dataBinding: e.target.value as CustomFormColumnDef['dataBinding'],
-                                      }
-                                    : x,
+                                tableColumnBindings: (f.tableColumnBindings || []).map((item, i) =>
+                                  i === idx ? { ...item, fieldKey: e.target.value } : item,
                                 ),
                               }))
                             }
                             className="col-span-5 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
                           >
-                            <option value="none">{isFa ? 'ورود دستی' : 'Manual'}</option>
-                            <option value="rowNo">{isFa ? 'شماره ردیف' : 'Row #'}</option>
-                            <option value="description">{isFa ? 'شرح کالا' : 'Description'}</option>
-                            <option value="itemCode">{isFa ? 'کد کالا' : 'Item Code'}</option>
-                            <option value="packageNo">{isFa ? 'شماره نگله' : 'Package No.'}</option>
-                            <option value="qty">{isFa ? 'تعداد / مقدار' : 'Qty'}</option>
-                            <option value="unit">{isFa ? 'واحد شمارش' : 'Unit'}</option>
-                            <option value="remarks">{isFa ? 'ملاحظات' : 'Remarks'}</option>
+                            {SAMAAN_BINDABLE_FIELDS.map((sf) => (
+                              <option key={sf.key} value={sf.key}>
+                                {isFa ? sf.labelFa : sf.labelEn}
+                              </option>
+                            ))}
                           </select>
                           <button
                             type="button"
                             onClick={() =>
-                              patchCustomForm((f) => ({
+                              patchUploadedForm((f) => ({
                                 ...f,
-                                tableColumns: f.tableColumns.filter((_, i) => i !== idx),
+                                tableColumnBindings: (f.tableColumnBindings || []).filter((_, i) => i !== idx),
                               }))
                             }
                             className="col-span-1 text-[var(--status-danger)] flex justify-center"
@@ -1890,142 +2165,65 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                           </button>
                         </div>
                       ))}
-                  </div>
+                    </div>
+                  )}
+                </div>
 
-                  {/* Body text & Signatures */}
-                  <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
-                    <textarea
-                      rows={2}
-                      value={activeCustomForm.bodyText || ''}
-                      placeholder={isFa ? 'متن صورتجلسه / توضیحات ثابت پایین جدول...' : 'Body / Declaration text...'}
-                      onChange={(e) => patchCustomForm((f) => ({ ...f, bodyText: e.target.value }))}
-                      className="w-full p-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                    />
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold">
-                        {isFa ? 'امضاءکنندگان فرم:' : 'Signatories:'}
-                      </span>
+                {/* Live A4 Form Preview with Auto-Fit Row Height */}
+                <div className="xl:col-span-6 space-y-2">
+                  <div className="text-xs font-bold text-[var(--text-secondary)] flex items-center justify-between gap-2">
+                    <span>
+                      {isFa ? 'پیش‌نمایش زنده فرم آپلودی (کاغذ A4 و ارتفاع سطر خودکار)' : 'Live A4 Preview'}
+                    </span>
+                    <span className="text-[10.5px] font-normal text-[var(--text-muted)]">
+                      {activeUploadedForm.printSettings.autoRowHeight
+                        ? isFa
+                          ? 'ارتفاع سطر خودکار: فعال'
+                          : 'AutoFit Rows: ON'
+                        : isFa
+                          ? 'ارتفاع ثابت'
+                          : 'Fixed Height'}
+                    </span>
+                  </div>
+                  <UploadedFormA4Sheet
+                    form={activeUploadedForm}
+                    employer={resolvedPreview}
+                    headerTokens={samplePreviewData.headerTokens}
+                    lineRows={samplePreviewData.lineRows}
+                    isFa={isFa}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Legacy archive accordion if old manually-created custom forms exist */}
+            {draft.customForms.length > 0 && (
+              <details className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-3 text-xs">
+                <summary className="cursor-pointer font-semibold text-[var(--text-secondary)]">
+                  {isFa
+                    ? `آرشیو فرم‌های دست‌ساز قبلی (${draft.customForms.length} مورد)`
+                    : `Legacy Manual Custom Forms (${draft.customForms.length})`}
+                </summary>
+                <div className="mt-2 space-y-1.5">
+                  {draft.customForms.map((cf) => (
+                    <div key={cf.id} className="flex items-center justify-between px-2 py-1 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                      <span>{cf.titleFa} {cf.docCode ? `(${cf.docCode})` : ''}</span>
                       <button
                         type="button"
                         onClick={() =>
-                          patchCustomForm((f) => ({
-                            ...f,
-                            signatures: [
-                              ...f.signatures,
-                              { id: `csig-${Date.now()}`, label: isFa ? 'سمت امضاءکننده' : 'Signatory', subtitle: 'نام و امضاء' },
-                            ],
+                          patchDraft((p) => ({
+                            ...p,
+                            customForms: p.customForms.filter((x) => x.id !== cf.id),
                           }))
                         }
-                        className="h-6 px-2 rounded border border-[var(--border-subtle)] text-[10.5px] font-semibold flex items-center gap-1"
+                        className="text-[var(--status-danger)] text-[11px] hover:underline"
                       >
-                        <Plus className="w-3 h-3" />
-                        <span>{isFa ? 'افزودن امضاء' : 'Add'}</span>
+                        {isFa ? 'حذف' : 'Delete'}
                       </button>
                     </div>
-                    {activeCustomForm.signatures.map((sig: FormSignatureBox, idx) => (
-                      <div key={sig.id} className="flex items-center gap-1.5">
-                        <input
-                          type="text"
-                          value={sig.label}
-                          onChange={(e) =>
-                            patchCustomForm((f) => ({
-                              ...f,
-                              signatures: f.signatures.map((s, i) =>
-                                i === idx ? { ...s, label: e.target.value } : s,
-                              ),
-                            }))
-                          }
-                          className="flex-1 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            patchCustomForm((f) => ({
-                              ...f,
-                              signatures: f.signatures.filter((_, i) => i !== idx),
-                            }))
-                          }
-                          className="p-1 text-[var(--status-danger)]"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                  ))}
                 </div>
-
-                {/* Live Custom Form Preview */}
-                <div className="xl:col-span-6 space-y-2">
-                  <div className="text-xs font-bold text-[var(--text-secondary)]">
-                    {isFa ? 'پیش‌نمایش زنده فرم اختصاصی' : 'Live Custom Form Preview'}
-                  </div>
-                  <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-white text-black space-y-2">
-                    <OfficialFormHeader
-                      employer={resolvedPreview}
-                      titleFa={activeCustomForm.titleFa}
-                      titleEn={activeCustomForm.titleEn}
-                      docCode={activeCustomForm.docCode}
-                      revisionText={activeCustomForm.revisionText}
-                      imsSubtitle={activeCustomForm.imsSubtitle}
-                      headerLayout={activeCustomForm.headerLayout}
-                      primaryLogo={resolveEmployerLogoById(
-                        resolvedPreview,
-                        activeCustomForm.primaryLogoId || '__default__',
-                        true,
-                      )}
-                      secondaryLogo={resolveEmployerLogoById(
-                        resolvedPreview,
-                        activeCustomForm.secondaryLogoId || '__none__',
-                        false,
-                      )}
-                      accentColor={activeCustomForm.accentColor}
-                    />
-                    {activeCustomForm.headerFields.length > 0 && (
-                      <div
-                        dir="rtl"
-                        className="grid grid-cols-2 border border-black divide-x divide-x-reverse divide-y divide-black text-[10px]"
-                      >
-                        {activeCustomForm.headerFields.map((hf) => (
-                          <div key={hf.id} className="px-2 py-1 flex items-center justify-between gap-2">
-                            <span className="font-bold">{hf.label}:</span>
-                            <span className="text-slate-500">________</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {activeCustomForm.hasTable && activeCustomForm.tableColumns.length > 0 && (
-                      <table dir="rtl" className="w-full border-collapse border border-black text-[10px]">
-                        <thead>
-                          <tr className="bg-slate-100">
-                            {activeCustomForm.tableColumns.map((col) => (
-                              <th key={col.id} className="border border-black px-1.5 py-1 text-center font-bold">
-                                {col.label}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {[1, 2, 3].map((r) => (
-                            <tr key={r}>
-                              {activeCustomForm.tableColumns.map((col) => (
-                                <td key={col.id} className="border border-black px-1.5 py-1.5 text-center text-slate-400">
-                                  {col.dataBinding === 'rowNo' ? r : '—'}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    {activeCustomForm.bodyText && (
-                      <div dir="rtl" className="p-2 border border-black text-[10px]">
-                        {activeCustomForm.bodyText}
-                      </div>
-                    )}
-                    <OfficialFormSignatures signatures={activeCustomForm.signatures} />
-                  </div>
-                </div>
-              </div>
+              </details>
             )}
           </div>
         )}

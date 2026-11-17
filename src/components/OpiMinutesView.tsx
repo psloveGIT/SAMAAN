@@ -210,7 +210,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           </div>
           <div style={{ padding: '5px 7px' }}>
             <strong style={{ fontWeight: 700 }}>پروژه: </strong>
-            <span className="bidi-plaintext">{record.projectName || ''}</span>
+            <span className="bidi-plaintext">{record.projectName?.trim() || activeProject?.name || ''}</span>
           </div>
         </div>
 
@@ -227,7 +227,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
             <strong style={{ fontWeight: 700 }}>شماره قرارداد/درخواست خرید: </strong>
             <span dir="ltr" className="tabular-nums">
-              {record.contractNo || ''}
+              {record.contractNo?.trim() || activeProject?.code || ''}
             </span>
           </div>
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
@@ -918,12 +918,10 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const [time, setTime] = useState('09:00');
   const [packingListNo, setPackingListNo] = useState('');
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
-  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [supplier, setSupplier] = useState('');
   const [system, setSystem] = useState('');
   const [island, setIsland] = useState('');
   const [unit, setUnit] = useState('');
-  const [contractNo, setContractNo] = useState('');
   const [purchasePackageNo, setPurchasePackageNo] = useState('');
   const [merNo, setMerNo] = useState('');
   const [items, setItems] = useState<OpiInvitationLineItem[]>([]);
@@ -979,7 +977,6 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         setIsland('');
         setUnit('');
         setLocation('');
-        setContractNo('');
         setMerNo('');
         return;
       }
@@ -993,7 +990,6 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       setIsland(genMatch?.island || detMatch?.island || '');
       setUnit(genMatch?.unit || detMatch?.unit || '');
       setLocation(detMatch?.storageLocation || genMatch?.dispatchLocation || '');
-      setContractNo(detMatch?.mtoRef || '');
       setMerNo(detMatch?.merNo || '');
       if (!editingMinutes) {
         const autoInv = genMatch?.opiInvitationNo || detMatch?.opiNo || '';
@@ -1013,12 +1009,10 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       if (inv.location) setLocation(inv.location);
       if (inv.date) setDate(inv.date);
       if (inv.time) setTime(inv.time);
-      if (inv.projectName) setProjectName(inv.projectName);
       if (inv.supplier) setSupplier(inv.supplier);
       if (inv.system) setSystem(inv.system);
       if (inv.island) setIsland(inv.island);
       if (inv.unit) setUnit(inv.unit);
-      if (inv.contractNo) setContractNo(inv.contractNo);
       if (inv.purchasePackageNo) setPurchasePackageNo(inv.purchasePackageNo);
       if (inv.packingNos.length > 0) {
         const pk = inv.packingNos[0];
@@ -1043,12 +1037,10 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     setTime('09:00');
     setPackingListNo('');
     setSelectedPackages([]);
-    setProjectName('');
     setSupplier('');
     setSystem('');
     setIsland('');
     setUnit('');
-    setContractNo('');
     setPurchasePackageNo('');
     setMerNo('');
     setItems([]);
@@ -1070,12 +1062,10 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     setTime(rec.time || '09:00');
     setPackingListNo(rec.packingListNo || '');
     setSelectedPackages(rec.packageNos || []);
-    setProjectName(rec.projectName || '');
     setSupplier(rec.supplier || '');
     setSystem(rec.system || '');
     setIsland(rec.island || '');
     setUnit(rec.unit || '');
-    setContractNo(rec.contractNo || '');
     setPurchasePackageNo(rec.purchasePackageNo || '');
     setMerNo(rec.merNo || '');
     setItems(
@@ -1156,12 +1146,12 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       time,
       packingListNo,
       packageNos: selectedPackages.length > 0 ? selectedPackages : packagesForSelectedPacking,
-      projectName,
+      projectName: activeProject?.name || '',
       supplier,
       system,
       island,
       unit,
-      contractNo,
+      contractNo: activeProject?.code || '',
       purchasePackageNo,
       items,
       merNo,
@@ -1708,21 +1698,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 </div>
               </div>
 
-              {/* Project, Supplier, System, Island, Unit, Contract, Purchase Package */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'پروژه' : 'Project'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={projectName}
-                    onChange={(e) => setProjectName(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
+              {/* Supplier & Purchase Package (Project & Contract inherited automatically) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.supplier}
@@ -1733,21 +1710,6 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     value={supplier}
                     onChange={(e) => setSupplier(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره قرارداد / درخواست خرید' : 'Contract / PR No.'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={isFa && !contractNo ? 'rtl' : 'ltr'}
-                    value={contractNo}
-                    onChange={(e) => setContractNo(e.target.value)}
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                      isFa && !contractNo ? 'text-right' : 'text-left'
-                    }`}
                   />
                 </div>
 

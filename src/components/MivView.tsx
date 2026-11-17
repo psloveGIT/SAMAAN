@@ -135,7 +135,7 @@ const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
               <div>درخواست خرید:</div>
             </div>
             <span dir="ltr" className="tabular-nums bidi-plaintext">
-              {doc.contractNo || ''}
+              {doc.contractNo?.trim() || activeProject?.code || ''}
             </span>
           </div>
 
@@ -538,8 +538,6 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [docType, setDocType] = useState<MivOnlyType>('miv_contractor');
   const [docNo, setDocNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
-  const [projectName, setProjectName] = useState(activeProject?.name || '');
-  const [contractNo, setContractNo] = useState('');
   const [party, setParty] = useState('');
   const [islandSystem, setIslandSystem] = useState('');
   const [unit, setUnit] = useState('');
@@ -696,14 +694,11 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
       if (nextReceiptNo && (overwrite || !receiptNo.trim())) {
         setReceiptNo(nextReceiptNo);
       }
-      if (nextContractNo && (overwrite || !contractNo.trim())) {
-        setContractNo(nextContractNo);
-      }
       if (docType === 'miv_contractor' && nextParty && (overwrite || !party.trim())) {
         setParty(nextParty);
       }
     },
-    [data?.generalEntries, data?.detailedItems, islandSystem, unit, receiptNo, contractNo, party, docType],
+    [data?.generalEntries, data?.detailedItems, islandSystem, unit, receiptNo, party, docType],
   );
 
   const handlePackingFilterChange = (val: string) => {
@@ -746,7 +741,6 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const resetForm = () => {
     setEditingDoc(null);
     setDocNo('');
-    setContractNo('');
     setParty('');
     setIslandSystem('');
     setUnit('');
@@ -769,8 +763,6 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     setDocNo(doc.docNo);
     setDate(doc.date);
     setParty(doc.party || '');
-    setProjectName(doc.projectName || '');
-    setContractNo(doc.contractNo || '');
     setIslandSystem(doc.islandSystem || '');
     setUnit(doc.unit || '');
     setReceiptNo(doc.receiptNo || '');
@@ -810,8 +802,8 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         docNo,
         date,
         party,
-        projectName,
-        contractNo,
+        projectName: activeProject?.name || '',
+        contractNo: activeProject?.code || '',
         islandSystem,
         unit,
         receiptNo,
@@ -984,8 +976,8 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             </div>
           </div>
 
-          {/* Row 1: Type, Doc No, Date, Project, Contract */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          {/* Row 1: Type, Doc No, Date (Project & Contract inherited automatically) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="lg:col-span-2">
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                 {isFa ? 'نوع درخواست / حواله انبار' : 'Requisition / Issue Type'} *
@@ -1026,35 +1018,6 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
               value={date}
               onChange={setDate}
             />
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'پروژه' : 'Project Name'}
-              </label>
-              <input
-                type="text"
-                dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder={isFa ? 'نام پروژه' : 'Project name'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره قرارداد / درخواست خرید' : 'Contract / Req. No.'}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !contractNo ? 'rtl' : 'ltr'}
-                value={contractNo}
-                onChange={(e) => setContractNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !contractNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
           </div>
 
           {/* Row 2: Party, System/Island, Unit, Receipt No */}

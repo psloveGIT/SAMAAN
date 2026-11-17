@@ -137,7 +137,6 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
   const [checkInfo, setCheckInfo] = useState<PackingCheckResult | null>(null);
   const [isContinuation, setIsContinuation] = useState(false);
   const [acknowledgeClosed, setAcknowledgeClosed] = useState(false);
-  const [mapnaDuplicateError, setMapnaDuplicateError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [smartOpen, setSmartOpen] = useState(false);
@@ -154,7 +153,6 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
   useEffect(() => {
     if (!open) return;
     setFormError('');
-    setMapnaDuplicateError('');
     setSavedNavigationPrompt(null);
     setIsContinuation(Boolean(prefillPackingNo));
     setAcknowledgeClosed(false);
@@ -217,11 +215,6 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
           if (!res.isClosed) {
             setAcknowledgeClosed(false);
           }
-          if (minTrimmed && res.mapnaMinutesTaken) {
-            setMapnaDuplicateError(t.packing.mapnaMinutesDuplicateError);
-          } else {
-            setMapnaDuplicateError('');
-          }
           if (
             trimmed &&
             res.existsInTransit &&
@@ -244,7 +237,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
         .catch(() => {});
     }, 220);
     return () => clearTimeout(timer);
-  }, [packingListNo, mapnaEntryMinutesNo, open, t.packing.mapnaMinutesDuplicateError]);
+  }, [packingListNo, mapnaEntryMinutesNo, open]);
 
   if (!open) return null;
 
@@ -368,11 +361,6 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
     if (checkInfo?.isClosed && !acknowledgeClosed) {
       setFormError(t.packing.closedWarningBody);
-      return;
-    }
-
-    if (mapnaDuplicateError || checkInfo?.mapnaMinutesTaken) {
-      setFormError(t.packing.mapnaMinutesDuplicateError);
       return;
     }
 
@@ -774,17 +762,10 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                     dir={isFa && !mapnaEntryMinutesNo ? 'rtl' : 'ltr'}
                     value={mapnaEntryMinutesNo}
                     onChange={(e) => setMapnaEntryMinutesNo(e.target.value)}
-                    className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none ${
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] focus:border-[var(--accent-primary)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none ${
                       isFa && !mapnaEntryMinutesNo ? 'text-right' : 'text-left'
-                    } ${
-                      mapnaDuplicateError
-                        ? 'border-[var(--status-danger)]'
-                        : 'border-[var(--border-subtle)] focus:border-[var(--accent-primary)]'
                     }`}
                   />
-                  {mapnaDuplicateError && (
-                    <p className="text-[11px] text-[var(--status-danger)] mt-1">{mapnaDuplicateError}</p>
-                  )}
                 </div>
 
                 <div>
@@ -1178,7 +1159,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
               </button>
               <button
                 type="button"
-                disabled={submitting || Boolean(mapnaDuplicateError)}
+                disabled={submitting}
                 onClick={handleSubmit}
                 className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold transition-colors disabled:opacity-50"
               >

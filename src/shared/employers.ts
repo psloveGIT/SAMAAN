@@ -5,12 +5,17 @@ import type {
   EmployerFormTemplate,
   EmployerLogoAsset,
   EmployerProfile,
+  EmployerUploadedForm,
   FormColumnOverride,
   FormExtraField,
   FormHeaderLayout,
   FormPaperOrientation,
   FormSignatureBox,
   ProjectInfo,
+  UploadedFormDataSource,
+  UploadedFormFileType,
+  UploadedFormPrintSettings,
+  UploadedFormTableColumnBinding,
 } from './types.ts';
 
 export interface ResolvedEmployerProfile {
@@ -35,6 +40,7 @@ export interface ResolvedEmployerProfile {
   logos: EmployerLogoAsset[];
   formTemplates: Partial<Record<BuiltInFormKey, EmployerFormTemplate>>;
   customForms: CustomEmployerForm[];
+  uploadedForms: EmployerUploadedForm[];
   hideDocCodes: boolean;
 }
 
@@ -469,6 +475,104 @@ export function sanitizeCustomForm(raw: unknown): CustomEmployerForm | null {
   };
 }
 
+export const DEFAULT_UPLOADED_FORM_PRINT_SETTINGS: UploadedFormPrintSettings = {
+  orientation: 'portrait',
+  marginTopMm: 10,
+  marginRightMm: 10,
+  marginBottomMm: 10,
+  marginLeftMm: 10,
+  fontSizePt: 10,
+  scalePercent: 100,
+  showGridlines: true,
+  autoRowHeight: true,
+  minRowHeightPx: 24,
+  fitToPageWidth: true,
+};
+
+export function sanitizeUploadedForm(raw: unknown): EmployerUploadedForm | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<EmployerUploadedForm>;
+  const titleFa = typeof r.titleFa === 'string' ? r.titleFa.trim() : '';
+  const fileName = typeof r.fileName === 'string' ? r.fileName.trim() : '';
+  const fileDataBase64 = typeof r.fileDataBase64 === 'string' ? r.fileDataBase64.trim() : '';
+  if (!titleFa || !fileDataBase64) return null;
+
+  const validTypes: UploadedFormFileType[] = ['excel', 'word', 'pdf', 'image'];
+  const fileType: UploadedFormFileType = validTypes.includes(r.fileType as UploadedFormFileType)
+    ? (r.fileType as UploadedFormFileType)
+    : 'excel';
+
+  const validSources: UploadedFormDataSource[] = ['siteEntry', 'general', 'detailed', 'transit', 'manual'];
+  const dataSource: UploadedFormDataSource = validSources.includes(r.dataSource as UploadedFormDataSource)
+    ? (r.dataSource as UploadedFormDataSource)
+    : 'general';
+
+  const psRaw = (r.printSettings || {}) as Partial<UploadedFormPrintSettings>;
+  const clamp = (val: unknown, min: number, max: number, fallback: number) =>
+    typeof val === 'number' && Number.isFinite(val) ? Math.min(max, Math.max(min, val)) : fallback;
+
+  const printSettings: UploadedFormPrintSettings = {
+    orientation: psRaw.orientation === 'landscape' ? 'landscape' : 'portrait',
+    marginTopMm: clamp(psRaw.marginTopMm, 0, 40, 10),
+    marginRightMm: clamp(psRaw.marginRightMm, 0, 40, 10),
+    marginBottomMm: clamp(psRaw.marginBottomMm, 0, 40, 10),
+    marginLeftMm: clamp(psRaw.marginLeftMm, 0, 40, 10),
+    fontSizePt: clamp(psRaw.fontSizePt, 6, 20, 10),
+    scalePercent: clamp(psRaw.scalePercent, 40, 150, 100),
+    showGridlines: typeof psRaw.showGridlines === 'boolean' ? psRaw.showGridlines : true,
+    autoRowHeight: typeof psRaw.autoRowHeight === 'boolean' ? psRaw.autoRowHeight : true,
+    minRowHeightPx: clamp(psRaw.minRowHeightPx, 16, 120, 24),
+    fitToPageWidth: typeof psRaw.fitToPageWidth === 'boolean' ? psRaw.fitToPageWidth : true,
+  };
+
+  const tokenBindings: Record<string, string> = {};
+  if (r.tokenBindings && typeof r.tokenBindings === 'object') {
+    for (const [k, v] of Object.entries(r.tokenBindings)) {
+      if (typeof k === 'string' && typeof v === 'string' && k.trim() && v.trim()) {
+        tokenBindings[k.trim()] = v.trim();
+      }
+    }
+  }
+
+  const tableColumnBindings: UploadedFormTableColumnBinding[] = Array.isArray(r.tableColumnBindings)
+    ? r.tableColumnBindings
+        .filter((c) => c && typeof c.colIndex === 'number' && typeof c.fieldKey === 'string')
+        .map((c) => ({
+          colIndex: c.colIndex,
+          headerLabel: typeof c.headerLabel === 'string' ? c.headerLabel.trim() : `Col ${c.colIndex + 1}`,
+          fieldKey: c.fieldKey.trim(),
+        }))
+    : [];
+
+  const now = new Date().toISOString();
+  return {
+    id: typeof r.id === 'string' && r.id.trim() ? r.id.trim() : `uform-${Date.now()}`,
+    titleFa,
+    titleEn: typeof r.titleEn === 'string' && r.titleEn.trim() ? r.titleEn.trim() : undefined,
+    formCode: typeof r.formCode === 'string' && r.formCode.trim() ? r.formCode.trim() : undefined,
+    fileName: fileName || `${titleFa}.xlsx`,
+    fileType,
+    mimeType: typeof r.mimeType === 'string' && r.mimeType.trim() ? r.mimeType.trim() : 'application/octet-stream',
+    fileDataBase64,
+    sheetName: typeof r.sheetName === 'string' && r.sheetName.trim() ? r.sheetName.trim() : undefined,
+    detectedTokens: Array.isArray(r.detectedTokens)
+      ? r.detectedTokens.filter((t): t is string => typeof t === 'string' && t.trim() !== '')
+      : undefined,
+    tokenBindings: Object.keys(tokenBindings).length > 0 ? tokenBindings : undefined,
+    dataSource,
+    printSettings,
+    tableStartRowIndex:
+      typeof r.tableStartRowIndex === 'number' && Number.isFinite(r.tableStartRowIndex) && r.tableStartRowIndex >= 0
+        ? Math.floor(r.tableStartRowIndex)
+        : undefined,
+    tableColumnBindings: tableColumnBindings.length > 0 ? tableColumnBindings : undefined,
+    primaryLogoId: typeof r.primaryLogoId === 'string' && r.primaryLogoId.trim() ? r.primaryLogoId.trim() : undefined,
+    notes: typeof r.notes === 'string' && r.notes.trim() ? r.notes.trim() : undefined,
+    createdAt: typeof r.createdAt === 'string' && r.createdAt ? r.createdAt : now,
+    updatedAt: typeof r.updatedAt === 'string' && r.updatedAt ? r.updatedAt : now,
+  };
+}
+
 export function sanitizeEmployerProfile(raw: unknown): EmployerProfile | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<EmployerProfile>;
@@ -498,6 +602,10 @@ export function sanitizeEmployerProfile(raw: unknown): EmployerProfile | null {
 
   const customForms: CustomEmployerForm[] = Array.isArray(r.customForms)
     ? r.customForms.map(sanitizeCustomForm).filter((x): x is CustomEmployerForm => Boolean(x))
+    : [];
+
+  const uploadedForms: EmployerUploadedForm[] = Array.isArray(r.uploadedForms)
+    ? r.uploadedForms.map(sanitizeUploadedForm).filter((x): x is EmployerUploadedForm => Boolean(x))
     : [];
 
   const shortName =
@@ -552,6 +660,7 @@ export function sanitizeEmployerProfile(raw: unknown): EmployerProfile | null {
     logos,
     formTemplates,
     customForms,
+    uploadedForms,
     createdAt: typeof r.createdAt === 'string' && r.createdAt ? r.createdAt : now,
     updatedAt: typeof r.updatedAt === 'string' && r.updatedAt ? r.updatedAt : now,
   };
@@ -601,6 +710,7 @@ export function createNeutralEmployerProfile(): ResolvedEmployerProfile {
     logos: [],
     formTemplates: {},
     customForms: [],
+    uploadedForms: [],
     hideDocCodes: true,
   };
 }
@@ -636,6 +746,7 @@ export function resolveEmployerProfile(
       logos: matched.logos || [],
       formTemplates: matched.formTemplates || {},
       customForms: matched.customForms || [],
+      uploadedForms: matched.uploadedForms || [],
       hideDocCodes: Boolean(matched.hideDocCodes),
     };
   }

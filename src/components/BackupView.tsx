@@ -215,6 +215,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const [rowsConfirmed, setRowsConfirmed] = useState(false);
   const [importResult, setImportResult] = useState<CommitResponse | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importedSheets, setImportedSheets] = useState<string[]>([]);
+  const [postSheetPrompt, setPostSheetPrompt] = useState<string | null>(null);
 
   // Import Log & Rejected Records Recovery State (persisted per active project in sessionStorage)
   const logsStorageKey = `samaan_import_logs_${activeProjectId}`;
@@ -319,6 +321,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setColumnMapping(null);
     setEditedRows([]);
     setRowsConfirmed(false);
+    setImportedSheets([]);
+    setPostSheetPrompt(null);
     try {
       const parsed = await parseSpreadsheetFile(file);
       setFileName(parsed.fileName);
@@ -342,6 +346,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const handleSheetChange = async (nextSheet: string) => {
     setSelectedSheet(nextSheet);
     setImportResult(null);
+    setPostSheetPrompt(null);
     setColumnMapping(null);
     const matrix = sheetsMap[nextSheet] || [];
     await runPreview(matrix, importScope, assumedCalendar);
@@ -448,15 +453,22 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       setPendingRejected(res.rejectedRecords || []);
       recordLogSession(res, currentFile, isFa);
 
-      // Clear active preview & file buffers immediately so newly committed rows are NOT re-flagged
+      // Clear active preview so newly committed rows are NOT re-flagged, but keep multi-sheet workbook open
       setPreview(null);
       setEditedRows([]);
       setColumnMapping(null);
       setRowsConfirmed(false);
-      setFileName('');
-      setSheetNames([]);
-      setSelectedSheet('');
-      setSheetsMap({});
+
+      if (sheetNames.length > 1) {
+        setImportedSheets((prev) => (prev.includes(selectedSheet) ? prev : [...prev, selectedSheet]));
+        setPostSheetPrompt(selectedSheet);
+      } else {
+        setFileName('');
+        setSheetNames([]);
+        setSelectedSheet('');
+        setSheetsMap({});
+        setPostSheetPrompt(null);
+      }
       notify(
         res.skipped > 0 ? 'info' : 'success',
         isFa
@@ -621,6 +633,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setEditedRows([]);
     setRowsConfirmed(false);
     setImportResult(null);
+    setImportedSheets([]);
+    setPostSheetPrompt(null);
   };
 
   const handleManualSnapshot = async () => {
@@ -794,13 +808,73 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                 >
                   {sheetNames.map((s) => (
                     <option key={s} value={s}>
-                      {s}
+                      {importedSheets.includes(s) ? `✓ ${s}` : s}
                     </option>
                   ))}
                 </select>
               </div>
             )}
           </div>
+
+          {/* Multi-Sheet Continuation Prompt */}
+          {postSheetPrompt && sheetNames.length > 1 && (
+            <div className="p-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] space-y-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-bold text-[var(--text-primary)]">
+                  {isFa
+                    ? `اطلاعات شیت «${postSheetPrompt}» با موفقیت ثبت شد. آیا می‌خواهید از سایر شیت‌های این فایل اکسل نیز اطلاعات وارد کنید؟`
+                    : `Sheet "${postSheetPrompt}" was imported. Would you like to import data from the remaining sheets of this workbook?`}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const remaining = sheetNames.filter((s) => !importedSheets.includes(s));
+                      const next = remaining[0] || sheetNames.find((s) => s !== selectedSheet) || sheetNames[0];
+                      if (next) void handleSheetChange(next);
+                    }}
+                    className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] font-semibold"
+                  >
+                    {isFa ? 'بله، انتخاب شیت بعدی' : 'Yes, Import Next Sheet'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFileName('');
+                      setSheetNames([]);
+                      setSelectedSheet('');
+                      setSheetsMap({});
+                      setImportedSheets([]);
+                      setPostSheetPrompt(null);
+                    }}
+                    className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] font-medium"
+                  >
+                    {isFa ? 'خیر، بستن فایل اکسل' : 'No, Close Workbook'}
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {sheetNames.map((s) => {
+                  const done = importedSheets.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => void handleSheetChange(s)}
+                      className={`h-7 px-2.5 rounded-lg border text-[11px] font-medium flex items-center gap-1 ${
+                        done
+                          ? 'border-[var(--status-success)] bg-[var(--status-success-bg)] text-[var(--status-success)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--accent-primary)]'
+                      }`}
+                    >
+                      {done && <CheckCircle2 className="w-3 h-3" />}
+                      <span>{s}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {fileName && preview && (
             <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-4">

@@ -176,7 +176,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
         >
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
             <strong style={{ fontWeight: 700 }}>پروژه: </strong>
-            <span className="bidi-plaintext">{record.projectName || ''}</span>
+            <span className="bidi-plaintext">{record.projectName?.trim() || activeProject?.name || ''}</span>
           </div>
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
             <strong style={{ fontWeight: 700 }}>سیستم: </strong>
@@ -210,7 +210,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
             <strong style={{ fontWeight: 700 }}>شماره قرارداد : </strong>
             <span dir="ltr" className="tabular-nums">
-              {record.contractNo || ''}
+              {record.contractNo?.trim() || activeProject?.code || ''}
             </span>
           </div>
           <div style={{ padding: '5px 7px' }}>
@@ -637,12 +637,10 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const [date, setDate] = useState(getTodayIso());
   const [time, setTime] = useState('09:00');
   const [location, setLocation] = useState('');
-  const [projectName, setProjectName] = useState(activeProject?.name || '');
   const [system, setSystem] = useState('');
   const [island, setIsland] = useState('');
   const [unit, setUnit] = useState('');
   const [supplier, setSupplier] = useState('');
-  const [contractNo, setContractNo] = useState('');
   const [purchasePackageNo, setPurchasePackageNo] = useState('');
   const [items, setItems] = useState<OpiInvitationLineItem[]>([]);
   const [installerContractor, setInstallerContractor] = useState('');
@@ -702,7 +700,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       setUnit(joinUnique([...genMatches.map((g) => g.unit), ...detMatches.map((d) => d.unit)]));
       setSupplier(joinUnique([...genMatches.map((g) => g.supplier), ...detMatches.map((d) => d.supplier)]));
       setLocation(joinUnique([...detMatches.map((d) => d.storageLocation), ...genMatches.map((g) => g.dispatchLocation)]));
-      setContractNo(joinUnique(detMatches.map((d) => d.mtoRef)));
 
       if (!editingInvitation) {
         const autoInvNo = joinUnique(genMatches.map((g) => g.opiInvitationNo));
@@ -740,8 +737,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     setDate(getTodayIso());
     setTime('09:00');
     setLocation('');
-    setProjectName('');
-    setContractNo('');
     setPurchasePackageNo('');
     setSystem('');
     setIsland('');
@@ -763,12 +758,10 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     setDate(inv.date || getTodayIso());
     setTime(inv.time || '09:00');
     setLocation(inv.location || '');
-    setProjectName(inv.projectName || '');
     setSystem(inv.system || '');
     setIsland(inv.island || '');
     setUnit(inv.unit || '');
     setSupplier(inv.supplier || '');
-    setContractNo(inv.contractNo || '');
     setPurchasePackageNo(inv.purchasePackageNo || '');
     setSelectedPackings(inv.packingNos || []);
     setItems(
@@ -819,12 +812,12 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       time,
       packingNos: selectedPackings,
       location,
-      projectName,
+      projectName: activeProject?.name || '',
       system,
       island,
       unit,
       supplier,
-      contractNo,
+      contractNo: activeProject?.code || '',
       purchasePackageNo,
       items,
       installerContractor,
@@ -1217,21 +1210,8 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 </div>
               </div>
 
-              {/* Project, System, Island, Unit, Supplier, Contract, Purchase Package */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'پروژه' : 'Project'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!projectName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={projectName}
-                    onChange={(e) => setProjectName(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
+              {/* Supplier & Purchase Package (Project & Contract inherited automatically) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.supplier}
@@ -1242,21 +1222,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                     value={supplier}
                     onChange={(e) => setSupplier(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره قرارداد' : 'Contract No.'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={isFa && !contractNo ? 'rtl' : 'ltr'}
-                    value={contractNo}
-                    onChange={(e) => setContractNo(e.target.value)}
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                      isFa && !contractNo ? 'text-right' : 'text-left'
-                    }`}
                   />
                 </div>
 
