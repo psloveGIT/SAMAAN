@@ -498,7 +498,7 @@ async function startServer() {
     });
     store.saveImmediate();
     const token = signSessionToken(newUser.id, projectManager.getAuthSecret(), newUser.username);
-    setSessionCookie(res, token);
+    setSessionCookie(res, token, req);
     res.json({ user: sanitizeUser(newUser) });
   });
 
@@ -520,7 +520,7 @@ async function startServer() {
     });
     store.saveImmediate();
     const token = signSessionToken(found.id, projectManager.getAuthSecret(), found.username);
-    setSessionCookie(res, token);
+    setSessionCookie(res, token, req);
     res.json({ user: sanitizeUser(found) });
   });
 
@@ -535,7 +535,7 @@ async function startServer() {
       });
       store.saveImmediate();
     }
-    clearSessionCookie(res);
+    clearSessionCookie(res, req);
     res.json({ ok: true });
   });
 

@@ -75,17 +75,23 @@ export function parseCookies(req: Request): Record<string, string> {
   return result;
 }
 
-export function setSessionCookie(res: Response, token: string): void {
+function cookiePolicyAttrs(req?: Request): string {
+  const xfProto = String(req?.headers['x-forwarded-proto'] || '').toLowerCase();
+  const isHttps = Boolean(req?.secure || xfProto.includes('https'));
+  return isHttps ? 'SameSite=None; Secure' : 'SameSite=Lax';
+}
+
+export function setSessionCookie(res: Response, token: string, req?: Request): void {
   res.setHeader(
     'Set-Cookie',
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; ${cookiePolicyAttrs(req)}; Max-Age=${Math.floor(
       TOKEN_TTL_MS / 1000,
     )}`,
   );
 }
 
-export function clearSessionCookie(res: Response): void {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+export function clearSessionCookie(res: Response, req?: Request): void {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; ${cookiePolicyAttrs(req)}; Max-Age=0`);
 }
 
 export function getSessionCookie(req: Request): string | null {
