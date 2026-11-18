@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -16,7 +17,7 @@ import {
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
-import { formatMultiValueCell } from '../shared/jalali.ts';
+import { formatDisplayNumber, formatMultiValueCell } from '../shared/jalali.ts';
 import { EMPTY_CELL_TOKEN } from '../shared/tableQuery.ts';
 import type {
   CategoryStore,
@@ -49,6 +50,9 @@ interface GeneralRowView extends GeneralEntry {
   packingClosed?: boolean;
   detailedCount?: number;
   hasLinkedShortage?: boolean;
+  hasLinkedDamaged?: boolean;
+  hasLinkedDiscrepancy?: boolean;
+  hasLinkedReplaced?: boolean;
 }
 
 interface GeneralListResponse {
@@ -85,7 +89,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [system, setSystem] = useState('');
   const [subSystem, setSubSystem] = useState('');
   const [unit, setUnit] = useState('');
-  const [supplier, setSupplier] = useState('');
+  const [dispatchLocation, setDispatchLocation] = useState('');
+  const [packageType, setPackageType] = useState('');
+  const [shortageOnly, setShortageOnly] = useState(false);
+  const [damagedOnly, setDamagedOnly] = useState(false);
+  const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
+  const [replacedOnly, setReplacedOnly] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
@@ -97,6 +106,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [data, setData] = useState<GeneralListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedMap, setSelectedMap] = useState<Record<string, GeneralRowView>>({});
+  const [allFilteredIds, setAllFilteredIds] = useState<string[] | null>(null);
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [printRowsOverride, setPrintRowsOverride] = useState<GeneralRowView[] | null>(null);
   const [inspected, setInspected] = useState<GeneralRowView | null>(null);
   const [editing, setEditing] = useState<GeneralRowView | null>(null);
   const [editError, setEditError] = useState('');
@@ -134,25 +146,52 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleteCascade, setBulkDeleteCascade] = useState(false);
 
+  const buildFilterParams = useCallback(() => {
+    return new URLSearchParams({
+      ...(q ? { q } : {}),
+      ...(island ? { island } : {}),
+      ...(system ? { system } : {}),
+      ...(subSystem ? { subSystem } : {}),
+      ...(unit ? { unit } : {}),
+      ...(dispatchLocation ? { dispatchLocation } : {}),
+      ...(packageType ? { packageType } : {}),
+      ...(shortageOnly ? { shortageOnly: 'true' } : {}),
+      ...(damagedOnly ? { damagedOnly: 'true' } : {}),
+      ...(discrepancyOnly ? { discrepancyOnly: 'true' } : {}),
+      ...(replacedOnly ? { replacedOnly: 'true' } : {}),
+      ...(fromDate ? { fromDate } : {}),
+      ...(toDate ? { toDate } : {}),
+      ...(Object.keys(colFilters).length > 0
+        ? { colFilters: JSON.stringify(colFilters), calendar: prefs.calendar }
+        : {}),
+      ...(sortBy && sortDir ? { sortBy, sortDir } : {}),
+    });
+  }, [
+    q,
+    island,
+    system,
+    subSystem,
+    unit,
+    dispatchLocation,
+    packageType,
+    shortageOnly,
+    damagedOnly,
+    discrepancyOnly,
+    replacedOnly,
+    fromDate,
+    toDate,
+    colFilters,
+    prefs.calendar,
+    sortBy,
+    sortDir,
+  ]);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: '50',
-        ...(q ? { q } : {}),
-        ...(island ? { island } : {}),
-        ...(system ? { system } : {}),
-        ...(subSystem ? { subSystem } : {}),
-        ...(unit ? { unit } : {}),
-        ...(supplier ? { supplier } : {}),
-        ...(fromDate ? { fromDate } : {}),
-        ...(toDate ? { toDate } : {}),
-        ...(Object.keys(colFilters).length > 0
-          ? { colFilters: JSON.stringify(colFilters), calendar: prefs.calendar }
-          : {}),
-        ...(sortBy && sortDir ? { sortBy, sortDir } : {}),
-      });
+      const params = buildFilterParams();
+      params.set('page', String(page));
+      params.set('pageSize', '50');
       const res = await apiRequest<GeneralListResponse>(`/api/general?${params.toString()}`);
       setData(res);
     } catch (err) {
@@ -160,7 +199,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [page, q, island, system, subSystem, unit, supplier, fromDate, toDate, colFilters, prefs.calendar, sortBy, sortDir, notify]);
+  }, [page, buildFilterParams, notify]);
 
   useEffect(() => {
     loadData();
@@ -168,7 +207,39 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
   const items = data?.items || [];
   const selectedRows = Object.values(selectedMap);
+  const selectedIds = useMemo(
+    () => (allFilteredIds !== null ? allFilteredIds : selectedRows.map((r) => r.id)),
+    [allFilteredIds, selectedRows],
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedCount = selectedIds.length;
+
   const activeSummary = useMemo(() => {
+    if (allFilteredIds !== null) {
+      return (
+        data?.filteredSummary || {
+          count: 0,
+          grossWeightSum: 0,
+          netWeightSum: 0,
+          weighbridgeWeightSum: 0,
+          freightCostSum: 0,
+          packingQtySum: 0,
+          actualQtySum: 0,
+          effectiveActualQtySum: 0,
+          shortageSum: 0,
+          surplusSum: 0,
+          damagedQtySum: 0,
+          gcvDeliveredSum: 0,
+          mapnaInventorySum: 0,
+          contractorInventorySum: 0,
+          mivContractorQtySum: 0,
+          smrContractorQtySum: 0,
+          smrMapnaQtySum: 0,
+          mivMapnaQtySum: 0,
+          transitAmountSum: 0,
+        }
+      );
+    }
     if (selectedRows.length > 0) {
       return computeSelectionFormulaSummary({ general: selectedRows });
     }
@@ -195,7 +266,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         transitAmountSum: 0,
       }
     );
-  }, [selectedRows, data]);
+  }, [allFilteredIds, selectedRows, data]);
 
   const columns = useMemo(
     () => [
@@ -236,7 +307,19 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     return showExtraCols ? columns : columns.filter((col) => !col.hideInTable);
   }, [columns, showExtraCols]);
 
+  const clearSelection = useCallback(() => {
+    setSelectedMap({});
+    setAllFilteredIds(null);
+  }, []);
+
   const toggleRow = (row: GeneralRowView) => {
+    if (allFilteredIds !== null) {
+      const nextIds = allFilteredIds.includes(row.id)
+        ? allFilteredIds.filter((id) => id !== row.id)
+        : [...allFilteredIds, row.id];
+      setAllFilteredIds(nextIds.length > 0 ? nextIds : null);
+      return;
+    }
     setSelectedMap((prev) => {
       const next = { ...prev };
       if (next[row.id]) delete next[row.id];
@@ -246,6 +329,10 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   };
 
   const toggleAllOnPage = () => {
+    if (allFilteredIds !== null) {
+      clearSelection();
+      return;
+    }
     const allSelected = items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]));
     setSelectedMap((prev) => {
       const next = { ...prev };
@@ -256,6 +343,43 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       }
       return next;
     });
+  };
+
+  const toggleSelectAllTable = async () => {
+    if (allFilteredIds !== null) {
+      clearSelection();
+      return;
+    }
+    setSelectingAll(true);
+    try {
+      const params = buildFilterParams();
+      params.set('allIds', 'true');
+      const res = await apiRequest<{ ids: string[]; total: number }>(`/api/general?${params.toString()}`);
+      setAllFilteredIds(res.ids || []);
+      setSelectedMap({});
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
+  const handleOpenPrint = async () => {
+    if (allFilteredIds !== null && allFilteredIds.length > items.length) {
+      try {
+        const params = buildFilterParams();
+        params.set('all', 'true');
+        const res = await apiRequest<GeneralListResponse>(`/api/general?${params.toString()}`);
+        const idSet = new Set(allFilteredIds);
+        setPrintRowsOverride((res.items || []).filter((r) => idSet.has(r.id)));
+      } catch (err) {
+        if (err instanceof ApiError) notify('error', err.message);
+        return;
+      }
+    } else {
+      setPrintRowsOverride(null);
+    }
+    setPrintOpen(true);
   };
 
   const handleTogglePackingClosed = async (packingNo: string, currentlyClosed: boolean) => {
@@ -404,7 +528,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
   const handleBulkEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedRows.length === 0) return;
+    if (selectedIds.length === 0) return;
     const cleanPatch: Record<string, string> = {};
     for (const [k, v] of Object.entries(bulkPatch)) {
       if (typeof v === 'string' && v.trim()) {
@@ -419,12 +543,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     try {
       const res = await apiRequest<{ ok: boolean; updatedCount: number }>('/api/general/bulk', {
         method: 'PATCH',
-        body: JSON.stringify({ ids: selectedRows.map((r) => r.id), patch: cleanPatch }),
+        body: JSON.stringify({ ids: selectedIds, patch: cleanPatch }),
       });
       notify(
         'success',
         isFa
-          ? `ویرایش گروهی برای ${res.updatedCount.toLocaleString('fa-IR')} ردیف انجام شد.`
+          ? `ویرایش گروهی برای ${formatDisplayNumber(res.updatedCount, 'fa')} ردیف انجام شد.`
           : `Updated ${res.updatedCount} rows.`,
       );
       setBulkEditOpen(false);
@@ -432,7 +556,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         arrivalDate: '', supplier: '', dispatchLocation: '', island: '', system: '', subSystem: '',
         unit: '', releaseNo: '', releaseDate: '', billOfLadingNo: '', vehicleNo: '', driverName: '',
       });
-      setSelectedMap({});
+      clearSelection();
       triggerAutoSnapshot('Bulk Edit General');
       onDataChanged();
       loadData();
@@ -444,7 +568,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   };
 
   const handleBulkDeleteConfirm = async () => {
-    if (selectedRows.length === 0) return;
+    if (selectedIds.length === 0) return;
     setBulkBusy(true);
     try {
       const res = await apiRequest<{ ok: boolean; deletedCount: number; trashedDetailedCount?: number }>(
@@ -452,7 +576,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         {
           method: 'POST',
           body: JSON.stringify({
-            ids: selectedRows.map((r) => r.id),
+            ids: selectedIds,
             cascadeDetailed: bulkDeleteCascade,
           }),
         },
@@ -460,14 +584,14 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       notify(
         'success',
         isFa
-          ? `${res.deletedCount.toLocaleString('fa-IR')} ردیف به سطل بازیافت منتقل شد${
-              res.trashedDetailedCount ? ` (${res.trashedDetailedCount} ردیف جزئیات نیز حذف شد)` : ''
+          ? `${formatDisplayNumber(res.deletedCount, 'fa')} ردیف به سطل بازیافت منتقل شد${
+              res.trashedDetailedCount ? ` (${formatDisplayNumber(res.trashedDetailedCount, 'fa')} ردیف جزئیات نیز حذف شد)` : ''
             }.`
           : `Moved ${res.deletedCount} row(s) to Recycle Bin.`,
       );
       setBulkDeleteOpen(false);
       setBulkDeleteCascade(false);
-      setSelectedMap({});
+      clearSelection();
       triggerAutoSnapshot('Bulk Delete General');
       onDataChanged();
       loadData();
@@ -496,6 +620,58 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           />
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { setShortageOnly((v) => !v); clearSelection(); setPage(1); }}
+              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
+                shortageOnly
+                  ? 'border-[var(--status-danger)] bg-[var(--status-danger-bg)] text-[var(--status-danger)]'
+                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>{t.shortage.hasShortageBadge}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setDamagedOnly((v) => !v); clearSelection(); setPage(1); }}
+              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
+                damagedOnly
+                  ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
+                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>{t.shortage.hasDamagedBadge}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setDiscrepancyOnly((v) => !v); clearSelection(); setPage(1); }}
+              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
+                discrepancyOnly
+                  ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
+                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>{isFa ? 'دارای مغایرت' : 'Discrepancy'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setReplacedOnly((v) => !v); clearSelection(); setPage(1); }}
+              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
+                replacedOnly
+                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'جایگزین شده' : 'Replaced'}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setShowExtraCols((v) => !v)}
@@ -540,7 +716,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 >
                   <span>
                     {colDef?.header || key}: {previewText}
-                    {vals.length > 2 ? ` (+${(vals.length - 2).toLocaleString(isFa ? 'fa-IR' : 'en-US')})` : ''}
+                    {vals.length > 2 ? ` (+${formatDisplayNumber(vals.length - 2, prefs.language)})` : ''}
                   </span>
                   <button
                     type="button"
@@ -591,11 +767,29 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           </div>
         )}
 
-        {/* Category & Date Filters */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5">
+        {/* Hidden-Field Category & Date Filters (not present in default visible table) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+          <select
+            value={dispatchLocation}
+            onChange={(e) => { setDispatchLocation(e.target.value); clearSelection(); setPage(1); }}
+            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+          >
+            <option value="">{t.headers.dispatchLocation}: {t.controls.all}</option>
+            {categories.dispatchLocation.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+
+          <select
+            value={packageType}
+            onChange={(e) => { setPackageType(e.target.value); clearSelection(); setPage(1); }}
+            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+          >
+            <option value="">{t.headers.packageType}: {t.controls.all}</option>
+            {editPackageTypeOptions.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+
           <select
             value={island}
-            onChange={(e) => { setIsland(e.target.value); setPage(1); }}
+            onChange={(e) => { setIsland(e.target.value); clearSelection(); setPage(1); }}
             className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
             <option value="">{t.headers.island}: {t.controls.all}</option>
@@ -604,7 +798,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
           <select
             value={system}
-            onChange={(e) => { setSystem(e.target.value); setPage(1); }}
+            onChange={(e) => { setSystem(e.target.value); clearSelection(); setPage(1); }}
             className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
             <option value="">{t.headers.system}: {t.controls.all}</option>
@@ -613,7 +807,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
           <select
             value={subSystem}
-            onChange={(e) => { setSubSystem(e.target.value); setPage(1); }}
+            onChange={(e) => { setSubSystem(e.target.value); clearSelection(); setPage(1); }}
             className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
             <option value="">{t.headers.subSystem}: {t.controls.all}</option>
@@ -622,74 +816,90 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
           <select
             value={unit}
-            onChange={(e) => { setUnit(e.target.value); setPage(1); }}
+            onChange={(e) => { setUnit(e.target.value); clearSelection(); setPage(1); }}
             className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
             <option value="">{t.headers.unit}: {t.controls.all}</option>
             {categories.unit.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
 
-          <select
-            value={supplier}
-            onChange={(e) => { setSupplier(e.target.value); setPage(1); }}
-            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-          >
-            <option value="">{t.headers.supplier}: {t.controls.all}</option>
-            {categories.supplier.map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-
           <JalaliDateInput
             value={fromDate}
-            onChange={(v) => { setFromDate(v); setPage(1); }}
+            onChange={(v) => { setFromDate(v); clearSelection(); setPage(1); }}
             placeholder={t.controls.fromDate}
           />
 
           <JalaliDateInput
             value={toDate}
-            onChange={(v) => { setToDate(v); setPage(1); }}
+            onChange={(v) => { setToDate(v); clearSelection(); setPage(1); }}
             placeholder={t.controls.toDate}
           />
         </div>
       </div>
 
       {/* Formula Selection Summary Bar */}
-      {(items.length > 0 || selectedRows.length > 0) && (
+      {(items.length > 0 || selectedCount > 0) && (
         <SelectionSummaryBar
           scope="general"
-          selectedCount={selectedRows.length}
+          selectedCount={selectedCount}
           summary={activeSummary}
-          isFilteredFallback={selectedRows.length === 0}
-          onClearSelection={() => setSelectedMap({})}
-          onPrintSelected={() => setPrintOpen(true)}
+          isFilteredFallback={selectedCount === 0}
+          onClearSelection={clearSelection}
+          onPrintSelected={handleOpenPrint}
         />
       )}
 
-      {/* Bulk Operations Bar */}
-      {canEdit && selectedRows.length > 0 && (
-        <div className="rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <span className="font-bold text-[var(--accent-primary)] tabular-nums">
-            {isFa
-              ? `${selectedRows.length.toLocaleString('fa-IR')} ردیف انتخاب شده است`
-              : `${selectedRows.length} row(s) selected`}
-          </span>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBulkEditOpen(true)}
-              className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold flex items-center gap-1.5"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span>{isFa ? 'ویرایش گروهی' : 'Bulk Edit'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkDeleteOpen(true)}
-              className="h-8 px-3 rounded-lg bg-[var(--status-danger)] text-white font-semibold flex items-center gap-1.5"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{isFa ? 'حذف گروهی' : 'Bulk Delete'}</span>
-            </button>
+      {/* Select-All Table Bar & Bulk Operations Bar */}
+      {(data?.total || 0) > 0 && (
+        <div
+          className={`rounded-xl border px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs ${
+            selectedCount > 0
+              ? 'border-[var(--accent-primary)]/40 bg-[var(--accent-soft)]'
+              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 font-semibold cursor-pointer select-none">
+              <input
+                type="checkbox"
+                disabled={selectingAll}
+                checked={allFilteredIds !== null && allFilteredIds.length > 0 && allFilteredIds.length >= (data?.total || 0)}
+                onChange={toggleSelectAllTable}
+              />
+              <span>
+                {isFa
+                  ? `انتخاب کل ردیف‌های جدول (${formatDisplayNumber(data?.total || 0, 'fa')} ردیف)`
+                  : `Select all table rows (${formatDisplayNumber(data?.total || 0, 'en')} rows)`}
+              </span>
+            </label>
+            {selectedCount > 0 && (
+              <span className="font-bold text-[var(--accent-primary)] tabular-nums">
+                {isFa
+                  ? `— ${formatDisplayNumber(selectedCount, 'fa')} ردیف انتخاب شده است`
+                  : `— ${selectedCount} row(s) selected`}
+              </span>
+            )}
           </div>
+          {canEdit && selectedCount > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkEditOpen(true)}
+                className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold flex items-center gap-1.5"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>{isFa ? 'ویرایش گروهی' : 'Bulk Edit'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkDeleteOpen(true)}
+                className="h-8 px-3 rounded-lg bg-[var(--status-danger)] text-white font-semibold flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isFa ? 'حذف گروهی' : 'Bulk Delete'}</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -702,7 +912,11 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 <th className="py-2.5 px-3 w-9">
                   <input
                     type="checkbox"
-                    checked={items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]))}
+                    checked={
+                      allFilteredIds !== null
+                        ? items.length > 0 && items.every((r) => selectedIdSet.has(r.id))
+                        : items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]))
+                    }
                     onChange={toggleAllOnPage}
                     aria-label={t.controls.selectAllPage}
                   />
@@ -772,7 +986,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
-                        checked={Boolean(selectedMap[row.id])}
+                        checked={allFilteredIds !== null ? selectedIdSet.has(row.id) : Boolean(selectedMap[row.id])}
                         onChange={() => toggleRow(row)}
                       />
                     </td>
@@ -781,7 +995,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       const rawVal = col.get(row);
                       const displayVal =
                         typeof rawVal === 'number'
-                          ? rawVal.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                          ? formatDisplayNumber(rawVal, prefs.language)
                           : formatMultiValueCell(rawVal, {
                               isDate: Boolean(col.isDate),
                               calendar: prefs.calendar,
@@ -891,7 +1105,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">
             <span className="tabular-nums">
               {isFa
-                ? `صفحه ${data.page.toLocaleString('fa-IR')} از ${data.totalPages.toLocaleString('fa-IR')} (${data.total.toLocaleString('fa-IR')} رکورد)`
+                ? `صفحه ${formatDisplayNumber(data.page, 'fa')} از ${formatDisplayNumber(data.totalPages, 'fa')} (${formatDisplayNumber(data.total, 'fa')} رکورد)`
                 : `Page ${data.page} of ${data.totalPages} (${data.total} records)`}
             </span>
             <div className="flex items-center gap-1.5">
@@ -984,83 +1198,61 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
             </div>
 
             <div className="space-y-4">
-              <div>
-                <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
-                  {isFa ? 'مشخصات پایه محموله' : 'Primary Shipment Info'}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {columns
-                    .filter((c) => {
-                      if (c.hideInTable) return false;
-                      const val = c.get(inspected);
-                      return val !== null && val !== undefined && String(val).trim() !== '';
-                    })
-                    .map((c) => {
+              {(
+                [
+                  {
+                    title: isFa ? 'مشخصات محموله و پکینگ' : 'Shipment & Packing Info',
+                    keys: ['rowNo', 'packingListNo', 'packageNo', 'packageType', 'itemCount', 'itemDescription', 'supplier', 'dispatchLocation'],
+                  },
+                  {
+                    title: isFa ? 'موقعیت فنی و دسته‌بندی' : 'Technical Classification',
+                    keys: ['island', 'system', 'subSystem', 'unit', 'arrivalDate'],
+                  },
+                  {
+                    title: isFa ? 'ابعاد، اوزان و کرایه حمل' : 'Dimensions, Weights & Freight',
+                    keys: ['grossWeight', 'netWeight', 'weighbridgeWeight', 'lengthCm', 'widthCm', 'heightCm', 'freightCost'],
+                  },
+                  {
+                    title: isFa ? 'حمل‌ونقل، صورتجلسات ورود و بازرسی' : 'Logistics, Minutes & Inspection',
+                    keys: ['employerEntryMinutesNo', 'mapnaEntryMinutesNo', 'releaseNo', 'releaseDate', 'billOfLadingNo', 'vehicleNo', 'driverName', 'opiInvitationNo', 'opiInvitationDate'],
+                  },
+                ] as const
+              ).map((group) => (
+                <div key={group.title}>
+                  <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
+                    {group.title}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {group.keys.map((colKey) => {
+                      const c = columns.find((col) => col.key === colKey);
+                      if (!c) return null;
                       const raw = c.get(inspected);
                       const formatted =
                         typeof raw === 'number'
-                          ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                          ? formatDisplayNumber(raw, prefs.language)
                           : formatMultiValueCell(raw, {
                               isDate: Boolean(c.isDate),
                               calendar: prefs.calendar,
                               lang: prefs.language,
                             });
+                      const isBlank = formatted === '';
                       return (
                         <div
                           key={c.key}
-                          className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
+                          className={`p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)] ${
+                            c.key === 'itemDescription' ? 'sm:col-span-2' : ''
+                          }`}
                         >
                           <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                          <div className="text-xs font-semibold mt-0.5 tabular-nums whitespace-pre-line break-words bidi-plaintext">
-                            {formatted}
+                          <div className={`text-xs font-semibold mt-0.5 tabular-nums whitespace-pre-line break-words bidi-plaintext ${isBlank ? 'text-[var(--text-muted)]' : ''}`}>
+                            {isBlank ? '—' : formatted}
                           </div>
                         </div>
                       );
                     })}
-                </div>
-              </div>
-
-              {columns.some((c) => {
-                if (!c.hideInTable) return false;
-                const val = c.get(inspected);
-                return val !== null && val !== undefined && String(val).trim() !== '';
-              }) && (
-                <div>
-                  <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
-                    {isFa ? 'اطلاعات حمل، ابعاد، صورتجلسات و OPI' : 'Minutes, Weights, Dimensions & Logistics'}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {columns
-                      .filter((c) => {
-                        if (!c.hideInTable) return false;
-                        const val = c.get(inspected);
-                        return val !== null && val !== undefined && String(val).trim() !== '';
-                      })
-                      .map((c) => {
-                        const raw = c.get(inspected);
-                        const formatted =
-                          typeof raw === 'number'
-                            ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                            : formatMultiValueCell(raw, {
-                                isDate: Boolean(c.isDate),
-                                calendar: prefs.calendar,
-                                lang: prefs.language,
-                              });
-                        return (
-                          <div
-                            key={c.key}
-                            className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
-                          >
-                            <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                            <div className="text-xs font-semibold mt-0.5 tabular-nums whitespace-pre-line break-words bidi-plaintext">
-                              {formatted}
-                            </div>
-                          </div>
-                        );
-                      })}
                   </div>
                 </div>
-              )}
+              ))}
             </div>
           </div>
         </div>
@@ -1515,8 +1707,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
             <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
               <h3 className="text-sm font-bold tabular-nums">
                 {isFa
-                  ? `ویرایش گروهی (${selectedRows.length.toLocaleString('fa-IR')} ردیف)`
-                  : `Bulk Edit (${selectedRows.length} rows)`}
+                  ? `ویرایش گروهی (${formatDisplayNumber(selectedCount, 'fa')} ردیف)`
+                  : `Bulk Edit (${selectedCount} rows)`}
               </h3>
               <button type="button" onClick={() => setBulkEditOpen(false)}>
                 <X className="w-5 h-5" />
@@ -1628,8 +1820,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
             </h3>
             <p className="text-xs text-[var(--text-primary)]">
               {isFa
-                ? `آیا از انتقال ${selectedRows.length.toLocaleString('fa-IR')} ردیف انتخاب‌شده به سطل بازیافت مطمئن هستید؟`
-                : `Are you sure you want to move ${selectedRows.length} selected row(s) to the Recycle Bin?`}
+                ? `آیا از انتقال ${formatDisplayNumber(selectedCount, 'fa')} ردیف انتخاب‌شده به سطل بازیافت مطمئن هستید؟`
+                : `Are you sure you want to move ${selectedCount} selected row(s) to the Recycle Bin?`}
             </p>
             <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
               <input
@@ -1666,9 +1858,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
       <PrintReportModal
         open={printOpen}
-        onClose={() => setPrintOpen(false)}
+        onClose={() => { setPrintOpen(false); setPrintRowsOverride(null); }}
         title={t.nav.general}
-        rows={selectedRows.length > 0 ? selectedRows : items}
+        rows={printRowsOverride ?? (selectedRows.length > 0 ? selectedRows : items)}
         columns={columns.map((c) => ({
           key: c.key,
           header: c.header,

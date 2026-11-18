@@ -171,17 +171,35 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
 
 /* Sticky data table headers & always-accessible top horizontal scrollbar */
 .samaan-top-scrollbar {
-  height: 12px;
+  height: 10px;
   scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) var(--bg-subtle);
 }
 
 .samaan-top-scrollbar::-webkit-scrollbar {
-  height: 10px;
+  height: 8px;
+}
+
+.samaan-top-scrollbar::-webkit-scrollbar-track {
+  background: var(--bg-subtle);
 }
 
 .samaan-top-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.samaan-top-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
-  border-radius: 5px;
+}
+
+.samaan-table-scroll::-webkit-scrollbar:horizontal {
+  display: none;
+  height: 0;
+}
+
+.samaan-table-scroll::-webkit-scrollbar:vertical {
+  width: 8px;
 }
 
 .samaan-table-scroll thead {

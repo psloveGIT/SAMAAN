@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckSquare, Printer, Square, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
-import { formatIsoDate } from '../shared/jalali.ts';
+import { formatDisplayNumber, formatIsoDate } from '../shared/jalali.ts';
 export interface PrintColumnDef<T> {
   key: string;
   header: string;
@@ -185,9 +185,11 @@ export function PrintReportModal<T>({
                 const val =
                   col.isDate && typeof raw === 'string' && raw.trim()
                     ? formatIsoDate(raw, prefs.calendar)
-                    : raw === null || raw === undefined || String(raw).trim() === ''
-                      ? '—'
-                      : String(raw);
+                    : typeof raw === 'number'
+                      ? formatDisplayNumber(raw, prefs.language)
+                      : raw === null || raw === undefined || String(raw).trim() === ''
+                        ? '—'
+                        : String(raw).replace(/\u066B/g, '.');
                 const isCompact = typeof raw === 'number' || Boolean(col.isDate) || val.length <= 16;
                 return (
                   <td
@@ -345,9 +347,11 @@ export function PrintReportModal<T>({
                             const v =
                               col.isDate && typeof raw === 'string' && raw.trim()
                                 ? formatIsoDate(raw, prefs.calendar)
-                                : raw === null || raw === undefined || String(raw).trim() === ''
-                                  ? '—'
-                                  : String(raw);
+                                : typeof raw === 'number'
+                                  ? formatDisplayNumber(raw, prefs.language)
+                                  : raw === null || raw === undefined || String(raw).trim() === ''
+                                    ? '—'
+                                    : String(raw).replace(/\u066B/g, '.');
                             return (
                               <td key={col.key} className="px-2 py-1 whitespace-nowrap max-w-[160px] truncate">
                                 {v}

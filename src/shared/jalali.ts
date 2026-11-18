@@ -263,13 +263,24 @@ export function formatIsoDate(isoOrRaw: string, calendar: CalendarMode, shortJal
     .join('\n');
 }
 
+export function formatDisplayNumber(
+  value: number,
+  lang: Language,
+  options?: Intl.NumberFormatOptions,
+): string {
+  if (!Number.isFinite(value)) return '0';
+  return value
+    .toLocaleString(lang === 'fa' ? 'fa-IR' : 'en-US', options)
+    .replace(/\u066B/g, '.');
+}
+
 export function formatMultiValueCell(
   rawValue: string | number | null | undefined,
   options: { isDate?: boolean; calendar: CalendarMode; lang: Language; shortJalali?: boolean },
 ): string {
   if (rawValue === null || rawValue === undefined) return '';
   if (typeof rawValue === 'number') {
-    return rawValue.toLocaleString(options.lang === 'fa' ? 'fa-IR' : 'en-US');
+    return formatDisplayNumber(rawValue, options.lang);
   }
   const str = String(rawValue).trim();
   if (!str || str === '-' || str === '—') return '';
@@ -405,6 +416,17 @@ export function formatMonthLabel(monthKey: string, calendar: CalendarMode, lang:
   }
   const mName = lang === 'fa' ? GREGORIAN_MONTH_NAMES_FA[mIdx] : GREGORIAN_MONTH_NAMES_EN[mIdx];
   return `${mName} ${yStr}`;
+}
+
+export function buildYearMonths(year: string, calendar: CalendarMode): string[] {
+  const cleanYear = normalizeDigits(year || '').trim();
+  if (!/^\d{4}$/.test(cleanYear)) return [];
+  const sep = calendar === 'gregorian' ? '-' : '/';
+  const months: string[] = [];
+  for (let m = 1; m <= 12; m += 1) {
+    months.push(`${cleanYear}${sep}${pad2(m)}`);
+  }
+  return months;
 }
 
 export function getTodayIso(): string {

@@ -19,7 +19,7 @@ import {
   toNum,
 } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
-import { getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
+import { buildYearMonths, getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
 import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../shared/sorting.ts';
 import {
   matchesCustomFilters,
@@ -35,6 +35,8 @@ import {
   checkDateRangeMulti,
   collectDistinctColumnValues,
   matchesColFilters,
+  matchesPackagePartial,
+  normDupPart,
   parseColFiltersParam,
   resolveSiteEntryArrivalAndRelease,
   sortRowsByColumn,
@@ -121,7 +123,7 @@ const DEFAULT_PROJECT_ID = 'default';
 const DEFAULT_PREFERENCES: UserPreferences = {
   language: 'fa',
   calendar: 'jalali',
-  theme: 'light',
+  theme: 'dark',
   eyeComfort: false,
 };
 
@@ -1305,6 +1307,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const subSystem = query.get('subSystem') || '';
     const unit = query.get('unit') || '';
     const supplier = query.get('supplier') || '';
+    const dispatchLocation = query.get('dispatchLocation') || '';
+    const packageType = query.get('packageType') || '';
     const packingListNo = normKey(query.get('packingListNo'));
     const packingNos = parsePackingNosParam(query.get('packingNos'));
     const customFilters = parseCustomFiltersParam(query.get('customFilters'));
@@ -1312,60 +1316,106 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const calendar: CalendarMode = query.get('calendar') === 'gregorian' ? 'gregorian' : 'jalali';
     const sortBy = (query.get('sortBy') || '').trim();
     const sortDir: 'asc' | 'desc' = query.get('sortDir') === 'desc' ? 'desc' : 'asc';
+    const shortageOnly = query.get('shortageOnly') === 'true';
+    const damagedOnly = query.get('damagedOnly') === 'true';
+    const discrepancyOnly = query.get('discrepancyOnly') === 'true';
+    const replacedOnly = query.get('replacedOnly') === 'true';
     const fromDate = query.get('fromDate') || '';
     const toDate = query.get('toDate') || '';
+    const fetchAll = query.get('all') === 'true';
+    const allIds = query.get('allIds') === 'true';
     const page = Math.max(1, Number(query.get('page') || 1));
-    const pageSize = Math.min(200, Math.max(10, Number(query.get('pageSize') || 50)));
+    const pageSize = Math.min(5000, Math.max(10, Number(query.get('pageSize') || 50)));
 
-    const filteredRaw = db.general.filter((g) => {
-      if (island && g.island !== island) return false;
-      if (system && g.system !== system) return false;
-      if (subSystem && g.subSystem !== subSystem) return false;
-      if (unit && g.unit !== unit) return false;
-      if (supplier && g.supplier !== supplier) return false;
-      if (packingListNo && normKey(g.packingListNo) !== packingListNo) return false;
-      if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
-      if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
-      if (!matchesColFilters(g as unknown as Record<string, unknown>, colFilters, calendar)) return false;
-      if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
-      return matchSearch(
-        [
-          g.rowNo, g.packingListNo, g.packageNo, g.packageType || '', g.itemDescription, g.supplier,
-          g.dispatchLocation, g.employerEntryMinutesNo, g.mapnaEntryMinutesNo,
-          g.releaseNo, g.billOfLadingNo, g.vehicleNo, g.driverName,
-          g.opiInvitationNo, g.island, g.system, g.subSystem, g.unit,
-        ],
-        q,
-      );
-    });
+    const substitutedIds = new Set(
+      (db.substitutions || []).map((s) => s.detailedId).filter(Boolean),
+    );
+
+    const enrichedRaw = db.general
+      .filter((g) => {
+        if (island && g.island !== island) return false;
+        if (system && g.system !== system) return false;
+        if (subSystem && g.subSystem !== subSystem) return false;
+        if (unit && g.unit !== unit) return false;
+        if (supplier && g.supplier !== supplier) return false;
+        if (dispatchLocation && g.dispatchLocation !== dispatchLocation) return false;
+        if (packageType && (g.packageType || '') !== packageType) return false;
+        if (packingListNo && normDupPart(g.packingListNo) !== normDupPart(packingListNo)) return false;
+        if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
+        if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
+        if (!matchesColFilters(g as unknown as Record<string, unknown>, colFilters, calendar)) return false;
+        if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
+        return matchSearch(
+          [
+            g.rowNo, g.packingListNo, g.packageNo, g.packageType || '', g.itemDescription, g.supplier,
+            g.dispatchLocation, g.employerEntryMinutesNo, g.mapnaEntryMinutesNo,
+            g.releaseNo, g.billOfLadingNo, g.vehicleNo, g.driverName,
+            g.opiInvitationNo, g.island, g.system, g.subSystem, g.unit,
+          ],
+          q,
+        );
+      })
+      .map((g) => {
+        const pk = normKey(g.packingListNo);
+        const pkg = normKey(g.packageNo);
+        const linkedDetails = pk ? db.detailed.filter((d) => normDupPart(d.shipmentNo) === normDupPart(pk)) : [];
+        const matchingPkgDetails = linkedDetails.filter((d) => !pkg || matchesPackagePartial(d.packageNo, pkg));
+        let hasLinkedShortage = false;
+        let hasLinkedDamaged = false;
+        let hasLinkedDiscrepancy = false;
+        let hasLinkedReplaced = false;
+        for (const d of matchingPkgDetails) {
+          const c = computeDetailedEntry(d);
+          if (c.hasShortage) hasLinkedShortage = true;
+          if (c.hasDamaged) hasLinkedDamaged = true;
+          if (isMerOpen(c) || Boolean(normKey(c.merNo) || normKey(c.merStatus)) || c.hasShortage || c.hasDamaged) {
+            hasLinkedDiscrepancy = true;
+          }
+          if (isRepOpen(c) || Boolean(normKey(c.repNo) || normKey(c.repStatus)) || substitutedIds.has(c.id)) {
+            hasLinkedReplaced = true;
+          }
+        }
+        return {
+          ...g,
+          packingClosed: Boolean(pk && db.packingMeta[pk]?.isClosed),
+          detailedCount: matchingPkgDetails.length,
+          hasLinkedShortage,
+          hasLinkedDamaged,
+          hasLinkedDiscrepancy,
+          hasLinkedReplaced,
+        };
+      })
+      .filter((g) => {
+        if (shortageOnly && !g.hasLinkedShortage) return false;
+        if (damagedOnly && !g.hasLinkedDamaged) return false;
+        if (discrepancyOnly && !g.hasLinkedDiscrepancy) return false;
+        if (replacedOnly && !g.hasLinkedReplaced) return false;
+        return true;
+      });
 
     const filtered = sortBy
-      ? (sortRowsByColumn(filteredRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as GeneralEntry[])
-      : [...filteredRaw].reverse();
+      ? (sortRowsByColumn(enrichedRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as typeof enrichedRaw)
+      : [...enrichedRaw].reverse();
 
     const total = filtered.length;
-    const start = (page - 1) * pageSize;
-    const items = filtered.slice(start, start + pageSize).map((g) => {
-      const pk = normKey(g.packingListNo);
-      const pkg = normKey(g.packageNo);
-      const linkedDetails = pk ? db.detailed.filter((d) => normKey(d.shipmentNo) === pk) : [];
-      const matchingPkgDetails = linkedDetails.filter((d) => !pkg || normKey(d.packageNo) === pkg);
-      const hasLinkedShortage = matchingPkgDetails.some((d) => computeDetailedEntry(d).hasShortage);
-      return {
-        ...g,
-        packingClosed: Boolean(pk && db.packingMeta[pk]?.isClosed),
-        detailedCount: matchingPkgDetails.length,
-        hasLinkedShortage,
-      };
-    });
+    const filteredSummary = computeSelectionFormulaSummary({ general: filtered });
 
+    if (allIds) {
+      return {
+        ids: filtered.map((g) => g.id),
+        total,
+        filteredSummary,
+      } as T;
+    }
+
+    const start = (page - 1) * pageSize;
     return {
-      items,
+      items: fetchAll ? filtered : filtered.slice(start, start + pageSize),
       total,
-      page,
-      pageSize,
-      totalPages: Math.max(1, Math.ceil(total / pageSize)),
-      filteredSummary: computeSelectionFormulaSummary({ general: filtered }),
+      page: fetchAll ? 1 : page,
+      pageSize: fetchAll ? Math.max(1, total) : pageSize,
+      totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
+      filteredSummary,
       packingMeta: db.packingMeta,
     } as T;
   }
@@ -1727,6 +1777,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const unit = query.get('unit') || '';
     const supplier = query.get('supplier') || '';
     const storageLocation = query.get('storageLocation') || '';
+    const itemCategory = query.get('itemCategory') || '';
     const shipmentNo = normKey(query.get('shipmentNo'));
     const packageNo = normKey(query.get('packageNo'));
     const packingNos = parsePackingNosParam(query.get('packingNos'));
@@ -1737,10 +1788,18 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const sortDir: 'asc' | 'desc' = query.get('sortDir') === 'desc' ? 'desc' : 'asc';
     const shortageOnly = query.get('shortageOnly') === 'true';
     const damagedOnly = query.get('damagedOnly') === 'true';
+    const discrepancyOnly = query.get('discrepancyOnly') === 'true';
+    const replacedOnly = query.get('replacedOnly') === 'true';
     const fromDate = query.get('fromDate') || '';
     const toDate = query.get('toDate') || '';
+    const fetchAll = query.get('all') === 'true';
+    const allIds = query.get('allIds') === 'true';
     const page = Math.max(1, Number(query.get('page') || 1));
-    const pageSize = Math.min(200, Math.max(10, Number(query.get('pageSize') || 50)));
+    const pageSize = Math.min(5000, Math.max(10, Number(query.get('pageSize') || 50)));
+
+    const substitutedIds = new Set(
+      (db.substitutions || []).map((s) => s.detailedId).filter(Boolean),
+    );
 
     const computedRaw: DetailedComputed[] = [];
     for (const d of db.detailed) {
@@ -1750,8 +1809,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (unit && d.unit !== unit) continue;
       if (supplier && d.supplier !== supplier) continue;
       if (storageLocation && d.storageLocation !== storageLocation) continue;
-      if (shipmentNo && normKey(d.shipmentNo) !== shipmentNo) continue;
-      if (packageNo && normKey(d.packageNo) !== packageNo) continue;
+      if (itemCategory && (d.itemCategory || '') !== itemCategory) continue;
+      if (shipmentNo && normDupPart(d.shipmentNo) !== normDupPart(shipmentNo)) continue;
+      if (packageNo && !matchesPackagePartial(d.packageNo, packageNo)) continue;
       if (!matchesMultiPacking(d.shipmentNo, packingNos)) continue;
       if (!inDateRange(d.arrivalDate, fromDate, toDate)) continue;
       if (!matchSearch([
@@ -1766,6 +1826,25 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (!matchesColFilters(comp as unknown as Record<string, unknown>, colFilters, calendar)) continue;
       if (shortageOnly && !comp.hasShortage) continue;
       if (damagedOnly && !comp.hasDamaged) continue;
+      if (
+        discrepancyOnly &&
+        !isMerOpen(comp) &&
+        !normKey(comp.merNo) &&
+        !normKey(comp.merStatus) &&
+        !comp.hasShortage &&
+        !comp.hasDamaged
+      ) {
+        continue;
+      }
+      if (
+        replacedOnly &&
+        !isRepOpen(comp) &&
+        !normKey(comp.repNo) &&
+        !normKey(comp.repStatus) &&
+        !substitutedIds.has(comp.id)
+      ) {
+        continue;
+      }
       computedRaw.push(comp);
     }
 
@@ -1774,14 +1853,24 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       : [...computedRaw].reverse();
 
     const total = computedAll.length;
+    const filteredSummary = computeSelectionFormulaSummary({ detailed: computedAll });
+
+    if (allIds) {
+      return {
+        ids: computedAll.map((d) => d.id),
+        total,
+        filteredSummary,
+      } as T;
+    }
+
     const start = (page - 1) * pageSize;
     return {
-      items: computedAll.slice(start, start + pageSize),
+      items: fetchAll ? computedAll : computedAll.slice(start, start + pageSize),
       total,
-      page,
-      pageSize,
-      totalPages: Math.max(1, Math.ceil(total / pageSize)),
-      filteredSummary: computeSelectionFormulaSummary({ detailed: computedAll }),
+      page: fetchAll ? 1 : page,
+      pageSize: fetchAll ? Math.max(1, total) : pageSize,
+      totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
+      filteredSummary,
     } as T;
   }
 
@@ -2060,6 +2149,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const status = query.get('status') || '';
     const supplier = query.get('supplier') || '';
     const system = query.get('system') || '';
+    const subSystem = query.get('subSystem') || '';
+    const unit = query.get('unit') || '';
+    const dispatchLocation = query.get('dispatchLocation') || '';
+    const carrierContractor = query.get('carrierContractor') || '';
     const packingNos = parsePackingNosParam(query.get('packingNos'));
     const customFilters = parseCustomFiltersParam(query.get('customFilters'));
     const colFilters = parseColFiltersParam(query.get('colFilters'));
@@ -2068,13 +2161,19 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const sortDir: 'asc' | 'desc' = query.get('sortDir') === 'desc' ? 'desc' : 'asc';
     const fromDate = query.get('fromDate') || '';
     const toDate = query.get('toDate') || '';
+    const fetchAll = query.get('all') === 'true';
+    const allIds = query.get('allIds') === 'true';
     const page = Math.max(1, Number(query.get('page') || 1));
-    const pageSize = Math.min(200, Math.max(10, Number(query.get('pageSize') || 50)));
+    const pageSize = Math.min(5000, Math.max(10, Number(query.get('pageSize') || 50)));
 
     const filteredRaw = db.transit.filter((t) => {
       if (status && t.overallStatus !== status) return false;
       if (supplier && t.supplier !== supplier) return false;
       if (system && t.system !== system) return false;
+      if (subSystem && t.subSystem !== subSystem) return false;
+      if (unit && t.unit !== unit) return false;
+      if (dispatchLocation && t.dispatchLocation !== dispatchLocation) return false;
+      if (carrierContractor && t.carrierContractor !== carrierContractor) return false;
       if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
       if (!matchesCustomFilters(t as unknown as Record<string, unknown>, customFilters)) return false;
       if (!matchesColFilters(t as unknown as Record<string, unknown>, colFilters, calendar)) return false;
@@ -2091,14 +2190,24 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       : [...filteredRaw].reverse();
 
     const total = filtered.length;
+    const filteredSummary = computeSelectionFormulaSummary({ transit: filtered });
+
+    if (allIds) {
+      return {
+        ids: filtered.map((t) => t.id),
+        total,
+        filteredSummary,
+      } as T;
+    }
+
     const start = (page - 1) * pageSize;
     return {
-      items: filtered.slice(start, start + pageSize),
+      items: fetchAll ? filtered : filtered.slice(start, start + pageSize),
       total,
-      page,
-      pageSize,
-      totalPages: Math.max(1, Math.ceil(total / pageSize)),
-      filteredSummary: computeSelectionFormulaSummary({ transit: filtered }),
+      page: fetchAll ? 1 : page,
+      pageSize: fetchAll ? Math.max(1, total) : pageSize,
+      totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
+      filteredSummary,
     } as T;
   }
 
@@ -2133,6 +2242,76 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     addAudit(db, sanitizeUser(u), 'CREATE_TRANSIT', 'transit', pk || created.rowNo, `ثبت محموله در راه ${pk || created.rowNo}`);
     await saveActiveDb();
     return { item: created } as T;
+  }
+
+  if (pathname === '/api/transit/bulk' && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const patch = (body.patch || {}) as Partial<TransitEntry>;
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('شناسه ردیف‌ها الزامی است', 'Row IDs are required'), 400);
+    }
+    const idSet = new Set(ids);
+    const cleanPatch: Record<string, unknown> = {};
+    const stringFields: (keyof TransitEntry)[] = [
+      'arrivalDate', 'overallStatus', 'inspectionRequest', 'releaseNetNo', 'releaseNetDate',
+      'mapnaShippingNotice', 'interimNo', 'interimDate', 'supplier', 'dispatchLocation',
+      'system', 'subSystem', 'unit', 'equipmentSupplyCode', 'carrierContractor', 'billOfLadingNo',
+    ];
+    for (const k of stringFields) {
+      if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
+        cleanPatch[k] = normKey(String(patch[k]));
+      }
+    }
+    if (patch.amount !== undefined && patch.amount !== null && Number.isFinite(Number(patch.amount))) {
+      cleanPatch.amount = Number(patch.amount);
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    for (const t of db.transit) {
+      if (!idSet.has(t.id)) continue;
+      Object.assign(t, cleanPatch, { updatedAt: now });
+      updatedCount += 1;
+    }
+    renumberScope(db, 'transit');
+    rebuildCategories(db);
+    addAudit(db, sanitizeUser(u), 'BULK_UPDATE_TRANSIT', 'transit', `${updatedCount} rows`, `ویرایش گروهی ${updatedCount} ردیف در بخش در راه`);
+    await saveActiveDb();
+    return { ok: true, updatedCount } as T;
+  }
+
+  if (pathname === '/api/transit/bulk-delete' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('هیچ ردیفی برای حذف انتخاب نشده است', 'No rows selected for deletion'), 400);
+    }
+    const idSet = new Set(ids);
+    const now = new Date().toISOString();
+    const deletedBy = u.fullName || u.username;
+    const removedRows: TransitEntry[] = [];
+    db.transit = db.transit.filter((t) => {
+      if (idSet.has(t.id)) {
+        removedRows.push(t);
+        return false;
+      }
+      return true;
+    });
+    for (const removed of removedRows) {
+      db.trash.unshift({
+        id: makeId(),
+        scope: 'transit',
+        deletedAt: now,
+        deletedBy,
+        targetLabel: `${removed.packingListNo || '-'} (#${removed.rowNo})`,
+        data: removed,
+      });
+    }
+    renumberScope(db, 'transit');
+    rebuildCategories(db);
+    addAudit(db, sanitizeUser(u), 'BULK_DELETE_TRANSIT', 'transit', `${removedRows.length} rows`, `حذف گروهی ${removedRows.length} ردیف از بخش در راه`);
+    await saveActiveDb();
+    return { ok: true, deletedCount: removedRows.length } as T;
   }
 
   if (pathname.startsWith('/api/transit/') && method === 'PATCH') {
@@ -4367,8 +4546,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         byIslandMap[bucket.key].shortageRowCount += 1;
       }
       byIslandMap[bucket.key].shortageQty = roundQty(byIslandMap[bucket.key].shortageQty + d.shortage);
-      byIslandMap[bucket.key].mapnaStock = roundQty(byIslandMap[bucket.key].mapnaStock + d.mapnaInventory);
-      byIslandMap[bucket.key].contractorStock = roundQty(byIslandMap[bucket.key].contractorStock + d.contractorInventory);
+      if (!d.opiPending && d.mapnaInventory > 0) {
+        byIslandMap[bucket.key].mapnaStock += 1;
+      }
+      if (!d.opiPending && d.contractorInventory > 0) {
+        byIslandMap[bucket.key].contractorStock += 1;
+      }
     }
 
     const monthBuckets: Record<string, { monthKey: string; generalRows: number; detailedRows: number; grossWeight: number }> = {};
@@ -4386,6 +4569,21 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       monthBuckets[mk].detailedRows += 1;
     }
 
+    const allMonthlyBuckets = Object.values(monthBuckets).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+    const availableYears = Array.from(
+      new Set(allMonthlyBuckets.map((m) => m.monthKey.slice(0, 4)).filter((y) => /^\d{4}$/.test(y))),
+    ).sort((a, b) => b.localeCompare(a));
+    const requestedYear = normalizeDigits((query.get('year') || '').trim());
+    const selectedYear =
+      requestedYear && availableYears.includes(requestedYear)
+        ? requestedYear
+        : availableYears[0] || '';
+    const monthlyTrend = selectedYear
+      ? buildYearMonths(selectedYear, calendar).map(
+          (mk) => monthBuckets[mk] || { monthKey: mk, generalRows: 0, detailedRows: 0, grossWeight: 0 },
+        )
+      : allMonthlyBuckets.slice(-12);
+
     const openMerItems = detailedComputed
       .filter((d) => isMerOpen(d))
       .map((d) => ({
@@ -4397,6 +4595,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         description: d.description || d.generalDescription,
         merNo: d.merNo,
         merStatus: d.merStatus,
+        packingQty: d.packingQty,
+        actualQty: d.actualQty,
+        effectiveActualQty: d.effectiveActualQty,
+        damagedQty: d.damagedQty,
+        shortage: d.shortage,
+        countingUnit: d.countingUnit,
       }));
     const openRepItems = detailedComputed
       .filter((d) => isRepOpen(d))
@@ -4409,6 +4613,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         description: d.description || d.generalDescription,
         repNo: d.repNo,
         repStatus: d.repStatus,
+        packingQty: d.packingQty,
+        actualQty: d.actualQty,
+        effectiveActualQty: d.effectiveActualQty,
+        damagedQty: d.damagedQty,
+        shortage: d.shortage,
+        countingUnit: d.countingUnit,
       }));
     const expiringChemicals = getExpiringChemicals(detailedComputed, 30);
 
@@ -4439,7 +4649,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       },
       transitByStatus: Object.entries(transitByStatus).map(([status, count]) => ({ status, count })),
       byIsland: Object.values(byIslandMap).sort((a, b) => (b.generalCount + b.detailedCount) - (a.generalCount + a.detailedCount)),
-      monthlyTrend: Object.values(monthBuckets).sort((a, b) => a.monthKey.localeCompare(b.monthKey)).slice(-12),
+      availableYears,
+      selectedYear,
+      allMonthlyBuckets,
+      monthlyTrend,
       topShortages: [...shortageItems].reverse().slice(0, 12),
       topDamaged: [...damagedItems].reverse().slice(0, 12),
       openMerItems: [...openMerItems].reverse().slice(0, 20),

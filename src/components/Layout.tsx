@@ -33,6 +33,7 @@ import {
   Scale,
   Search,
   Shield,
+  Sparkles,
   Sun,
   Tag,
   Trash2,
@@ -80,6 +81,7 @@ interface LayoutProps {
   activeTab: NavTabKey;
   onTabChange: (tab: NavTabKey) => void;
   onOpenNewPacking: () => void;
+  onOpenAiAssistant?: () => void;
   children: React.ReactNode;
 }
 
@@ -87,6 +89,7 @@ export const Layout: React.FC<LayoutProps> = ({
   activeTab,
   onTabChange,
   onOpenNewPacking,
+  onOpenAiAssistant,
   children,
 }) => {
   const {
@@ -592,9 +595,9 @@ export const Layout: React.FC<LayoutProps> = ({
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col overflow-x-hidden">
         {/* Strict 3-zone Top Bar */}
-        <header className="sticky top-0 z-30 h-14 px-4 lg:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-8 print:hidden">
+        <header className="sticky top-0 z-30 h-14 px-4 lg:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-4 print:hidden">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -623,6 +626,16 @@ export const Layout: React.FC<LayoutProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {onOpenAiAssistant && (
+              <button
+                type="button"
+                onClick={onOpenAiAssistant}
+                className="h-9 px-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] hover:bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{isFa ? 'دستیار هوشمند' : 'AI Assistant'}</span>
+              </button>
+            )}
             <PWAInstallButton />
             {canEdit && (
               <button
@@ -637,7 +650,7 @@ export const Layout: React.FC<LayoutProps> = ({
           </div>
         </header>
 
-        <main className="flex-1 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">{children}</main>
+        <main className="flex-1 min-w-0 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">{children}</main>
       </div>
 
       <ChangePasswordModal

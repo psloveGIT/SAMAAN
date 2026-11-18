@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { registerSW } from 'virtual:pwa-register';
+import { AiAssistantDrawer } from './components/AiAssistantDrawer.tsx';
 import { AuthGate } from './components/AuthGate.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
 import { Layout } from './components/Layout.tsx';
@@ -53,6 +54,7 @@ const SamaanWorkspace: React.FC = () => {
 
   // Packing Wizard Modal state
   const [packingModalOpen, setPackingModalOpen] = useState(false);
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
   const [transitPrefill, setTransitPrefill] = useState<TransitEntry | null>(null);
   const [prefillPackingNo, setPrefillPackingNo] = useState<string>('');
 
@@ -141,6 +143,7 @@ const SamaanWorkspace: React.FC = () => {
             setActiveTab(tab);
           }}
           onOpenNewPacking={() => openNewPacking('')}
+          onOpenAiAssistant={() => setAiDrawerOpen(true)}
         >
           <Suspense
             fallback={
@@ -280,6 +283,7 @@ const SamaanWorkspace: React.FC = () => {
             prefillFromTransit={transitPrefill}
             prefillPackingNo={prefillPackingNo}
           />
+          <AiAssistantDrawer open={aiDrawerOpen} onClose={() => setAiDrawerOpen(false)} />
         </Layout>
       )}
 

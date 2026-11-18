@@ -42,7 +42,7 @@ import {
   roundQty,
   toNum,
 } from './src/shared/formulas.ts';
-import { getMonthKeyFromIso, normalizeDigits } from './src/shared/jalali.ts';
+import { buildYearMonths, getMonthKeyFromIso, normalizeDigits } from './src/shared/jalali.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
 import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
 import {
@@ -58,6 +58,8 @@ import {
   checkDateRangeMulti,
   collectDistinctColumnValues,
   matchesColFilters,
+  matchesPackagePartial,
+  normDupPart,
   parseColFiltersParam,
   resolveSiteEntryArrivalAndRelease,
   sortRowsByColumn,
@@ -897,6 +899,8 @@ async function startServer() {
     const subSystem = String(req.query.subSystem || '');
     const unit = String(req.query.unit || '');
     const supplier = String(req.query.supplier || '');
+    const dispatchLocation = String(req.query.dispatchLocation || '');
+    const packageType = String(req.query.packageType || '');
     const packingListNo = normKey(String(req.query.packingListNo || ''));
     const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
     const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
@@ -904,77 +908,124 @@ async function startServer() {
     const calendar: CalendarMode = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
     const sortBy = String(req.query.sortBy || '').trim();
     const sortDir: 'asc' | 'desc' = req.query.sortDir === 'desc' ? 'desc' : 'asc';
+    const shortageOnly = String(req.query.shortageOnly || '') === 'true';
+    const damagedOnly = String(req.query.damagedOnly || '') === 'true';
+    const discrepancyOnly = String(req.query.discrepancyOnly || '') === 'true';
+    const replacedOnly = String(req.query.replacedOnly || '') === 'true';
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
+    const fetchAll = String(req.query.all || '') === 'true';
+    const allIds = String(req.query.allIds || '') === 'true';
     const page = Math.max(1, Number(req.query.page || 1));
-    const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize || 50)));
+    const pageSize = Math.min(5000, Math.max(10, Number(req.query.pageSize || 50)));
 
-    const filteredRaw = store.db.general.filter((g) => {
-      if (island && g.island !== island) return false;
-      if (system && g.system !== system) return false;
-      if (subSystem && g.subSystem !== subSystem) return false;
-      if (unit && g.unit !== unit) return false;
-      if (supplier && g.supplier !== supplier) return false;
-      if (packingListNo && normKey(g.packingListNo) !== packingListNo) return false;
-      if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
-      if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
-      if (!matchesColFilters(g as unknown as Record<string, unknown>, colFilters, calendar)) return false;
-      if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
-      return matchSearch(
-        [
-          g.rowNo,
-          g.packingListNo,
-          g.packageNo,
-          g.packageType || '',
-          g.itemDescription,
-          g.supplier,
-          g.dispatchLocation,
-          g.employerEntryMinutesNo,
-          g.mapnaEntryMinutesNo,
-          g.releaseNo,
-          g.billOfLadingNo,
-          g.vehicleNo,
-          g.driverName,
-          g.opiInvitationNo,
-          g.island,
-          g.system,
-          g.subSystem,
-          g.unit,
-        ],
-        q,
-      );
-    });
+    const substitutedIds = new Set(
+      (store.db.substitutions || []).map((s) => s.detailedId).filter(Boolean),
+    );
+
+    const enrichedRaw = store.db.general
+      .filter((g) => {
+        if (island && g.island !== island) return false;
+        if (system && g.system !== system) return false;
+        if (subSystem && g.subSystem !== subSystem) return false;
+        if (unit && g.unit !== unit) return false;
+        if (supplier && g.supplier !== supplier) return false;
+        if (dispatchLocation && g.dispatchLocation !== dispatchLocation) return false;
+        if (packageType && (g.packageType || '') !== packageType) return false;
+        if (packingListNo && normDupPart(g.packingListNo) !== normDupPart(packingListNo)) return false;
+        if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
+        if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
+        if (!matchesColFilters(g as unknown as Record<string, unknown>, colFilters, calendar)) return false;
+        if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
+        return matchSearch(
+          [
+            g.rowNo,
+            g.packingListNo,
+            g.packageNo,
+            g.packageType || '',
+            g.itemDescription,
+            g.supplier,
+            g.dispatchLocation,
+            g.employerEntryMinutesNo,
+            g.mapnaEntryMinutesNo,
+            g.releaseNo,
+            g.billOfLadingNo,
+            g.vehicleNo,
+            g.driverName,
+            g.opiInvitationNo,
+            g.island,
+            g.system,
+            g.subSystem,
+            g.unit,
+          ],
+          q,
+        );
+      })
+      .map((g) => {
+        const pk = normKey(g.packingListNo);
+        const pkg = normKey(g.packageNo);
+        const linkedDetails = pk ? store.detailedByPacking.get(pk) || [] : [];
+        const matchingPkgDetails = linkedDetails.filter(
+          (d) => !pkg || matchesPackagePartial(d.packageNo, pkg),
+        );
+        let hasShortage = false;
+        let hasDamaged = false;
+        let hasDiscrepancy = false;
+        let hasReplaced = false;
+        for (const d of matchingPkgDetails) {
+          const c = computeDetailedEntry(d);
+          if (c.hasShortage) hasShortage = true;
+          if (c.hasDamaged) hasDamaged = true;
+          if (isMerOpen(c) || Boolean(normKey(c.merNo) || normKey(c.merStatus)) || c.hasShortage || c.hasDamaged) {
+            hasDiscrepancy = true;
+          }
+          if (isRepOpen(c) || Boolean(normKey(c.repNo) || normKey(c.repStatus)) || substitutedIds.has(c.id)) {
+            hasReplaced = true;
+          }
+        }
+        return {
+          ...g,
+          packingClosed: Boolean(pk && store.db.packingMeta[pk]?.isClosed),
+          detailedCount: matchingPkgDetails.length,
+          hasLinkedShortage: hasShortage,
+          hasLinkedDamaged: hasDamaged,
+          hasLinkedDiscrepancy: hasDiscrepancy,
+          hasLinkedReplaced: hasReplaced,
+        };
+      })
+      .filter((g) => {
+        if (shortageOnly && !g.hasLinkedShortage) return false;
+        if (damagedOnly && !g.hasLinkedDamaged) return false;
+        if (discrepancyOnly && !g.hasLinkedDiscrepancy) return false;
+        if (replacedOnly && !g.hasLinkedReplaced) return false;
+        return true;
+      });
 
     const filtered = sortBy
-      ? sortRowsByColumn(filteredRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as GeneralEntry[]
-      : [...filteredRaw].reverse();
+      ? (sortRowsByColumn(enrichedRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as typeof enrichedRaw)
+      : [...enrichedRaw].reverse();
 
     const total = filtered.length;
-    const start = (page - 1) * pageSize;
-    const items = filtered.slice(start, start + pageSize).map((g) => {
-      const pk = normKey(g.packingListNo);
-      const pkg = normKey(g.packageNo);
-      const linkedDetails = pk ? store.detailedByPacking.get(pk) || [] : [];
-      const matchingPkgDetails = linkedDetails.filter(
-        (d) => !pkg || normKey(d.packageNo) === pkg,
-      );
-      const hasShortage = matchingPkgDetails.some((d) => computeDetailedEntry(d).hasShortage);
-      return {
-        ...g,
-        packingClosed: Boolean(pk && store.db.packingMeta[pk]?.isClosed),
-        detailedCount: matchingPkgDetails.length,
-        hasLinkedShortage: hasShortage,
-      };
-    });
-
     const filteredSummary = computeSelectionFormulaSummary({ general: filtered });
+
+    if (allIds) {
+      res.json({
+        ids: filtered.map((g) => g.id),
+        total,
+        filteredSummary,
+      });
+      return;
+    }
+
+    const start = (page - 1) * pageSize;
+    const items = fetchAll ? filtered : filtered.slice(start, start + pageSize);
 
     res.json({
       items,
       total,
-      page,
-      pageSize,
-      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      page: fetchAll ? 1 : page,
+      pageSize: fetchAll ? Math.max(1, total) : pageSize,
+      totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
       packingMeta: store.db.packingMeta,
     });
@@ -1417,6 +1468,7 @@ async function startServer() {
     const unit = String(req.query.unit || '');
     const supplier = String(req.query.supplier || '');
     const storageLocation = String(req.query.storageLocation || '');
+    const itemCategory = String(req.query.itemCategory || '');
     const shipmentNo = normKey(String(req.query.shipmentNo || ''));
     const packageNo = normKey(String(req.query.packageNo || ''));
     const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
@@ -1427,10 +1479,18 @@ async function startServer() {
     const sortDir: 'asc' | 'desc' = req.query.sortDir === 'desc' ? 'desc' : 'asc';
     const shortageOnly = String(req.query.shortageOnly || '') === 'true';
     const damagedOnly = String(req.query.damagedOnly || '') === 'true';
+    const discrepancyOnly = String(req.query.discrepancyOnly || '') === 'true';
+    const replacedOnly = String(req.query.replacedOnly || '') === 'true';
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
+    const fetchAll = String(req.query.all || '') === 'true';
+    const allIds = String(req.query.allIds || '') === 'true';
     const page = Math.max(1, Number(req.query.page || 1));
-    const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize || 50)));
+    const pageSize = Math.min(5000, Math.max(10, Number(req.query.pageSize || 50)));
+
+    const substitutedIds = new Set(
+      (store.db.substitutions || []).map((s) => s.detailedId).filter(Boolean),
+    );
 
     const computedRaw: DetailedComputed[] = [];
     for (const d of store.db.detailed) {
@@ -1440,8 +1500,9 @@ async function startServer() {
       if (unit && d.unit !== unit) continue;
       if (supplier && d.supplier !== supplier) continue;
       if (storageLocation && d.storageLocation !== storageLocation) continue;
-      if (shipmentNo && normKey(d.shipmentNo) !== shipmentNo) continue;
-      if (packageNo && normKey(d.packageNo) !== packageNo) continue;
+      if (itemCategory && (d.itemCategory || '') !== itemCategory) continue;
+      if (shipmentNo && normDupPart(d.shipmentNo) !== normDupPart(shipmentNo)) continue;
+      if (packageNo && !matchesPackagePartial(d.packageNo, packageNo)) continue;
       if (!matchesMultiPacking(d.shipmentNo, packingNos)) continue;
       if (!inDateRange(d.arrivalDate, fromDate, toDate)) continue;
       if (
@@ -1487,6 +1548,25 @@ async function startServer() {
       if (!matchesColFilters(comp as unknown as Record<string, unknown>, colFilters, calendar)) continue;
       if (shortageOnly && !comp.hasShortage) continue;
       if (damagedOnly && !comp.hasDamaged) continue;
+      if (
+        discrepancyOnly &&
+        !isMerOpen(comp) &&
+        !normKey(comp.merNo) &&
+        !normKey(comp.merStatus) &&
+        !comp.hasShortage &&
+        !comp.hasDamaged
+      ) {
+        continue;
+      }
+      if (
+        replacedOnly &&
+        !isRepOpen(comp) &&
+        !normKey(comp.repNo) &&
+        !normKey(comp.repStatus) &&
+        !substitutedIds.has(comp.id)
+      ) {
+        continue;
+      }
       computedRaw.push(comp);
     }
 
@@ -1495,16 +1575,26 @@ async function startServer() {
       : [...computedRaw].reverse();
 
     const total = computedAll.length;
-    const start = (page - 1) * pageSize;
-    const items = computedAll.slice(start, start + pageSize);
     const filteredSummary = computeSelectionFormulaSummary({ detailed: computedAll });
+
+    if (allIds) {
+      res.json({
+        ids: computedAll.map((d) => d.id),
+        total,
+        filteredSummary,
+      });
+      return;
+    }
+
+    const start = (page - 1) * pageSize;
+    const items = fetchAll ? computedAll : computedAll.slice(start, start + pageSize);
 
     res.json({
       items,
       total,
-      page,
-      pageSize,
-      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      page: fetchAll ? 1 : page,
+      pageSize: fetchAll ? Math.max(1, total) : pageSize,
+      totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
     });
   });
@@ -1840,6 +1930,10 @@ async function startServer() {
     const status = String(req.query.status || '');
     const supplier = String(req.query.supplier || '');
     const system = String(req.query.system || '');
+    const subSystem = String(req.query.subSystem || '');
+    const unit = String(req.query.unit || '');
+    const dispatchLocation = String(req.query.dispatchLocation || '');
+    const carrierContractor = String(req.query.carrierContractor || '');
     const packingNos = parsePackingNosParam(String(req.query.packingNos || ''));
     const customFilters = parseCustomFiltersParam(String(req.query.customFilters || ''));
     const colFilters = parseColFiltersParam(String(req.query.colFilters || ''));
@@ -1848,13 +1942,19 @@ async function startServer() {
     const sortDir: 'asc' | 'desc' = req.query.sortDir === 'desc' ? 'desc' : 'asc';
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
+    const fetchAll = String(req.query.all || '') === 'true';
+    const allIds = String(req.query.allIds || '') === 'true';
     const page = Math.max(1, Number(req.query.page || 1));
-    const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize || 50)));
+    const pageSize = Math.min(5000, Math.max(10, Number(req.query.pageSize || 50)));
 
     const filteredRaw = store.db.transit.filter((t) => {
       if (status && t.overallStatus !== status) return false;
       if (supplier && t.supplier !== supplier) return false;
       if (system && t.system !== system) return false;
+      if (subSystem && t.subSystem !== subSystem) return false;
+      if (unit && t.unit !== unit) return false;
+      if (dispatchLocation && t.dispatchLocation !== dispatchLocation) return false;
+      if (carrierContractor && t.carrierContractor !== carrierContractor) return false;
       if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
       if (!matchesCustomFilters(t as unknown as Record<string, unknown>, customFilters)) return false;
       if (!matchesColFilters(t as unknown as Record<string, unknown>, colFilters, calendar)) return false;
@@ -1886,16 +1986,26 @@ async function startServer() {
       : [...filteredRaw].reverse();
 
     const total = filtered.length;
-    const start = (page - 1) * pageSize;
-    const items = filtered.slice(start, start + pageSize);
     const filteredSummary = computeSelectionFormulaSummary({ transit: filtered });
+
+    if (allIds) {
+      res.json({
+        ids: filtered.map((t) => t.id),
+        total,
+        filteredSummary,
+      });
+      return;
+    }
+
+    const start = (page - 1) * pageSize;
+    const items = fetchAll ? filtered : filtered.slice(start, start + pageSize);
 
     res.json({
       items,
       total,
-      page,
-      pageSize,
-      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      page: fetchAll ? 1 : page,
+      pageSize: fetchAll ? Math.max(1, total) : pageSize,
+      totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
     });
   });
@@ -1956,6 +2066,89 @@ async function startServer() {
     });
     store.saveImmediate();
     res.json({ item: created });
+  });
+
+  app.patch('/api/transit/bulk', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { ids, patch } = req.body as { ids?: string[]; patch?: Partial<TransitEntry> };
+    if (!Array.isArray(ids) || ids.length === 0 || !patch || typeof patch !== 'object') {
+      res.status(400).json({ error: errMsg(req, 'شناسه ردیف‌ها و تغییرات الزامی است', 'Row IDs and patch data are required') });
+      return;
+    }
+    const idSet = new Set(ids);
+    const cleanPatch: Record<string, unknown> = {};
+    const stringFields: (keyof TransitEntry)[] = [
+      'arrivalDate', 'overallStatus', 'inspectionRequest', 'releaseNetNo', 'releaseNetDate',
+      'mapnaShippingNotice', 'interimNo', 'interimDate', 'supplier', 'dispatchLocation',
+      'system', 'subSystem', 'unit', 'equipmentSupplyCode', 'carrierContractor', 'billOfLadingNo',
+    ];
+    for (const k of stringFields) {
+      if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
+        cleanPatch[k] = normKey(String(patch[k]));
+      }
+    }
+    if (patch.amount !== undefined && patch.amount !== null && Number.isFinite(Number(patch.amount))) {
+      cleanPatch.amount = Number(patch.amount);
+    }
+
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    for (const t of store.db.transit) {
+      if (!idSet.has(t.id)) continue;
+      Object.assign(t, cleanPatch, { updatedAt: now });
+      updatedCount += 1;
+    }
+
+    store.renumberScope('transit');
+    store.rebuildIndexes();
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'BULK_UPDATE_TRANSIT',
+      scope: 'transit',
+      targetId: `${updatedCount} rows`,
+      summary: `ویرایش گروهی ${updatedCount} ردیف در بخش در راه`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true, updatedCount });
+  });
+
+  app.post('/api/transit/bulk-delete', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { ids } = req.body as { ids?: string[] };
+    if (!Array.isArray(ids) || ids.length === 0) {
+      res.status(400).json({ error: errMsg(req, 'هیچ ردیفی برای حذف انتخاب نشده است', 'No rows selected for deletion') });
+      return;
+    }
+    const idSet = new Set(ids);
+    const now = new Date().toISOString();
+    const deletedBy = req.currentUser!.fullName || req.currentUser!.username;
+    const removedRows: TransitEntry[] = [];
+    store.db.transit = store.db.transit.filter((t) => {
+      if (idSet.has(t.id)) {
+        removedRows.push(t);
+        return false;
+      }
+      return true;
+    });
+    for (const removed of removedRows) {
+      store.db.trash.unshift({
+        id: makeId(),
+        scope: 'transit',
+        deletedAt: now,
+        deletedBy,
+        targetLabel: `${removed.packingListNo || '-'} (#${removed.rowNo})`,
+        data: removed,
+      });
+    }
+    store.renumberScope('transit');
+    store.rebuildIndexes();
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'BULK_DELETE_TRANSIT',
+      scope: 'transit',
+      targetId: `${removedRows.length} rows`,
+      summary: `حذف گروهی ${removedRows.length} ردیف از بخش در راه (انتقال به سطل بازیافت)`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true, deletedCount: removedRows.length });
   });
 
   app.patch('/api/transit/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
@@ -4560,10 +4753,12 @@ async function startServer() {
         byIslandMap[bucket.key].shortageRowCount += 1;
       }
       byIslandMap[bucket.key].shortageQty = roundQty(byIslandMap[bucket.key].shortageQty + d.shortage);
-      byIslandMap[bucket.key].mapnaStock = roundQty(byIslandMap[bucket.key].mapnaStock + d.mapnaInventory);
-      byIslandMap[bucket.key].contractorStock = roundQty(
-        byIslandMap[bucket.key].contractorStock + d.contractorInventory,
-      );
+      if (!d.opiPending && d.mapnaInventory > 0) {
+        byIslandMap[bucket.key].mapnaStock += 1;
+      }
+      if (!d.opiPending && d.contractorInventory > 0) {
+        byIslandMap[bucket.key].contractorStock += 1;
+      }
     }
 
     const monthBuckets: Record<string, { monthKey: string; generalRows: number; detailedRows: number; grossWeight: number }> = {};
@@ -4585,9 +4780,24 @@ async function startServer() {
       monthBuckets[mk].detailedRows += 1;
     }
 
-    const monthlyTrend = Object.values(monthBuckets)
-      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
-      .slice(-12);
+    const allMonthlyBuckets = Object.values(monthBuckets).sort((a, b) =>
+      a.monthKey.localeCompare(b.monthKey),
+    );
+    const availableYears = Array.from(
+      new Set(allMonthlyBuckets.map((m) => m.monthKey.slice(0, 4)).filter((y) => /^\d{4}$/.test(y))),
+    ).sort((a, b) => b.localeCompare(a));
+
+    const requestedYear = normalizeDigits(String(req.query.year || '').trim());
+    const selectedYear =
+      requestedYear && availableYears.includes(requestedYear)
+        ? requestedYear
+        : availableYears[0] || '';
+
+    const monthlyTrend = selectedYear
+      ? buildYearMonths(selectedYear, calendar).map(
+          (mk) => monthBuckets[mk] || { monthKey: mk, generalRows: 0, detailedRows: 0, grossWeight: 0 },
+        )
+      : allMonthlyBuckets.slice(-12);
 
     const openMerItems = detailedComputed
       .filter((d) => isMerOpen(d))
@@ -4600,6 +4810,12 @@ async function startServer() {
         description: d.description || d.generalDescription,
         merNo: d.merNo,
         merStatus: d.merStatus,
+        packingQty: d.packingQty,
+        actualQty: d.actualQty,
+        effectiveActualQty: d.effectiveActualQty,
+        damagedQty: d.damagedQty,
+        shortage: d.shortage,
+        countingUnit: d.countingUnit,
       }));
     const openRepItems = detailedComputed
       .filter((d) => isRepOpen(d))
@@ -4612,6 +4828,12 @@ async function startServer() {
         description: d.description || d.generalDescription,
         repNo: d.repNo,
         repStatus: d.repStatus,
+        packingQty: d.packingQty,
+        actualQty: d.actualQty,
+        effectiveActualQty: d.effectiveActualQty,
+        damagedQty: d.damagedQty,
+        shortage: d.shortage,
+        countingUnit: d.countingUnit,
       }));
     const expiringChemicals = getExpiringChemicals(detailedComputed, 30);
 
@@ -4644,6 +4866,9 @@ async function startServer() {
       byIsland: Object.values(byIslandMap).sort(
         (a, b) => (b.generalCount + b.detailedCount) - (a.generalCount + a.detailedCount),
       ),
+      availableYears,
+      selectedYear,
+      allMonthlyBuckets,
       monthlyTrend,
       topShortages: [...shortageItems].reverse().slice(0, 12),
       topDamaged: [...damagedItems].reverse().slice(0, 12),
@@ -5326,6 +5551,313 @@ async function startServer() {
         mimeType,
       });
       res.json({ result: offlineResult });
+    }
+  });
+
+  function buildWarehouseAiContext(queryText = '') {
+    const detailedComputed = store.getDetailedComputedList();
+    const shortageItems = detailedComputed.filter((d) => d.hasShortage);
+    const damagedItems = detailedComputed.filter((d) => d.hasDamaged);
+    const openMer = detailedComputed.filter((d) => isMerOpen(d));
+    const openRep = detailedComputed.filter((d) => isRepOpen(d));
+    const opiPending = detailedComputed.filter((d) => d.opiPending);
+    const expiringChemicals = getExpiringChemicals(detailedComputed, 30);
+
+    const uniquePackings = new Set<string>();
+    for (const g of store.db.general) {
+      if (normKey(g.packingListNo)) uniquePackings.add(normKey(g.packingListNo));
+    }
+    for (const d of store.db.detailed) {
+      if (normKey(d.shipmentNo)) uniquePackings.add(normKey(d.shipmentNo));
+    }
+
+    const transitSummary = computeSelectionFormulaSummary({ transit: store.db.transit });
+    const generalSummary = computeSelectionFormulaSummary({ general: store.db.general });
+    const detailedSummary = computeSelectionFormulaSummary({ detailed: detailedComputed });
+
+    const tokens = normalizeDigits(queryText || '')
+      .toLowerCase()
+      .split(/\s+/)
+      .map((w) => w.trim())
+      .filter((w) => w.length >= 2);
+
+    const matchedGeneral = tokens.length > 0
+      ? store.db.general
+          .filter((g) => {
+            const hay = `${g.packingListNo} ${g.packageNo} ${g.itemDescription} ${g.supplier} ${g.island} ${g.system}`.toLowerCase();
+            return tokens.some((tok) => hay.includes(tok));
+          })
+          .slice(0, 10)
+          .map((g) => ({
+            packingListNo: g.packingListNo,
+            packageNo: g.packageNo,
+            itemDescription: g.itemDescription,
+            supplier: g.supplier,
+            island: g.island,
+            arrivalDate: g.arrivalDate,
+            grossWeight: g.grossWeight,
+          }))
+      : [];
+
+    const matchedDetailed = tokens.length > 0
+      ? detailedComputed
+          .filter((d) => {
+            const hay = `${d.shipmentNo} ${d.packageNo} ${d.itemNo} ${d.description} ${d.generalDescription} ${d.itemCode} ${d.island} ${d.supplier} ${d.merNo} ${d.repNo}`.toLowerCase();
+            return tokens.some((tok) => hay.includes(tok));
+          })
+          .slice(0, 15)
+          .map((d) => ({
+            shipmentNo: d.shipmentNo,
+            packageNo: d.packageNo,
+            itemNo: d.itemNo,
+            description: d.description,
+            packingQty: d.packingQty,
+            actualQty: d.actualQty,
+            shortage: d.shortage,
+            damagedQty: d.damagedQty,
+            mapnaInventory: d.mapnaInventory,
+            contractorInventory: d.contractorInventory,
+            merNo: d.merNo,
+            repNo: d.repNo,
+          }))
+      : [];
+
+    return {
+      metrics: {
+        generalRows: store.db.general.length,
+        detailedRows: store.db.detailed.length,
+        transitRows: store.db.transit.length,
+        uniquePackings: uniquePackings.size,
+        grossWeightTons: roundQty(generalSummary.grossWeightSum / 1000),
+        netWeightTons: roundQty(generalSummary.netWeightSum / 1000),
+        shortageItemsCount: shortageItems.length,
+        shortageQtySum: detailedSummary.shortageSum,
+        damagedItemsCount: damagedItems.length,
+        openMerCount: openMer.length,
+        openRepCount: openRep.length,
+        opiPendingCount: opiPending.length,
+        expiringChemicalsCount: expiringChemicals.length,
+        transitArrivedPackingsCount: transitSummary.transitArrivedPackingsCount || 0,
+        transitShippingPackingsCount: transitSummary.transitShippingPackingsCount || 0,
+        transitInspectionPackingsCount: transitSummary.transitInspectionPackingsCount || 0,
+      },
+      topShortages: shortageItems.slice(0, 8).map((d) => ({
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        description: d.description,
+        shortage: d.shortage,
+        island: d.island,
+      })),
+      expiringChemicals: expiringChemicals.slice(0, 8).map((c) => ({
+        shipmentNo: c.shipmentNo,
+        description: c.description,
+        chemicalType: c.chemicalType,
+        expirationDate: c.expirationDate,
+        daysRemaining: c.daysRemaining,
+      })),
+      openMerSample: openMer.slice(0, 8).map((d) => ({
+        shipmentNo: d.shipmentNo,
+        description: d.description,
+        merNo: d.merNo,
+        merStatus: d.merStatus,
+      })),
+      matchedGeneral,
+      matchedDetailed,
+    };
+  }
+
+  app.post('/api/ai/assistant', requireRole(['admin', 'operator', 'viewer']), async (req: AuthedRequest, res: Response) => {
+    const { prompt, lang, history } = req.body as {
+      prompt?: string;
+      lang?: Language;
+      history?: Array<{ role: 'user' | 'assistant'; text: string }>;
+    };
+    const question = normKey(prompt);
+    if (!question) {
+      res.status(400).json({ error: errMsg(req, 'پرسش نمی‌تواند خالی باشد', 'Prompt cannot be empty') });
+      return;
+    }
+
+    const contextData = buildWarehouseAiContext(question);
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        code: 'AI_KEY_REQUIRED',
+        error: errMsg(
+          req,
+          'کلید GEMINI_API_KEY در متغیرهای محیطی سرور تنظیم نشده است. پس از تنظیم کلید، پاسخ هوشمند فعال می‌شود.',
+          'GEMINI_API_KEY is not configured in the server environment variables.',
+        ),
+        metrics: contextData.metrics,
+      });
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+      const outLang = lang === 'en' ? 'English' : 'Persian (Farsi)';
+      const historyText = Array.isArray(history)
+        ? history
+            .slice(-6)
+            .map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.text}`)
+            .join('\n')
+        : '';
+
+      const systemInstruction = `You are the SAMAAN Power Plant Warehouse AI Analyst & Assistant. Answer strictly based on the provided live warehouse JSON context. Be concise, accurate, structured with bullet points where helpful, and respond in ${outLang}. If specific records are absent in the context, state clearly what is visible and never fabricate packing list numbers or item quantities.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: `Live Warehouse Context:\n${JSON.stringify(contextData)}\n\n${historyText ? `Recent Conversation:\n${historyText}\n\n` : ''}User Question:\n${question}`,
+        config: { systemInstruction },
+      });
+
+      res.json({
+        answer: (response.text || '').trim(),
+        metrics: contextData.metrics,
+      });
+    } catch (err) {
+      res.status(502).json({
+        error: errMsg(
+          req,
+          `خطا در ارتباط با سرویس هوش مصنوعی: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          `AI service error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        ),
+        metrics: contextData.metrics,
+      });
+    }
+  });
+
+  app.post('/api/ai/analyze-warehouse', requireRole(['admin', 'operator', 'viewer']), async (req: AuthedRequest, res: Response) => {
+    const { lang } = req.body as { lang?: Language };
+    const contextData = buildWarehouseAiContext('');
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        code: 'AI_KEY_REQUIRED',
+        error: errMsg(
+          req,
+          'کلید GEMINI_API_KEY در متغیرهای محیطی سرور تنظیم نشده است.',
+          'GEMINI_API_KEY is not configured in server environment variables.',
+        ),
+        metrics: contextData.metrics,
+      });
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+      const outLang = lang === 'en' ? 'English' : 'Persian (Farsi)';
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: `Analyze this power-plant warehouse operational snapshot and provide an executive risk briefing and priority action items in ${outLang}:\n${JSON.stringify(contextData)}`,
+        config: {
+          systemInstruction: `You are an industrial power-plant warehouse operations auditor for SAMAAN. Output structured JSON in ${outLang} strictly grounded in the provided metrics.`,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              summary: { type: Type.STRING },
+              riskLevel: { type: Type.STRING, enum: ['low', 'medium', 'high'] },
+              priorityActions: { type: Type.ARRAY, items: { type: Type.STRING } },
+              followUpSuggestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ['summary', 'riskLevel', 'priorityActions', 'followUpSuggestions'],
+          },
+        },
+      });
+      const parsed = JSON.parse((response.text || '{}').trim());
+      res.json({ analysis: parsed, metrics: contextData.metrics });
+    } catch (err) {
+      res.status(502).json({
+        error: errMsg(
+          req,
+          `خطا در تحلیل هوشمند انبار: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          `Warehouse AI analysis error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        ),
+        metrics: contextData.metrics,
+      });
+    }
+  });
+
+  app.post('/api/ai/classify-item', requireRole(['admin', 'operator']), async (req: AuthedRequest, res: Response) => {
+    const { description, size, itemCode, lang } = req.body as {
+      description?: string;
+      size?: string;
+      itemCode?: string;
+      lang?: Language;
+    };
+    const desc = normKey(description);
+    if (!desc) {
+      res.status(400).json({ error: errMsg(req, 'شرح کالا برای دسته‌بندی هوشمند الزامی است', 'Item description is required for AI classification') });
+      return;
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        code: 'AI_KEY_REQUIRED',
+        error: errMsg(
+          req,
+          'کلید GEMINI_API_KEY در سرور تنظیم نشده است.',
+          'GEMINI_API_KEY is not configured on the server.',
+        ),
+      });
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+      const outLang = lang === 'en' ? 'English' : 'Persian';
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: `Classify this power-plant warehouse item:\nDescription: ${desc}\nSize: ${size || '-'}\nItem Code: ${itemCode || '-'}`,
+        config: {
+          systemInstruction: `You are a power-plant warehouse engineering classifier. Classify the equipment item into standard SAMAAN fields: generalDescription (Title Case English or concise category name), itemCategory ('special_tools' | 'chemicals' | 'spare_parts' | ''), chemicalType (only if chemical, else empty), countingUnit (e.g. EA, PC, SET, KG, L, M), and brief warehouse handling notes in ${outLang}.`,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              generalDescription: { type: Type.STRING },
+              itemCategory: { type: Type.STRING, enum: ['special_tools', 'chemicals', 'spare_parts', ''] },
+              chemicalType: { type: Type.STRING },
+              countingUnit: { type: Type.STRING },
+              notes: { type: Type.STRING },
+            },
+            required: ['generalDescription', 'itemCategory', 'chemicalType', 'countingUnit', 'notes'],
+          },
+        },
+      });
+      const parsed = JSON.parse((response.text || '{}').trim());
+      res.json({ classification: parsed });
+    } catch (err) {
+      res.status(502).json({
+        error: errMsg(
+          req,
+          `خطا در دسته‌بندی هوشمند کالا: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          `AI classification failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        ),
+      });
     }
   });
 

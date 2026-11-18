@@ -47,6 +47,67 @@ export function normDupPart(val: unknown): string {
     .toLowerCase();
 }
 
+/**
+ * Flexible package number matching between General and Detailed entries.
+ * Handles cases where General contains "PKG-01", "1-2", "1/3", "Box 01"
+ * while Detailed contains "1", "01", "PKG1", etc., without false positives
+ * such as "1" matching "10" or "11".
+ */
+export function matchesPackagePartial(
+  candidatePkg: string | undefined | null,
+  queryPkg: string | undefined | null,
+): boolean {
+  const qNorm = normDupPart(queryPkg);
+  if (!qNorm) return true;
+  const cNorm = normDupPart(candidatePkg);
+  if (!cNorm) return false;
+  if (cNorm === qNorm) return true;
+
+  const stripNonAlnum = (s: string) => s.replace(/[^a-z0-9\u0600-\u06ff]/g, '');
+  const cCompact = stripNonAlnum(cNorm);
+  const qCompact = stripNonAlnum(qNorm);
+  if (cCompact && qCompact && cCompact === qCompact) return true;
+
+  const tokenize = (s: string) =>
+    s
+      .split(/[\s,،;|/\\\-_+().:]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+  const cTokens = tokenize(cNorm);
+  const qTokens = tokenize(qNorm);
+
+  const tokensEqual = (a: string, b: string): boolean => {
+    if (a === b) return true;
+    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+      return Number(a) === Number(b);
+    }
+    // Check alphanumeric suffix match like "pkg01" vs "1"
+    const mA = a.match(/^([a-z\u0600-\u06ff]+)0*(\d+)$/);
+    const mB = b.match(/^([a-z\u0600-\u06ff]+)0*(\d+)$/);
+    if (mA && /^\d+$/.test(b) && Number(mA[2]) === Number(b)) return true;
+    if (mB && /^\d+$/.test(a) && Number(mB[2]) === Number(a)) return true;
+    return false;
+  };
+
+  for (const qt of qTokens) {
+    for (const ct of cTokens) {
+      if (tokensEqual(ct, qt)) return true;
+    }
+  }
+
+  // Substring check when non-pure-number or multi-char token exists
+  const isPureDigits = (s: string) => /^\d+$/.test(s);
+  if (!isPureDigits(qCompact) && qCompact.length >= 2 && cCompact.includes(qCompact)) {
+    return true;
+  }
+  if (!isPureDigits(cCompact) && cCompact.length >= 2 && qCompact.includes(cCompact)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function normNumDupPart(val: unknown): string {
   if (val === null || val === undefined) return '';
   if (typeof val === 'number') {

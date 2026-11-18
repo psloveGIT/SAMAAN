@@ -140,6 +140,35 @@ export function computeDetailedEntry(entry: DetailedEntry): DetailedComputed {
   };
 }
 
+export function classifyTransitStatusBucket(
+  overallStatus: string | undefined | null,
+): 'arrived' | 'shipping' | 'inspection' | 'other' {
+  const s = (overallStatus || '')
+    .replace(/\u200c/g, ' ')
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (!s) return 'other';
+  if (
+    s.includes('رسیده') ||
+    s.includes('پایان') ||
+    s.includes('arrived') ||
+    s.includes('completed') ||
+    s.includes('finished')
+  ) {
+    return 'arrived';
+  }
+  if (s.includes('در دست ارسال') || s.includes('shipping') || s.includes('in transit')) {
+    return 'shipping';
+  }
+  if (s.includes('در دست بازرسی') || s.includes('بازرسی') || s.includes('inspection')) {
+    return 'inspection';
+  }
+  return 'other';
+}
+
 export function computeSelectionFormulaSummary(params: {
   general?: GeneralEntry[];
   detailed?: DetailedComputed[];
@@ -169,6 +198,10 @@ export function computeSelectionFormulaSummary(params: {
     smrMapnaQtySum: 0,
     mivMapnaQtySum: 0,
     transitAmountSum: 0,
+    uniquePackingsCount: 0,
+    transitArrivedPackingsCount: 0,
+    transitShippingPackingsCount: 0,
+    transitInspectionPackingsCount: 0,
     packingsByIsland: [],
     openMerCount: 0,
     openRepCount: 0,
@@ -210,7 +243,12 @@ export function computeSelectionFormulaSummary(params: {
     summary.packingsByIsland = byIsland;
   }
 
+  const detailedPackings = new Set<string>();
+
   for (const d of detailed) {
+    const pk = (d.shipmentNo || '').trim().toLowerCase();
+    if (pk) detailedPackings.add(pk);
+
     summary.packingQtySum = roundQty(summary.packingQtySum + toNum(d.packingQty));
     summary.actualQtySum = roundQty(summary.actualQtySum + toNum(d.actualQty));
     summary.effectiveActualQtySum = roundQty(
@@ -244,13 +282,28 @@ export function computeSelectionFormulaSummary(params: {
     }
   }
 
+  summary.uniquePackingsCount = detailedPackings.size;
+
   if (detailed.length > 0) {
     summary.expiringChemicals = getExpiringChemicals(detailed, 30);
   }
 
+  const arrivedPackings = new Set<string>();
+  const shippingPackings = new Set<string>();
+  const inspectionPackings = new Set<string>();
+
   for (const t of transit) {
     summary.transitAmountSum = roundQty(summary.transitAmountSum + toNum(t.amount));
+    const pk = (t.packingListNo || '').trim().toLowerCase() || t.id;
+    const bucket = classifyTransitStatusBucket(t.overallStatus);
+    if (bucket === 'arrived') arrivedPackings.add(pk);
+    else if (bucket === 'shipping') shippingPackings.add(pk);
+    else if (bucket === 'inspection') inspectionPackings.add(pk);
   }
+
+  summary.transitArrivedPackingsCount = arrivedPackings.size;
+  summary.transitShippingPackingsCount = shippingPackings.size;
+  summary.transitInspectionPackingsCount = inspectionPackings.size;
 
   return summary;
 }

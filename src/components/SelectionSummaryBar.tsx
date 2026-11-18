@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, Calculator, FlaskConical, Printer, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
+import { formatDisplayNumber } from '../shared/jalali.ts';
 import type { SelectionFormulaSummary } from '../shared/types.ts';
 
 interface SelectionSummaryBarProps {
@@ -13,7 +14,7 @@ interface SelectionSummaryBarProps {
 }
 
 function fmtNum(n: number, lang: 'fa' | 'en'): string {
-  return n.toLocaleString(lang === 'fa' ? 'fa-IR' : 'en-US', { maximumFractionDigits: 3 });
+  return formatDisplayNumber(n, lang, { maximumFractionDigits: 3 });
 }
 
 export const SelectionSummaryBar: React.FC<SelectionSummaryBarProps> = ({
@@ -64,19 +65,29 @@ export const SelectionSummaryBar: React.FC<SelectionSummaryBarProps> = ({
       value: summary.shortageOrDamagedCount ?? 0,
       highlight: (summary.shortageOrDamagedCount ?? 0) > 0 ? 'danger' : undefined,
     });
-    if (summary.shortageSum) {
-      metrics.push({ label: t.headers.shortage, value: summary.shortageSum, highlight: 'danger' });
-    }
     if (summary.damagedQtySum) {
       metrics.push({ label: t.headers.damagedQty, value: summary.damagedQtySum, highlight: 'danger' });
     }
-    if (summary.packingQtySum) {
-      metrics.push({ label: t.headers.packingQty, value: summary.packingQtySum });
-    }
-    if (summary.actualQtySum) {
-      metrics.push({ label: t.headers.actualQty, value: summary.actualQtySum });
-    }
+    metrics.push({
+      label: t.headers.packingQty,
+      value: summary.uniquePackingsCount ?? 0,
+      unit: isFa ? 'پکینگ' : 'packings',
+    });
   } else {
+    metrics.push({
+      label: isFa ? 'پکینگ‌های رسیده / پایان' : 'Arrived / Completed Packings',
+      value: summary.transitArrivedPackingsCount ?? 0,
+      highlight: (summary.transitArrivedPackingsCount ?? 0) > 0 ? 'accent' : undefined,
+    });
+    metrics.push({
+      label: isFa ? 'پکینگ‌های در دست ارسال' : 'In-Transit Packings',
+      value: summary.transitShippingPackingsCount ?? 0,
+      highlight: (summary.transitShippingPackingsCount ?? 0) > 0 ? 'warning' : undefined,
+    });
+    metrics.push({
+      label: isFa ? 'پکینگ‌های در دست بازرسی' : 'Under Inspection Packings',
+      value: summary.transitInspectionPackingsCount ?? 0,
+    });
     if (summary.transitAmountSum) {
       metrics.push({ label: t.headers.amount, value: summary.transitAmountSum, highlight: 'accent' });
     }

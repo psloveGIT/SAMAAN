@@ -13,6 +13,7 @@ import {
   Plus,
   Sparkles,
   Trash2,
+  Wand2,
   Wrench,
   X,
 } from 'lucide-react';
@@ -20,7 +21,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { computeSelectionFormulaSummary, isMerOpen, isRepOpen } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
-import { formatMultiValueCell, getTodayIso } from '../shared/jalali.ts';
+import { formatDisplayNumber, formatMultiValueCell, getTodayIso } from '../shared/jalali.ts';
 import { EMPTY_CELL_TOKEN } from '../shared/tableQuery.ts';
 import type {
   CategoryStore,
@@ -185,9 +186,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [packageFilter, setPackageFilter] = useState(initialPackageFilter);
   const [island, setIsland] = useState('');
   const [system, setSystem] = useState('');
-  const [storageLocation, setStorageLocation] = useState('');
+  const [unit, setUnit] = useState('');
+  const [supplier, setSupplier] = useState('');
+  const [itemCategoryFilter, setItemCategoryFilter] = useState('');
   const [shortageOnly, setShortageOnly] = useState(false);
   const [damagedOnly, setDamagedOnly] = useState(false);
+  const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
+  const [replacedOnly, setReplacedOnly] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
@@ -199,12 +204,16 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [data, setData] = useState<DetailedListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedMap, setSelectedMap] = useState<Record<string, DetailedComputed>>({});
+  const [allFilteredIds, setAllFilteredIds] = useState<string[] | null>(null);
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [printRowsOverride, setPrintRowsOverride] = useState<DetailedComputed[] | null>(null);
   const [inspected, setInspected] = useState<DetailedComputed | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
 
   // Add/Edit Modal
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [smartOpen, setSmartOpen] = useState(false);
+  const [aiClassifying, setAiClassifying] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<DetailedEntry>>(emptyDetailedDraft());
   const [closedWarningVisible, setClosedWarningVisible] = useState(false);
@@ -260,27 +269,54 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     setPage(1);
   }, [initialShipmentFilter, initialPackageFilter]);
 
+  const buildFilterParams = useCallback(() => {
+    return new URLSearchParams({
+      ...(q ? { q } : {}),
+      ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
+      ...(packageFilter ? { packageNo: packageFilter } : {}),
+      ...(island ? { island } : {}),
+      ...(system ? { system } : {}),
+      ...(unit ? { unit } : {}),
+      ...(supplier ? { supplier } : {}),
+      ...(itemCategoryFilter ? { itemCategory: itemCategoryFilter } : {}),
+      ...(shortageOnly ? { shortageOnly: 'true' } : {}),
+      ...(damagedOnly ? { damagedOnly: 'true' } : {}),
+      ...(discrepancyOnly ? { discrepancyOnly: 'true' } : {}),
+      ...(replacedOnly ? { replacedOnly: 'true' } : {}),
+      ...(fromDate ? { fromDate } : {}),
+      ...(toDate ? { toDate } : {}),
+      ...(Object.keys(colFilters).length > 0
+        ? { colFilters: JSON.stringify(colFilters), calendar: prefs.calendar }
+        : {}),
+      ...(sortBy && sortDir ? { sortBy, sortDir } : {}),
+    });
+  }, [
+    q,
+    shipmentFilter,
+    packageFilter,
+    island,
+    system,
+    unit,
+    supplier,
+    itemCategoryFilter,
+    shortageOnly,
+    damagedOnly,
+    discrepancyOnly,
+    replacedOnly,
+    fromDate,
+    toDate,
+    colFilters,
+    prefs.calendar,
+    sortBy,
+    sortDir,
+  ]);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: '50',
-        ...(q ? { q } : {}),
-        ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
-        ...(packageFilter ? { packageNo: packageFilter } : {}),
-        ...(island ? { island } : {}),
-        ...(system ? { system } : {}),
-        ...(storageLocation ? { storageLocation } : {}),
-        ...(shortageOnly ? { shortageOnly: 'true' } : {}),
-        ...(damagedOnly ? { damagedOnly: 'true' } : {}),
-        ...(fromDate ? { fromDate } : {}),
-        ...(toDate ? { toDate } : {}),
-        ...(Object.keys(colFilters).length > 0
-          ? { colFilters: JSON.stringify(colFilters), calendar: prefs.calendar }
-          : {}),
-        ...(sortBy && sortDir ? { sortBy, sortDir } : {}),
-      });
+      const params = buildFilterParams();
+      params.set('page', String(page));
+      params.set('pageSize', '50');
       const res = await apiRequest<DetailedListResponse>(`/api/detailed?${params.toString()}`);
       setData(res);
     } catch (err) {
@@ -288,24 +324,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [
-    page,
-    q,
-    shipmentFilter,
-    packageFilter,
-    island,
-    system,
-    storageLocation,
-    shortageOnly,
-    damagedOnly,
-    fromDate,
-    toDate,
-    colFilters,
-    prefs.calendar,
-    sortBy,
-    sortDir,
-    notify,
-  ]);
+  }, [page, buildFilterParams, notify]);
 
   useEffect(() => {
     loadData();
@@ -449,7 +468,39 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
   const items = data?.items || [];
   const selectedRows = Object.values(selectedMap);
+  const selectedIds = useMemo(
+    () => (allFilteredIds !== null ? allFilteredIds : selectedRows.map((r) => r.id)),
+    [allFilteredIds, selectedRows],
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedCount = selectedIds.length;
+
   const activeSummary = useMemo(() => {
+    if (allFilteredIds !== null) {
+      return (
+        data?.filteredSummary || {
+          count: 0,
+          grossWeightSum: 0,
+          netWeightSum: 0,
+          weighbridgeWeightSum: 0,
+          freightCostSum: 0,
+          packingQtySum: 0,
+          actualQtySum: 0,
+          effectiveActualQtySum: 0,
+          shortageSum: 0,
+          surplusSum: 0,
+          damagedQtySum: 0,
+          gcvDeliveredSum: 0,
+          mapnaInventorySum: 0,
+          contractorInventorySum: 0,
+          mivContractorQtySum: 0,
+          smrContractorQtySum: 0,
+          smrMapnaQtySum: 0,
+          mivMapnaQtySum: 0,
+          transitAmountSum: 0,
+        }
+      );
+    }
     if (selectedRows.length > 0) {
       return computeSelectionFormulaSummary({ detailed: selectedRows });
     }
@@ -476,7 +527,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         transitAmountSum: 0,
       }
     );
-  }, [selectedRows, data]);
+  }, [allFilteredIds, selectedRows, data]);
 
   // Default visible columns (RTL): rowNo, shipmentNo, packageNo, itemNo, description, size, packingQty, countingUnit, subSystem, storageLocation, mapnaInventory, contractorInventory
   // All remaining columns stay hidden until user activates "نمایش ستون‌های اضافی"
@@ -820,9 +871,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     }
   };
 
+  const clearSelection = useCallback(() => {
+    setSelectedMap({});
+    setAllFilteredIds(null);
+  }, []);
+
   const handleBulkEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedRows.length === 0) return;
+    if (selectedIds.length === 0) return;
     const cleanPatch: Record<string, string> = {};
     for (const [k, v] of Object.entries(bulkPatch)) {
       if (k === 'itemCategory') {
@@ -842,12 +898,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     try {
       const res = await apiRequest<{ ok: boolean; updatedCount: number }>('/api/detailed/bulk', {
         method: 'PATCH',
-        body: JSON.stringify({ ids: selectedRows.map((r) => r.id), patch: cleanPatch }),
+        body: JSON.stringify({ ids: selectedIds, patch: cleanPatch }),
       });
       notify(
         'success',
         isFa
-          ? `ویرایش گروهی برای ${res.updatedCount.toLocaleString('fa-IR')} ردیف انجام شد.`
+          ? `ویرایش گروهی برای ${formatDisplayNumber(res.updatedCount, 'fa')} ردیف انجام شد.`
           : `Updated ${res.updatedCount} rows.`,
       );
       setBulkEditOpen(false);
@@ -856,7 +912,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         unit: '', storageLocation: '', receiver: '', countingUnit: '', itemCategory: '',
         chemicalType: '', productionDate: '', expirationDate: '', merStatus: '', repStatus: '',
       });
-      setSelectedMap({});
+      clearSelection();
       triggerAutoSnapshot('Bulk Edit Detailed');
       onDataChanged();
       loadData();
@@ -868,21 +924,21 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   };
 
   const handleBulkDeleteConfirm = async () => {
-    if (selectedRows.length === 0) return;
+    if (selectedIds.length === 0) return;
     setBulkBusy(true);
     try {
       const res = await apiRequest<{ ok: boolean; deletedCount: number }>('/api/detailed/bulk-delete', {
         method: 'POST',
-        body: JSON.stringify({ ids: selectedRows.map((r) => r.id) }),
+        body: JSON.stringify({ ids: selectedIds }),
       });
       notify(
         'success',
         isFa
-          ? `${res.deletedCount.toLocaleString('fa-IR')} ردیف به سطل بازیافت منتقل شد.`
+          ? `${formatDisplayNumber(res.deletedCount, 'fa')} ردیف به سطل بازیافت منتقل شد.`
           : `Moved ${res.deletedCount} row(s) to Recycle Bin.`,
       );
       setBulkDeleteOpen(false);
-      setSelectedMap({});
+      clearSelection();
       triggerAutoSnapshot('Bulk Delete Detailed');
       onDataChanged();
       loadData();
@@ -894,6 +950,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   };
 
   const toggleRow = (row: DetailedComputed) => {
+    if (allFilteredIds !== null) {
+      const nextIds = allFilteredIds.includes(row.id)
+        ? allFilteredIds.filter((id) => id !== row.id)
+        : [...allFilteredIds, row.id];
+      setAllFilteredIds(nextIds.length > 0 ? nextIds : null);
+      return;
+    }
     setSelectedMap((prev) => {
       const next = { ...prev };
       if (next[row.id]) delete next[row.id];
@@ -903,6 +966,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   };
 
   const toggleAllOnPage = () => {
+    if (allFilteredIds !== null) {
+      clearSelection();
+      return;
+    }
     const allSelected = items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]));
     setSelectedMap((prev) => {
       const next = { ...prev };
@@ -913,6 +980,85 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       }
       return next;
     });
+  };
+
+  const toggleSelectAllTable = async () => {
+    if (allFilteredIds !== null) {
+      clearSelection();
+      return;
+    }
+    setSelectingAll(true);
+    try {
+      const params = buildFilterParams();
+      params.set('allIds', 'true');
+      const res = await apiRequest<{ ids: string[]; total: number }>(`/api/detailed?${params.toString()}`);
+      setAllFilteredIds(res.ids || []);
+      setSelectedMap({});
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
+  const handleOpenPrint = async () => {
+    if (allFilteredIds !== null && allFilteredIds.length > items.length) {
+      try {
+        const params = buildFilterParams();
+        params.set('all', 'true');
+        const res = await apiRequest<DetailedListResponse>(`/api/detailed?${params.toString()}`);
+        const idSet = new Set(allFilteredIds);
+        setPrintRowsOverride((res.items || []).filter((r) => idSet.has(r.id)));
+      } catch (err) {
+        if (err instanceof ApiError) notify('error', err.message);
+        return;
+      }
+    } else {
+      setPrintRowsOverride(null);
+    }
+    setPrintOpen(true);
+  };
+
+  const handleAiClassifyDraft = async () => {
+    if (!draft.description?.trim()) {
+      notify('warning', isFa ? 'ابتدا شرح کالا را وارد کنید تا هوش مصنوعی دسته‌بندی را انجام دهد.' : 'Enter item description first for AI classification.');
+      return;
+    }
+    setAiClassifying(true);
+    try {
+      const res = await apiRequest<{
+        classification: {
+          generalDescription?: string;
+          itemCategory?: '' | 'special_tools' | 'chemicals' | 'spare_parts';
+          chemicalType?: string;
+          countingUnit?: string;
+          notes?: string;
+        };
+      }>('/api/ai/classify-item', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: draft.description,
+          size: draft.size || '',
+          itemCode: draft.itemCode || '',
+          lang: prefs.language,
+        }),
+      });
+      const c = res.classification || {};
+      if (c.generalDescription) setGenDescManual(true);
+      setDraft((prev) => ({
+        ...prev,
+        generalDescription: c.generalDescription || prev.generalDescription || '',
+        itemCategory: c.itemCategory ?? prev.itemCategory ?? '',
+        chemicalType: c.chemicalType || prev.chemicalType || '',
+        countingUnit: prev.countingUnit || c.countingUnit || '',
+        notes: prev.notes || c.notes || '',
+      }));
+      notify('success', isFa ? 'تکمیل هوشمند فیلدها با هوش مصنوعی انجام شد.' : 'AI item classification applied.');
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setAiClassifying(false);
+    }
   };
 
   const handleApplySmartDetailed = async (
@@ -1008,7 +1154,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       notify(
         'success',
         isFa
-          ? `${savedCount.toLocaleString('fa-IR')} آیتم جزئیات به‌صورت خودکار ثبت شد.`
+          ? `${formatDisplayNumber(savedCount, 'fa')} آیتم جزئیات به‌صورت خودکار ثبت شد.`
           : `${savedCount} detailed item(s) saved automatically.`,
       );
       triggerAutoSnapshot(`Smart Detailed ${targetShipment}`);
@@ -1039,7 +1185,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => { setShortageOnly((v) => !v); setPage(1); }}
+              onClick={() => { setShortageOnly((v) => !v); clearSelection(); setPage(1); }}
               className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
                 shortageOnly
                   ? 'border-[var(--status-danger)] bg-[var(--status-danger-bg)] text-[var(--status-danger)]'
@@ -1052,7 +1198,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
             <button
               type="button"
-              onClick={() => { setDamagedOnly((v) => !v); setPage(1); }}
+              onClick={() => { setDamagedOnly((v) => !v); clearSelection(); setPage(1); }}
               className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
                 damagedOnly
                   ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
@@ -1061,6 +1207,32 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             >
               <AlertTriangle className="w-3.5 h-3.5" />
               <span>{t.shortage.hasDamagedBadge}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setDiscrepancyOnly((v) => !v); clearSelection(); setPage(1); }}
+              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
+                discrepancyOnly
+                  ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
+                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>{isFa ? 'دارای مغایرت' : 'Discrepancy'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setReplacedOnly((v) => !v); clearSelection(); setPage(1); }}
+              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
+                replacedOnly
+                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'جایگزین شده' : 'Replaced'}</span>
             </button>
 
             <button
@@ -1089,6 +1261,42 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           </div>
         </div>
 
+        {(shipmentFilter || packageFilter) && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
+            <span className="font-semibold text-[var(--text-secondary)]">
+              {isFa ? 'فیلتر ارجاع‌شده از پکینگ:' : 'Linked Packing Filter:'}
+            </span>
+            {shipmentFilter && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-[var(--accent-primary)] font-medium">
+                <span className="bidi-plaintext">
+                  {t.headers.shipmentNo}: <span dir="ltr">{shipmentFilter}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setShipmentFilter(''); clearSelection(); setPage(1); }}
+                  className="hover:opacity-75"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {packageFilter && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-[var(--accent-primary)] font-medium">
+                <span className="bidi-plaintext">
+                  {t.headers.packageNo}: <span dir="ltr">{packageFilter}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setPackageFilter(''); clearSelection(); setPage(1); }}
+                  className="hover:opacity-75"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+
         {(Object.keys(colFilters).length > 0 || (sortBy && sortDir)) && (
           <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
             <span className="font-semibold text-[var(--text-secondary)]">
@@ -1107,7 +1315,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 >
                   <span>
                     {colDef?.header || key}: {previewText}
-                    {vals.length > 2 ? ` (+${(vals.length - 2).toLocaleString(isFa ? 'fa-IR' : 'en-US')})` : ''}
+                    {vals.length > 2 ? ` (+${formatDisplayNumber(vals.length - 2, prefs.language)})` : ''}
                   </span>
                   <button
                     type="button"
@@ -1158,24 +1366,11 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5">
-          <SearchInputWithClear
-            value={shipmentFilter}
-            onChange={(val) => { setShipmentFilter(val); setPage(1); }}
-            placeholder={t.headers.shipmentNo}
-            dir={isFa && !shipmentFilter ? 'rtl' : 'ltr'}
-            inputClassName="text-xs tabular-nums"
-          />
-          <SearchInputWithClear
-            value={packageFilter}
-            onChange={(val) => { setPackageFilter(val); setPage(1); }}
-            placeholder={t.headers.packageNo}
-            dir={isFa && !packageFilter ? 'rtl' : 'ltr'}
-            inputClassName="text-xs tabular-nums"
-          />
+        {/* Hidden-Field Category & Date Filters (not present in default visible table) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
           <select
             value={island}
-            onChange={(e) => { setIsland(e.target.value); setPage(1); }}
+            onChange={(e) => { setIsland(e.target.value); clearSelection(); setPage(1); }}
             className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
             <option value="">{t.headers.island}: {t.controls.all}</option>
@@ -1183,71 +1378,114 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           </select>
           <select
             value={system}
-            onChange={(e) => { setSystem(e.target.value); setPage(1); }}
+            onChange={(e) => { setSystem(e.target.value); clearSelection(); setPage(1); }}
             className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
             <option value="">{t.headers.system}: {t.controls.all}</option>
             {categories.system.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
           <select
-            value={storageLocation}
-            onChange={(e) => { setStorageLocation(e.target.value); setPage(1); }}
+            value={unit}
+            onChange={(e) => { setUnit(e.target.value); clearSelection(); setPage(1); }}
             className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
-            <option value="">{t.headers.storageLocation}: {t.controls.all}</option>
-            {categories.storageLocation.map((v) => <option key={v} value={v}>{v}</option>)}
+            <option value="">{t.headers.unit}: {t.controls.all}</option>
+            {categories.unit.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+          <select
+            value={supplier}
+            onChange={(e) => { setSupplier(e.target.value); clearSelection(); setPage(1); }}
+            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+          >
+            <option value="">{t.headers.supplier}: {t.controls.all}</option>
+            {categories.supplier.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+          <select
+            value={itemCategoryFilter}
+            onChange={(e) => { setItemCategoryFilter(e.target.value); clearSelection(); setPage(1); }}
+            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+          >
+            <option value="">{t.headers.itemCategory}: {t.controls.all}</option>
+            <option value="special_tools">{t.itemCategories.special_tools}</option>
+            <option value="chemicals">{t.itemCategories.chemicals}</option>
+            <option value="spare_parts">{t.itemCategories.spare_parts}</option>
           </select>
           <JalaliDateInput
             value={fromDate}
-            onChange={(v) => { setFromDate(v); setPage(1); }}
+            onChange={(v) => { setFromDate(v); clearSelection(); setPage(1); }}
             placeholder={t.controls.fromDate}
           />
           <JalaliDateInput
             value={toDate}
-            onChange={(v) => { setToDate(v); setPage(1); }}
+            onChange={(v) => { setToDate(v); clearSelection(); setPage(1); }}
             placeholder={t.controls.toDate}
           />
         </div>
       </div>
 
       {/* Formula Selection Summary Bar */}
-      {(items.length > 0 || selectedRows.length > 0) && (
+      {(items.length > 0 || selectedCount > 0) && (
         <SelectionSummaryBar
           scope="detailed"
-          selectedCount={selectedRows.length}
+          selectedCount={selectedCount}
           summary={activeSummary}
-          isFilteredFallback={selectedRows.length === 0}
-          onClearSelection={() => setSelectedMap({})}
-          onPrintSelected={() => setPrintOpen(true)}
+          isFilteredFallback={selectedCount === 0}
+          onClearSelection={clearSelection}
+          onPrintSelected={handleOpenPrint}
         />
       )}
 
-      {/* Bulk Operations Bar */}
-      {canEdit && selectedRows.length > 0 && (
-        <div className="rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <span className="font-bold text-[var(--accent-primary)] tabular-nums">
-            {isFa
-              ? `${selectedRows.length.toLocaleString('fa-IR')} ردیف انتخاب شده است`
-              : `${selectedRows.length} row(s) selected`}
-          </span>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBulkEditOpen(true)}
-              className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold flex items-center gap-1.5"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span>{isFa ? 'ویرایش گروهی' : 'Bulk Edit'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkDeleteOpen(true)}
-              className="h-8 px-3 rounded-lg bg-[var(--status-danger)] text-white font-semibold flex items-center gap-1.5"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{isFa ? 'حذف گروهی' : 'Bulk Delete'}</span>
-            </button>
+      {/* Select-All Table Bar & Bulk Operations Bar */}
+      {(data?.total || 0) > 0 && (
+        <div
+          className={`rounded-xl border px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs ${
+            selectedCount > 0
+              ? 'border-[var(--accent-primary)]/40 bg-[var(--accent-soft)]'
+              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 font-semibold cursor-pointer select-none">
+              <input
+                type="checkbox"
+                disabled={selectingAll}
+                checked={allFilteredIds !== null && allFilteredIds.length > 0 && allFilteredIds.length >= (data?.total || 0)}
+                onChange={toggleSelectAllTable}
+              />
+              <span>
+                {isFa
+                  ? `انتخاب کل ردیف‌های جدول (${formatDisplayNumber(data?.total || 0, 'fa')} ردیف)`
+                  : `Select all table rows (${formatDisplayNumber(data?.total || 0, 'en')} rows)`}
+              </span>
+            </label>
+            {selectedCount > 0 && (
+              <span className="font-bold text-[var(--accent-primary)] tabular-nums">
+                {isFa
+                  ? `— ${formatDisplayNumber(selectedCount, 'fa')} ردیف انتخاب شده است`
+                  : `— ${selectedCount} row(s) selected`}
+              </span>
+            )}
           </div>
+          {canEdit && selectedCount > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkEditOpen(true)}
+                className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold flex items-center gap-1.5"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>{isFa ? 'ویرایش گروهی' : 'Bulk Edit'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkDeleteOpen(true)}
+                className="h-8 px-3 rounded-lg bg-[var(--status-danger)] text-white font-semibold flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isFa ? 'حذف گروهی' : 'Bulk Delete'}</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1260,8 +1498,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 <th className="py-2.5 px-3 w-9">
                   <input
                     type="checkbox"
-                    checked={items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]))}
+                    checked={
+                      allFilteredIds !== null
+                        ? items.length > 0 && items.every((r) => selectedIdSet.has(r.id))
+                        : items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]))
+                    }
                     onChange={toggleAllOnPage}
+                    aria-label={t.controls.selectAllPage}
                   />
                 </th>
                 {visibleColumns.map((col) => (
@@ -1335,7 +1578,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
-                        checked={Boolean(selectedMap[row.id])}
+                        checked={allFilteredIds !== null ? selectedIdSet.has(row.id) : Boolean(selectedMap[row.id])}
                         onChange={() => toggleRow(row)}
                       />
                     </td>
@@ -1344,7 +1587,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       const raw = col.get(row);
                       const display =
                         typeof raw === 'number'
-                          ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                          ? formatDisplayNumber(raw, prefs.language)
                           : formatMultiValueCell(raw, {
                               isDate: Boolean(col.isDate),
                               calendar: prefs.calendar,
@@ -1494,7 +1737,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">
             <span className="tabular-nums">
               {isFa
-                ? `صفحه ${data.page.toLocaleString('fa-IR')} از ${data.totalPages.toLocaleString('fa-IR')} (${data.total.toLocaleString('fa-IR')} رکورد)`
+                ? `صفحه ${formatDisplayNumber(data.page, 'fa')} از ${formatDisplayNumber(data.totalPages, 'fa')} (${formatDisplayNumber(data.total, 'fa')} رکورد)`
                 : `Page ${data.page} of ${data.totalPages} (${data.total} records)`}
             </span>
             <div className="flex items-center gap-1.5">
@@ -1583,85 +1826,65 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             )}
 
             <div className="space-y-4">
-              <div>
-                <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
-                  {isFa ? 'مشخصات پایه تجهیز' : 'Primary Equipment Info'}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {columns
-                    .filter((c) => {
-                      if (c.hideInTable) return false;
-                      const val = c.get(inspected);
-                      return val !== null && val !== undefined && String(val).trim() !== '';
-                    })
-                    .map((c) => {
+              {(
+                [
+                  {
+                    title: isFa ? 'مشخصات پایه و کدینگ کالا' : 'Primary Equipment & Coding',
+                    keys: ['rowNo', 'shipmentNo', 'packageNo', 'itemNo', 'description', 'generalDescription', 'size', 'itemCode', 'mtoRef', 'arrivalDate'],
+                  },
+                  {
+                    title: isFa ? 'موقعیت فنی، تامین و نگهداری' : 'Location, Supply & Origin',
+                    keys: ['supplier', 'origin', 'island', 'system', 'subSystem', 'unit', 'storageLocation', 'receiver'],
+                  },
+                  {
+                    title: isFa ? 'مقادیر، بازرسی OPI، مغایرت MER و جایگزینی REP' : 'Quantities, OPI Inspection, MER & REP',
+                    keys: ['packingQty', 'countingUnit', 'actualQty', 'shortage', 'surplus', 'damagedQty', 'opiNo', 'opiDate', 'merNo', 'merStatus', 'repNo', 'repStatus', 'repDescription'],
+                  },
+                  {
+                    title: isFa ? 'موجودی انبار، رسید GCV، حواله MIV و برگشت SMR' : 'Inventory, GCV, MIV & SMR',
+                    keys: ['gcvReceiptNo', 'gcvDeliveredQty', 'mapnaInventory', 'mivContractorNo', 'mivContractorDate', 'mivContractorQty', 'contractorInventory', 'smrContractorNo', 'smrContractorDate', 'smrContractorQty', 'smrMapnaNo', 'smrMapnaDate', 'smrMapnaQty', 'mivMapnaNo', 'mivMapnaDate', 'mivMapnaQty'],
+                  },
+                  {
+                    title: isFa ? 'دسته‌بندی تخصصی، بالانس، انبارگردانی و یادداشت' : 'Specialized Class, Balance, Stocktake & Notes',
+                    keys: ['itemCategory', 'chemicalType', 'productionDate', 'expirationDate', 'materialBalanceNo', 'balanceStatus', 'stocktakeStatus', 'stocktakeDate', 'stocktakeInfo', 'notes'],
+                  },
+                ] as const
+              ).map((group) => (
+                <div key={group.title}>
+                  <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
+                    {group.title}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {group.keys.map((colKey) => {
+                      const c = columns.find((col) => col.key === colKey);
+                      if (!c) return null;
                       const raw = c.get(inspected);
                       const formatted =
                         typeof raw === 'number'
-                          ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                          ? formatDisplayNumber(raw, prefs.language)
                           : formatMultiValueCell(raw, {
                               isDate: Boolean(c.isDate),
                               calendar: prefs.calendar,
                               lang: prefs.language,
                             });
+                      const isBlank = formatted === '';
                       return (
                         <div
                           key={c.key}
-                          className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
+                          className={`p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)] ${
+                            c.key === 'description' || c.key === 'notes' || c.key === 'repDescription' ? 'sm:col-span-2' : ''
+                          }`}
                         >
                           <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                          <div className="text-xs font-semibold mt-0.5 tabular-nums whitespace-pre-line break-words bidi-plaintext">
-                            {c.isLtr ? <span dir="ltr">{formatted}</span> : formatted}
+                          <div className={`text-xs font-semibold mt-0.5 tabular-nums whitespace-pre-line break-words bidi-plaintext ${isBlank ? 'text-[var(--text-muted)]' : ''}`}>
+                            {isBlank ? '—' : c.isLtr ? <span dir="ltr">{formatted}</span> : formatted}
                           </div>
                         </div>
                       );
                     })}
-                </div>
-              </div>
-
-              {columns.some((c) => {
-                if (!c.hideInTable) return false;
-                const val = c.get(inspected);
-                return val !== null && val !== undefined && String(val).trim() !== '';
-              }) && (
-                <div>
-                  <div className="text-[11px] font-bold text-[var(--text-muted)] mb-2">
-                    {isFa
-                      ? 'وضعیت بازرسی، موجودی‌ها، حواله‌ها، موازنه و انبارگردانی'
-                      : 'Inspection, Stock, Issues, Returns, Balance & Stocktake'}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {columns
-                      .filter((c) => {
-                        if (!c.hideInTable) return false;
-                        const val = c.get(inspected);
-                        return val !== null && val !== undefined && String(val).trim() !== '';
-                      })
-                      .map((c) => {
-                        const raw = c.get(inspected);
-                        const formatted =
-                          typeof raw === 'number'
-                            ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                            : formatMultiValueCell(raw, {
-                                isDate: Boolean(c.isDate),
-                                calendar: prefs.calendar,
-                                lang: prefs.language,
-                              });
-                        return (
-                          <div
-                            key={c.key}
-                            className="p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)]"
-                          >
-                            <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
-                            <div className="text-xs font-semibold mt-0.5 tabular-nums whitespace-pre-line break-words bidi-plaintext">
-                              {c.isLtr ? <span dir="ltr">{formatted}</span> : formatted}
-                            </div>
-                          </div>
-                        );
-                      })}
                   </div>
                 </div>
-              )}
+              ))}
             </div>
 
             {inspected.shortageBackfills && inspected.shortageBackfills.length > 0 && (
@@ -2236,6 +2459,23 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       ? 'مشخصات تخصصی قلم (ابزار مخصوص / مواد شیمیایی / لوازم یدکی)'
                       : 'Specialized Item Classification (Tools / Chemicals / Spare Parts)'}
                   </span>
+                  <button
+                    type="button"
+                    disabled={aiClassifying}
+                    onClick={handleAiClassifyDraft}
+                    className="h-8 px-3 rounded-lg border border-[var(--accent-primary)]/60 bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-90 text-[11px] font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    <span>
+                      {aiClassifying
+                        ? isFa
+                          ? 'در حال تحلیل با AI...'
+                          : 'Analyzing with AI...'
+                        : isFa
+                          ? 'تکمیل هوشمند با AI'
+                          : 'AI Auto-Classify'}
+                    </span>
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -2363,8 +2603,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
               <h3 className="text-sm font-bold tabular-nums">
                 {isFa
-                  ? `ویرایش گروهی (${selectedRows.length.toLocaleString('fa-IR')} ردیف)`
-                  : `Bulk Edit (${selectedRows.length} rows)`}
+                  ? `ویرایش گروهی (${formatDisplayNumber(selectedCount, 'fa')} ردیف)`
+                  : `Bulk Edit (${selectedCount} rows)`}
               </h3>
               <button type="button" onClick={() => setBulkEditOpen(false)}>
                 <X className="w-5 h-5" />
@@ -2496,8 +2736,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             </h3>
             <p className="text-xs text-[var(--text-primary)]">
               {isFa
-                ? `آیا از انتقال ${selectedRows.length.toLocaleString('fa-IR')} ردیف انتخاب‌شده به سطل بازیافت مطمئن هستید؟`
-                : `Are you sure you want to move ${selectedRows.length} selected row(s) to the Recycle Bin?`}
+                ? `آیا از انتقال ${formatDisplayNumber(selectedCount, 'fa')} ردیف انتخاب‌شده به سطل بازیافت مطمئن هستید؟`
+                : `Are you sure you want to move ${selectedCount} selected row(s) to the Recycle Bin?`}
             </p>
             <div className="pt-2 flex justify-end gap-2">
               <button
@@ -2522,9 +2762,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
       <PrintReportModal
         open={printOpen}
-        onClose={() => setPrintOpen(false)}
+        onClose={() => { setPrintOpen(false); setPrintRowsOverride(null); }}
         title={t.nav.detailed}
-        rows={selectedRows.length > 0 ? selectedRows : items}
+        rows={printRowsOverride ?? (selectedRows.length > 0 ? selectedRows : items)}
         columns={columns.map((c) => ({
           key: c.key,
           header: c.header,

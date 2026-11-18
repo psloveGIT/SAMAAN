@@ -116,7 +116,7 @@ export function sanitizeUser(user: StoredUser): UserAccount {
 export const DEFAULT_PREFERENCES: UserPreferences = {
   language: 'fa',
   calendar: 'jalali',
-  theme: 'light',
+  theme: 'dark',
   eyeComfort: false,
 };
 

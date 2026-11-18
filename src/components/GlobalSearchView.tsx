@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { AlertTriangle, Printer, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { formatDisplayNumber } from '../shared/jalali.ts';
 import {
   type CustomFieldFilter,
   DETAILED_FILTER_FIELDS,
@@ -143,11 +144,11 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
         const display = isDate
           ? formatDate(String(val))
           : typeof val === 'number'
-            ? val.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+            ? formatDisplayNumber(val, prefs.language)
             : String(val);
         return { key: k, label, display };
       });
-  }, [inspected, t.headers, formatDate, isFa]);
+  }, [inspected, t.headers, formatDate, prefs.language]);
 
   return (
     <div className="space-y-6">
@@ -208,7 +209,7 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
               <div className="px-5 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-3">
                 <span className="text-sm font-bold">
-                  {t.nav.general} ({results.general.length.toLocaleString(isFa ? 'fa-IR' : 'en-US')})
+                  {t.nav.general} ({formatDisplayNumber(results.general.length, prefs.language)})
                 </span>
                 <button
                   type="button"
@@ -258,7 +259,7 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
               <div className="px-5 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-3">
                 <span className="text-sm font-bold">
-                  {t.nav.detailed} ({results.detailed.length.toLocaleString(isFa ? 'fa-IR' : 'en-US')})
+                  {t.nav.detailed} ({formatDisplayNumber(results.detailed.length, prefs.language)})
                 </span>
                 <button
                   type="button"
@@ -323,7 +324,7 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
               <div className="px-5 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-3">
                 <span className="text-sm font-bold">
-                  {t.nav.transit} ({results.transit.length.toLocaleString(isFa ? 'fa-IR' : 'en-US')})
+                  {t.nav.transit} ({formatDisplayNumber(results.transit.length, prefs.language)})
                 </span>
                 <button
                   type="button"

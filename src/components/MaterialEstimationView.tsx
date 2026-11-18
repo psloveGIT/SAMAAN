@@ -11,6 +11,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
+import { formatDisplayNumber } from '../shared/jalali.ts';
 import type {
   CategoryStore,
   DetailedComputed,
@@ -232,8 +233,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
     return list;
   }, [detailedItems]);
 
-  const fmtNum = (val: number) =>
-    isFa ? val.toLocaleString('fa-IR') : val.toLocaleString('en-US');
+  const fmtNum = (val: number) => formatDisplayNumber(val, prefs.language);
 
   const statusLabel = (s: SupplyStatus) => {
     if (s === 'fulfilled') return isFa ? 'تامین کامل' : 'Fulfilled';

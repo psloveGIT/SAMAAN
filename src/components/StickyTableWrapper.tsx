@@ -12,7 +12,8 @@ interface StickyTableWrapperProps {
  * 1. Bounded vertical scroll (`max-h-[70vh]`) + sticky opaque `thead` (`samaan-table-scroll`)
  *    so column headers remain pinned while scrolling down rows.
  * 2. A synced top horizontal scrollbar automatically displayed whenever the table is wider
- *    than its container, so horizontal scrolling is always accessible without scrolling down.
+ *    than its container (with bottom horizontal scrollbar hidden cleanly via CSS),
+ *    using a jitter-free RTL-safe bidirectional lock.
  */
 export const StickyTableWrapper: React.FC<StickyTableWrapperProps> = ({
   children,
@@ -23,7 +24,7 @@ export const StickyTableWrapper: React.FC<StickyTableWrapperProps> = ({
   const effectiveMaxHeight = maxHeightClass ?? maxHeightClassName ?? 'max-h-[70vh]';
   const topBarRef = useRef<HTMLDivElement | null>(null);
   const bodyScrollRef = useRef<HTMLDivElement | null>(null);
-  const syncingRef = useRef<'top' | 'body' | null>(null);
+  const activeLockRef = useRef<{ source: 'top' | 'body'; until: number } | null>(null);
 
   const [scrollWidth, setScrollWidth] = useState(0);
   const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
@@ -33,8 +34,9 @@ export const StickyTableWrapper: React.FC<StickyTableWrapperProps> = ({
     if (!body) return;
     const sw = body.scrollWidth;
     const cw = body.clientWidth;
-    setScrollWidth(sw);
-    setHasHorizontalOverflow(sw - cw > 2);
+    const nextOverflow = sw - cw > 2;
+    setScrollWidth((prev) => (prev !== sw ? sw : prev));
+    setHasHorizontalOverflow((prev) => (prev !== nextOverflow ? nextOverflow : prev));
   }, []);
 
   useEffect(() => {
@@ -56,7 +58,7 @@ export const StickyTableWrapper: React.FC<StickyTableWrapperProps> = ({
             requestAnimationFrame(measure);
           })
         : null;
-    mutationObserver?.observe(body, { childList: true, subtree: true, attributes: true });
+    mutationObserver?.observe(body, { childList: true, subtree: false });
 
     window.addEventListener('resize', measure);
     return () => {
@@ -66,38 +68,50 @@ export const StickyTableWrapper: React.FC<StickyTableWrapperProps> = ({
     };
   }, [measure, children]);
 
+  // Keep top scrollbar initially aligned with body scroll position when mounted
+  useEffect(() => {
+    if (!hasHorizontalOverflow) return;
+    const top = topBarRef.current;
+    const body = bodyScrollRef.current;
+    if (!top || !body) return;
+    if (Math.abs(top.scrollLeft - body.scrollLeft) >= 1) {
+      activeLockRef.current = { source: 'body', until: performance.now() + 80 };
+      top.scrollLeft = body.scrollLeft;
+    }
+  }, [hasHorizontalOverflow, scrollWidth]);
+
   const handleTopScroll = () => {
     const top = topBarRef.current;
     const body = bodyScrollRef.current;
     if (!top || !body) return;
-    if (syncingRef.current === 'body') {
-      syncingRef.current = null;
+    const now = performance.now();
+    const lock = activeLockRef.current;
+    if (lock && lock.source === 'body' && now < lock.until) {
       return;
     }
-    syncingRef.current = 'top';
-    body.scrollLeft = top.scrollLeft;
-    requestAnimationFrame(() => {
-      if (syncingRef.current === 'top') syncingRef.current = null;
-    });
+    const next = top.scrollLeft;
+    if (Math.abs(body.scrollLeft - next) < 1) return;
+    activeLockRef.current = { source: 'top', until: now + 90 };
+    body.scrollLeft = next;
   };
 
   const handleBodyScroll = () => {
     const top = topBarRef.current;
     const body = bodyScrollRef.current;
     if (!top || !body) return;
-    if (syncingRef.current === 'top') {
-      syncingRef.current = null;
+    const now = performance.now();
+    const lock = activeLockRef.current;
+    if (lock && lock.source === 'top' && now < lock.until) {
       return;
     }
-    syncingRef.current = 'body';
-    top.scrollLeft = body.scrollLeft;
-    requestAnimationFrame(() => {
-      if (syncingRef.current === 'body') syncingRef.current = null;
-    });
+    const next = body.scrollLeft;
+    if (Math.abs(top.scrollLeft - next) < 1) return;
+    activeLockRef.current = { source: 'body', until: now + 90 };
+    top.scrollLeft = next;
   };
 
   return (
-    <div className={`w-full ${className}`}>
+    <div className={`w-full min-w-0 ${className}`}>
       {hasHorizontalOverflow && (
         <div
           ref={topBarRef}
@@ -111,7 +125,7 @@ export const StickyTableWrapper: React.FC<StickyTableWrapperProps> = ({
       <div
         ref={bodyScrollRef}
         onScroll={handleBodyScroll}
-        className={`samaan-table-scroll overflow-auto ${effectiveMaxHeight} print:max-h-none print:overflow-visible`}
+        className={`samaan-table-scroll overflow-y-auto overflow-x-auto ${effectiveMaxHeight} print:max-h-none print:overflow-visible`}
       >
         {children}
       </div>

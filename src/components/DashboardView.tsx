@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest } from '../lib/api.ts';
-import { formatMonthLabel } from '../shared/jalali.ts';
+import { buildYearMonths, formatDisplayNumber, formatMonthLabel } from '../shared/jalali.ts';
 import type {
   DetailedComputed,
   ExpiringChemicalNotice,
@@ -20,6 +20,9 @@ import type {
 import type { NavTabKey } from './Layout.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
+interface OpenMerRepItem extends DetailedComputed {
+  countingUnit: string;
+}
 
 interface AnalyticsPayload {
   counts: {
@@ -49,6 +52,14 @@ interface AnalyticsPayload {
     mapnaStock: number;
     contractorStock: number;
   }[];
+  availableYears?: string[];
+  selectedYear?: string;
+  allMonthlyBuckets?: {
+    monthKey: string;
+    generalRows: number;
+    detailedRows: number;
+    grossWeight: number;
+  }[];
   monthlyTrend: {
     monthKey: string;
     generalRows: number;
@@ -57,8 +68,8 @@ interface AnalyticsPayload {
   }[];
   topShortages: DetailedComputed[];
   topDamaged: DetailedComputed[];
-  openMerItems?: DetailedComputed[];
-  openRepItems?: DetailedComputed[];
+  openMerItems?: OpenMerRepItem[];
+  openRepItems?: OpenMerRepItem[];
   expiringChemicals?: ExpiringChemicalNotice[];
 }
 
@@ -79,17 +90,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const isFa = prefs.language === 'fa';
   const [data, setData] = useState<AnalyticsPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedYear, setSelectedYear] = useState<string>('');
 
   useEffect(() => {
     setLoading(true);
     apiRequest<AnalyticsPayload>(`/api/analytics?calendar=${prefs.calendar}`)
-      .then(setData)
+      .then((res) => {
+        setData(res);
+        setSelectedYear((prev) => {
+          if (prev && res.availableYears?.includes(prev)) return prev;
+          return res.selectedYear || res.availableYears?.[0] || '';
+        });
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [prefs.calendar, refreshSignal]);
 
   const fmt = (n: number, maxFrac = 2) =>
-    n.toLocaleString(isFa ? 'fa-IR' : 'en-US', { maximumFractionDigits: maxFrac });
+    formatDisplayNumber(n, prefs.language, { maximumFractionDigits: maxFrac });
 
   if (loading && !data) {
     return (
@@ -151,12 +169,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const openRepItems = data.openRepItems || [];
   const expiringChemicals = data.expiringChemicals || data.totals.expiringChemicals || [];
 
+  const availableYears = data.availableYears || [];
+  const activeYear =
+    selectedYear && availableYears.includes(selectedYear)
+      ? selectedYear
+      : data.selectedYear || availableYears[0] || '';
+
+  const activeMonthlyTrend = (() => {
+    if (activeYear && data.allMonthlyBuckets) {
+      const byMk = new Map(data.allMonthlyBuckets.map((m) => [m.monthKey, m]));
+      return buildYearMonths(activeYear, prefs.calendar).map(
+        (mk) => byMk.get(mk) || { monthKey: mk, generalRows: 0, detailedRows: 0, grossWeight: 0 },
+      );
+    }
+    return data.monthlyTrend;
+  })();
+
   const maxTrendVal = Math.max(
     1,
-    ...data.monthlyTrend.map((m) => m.generalRows + m.detailedRows),
+    ...activeMonthlyTrend.map((m) => m.generalRows + m.detailedRows),
   );
 
-  const kpis: { label: string; value: string; sub?: string; tone?: 'danger' | 'warning' | 'accent' }[] = [
+  const kpis: { label: string; value: string; sub?: string; tone?: 'danger' | 'warning' | 'accent'; compactValue?: boolean }[] = [
     {
       label: isFa ? 'پکینگ لیست‌های یکتا' : 'Unique Packing Lists',
       value: fmt(data.counts.uniquePackings),
@@ -168,12 +202,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           : undefined,
     },
     {
-      label: isFa ? 'ردیف‌های کلی تجهیزات' : 'General Equipment Rows',
-      value: fmt(data.counts.generalRows),
-    },
-    {
       label: isFa ? 'شماره نگله‌های یکتا' : 'Unique Package Numbers',
       value: fmt(data.counts.uniquePackages),
+    },
+    {
+      label: isFa ? 'ردیف‌های کلی تجهیزات' : 'General Equipment Rows',
+      value: fmt(data.counts.generalRows),
     },
     {
       label: isFa ? 'اقلام تجهیزات' : 'Equipment Items',
@@ -186,44 +220,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         ? `وزن خالص: ${fmt(netTons, 3)} تن`
         : `Net Weight: ${fmt(netTons, 3)} tons`,
       tone: 'accent',
+      compactValue: true,
     },
     {
       label: isFa ? 'اقلام دارای کسری' : 'Items with Shortage',
       value: fmt(data.counts.shortageItemsCount),
-      sub:
-        data.counts.shortageItemsCount > 0
-          ? isFa
-            ? `${fmt(data.counts.shortageItemsCount)} ردیف دارای کسری`
-            : `${fmt(data.counts.shortageItemsCount)} shortage rows`
-          : isFa
-            ? 'بدون کسری فعال'
-            : 'No active shortages',
       tone: data.counts.shortageItemsCount > 0 ? 'danger' : undefined,
     },
     {
-      label: isFa
-        ? 'اقلام دارای مغایرت یا آسیب‌دیدگی / اقلام جایگزین شده'
-        : 'Discrepancy or Damaged / Replaced Items',
-      value: `${fmt(openMerCount)} / ${fmt(openRepCount)}`,
-      sub: isFa
-        ? `مغایرت یا آسیب‌دیدگی: ${fmt(openMerCount)} · جایگزین‌شده: ${fmt(openRepCount)}`
-        : `Discrepancy/Damaged: ${fmt(openMerCount)} · Replaced: ${fmt(openRepCount)}`,
-      tone: openMerCount + openRepCount > 0 ? 'warning' : undefined,
+      label: isFa ? 'اقلام دارای مغایرت یا آسیب‌دیدگی' : 'Discrepancy / Damaged Items',
+      value: fmt(openMerCount),
+      tone: openMerCount > 0 ? 'warning' : undefined,
+    },
+    {
+      label: isFa ? 'اقلام جایگزین شده' : 'Replaced Items',
+      value: fmt(openRepCount),
+      tone: openRepCount > 0 ? 'warning' : undefined,
     },
   ];
 
   return (
     <div className="space-y-6">
       {/* KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         {kpis.map((k) => (
           <div
             key={k.label}
-            className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-col justify-between"
+            className="min-w-0 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-col justify-between overflow-hidden"
           >
             <div className="text-xs font-medium text-[var(--text-secondary)] leading-snug">{k.label}</div>
             <div
-              className={`mt-2 text-2xl font-bold tabular-nums ${
+              className={`mt-2 font-bold tabular-nums break-words ${
+                k.compactValue || k.value.length > 10 ? 'text-lg sm:text-xl leading-tight' : 'text-2xl'
+              } ${
                 k.tone === 'danger'
                   ? 'text-[var(--status-danger)]'
                   : k.tone === 'warning'
@@ -236,7 +265,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {k.value}
             </div>
             {k.sub && (
-              <div className="mt-1 text-[11px] text-[var(--text-muted)] tabular-nums">{k.sub}</div>
+              <div className="mt-1 text-[11px] text-[var(--text-muted)] tabular-nums break-words">{k.sub}</div>
             )}
           </div>
         ))}
@@ -296,7 +325,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Monthly Trend in Active Calendar */}
         <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5">
-          <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <div>
               <h3 className="text-sm font-bold">
                 {isFa ? 'روند ورود ماهانه اقلام' : 'Monthly Arrival Activity'}
@@ -304,24 +333,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <p className="text-xs text-[var(--text-muted)] mt-0.5">
                 {prefs.calendar === 'jalali'
                   ? isFa
-                    ? 'گروه‌بندی خودکار بر اساس ماه‌های هجری شمسی'
-                    : 'Grouped dynamically by Jalali calendar months'
+                    ? 'گروه‌بندی بر اساس ۱۲ ماه سال هجری شمسی'
+                    : '12-month view by Jalali calendar year'
                   : isFa
-                    ? 'گروه‌بندی خودکار بر اساس ماه‌های میلادی'
-                    : 'Grouped dynamically by Gregorian calendar months'}
+                    ? 'گروه‌بندی بر اساس ۱۲ ماه سال میلادی'
+                    : '12-month view by Gregorian calendar year'}
               </p>
             </div>
+            {availableYears.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-[var(--text-muted)]">
+                  {isFa ? 'سال:' : 'Year:'}
+                </label>
+                <select
+                  aria-label={isFa ? 'انتخاب سال روند ماهانه' : 'Select Year'}
+                  value={activeYear}
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-semibold tabular-nums"
+                >
+                  {availableYears.map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
-          {data.monthlyTrend.length === 0 ? (
+          {activeMonthlyTrend.length === 0 ? (
             <div className="py-12 text-center text-xs text-[var(--text-muted)]">
               {t.controls.noData}
             </div>
           ) : (
             <div className="space-y-3">
-              {data.monthlyTrend.map((m) => {
+              {activeMonthlyTrend.map((m) => {
                 const total = m.generalRows + m.detailedRows;
-                const pct = Math.max(4, Math.round((total / maxTrendVal) * 100));
+                const pct = total > 0 ? Math.max(4, Math.round((total / maxTrendVal) * 100)) : 0;
                 return (
                   <div key={m.monthKey} className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
@@ -329,9 +377,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {formatMonthLabel(m.monthKey, prefs.calendar, prefs.language)}
                       </span>
                       <span className="text-[var(--text-muted)] tabular-nums">
-                        {m.generalRows > 0 && `${isFa ? 'کلی:' : 'General:'} ${fmt(m.generalRows)}`}
-                        {m.generalRows > 0 && m.detailedRows > 0 && ' · '}
-                        {m.detailedRows > 0 && `${isFa ? 'جزئیات:' : 'Detail:'} ${fmt(m.detailedRows)}`}
+                        {total === 0 ? (
+                          isFa ? '۰' : '0'
+                        ) : (
+                          <>
+                            {m.generalRows > 0 && `${isFa ? 'کلی:' : 'General:'} ${fmt(m.generalRows)}`}
+                            {m.generalRows > 0 && m.detailedRows > 0 && ' · '}
+                            {m.detailedRows > 0 && `${isFa ? 'جزئیات:' : 'Detail:'} ${fmt(m.detailedRows)}`}
+                          </>
+                        )}
                       </span>
                     </div>
                     <div className="h-2.5 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
@@ -393,8 +447,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </span>
               </div>
               {data.totals.freightCostSum > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-[var(--text-muted)]">{t.headers.freightCost}</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-[var(--text-muted)]">
+                    {isFa ? 'کل مبلغ کرایه حمل (ریال)' : 'Total Freight Cost (IRR)'}
+                  </span>
                   <span className="font-semibold tabular-nums text-[var(--accent-primary)]">
                     {fmt(data.totals.freightCostSum)} {isFa ? 'ریال' : 'IRR'}
                   </span>
@@ -405,7 +461,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Active Monitoring Panels (Shortages, Discrepancy/Damaged, Replaced, Expiring Chemicals) */}
+      {/* Active Monitoring Panels (Shortages, Expiring Chemicals, Replaced, Discrepancy/Damaged) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* اقلام دارای کسری فعال */}
         <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
@@ -456,110 +512,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {t.headers.shortage}: {fmt(item.shortage)}
                     </span>
                   </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* اقلام دارای مغایرت یا آسیب‌دیدگی فعال */}
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
-              <ClipboardList className="w-4 h-4" />
-              <span>
-                {isFa
-                  ? `اقلام دارای مغایرت یا آسیب‌دیدگی فعال (${fmt(openMerCount)})`
-                  : `Active Discrepancy or Damaged Items (${fmt(openMerCount)})`}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigate('detailed')}
-              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
-            >
-              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          {openMerItems.length === 0 ? (
-            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
-              {isFa ? 'اقلام دارای مغایرت یا آسیب‌دیدگی فعالی یافت نشد.' : 'No active discrepancy or damaged items.'}
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--border-subtle)]">
-              {openMerItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onInspectDetailedShipment(item.shipmentNo)}
-                  className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold truncate bidi-plaintext">
-                      {item.description || item.generalDescription}
-                    </div>
-                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
-                      <span dir="ltr">{item.shipmentNo}</span>
-                      {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
-                      {item.merNo && <span dir="ltr">· MER: {item.merNo}</span>}
-                    </div>
-                  </div>
-                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold">
-                    {item.merStatus || (isFa ? 'باز' : 'Open')}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* اقلام جایگزین شده فعال */}
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
-              <ClipboardList className="w-4 h-4" />
-              <span>
-                {isFa
-                  ? `اقلام جایگزین شده فعال (${fmt(openRepCount)})`
-                  : `Active Replaced Items (${fmt(openRepCount)})`}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigate('detailed')}
-              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
-            >
-              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          {openRepItems.length === 0 ? (
-            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
-              {isFa ? 'اقلام جایگزین‌شده فعالی یافت نشد.' : 'No active replaced items.'}
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--border-subtle)]">
-              {openRepItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onInspectDetailedShipment(item.shipmentNo)}
-                  className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold truncate bidi-plaintext">
-                      {item.description || item.generalDescription}
-                    </div>
-                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
-                      <span dir="ltr">{item.shipmentNo}</span>
-                      {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
-                      {item.repNo && <span dir="ltr">· REP: {item.repNo}</span>}
-                    </div>
-                  </div>
-                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold">
-                    {item.repStatus || (isFa ? 'باز' : 'Open')}
-                  </span>
                 </button>
               ))}
             </div>
@@ -621,6 +573,125 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </span>
                 </button>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* اقلام جایگزین شده فعال */}
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
+              <ClipboardList className="w-4 h-4" />
+              <span>
+                {isFa
+                  ? `اقلام جایگزین شده فعال (${fmt(openRepCount)})`
+                  : `Active Replaced Items (${fmt(openRepCount)})`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('detailed')}
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+            >
+              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {openRepItems.length === 0 ? (
+            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
+              {isFa ? 'اقلام جایگزین‌شده فعالی یافت نشد.' : 'No active replaced items.'}
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--border-subtle)]">
+              {openRepItems.map((item) => {
+                const qtyVal = item.effectiveActualQty || item.packingQty || 0;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onInspectDetailedShipment(item.shipmentNo)}
+                    className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold truncate bidi-plaintext">
+                        {item.description || item.generalDescription}
+                      </div>
+                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                        <span dir="ltr">{item.shipmentNo}</span>
+                        {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
+                        {item.repNo && <span dir="ltr">· REP: {item.repNo}</span>}
+                        {item.repStatus && <span>· {item.repStatus}</span>}
+                      </div>
+                    </div>
+                    <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold tabular-nums">
+                      {isFa ? `تعداد: ${fmt(qtyVal)}` : `Qty: ${fmt(qtyVal)}`}
+                      {item.countingUnit ? ` ${item.countingUnit}` : ''}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* اقلام دارای مغایرت یا آسیب‌دیدگی فعال */}
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
+              <ClipboardList className="w-4 h-4" />
+              <span>
+                {isFa
+                  ? `اقلام دارای مغایرت یا آسیب‌دیدگی فعال (${fmt(openMerCount)})`
+                  : `Active Discrepancy or Damaged Items (${fmt(openMerCount)})`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('detailed')}
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+            >
+              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {openMerItems.length === 0 ? (
+            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
+              {isFa ? 'اقلام دارای مغایرت یا آسیب‌دیدگی فعالی یافت نشد.' : 'No active discrepancy or damaged items.'}
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--border-subtle)]">
+              {openMerItems.map((item) => {
+                const qtyVal =
+                  (item.damagedQty && item.damagedQty > 0 ? item.damagedQty : 0) ||
+                  (item.shortage && item.shortage > 0 ? item.shortage : 0) ||
+                  item.effectiveActualQty ||
+                  item.packingQty ||
+                  0;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onInspectDetailedShipment(item.shipmentNo)}
+                    className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold truncate bidi-plaintext">
+                        {item.description || item.generalDescription}
+                      </div>
+                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                        <span dir="ltr">{item.shipmentNo}</span>
+                        {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
+                        {item.merNo && <span dir="ltr">· MER: {item.merNo}</span>}
+                        {item.merStatus && <span>· {item.merStatus}</span>}
+                      </div>
+                    </div>
+                    <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold tabular-nums">
+                      {isFa ? `تعداد: ${fmt(qtyVal)}` : `Qty: ${fmt(qtyVal)}`}
+                      {item.countingUnit ? ` ${item.countingUnit}` : ''}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

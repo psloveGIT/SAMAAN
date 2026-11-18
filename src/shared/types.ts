@@ -848,6 +848,10 @@ export interface SelectionFormulaSummary {
   smrMapnaQtySum: number;
   mivMapnaQtySum: number;
   transitAmountSum: number;
+  uniquePackingsCount?: number;
+  transitArrivedPackingsCount?: number;
+  transitShippingPackingsCount?: number;
+  transitInspectionPackingsCount?: number;
   packingsByIsland?: IslandPackingCount[];
   openMerCount?: number;
   openRepCount?: number;

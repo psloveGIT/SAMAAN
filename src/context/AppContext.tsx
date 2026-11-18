@@ -23,7 +23,7 @@ const PREFS_STORAGE_KEY = 'samaan_user_preferences_v1';
 const INITIAL_PREFS: UserPreferences = {
   language: 'fa',
   calendar: 'jalali',
-  theme: 'light',
+  theme: 'dark',
   eyeComfort: false,
 };
 
@@ -35,7 +35,7 @@ function readStoredPrefs(): UserPreferences {
     return {
       language: parsed.language === 'en' ? 'en' : 'fa',
       calendar: parsed.calendar === 'gregorian' ? 'gregorian' : 'jalali',
-      theme: parsed.theme === 'dark' ? 'dark' : 'light',
+      theme: parsed.theme === 'light' ? 'light' : 'dark',
       eyeComfort: Boolean(parsed.eyeComfort),
     };
   } catch {

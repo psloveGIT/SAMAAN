@@ -1741,7 +1741,27 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               <table className="w-full text-xs">
                 <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                   <tr>
-                    <th className="py-2.5 px-3 w-9">{isFa ? 'ثبت' : 'Apply'}</th>
+                    <th className="py-2.5 px-3 w-12">
+                      <input
+                        type="checkbox"
+                        aria-label={isFa ? 'انتخاب همه اقلام' : 'Select all items'}
+                        checked={
+                          itemsForResults.length > 0 &&
+                          itemsForResults.every((item) => getDraft(item).selected)
+                        }
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setRowDrafts((prev) => {
+                            const next = { ...prev };
+                            for (const item of itemsForResults) {
+                              const current = next[item.id] || getDraft(item);
+                              next[item.id] = { ...current, selected: checked };
+                            }
+                            return next;
+                          });
+                        }}
+                      />
+                    </th>
                     <th className="py-2.5 px-3 text-start">{t.headers.shipmentNo}</th>
                     <th className="py-2.5 px-3 text-start">{t.headers.packageNo}</th>
                     <th className="py-2.5 px-3 text-start">{t.headers.itemNo}</th>
