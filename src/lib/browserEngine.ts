@@ -1409,7 +1409,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         pageSize: fetchAll ? Math.max(1, total) : pageSize,
         totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
         filteredSummary,
-        packingMeta: db.packingMeta,
+        packingMeta: {},
       } as T;
     }
 
@@ -1448,7 +1448,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       pageSize: fetchAll ? Math.max(1, total) : pageSize,
       totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
-      packingMeta: db.packingMeta,
+      packingMeta: {},
     } as T;
   }
 

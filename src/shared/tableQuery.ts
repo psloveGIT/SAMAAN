@@ -177,6 +177,83 @@ interface PkgGroupSummary {
 interface PkBucketSummary {
   groups: PkgGroupSummary[];
   allInPk: GeneralLinkedStatus;
+  byNorm: Map<string, number[]>;
+  byCompact: Map<string, number[]>;
+  byTokenRaw: Map<string, number[]>;
+  byDigitsOnly: Map<number, number[]>;
+  bySuffixDigits: Map<number, number[]>;
+  byCompactBigram: Map<string, number[]>;
+  byCompactTrigram: Map<string, number[]>;
+  byNonPureLen2: Map<string, number[]>;
+  byNonPureLastTrigram: Map<string, number[]>;
+}
+
+function pushIdx<K>(map: Map<K, number[]>, key: K, idx: number): void {
+  let list = map.get(key);
+  if (!list) {
+    list = [idx];
+    map.set(key, list);
+  } else if (list[list.length - 1] !== idx) {
+    list.push(idx);
+  }
+}
+
+function buildPkBucketIndexes(groups: PkgGroupSummary[]): Omit<PkBucketSummary, 'groups' | 'allInPk'> {
+  const byNorm = new Map<string, number[]>();
+  const byCompact = new Map<string, number[]>();
+  const byTokenRaw = new Map<string, number[]>();
+  const byDigitsOnly = new Map<number, number[]>();
+  const bySuffixDigits = new Map<number, number[]>();
+  const byCompactBigram = new Map<string, number[]>();
+  const byCompactTrigram = new Map<string, number[]>();
+  const byNonPureLen2 = new Map<string, number[]>();
+  const byNonPureLastTrigram = new Map<string, number[]>();
+
+  for (let idx = 0; idx < groups.length; idx += 1) {
+    const p = groups[idx].preparedPkg;
+    if (p.norm) pushIdx(byNorm, p.norm, idx);
+    if (p.compact) pushIdx(byCompact, p.compact, idx);
+
+    for (let t = 0; t < p.tokens.length; t += 1) {
+      const tok = p.tokens[t];
+      pushIdx(byTokenRaw, tok.raw, idx);
+      if (tok.digitsOnly !== null) pushIdx(byDigitsOnly, tok.digitsOnly, idx);
+      if (tok.suffixDigits !== null) pushIdx(bySuffixDigits, tok.suffixDigits, idx);
+    }
+
+    const cLen = p.compact.length;
+    if (cLen >= 2) {
+      if (cLen === 2) {
+        pushIdx(byCompactBigram, p.compact, idx);
+      } else {
+        for (let j = 0; j <= cLen - 2; j += 1) {
+          pushIdx(byCompactBigram, p.compact.slice(j, j + 2), idx);
+        }
+        for (let j = 0; j <= cLen - 3; j += 1) {
+          pushIdx(byCompactTrigram, p.compact.slice(j, j + 3), idx);
+        }
+      }
+      if (!p.isPureDigits) {
+        if (cLen === 2) {
+          pushIdx(byNonPureLen2, p.compact, idx);
+        } else {
+          pushIdx(byNonPureLastTrigram, p.compact.slice(cLen - 3), idx);
+        }
+      }
+    }
+  }
+
+  return {
+    byNorm,
+    byCompact,
+    byTokenRaw,
+    byDigitsOnly,
+    bySuffixDigits,
+    byCompactBigram,
+    byCompactTrigram,
+    byNonPureLen2,
+    byNonPureLastTrigram,
+  };
 }
 
 /**
@@ -259,8 +336,10 @@ export function createGeneralDetailedLinker(
       if (hasReplaced) grp.hasReplaced = true;
     }
 
+    const groups = Array.from(groupMap.values());
+    const indexes = buildPkBucketIndexes(groups);
     const summary: PkBucketSummary = {
-      groups: Array.from(groupMap.values()),
+      groups,
       allInPk: {
         detailedCount: totalCount,
         hasLinkedShortage: allShortage,
@@ -268,6 +347,7 @@ export function createGeneralDetailedLinker(
         hasLinkedDiscrepancy: allDiscrepancy,
         hasLinkedReplaced: allReplaced,
       },
+      ...indexes,
     };
     preparedBuckets.set(pkNorm, summary);
     rawByPk.delete(pkNorm);
@@ -300,14 +380,119 @@ export function createGeneralDetailedLinker(
     let hasLinkedDiscrepancy = false;
     let hasLinkedReplaced = false;
 
-    for (let i = 0; i < bucket.groups.length; i += 1) {
-      const grp = bucket.groups[i];
-      if (!matchesPreparedPackage(grp.preparedPkg, queryPkg)) continue;
+    const accumGroup = (grp: PkgGroupSummary) => {
       detailedCount += grp.count;
       if (grp.hasShortage) hasLinkedShortage = true;
       if (grp.hasDamaged) hasLinkedDamaged = true;
       if (grp.hasDiscrepancy) hasLinkedDiscrepancy = true;
       if (grp.hasReplaced) hasLinkedReplaced = true;
+    };
+
+    // Fast path for small buckets where full scan is trivial
+    if (bucket.groups.length <= 16) {
+      for (let i = 0; i < bucket.groups.length; i += 1) {
+        const grp = bucket.groups[i];
+        if (matchesPreparedPackage(grp.preparedPkg, queryPkg)) {
+          accumGroup(grp);
+        }
+      }
+    } else {
+      const matchedIndices = new Set<number>();
+      const addList = (list: number[] | undefined) => {
+        if (!list) return;
+        for (let i = 0; i < list.length; i += 1) {
+          matchedIndices.add(list[i]);
+        }
+      };
+
+      // 1. Exact norm & compact
+      addList(bucket.byNorm.get(queryPkg.norm));
+      if (queryPkg.compact) {
+        addList(bucket.byCompact.get(queryPkg.compact));
+      }
+
+      // 2. Token matches
+      for (let i = 0; i < queryPkg.tokens.length; i += 1) {
+        const qt = queryPkg.tokens[i];
+        addList(bucket.byTokenRaw.get(qt.raw));
+        if (qt.digitsOnly !== null) {
+          addList(bucket.byDigitsOnly.get(qt.digitsOnly));
+          addList(bucket.bySuffixDigits.get(qt.digitsOnly));
+        }
+        if (qt.suffixDigits !== null) {
+          addList(bucket.byDigitsOnly.get(qt.suffixDigits));
+        }
+      }
+
+      // 3a. Non-pure-digit query substring contained in cand.compact
+      const qCompact = queryPkg.compact;
+      if (!queryPkg.isPureDigits && qCompact.length >= 2) {
+        if (qCompact.length === 2) {
+          const list = bucket.byCompactBigram.get(qCompact);
+          if (list) {
+            for (let i = 0; i < list.length; i += 1) {
+              const idx = list[i];
+              if (!matchedIndices.has(idx) && bucket.groups[idx].preparedPkg.compact.includes(qCompact)) {
+                matchedIndices.add(idx);
+              }
+            }
+          }
+        } else {
+          // Pick the rarest 3-gram of queryPkg.compact to minimize candidates
+          let rarestList: number[] | undefined;
+          let impossible = false;
+          for (let j = 0; j <= qCompact.length - 3; j += 1) {
+            const list = bucket.byCompactTrigram.get(qCompact.slice(j, j + 3));
+            if (!list) {
+              impossible = true;
+              break;
+            }
+            if (!rarestList || list.length < rarestList.length) {
+              rarestList = list;
+            }
+          }
+          if (!impossible && rarestList) {
+            for (let i = 0; i < rarestList.length; i += 1) {
+              const idx = rarestList[i];
+              if (!matchedIndices.has(idx) && bucket.groups[idx].preparedPkg.compact.includes(qCompact)) {
+                matchedIndices.add(idx);
+              }
+            }
+          }
+        }
+      }
+
+      // 3b. Non-pure-digit cand.compact contained in query.compact
+      if (qCompact.length >= 2) {
+        for (let j = 0; j <= qCompact.length - 2; j += 1) {
+          const bgList = bucket.byNonPureLen2.get(qCompact.slice(j, j + 2));
+          if (bgList) {
+            for (let i = 0; i < bgList.length; i += 1) {
+              matchedIndices.add(bgList[i]);
+            }
+          }
+        }
+        if (qCompact.length >= 3) {
+          for (let j = 0; j <= qCompact.length - 3; j += 1) {
+            const tgList = bucket.byNonPureLastTrigram.get(qCompact.slice(j, j + 3));
+            if (tgList) {
+              for (let i = 0; i < tgList.length; i += 1) {
+                const idx = tgList[i];
+                if (!matchedIndices.has(idx)) {
+                  const candCompact = bucket.groups[idx].preparedPkg.compact;
+                  if (qCompact.includes(candCompact)) {
+                    matchedIndices.add(idx);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      for (const idx of matchedIndices) {
+        accumGroup(bucket.groups[idx]);
+      }
     }
 
     const out: GeneralLinkedStatus = {

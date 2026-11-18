@@ -55,21 +55,23 @@ export function PrintReportModal<T>({
   }, [open, columns, rows, defaultSelectedKeys]);
 
   const activeColumns = useMemo(
-    () => columns.filter((c) => selectedKeys.includes(c.key)),
-    [columns, selectedKeys],
+    () => (open ? columns.filter((c) => selectedKeys.includes(c.key)) : []),
+    [open, columns, selectedKeys],
   );
 
   const nonEmptyColumnKeys = useMemo(
     () =>
-      columns
-        .filter((col) =>
-          rows.some((r) => {
-            const v = col.getValue(r);
-            return v !== null && v !== undefined && String(v).trim() !== '';
-          }),
-        )
-        .map((c) => c.key),
-    [columns, rows],
+      open
+        ? columns
+            .filter((col) =>
+              rows.some((r) => {
+                const v = col.getValue(r);
+                return v !== null && v !== undefined && String(v).trim() !== '';
+              }),
+            )
+            .map((c) => c.key)
+        : [],
+    [open, columns, rows],
   );
 
   if (!open) return null;

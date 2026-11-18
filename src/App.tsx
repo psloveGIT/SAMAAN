@@ -88,10 +88,44 @@ const SamaanWorkspace: React.FC = () => {
   }, [user, activeTab]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-      registerSW({ immediate: true });
-    }
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let reloaded = false;
+    const onControllerChange = () => {
+      if (!hadController || reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    registerSW({
+      immediate: true,
+      onRegisteredSW(_swUrl, reg) {
+        reg?.update().catch(() => {});
+      },
+    });
+    return () => {
+      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const prefetch = () => {
+      void import('./components/GeneralView.tsx');
+      void import('./components/DetailedView.tsx');
+      void import('./components/TransitView.tsx');
+    };
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof w.requestIdleCallback === 'function') {
+      const id = w.requestIdleCallback(prefetch, { timeout: 1500 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const timer = window.setTimeout(prefetch, 400);
+    return () => window.clearTimeout(timer);
+  }, [user]);
 
   const openNewPacking = (packingNo = '') => {
     setTransitPrefill(null);

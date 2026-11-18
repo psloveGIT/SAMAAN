@@ -29,7 +29,7 @@ interface ExcelColumnFilterProps {
   onApplyFilter: (colKey: string, allowedValues: string[] | undefined) => void;
 }
 
-export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
+const ExcelColumnFilterInner: React.FC<ExcelColumnFilterProps> = ({
   scope,
   colKey,
   label,
@@ -427,3 +427,5 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
     </div>
   );
 };
+
+export const ExcelColumnFilter = React.memo(ExcelColumnFilterInner);

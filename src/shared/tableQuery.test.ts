@@ -234,3 +234,45 @@ test('compileColFilters and sortRowsByColumn handle blanks, dates, and Persian n
     ['1', '2'],
   );
 });
+
+test('createGeneralDetailedLinker preserves non-digit substring matching and stays <250ms when 5,000 rows share ONE packing list', () => {
+  const generalRows: GeneralEntry[] = [];
+  const detailedRows: DetailedEntry[] = [];
+
+  for (let i = 0; i < 5000; i += 1) {
+    const num = i + 1;
+    generalRows.push(
+      makeGeneral({
+        id: `g-same-${i}`,
+        packingListNo: 'SAME-PK-999',
+        packageNo: i === 0 ? 'BOX-AB' : i === 1 ? 'CRT-XY' : `PKG-${num}`,
+      }),
+    );
+    detailedRows.push(
+      makeDetailed({
+        id: `d-same-${i}`,
+        shipmentNo: 'SAME-PK-999',
+        packageNo: i === 0 ? 'BOX-A' : i === 1 ? 'XY' : String(num),
+        packingQty: 10,
+        actualQty: i % 25 === 0 ? 7 : 10,
+      }),
+    );
+  }
+
+  const start = performance.now();
+  const resolveLinked = createGeneralDetailedLinker(detailedRows, new Set<string>());
+  const firstMatch = resolveLinked('SAME-PK-999', 'BOX-AB');
+  const twoCharMatch = resolveLinked('SAME-PK-999', 'CRT-XY');
+  let shortageCount = 0;
+  for (let i = 0; i < generalRows.length; i += 1) {
+    const res = resolveLinked(generalRows[i].packingListNo, generalRows[i].packageNo);
+    if (res.hasLinkedShortage) shortageCount += 1;
+  }
+  const elapsedMs = performance.now() - start;
+
+  assert.equal(firstMatch.detailedCount, 1);
+  assert.equal(firstMatch.hasLinkedShortage, true);
+  assert.equal(twoCharMatch.detailedCount, 1);
+  assert.ok(shortageCount >= 199, `Expected >=199 shortages, got ${shortageCount}`);
+  assert.ok(elapsedMs < 250, `Expected <250ms for 5000x5000 same-PK pass, got ${elapsedMs.toFixed(1)}ms`);
+});

@@ -17,7 +17,7 @@ function fmtNum(n: number, lang: 'fa' | 'en'): string {
   return formatDisplayNumber(n, lang, { maximumFractionDigits: 3 });
 }
 
-export const SelectionSummaryBar: React.FC<SelectionSummaryBarProps> = ({
+const SelectionSummaryBarInner: React.FC<SelectionSummaryBarProps> = ({
   scope,
   selectedCount,
   summary,
@@ -237,3 +237,5 @@ export const SelectionSummaryBar: React.FC<SelectionSummaryBarProps> = ({
     </div>
   );
 };
+
+export const SelectionSummaryBar = React.memo(SelectionSummaryBarInner);

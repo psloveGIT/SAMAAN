@@ -1018,7 +1018,7 @@ async function startServer() {
         pageSize: fetchAll ? Math.max(1, total) : pageSize,
         totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
         filteredSummary,
-        packingMeta: store.db.packingMeta,
+        packingMeta: {},
       });
       return;
     }
@@ -1059,7 +1059,7 @@ async function startServer() {
       pageSize: fetchAll ? Math.max(1, total) : pageSize,
       totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
-      packingMeta: store.db.packingMeta,
+      packingMeta: {},
     });
   });
 
@@ -6235,8 +6235,18 @@ self.addEventListener('activate', (event) => {
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
     if (fs.existsSync(distDir)) {
-      app.use(express.static(distDir));
+      app.use(
+        express.static(distDir, {
+          setHeaders: (res, filePath) => {
+            const base = path.basename(filePath);
+            if (base === 'index.html' || base === 'sw.js' || base === 'manifest.webmanifest') {
+              res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            }
+          },
+        }),
+      );
       app.get('*', (_req, res) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         res.sendFile(path.join(distDir, 'index.html'));
       });
     }

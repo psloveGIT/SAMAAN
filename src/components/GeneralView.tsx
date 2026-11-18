@@ -65,6 +65,167 @@ interface GeneralListResponse {
   packingMeta: Record<string, PackingStatusMeta>;
 }
 
+interface GeneralColDef {
+  key: string;
+  header: string;
+  isNum?: boolean;
+  isDate?: boolean;
+  hideInTable?: boolean;
+  get: (r: GeneralRowView) => string | number | null | undefined;
+}
+
+interface GeneralTableRowProps {
+  row: GeneralRowView;
+  visibleColumns: GeneralColDef[];
+  isSelected: boolean;
+  canEdit: boolean;
+  isFa: boolean;
+  calendar: 'jalali' | 'gregorian';
+  lang: 'fa' | 'en';
+  closedBadgeLabel: string;
+  closePackingBtnLabel: string;
+  reopenPackingBtnLabel: string;
+  editLabel: string;
+  deleteLabel: string;
+  onToggleRow: (row: GeneralRowView) => void;
+  onInspect: (row: GeneralRowView) => void;
+  onOpenLinkedDetailed: (packingNo: string, packageNo: string) => void;
+  onTogglePackingClosed: (packingNo: string, currentlyClosed: boolean) => void;
+  onEdit: (row: GeneralRowView) => void;
+  onDelete: (row: GeneralRowView) => void;
+}
+
+const GeneralTableRow = React.memo<GeneralTableRowProps>(({
+  row,
+  visibleColumns,
+  isSelected,
+  canEdit,
+  isFa,
+  calendar,
+  lang,
+  closedBadgeLabel,
+  closePackingBtnLabel,
+  reopenPackingBtnLabel,
+  editLabel,
+  deleteLabel,
+  onToggleRow,
+  onInspect,
+  onOpenLinkedDetailed,
+  onTogglePackingClosed,
+  onEdit,
+  onDelete,
+}) => (
+  <tr
+    onClick={() => onInspect(row)}
+    className="cursor-pointer hover:bg-[var(--bg-subtle)]/60 transition-colors"
+  >
+    <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
+      <input
+        type="checkbox"
+        checked={isSelected}
+        onChange={() => onToggleRow(row)}
+      />
+    </td>
+
+    {visibleColumns.map((col) => {
+      const rawVal = col.get(row);
+      const displayVal =
+        typeof rawVal === 'number'
+          ? formatDisplayNumber(rawVal, lang)
+          : formatMultiValueCell(rawVal, {
+              isDate: Boolean(col.isDate),
+              calendar,
+              lang,
+            });
+      return (
+        <td
+          key={col.key}
+          className={`py-2 px-3 whitespace-pre-line align-top max-w-[280px] leading-relaxed tabular-nums bidi-plaintext ${
+            col.isNum ? 'text-end' : 'text-start'
+          }`}
+          title={String(displayVal)}
+        >
+          {displayVal}
+        </td>
+      );
+    })}
+
+    <td className="py-2 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center gap-1.5">
+        {row.packingClosed ? (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--status-success-bg)] text-[var(--status-success)] text-[11px] font-semibold">
+            <Lock className="w-3 h-3" />
+            <span>{closedBadgeLabel}</span>
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[11px] font-medium">
+            <CheckCircle2 className="w-3 h-3" />
+            <span>{isFa ? 'باز / در جریان' : 'Open / Active'}</span>
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => onOpenLinkedDetailed(row.packingListNo, row.packageNo)}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--border-subtle)] hover:border-[var(--accent-primary)] text-[11px] font-medium text-[var(--accent-primary)]"
+        >
+          <Link2 className="w-3 h-3" />
+          <span className="tabular-nums">
+            {isFa ? 'جزئیات' : 'Details'}
+            {row.detailedCount ? ` (${row.detailedCount})` : ''}
+          </span>
+        </button>
+      </div>
+    </td>
+
+    <td className="py-2 px-3 whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
+      <div className="inline-flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onInspect(row)}
+          title={isFa ? 'مشاهده اطلاعات کامل سطر' : 'Inspect Row Details'}
+          className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+        >
+          <Eye className="w-3.5 h-3.5" />
+        </button>
+        {canEdit && (
+          <>
+            {row.packingListNo && (
+              <button
+                type="button"
+                onClick={() => onTogglePackingClosed(row.packingListNo, Boolean(row.packingClosed))}
+                title={row.packingClosed ? reopenPackingBtnLabel : closePackingBtnLabel}
+                className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+              >
+                {row.packingClosed ? (
+                  <LockOpen className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                ) : (
+                  <Lock className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onEdit(row)}
+              className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+              title={editLabel}
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(row)}
+              className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+              title={deleteLabel}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+      </div>
+    </td>
+  </tr>
+));
+
 interface GeneralViewProps {
   categories: CategoryStore;
   refreshSignal: number;
@@ -273,7 +434,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     );
   }, [allFilteredIds, selectedRows, data]);
 
-  const columns = useMemo(
+  const columns = useMemo<GeneralColDef[]>(
     () => [
       { key: 'rowNo', header: t.headers.rowNo, isNum: true, get: (r: GeneralRowView) => r.rowNo },
       { key: 'packingListNo', header: t.headers.packingListNo, get: (r: GeneralRowView) => r.packingListNo },
@@ -312,17 +473,64 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     return showExtraCols ? columns : columns.filter((col) => !col.hideInTable);
   }, [columns, showExtraCols]);
 
+  const printColumns = useMemo(
+    () =>
+      columns.map((c) => ({
+        key: c.key,
+        header: c.header,
+        isDate: c.isDate,
+        getValue: c.get,
+      })),
+    [columns],
+  );
+
+  const defaultPrintColKeys = useMemo(
+    () => visibleColumns.map((c) => c.key),
+    [visibleColumns],
+  );
+
+  const printRows = useMemo(
+    () => printRowsOverride ?? (selectedRows.length > 0 ? selectedRows : items),
+    [printRowsOverride, selectedRows, items],
+  );
+
   const clearSelection = useCallback(() => {
     setSelectedMap({});
     setAllFilteredIds(null);
   }, []);
 
-  const toggleRow = (row: GeneralRowView) => {
-    if (allFilteredIds !== null) {
-      const nextIds = allFilteredIds.includes(row.id)
-        ? allFilteredIds.filter((id) => id !== row.id)
-        : [...allFilteredIds, row.id];
-      setAllFilteredIds(nextIds.length > 0 ? nextIds : null);
+  const handleSortChange = useCallback((k: string, dir: 'asc' | 'desc' | null) => {
+    setSortBy(dir ? k : '');
+    setSortDir(dir || '');
+    setPage(1);
+  }, []);
+
+  const handleApplyColFilter = useCallback(
+    (k: string, vals: string[] | undefined) => {
+      setColFilters((prev) => {
+        const next = { ...prev };
+        if (vals === undefined) delete next[k];
+        else next[k] = vals;
+        return next;
+      });
+      clearSelection();
+      setPage(1);
+    },
+    [clearSelection],
+  );
+
+  const allFilteredIdsRef = useRef<string[] | null>(allFilteredIds);
+  allFilteredIdsRef.current = allFilteredIds;
+
+  const toggleRow = useCallback((row: GeneralRowView) => {
+    if (allFilteredIdsRef.current !== null) {
+      setAllFilteredIds((prevIds) => {
+        if (prevIds === null) return null;
+        const nextIds = prevIds.includes(row.id)
+          ? prevIds.filter((id) => id !== row.id)
+          : [...prevIds, row.id];
+        return nextIds.length > 0 ? nextIds : null;
+      });
       return;
     }
     setSelectedMap((prev) => {
@@ -331,9 +539,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       else next[row.id] = row;
       return next;
     });
-  };
+  }, []);
 
-  const toggleAllOnPage = () => {
+  const toggleAllOnPage = useCallback(() => {
     if (allFilteredIds !== null) {
       clearSelection();
       return;
@@ -348,9 +556,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       }
       return next;
     });
-  };
+  }, [allFilteredIds, clearSelection, items, selectedMap]);
 
-  const toggleSelectAllTable = async () => {
+  const toggleSelectAllTable = useCallback(async () => {
     if (allFilteredIds !== null) {
       clearSelection();
       return;
@@ -367,9 +575,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     } finally {
       setSelectingAll(false);
     }
-  };
+  }, [allFilteredIds, buildFilterParams, clearSelection, notify]);
 
-  const handleOpenPrint = async () => {
+  const handleOpenPrint = useCallback(async () => {
     if (allFilteredIds !== null) {
       if (data && data.totalPages <= 1) {
         setPrintRowsOverride(items.filter((r) => selectedIdSet.has(r.id)));
@@ -389,9 +597,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       setPrintRowsOverride(null);
     }
     setPrintOpen(true);
-  };
+  }, [allFilteredIds, buildFilterParams, data, items, notify, selectedIdSet]);
 
-  const handleTogglePackingClosed = async (packingNo: string, currentlyClosed: boolean) => {
+  const handleTogglePackingClosed = useCallback(async (packingNo: string, currentlyClosed: boolean) => {
     try {
       const endpoint = currentlyClosed
         ? `/api/packing/${encodeURIComponent(packingNo)}/reopen`
@@ -412,9 +620,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     }
-  };
+  }, [isFa, loadData, notify, onDataChanged]);
 
-  const openEditRow = (row: GeneralRowView) => {
+  const openEditRow = useCallback((row: GeneralRowView) => {
     setEditing({ ...row });
     setAckClosedEdit(false);
     setEditError('');
@@ -428,7 +636,15 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       heightCm: row.heightCm !== null && row.heightCm !== undefined ? String(row.heightCm) : '',
       freightCost: row.freightCost !== null && row.freightCost !== undefined ? formatThousands(row.freightCost, isFa) : '',
     });
-  };
+  }, [isFa]);
+
+  const handleInspectRow = useCallback((row: GeneralRowView) => {
+    setInspected(row);
+  }, []);
+
+  const handleDeleteTarget = useCallback((row: GeneralRowView) => {
+    setDeleteTarget(row);
+  }, []);
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -962,21 +1178,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       activeValues={colFilters[col.key]}
                       sortDir={sortBy === col.key ? (sortDir || null) : null}
                       refreshSignal={refreshSignal}
-                      onSortChange={(k, dir) => {
-                        setSortBy(dir ? k : '');
-                        setSortDir(dir || '');
-                        setPage(1);
-                      }}
-                      onApplyFilter={(k, vals) => {
-                        setColFilters((prev) => {
-                          const next = { ...prev };
-                          if (vals === undefined) delete next[k];
-                          else next[k] = vals;
-                          return next;
-                        });
-                        clearSelection();
-                        setPage(1);
-                      }}
+                      onSortChange={handleSortChange}
+                      onApplyFilter={handleApplyColFilter}
                     />
                   </th>
                 ))}
@@ -1003,122 +1206,27 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </tr>
               ) : (
                 items.map((row) => (
-                  <tr
+                  <GeneralTableRow
                     key={row.id}
-                    onClick={() => setInspected(row)}
-                    className="cursor-pointer hover:bg-[var(--bg-subtle)]/60 transition-colors"
-                  >
-                    <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={allFilteredIds !== null ? selectedIdSet.has(row.id) : Boolean(selectedMap[row.id])}
-                        onChange={() => toggleRow(row)}
-                      />
-                    </td>
-
-                    {visibleColumns.map((col) => {
-                      const rawVal = col.get(row);
-                      const displayVal =
-                        typeof rawVal === 'number'
-                          ? formatDisplayNumber(rawVal, prefs.language)
-                          : formatMultiValueCell(rawVal, {
-                              isDate: Boolean(col.isDate),
-                              calendar: prefs.calendar,
-                              lang: prefs.language,
-                            });
-                      return (
-                        <td
-                          key={col.key}
-                          className={`py-2 px-3 whitespace-pre-line align-top max-w-[280px] leading-relaxed tabular-nums bidi-plaintext ${
-                            col.isNum ? 'text-end' : 'text-start'
-                          }`}
-                          title={String(displayVal)}
-                        >
-                          {displayVal}
-                        </td>
-                      );
-                    })}
-
-                    <td className="py-2 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-1.5">
-                        {row.packingClosed ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--status-success-bg)] text-[var(--status-success)] text-[11px] font-semibold">
-                            <Lock className="w-3 h-3" />
-                            <span>{t.packing.closedBadge}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[11px] font-medium">
-                            <CheckCircle2 className="w-3 h-3" />
-                            <span>{isFa ? 'باز / در جریان' : 'Open / Active'}</span>
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => onOpenLinkedDetailed(row.packingListNo, row.packageNo)}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--border-subtle)] hover:border-[var(--accent-primary)] text-[11px] font-medium text-[var(--accent-primary)]"
-                        >
-                          <Link2 className="w-3 h-3" />
-                          <span className="tabular-nums">
-                            {isFa ? 'جزئیات' : 'Details'}
-                            {row.detailedCount ? ` (${row.detailedCount})` : ''}
-                          </span>
-                        </button>
-                      </div>
-                    </td>
-
-                    <td className="py-2 px-3 whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
-                      <div className="inline-flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setInspected(row)}
-                          title={isFa ? 'مشاهده اطلاعات کامل سطر' : 'Inspect Row Details'}
-                          className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                        {canEdit && (
-                          <>
-                            {row.packingListNo && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleTogglePackingClosed(row.packingListNo, Boolean(row.packingClosed))
-                                }
-                                title={
-                                  row.packingClosed
-                                    ? t.packing.reopenPackingBtn
-                                    : t.packing.closePackingBtn
-                                }
-                                className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                              >
-                                {row.packingClosed ? (
-                                  <LockOpen className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                                ) : (
-                                  <Lock className="w-3.5 h-3.5" />
-                                )}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => openEditRow(row)}
-                              className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                              title={t.controls.edit}
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setDeleteTarget(row)}
-                              className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                              title={t.controls.delete}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                    row={row}
+                    visibleColumns={visibleColumns}
+                    isSelected={allFilteredIds !== null ? selectedIdSet.has(row.id) : Boolean(selectedMap[row.id])}
+                    canEdit={canEdit}
+                    isFa={isFa}
+                    calendar={prefs.calendar}
+                    lang={prefs.language}
+                    closedBadgeLabel={t.packing.closedBadge}
+                    closePackingBtnLabel={t.packing.closePackingBtn}
+                    reopenPackingBtnLabel={t.packing.reopenPackingBtn}
+                    editLabel={t.controls.edit}
+                    deleteLabel={t.controls.delete}
+                    onToggleRow={toggleRow}
+                    onInspect={handleInspectRow}
+                    onOpenLinkedDetailed={onOpenLinkedDetailed}
+                    onTogglePackingClosed={handleTogglePackingClosed}
+                    onEdit={openEditRow}
+                    onDelete={handleDeleteTarget}
+                  />
                 ))
               )}
             </tbody>
@@ -1885,14 +1993,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         open={printOpen}
         onClose={() => { setPrintOpen(false); setPrintRowsOverride(null); }}
         title={t.nav.general}
-        rows={printRowsOverride ?? (selectedRows.length > 0 ? selectedRows : items)}
-        columns={columns.map((c) => ({
-          key: c.key,
-          header: c.header,
-          isDate: c.isDate,
-          getValue: c.get,
-        }))}
-        defaultSelectedKeys={visibleColumns.map((c) => c.key)}
+        rows={printRows}
+        columns={printColumns}
+        defaultSelectedKeys={defaultPrintColKeys}
       />
     </div>
   );
