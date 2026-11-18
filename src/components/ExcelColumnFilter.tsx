@@ -4,9 +4,15 @@ import { ArrowDownAZ, ArrowUpZA, Check, ChevronDown, Filter, Search, X } from 'l
 import { apiRequest } from '../lib/api.ts';
 import { EMPTY_CELL_TOKEN } from '../shared/tableQuery.ts';
 
+interface RawColumnValueItem {
+  token?: unknown;
+  label?: unknown;
+  count?: unknown;
+}
+
 interface ColumnValuesResponse {
-  column: string;
-  values: Array<{ token: string; label: string; count: number }>;
+  column?: string;
+  values: Array<string | RawColumnValueItem>;
 }
 
 interface ExcelColumnFilterProps {
@@ -81,7 +87,20 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
     )
       .then((res) => {
         if (cancelled) return;
-        const vals = res.values || [];
+        const rawVals = Array.isArray(res?.values) ? res.values : [];
+        const vals = rawVals.map((v) => {
+          if (typeof v === 'string') {
+            return {
+              token: v,
+              label: v === EMPTY_CELL_TOKEN ? '' : v,
+              count: 0,
+            };
+          }
+          const tok = String(v?.token ?? '');
+          const lbl = String(v?.label ?? (tok === EMPTY_CELL_TOKEN ? '' : tok));
+          const cnt = typeof v?.count === 'number' && Number.isFinite(v.count) ? v.count : 0;
+          return { token: tok, label: lbl, count: cnt };
+        });
         setOptions(vals);
         if (activeValues === undefined) {
           setDraftChecked(new Set(vals.map((v) => v.token)));
@@ -210,9 +229,9 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
           <div
             ref={popoverRef}
             dir={isFa ? 'rtl' : 'ltr'}
-            style={{ top: pos.top, left: pos.left, width: 280 }}
+            style={{ top: pos.top, left: pos.left, width: 280, maxHeight: 'calc(100vh - 24px)' }}
             onClick={(e) => e.stopPropagation()}
-            className="fixed z-[90] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-xl text-xs text-[var(--text-primary)] overflow-hidden"
+            className="fixed z-[90] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-surface)] shadow-xl text-xs text-[var(--text-primary)] overflow-hidden flex flex-col"
           >
             {/* Header */}
             <div className="px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-subtle)] flex items-center justify-between gap-2">
@@ -304,7 +323,7 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
             </div>
 
             {/* Distinct Values Checkboxes */}
-            <div className="max-h-48 overflow-y-auto p-2 space-y-1">
+            <div className="flex-1 min-h-0 max-h-48 overflow-y-auto p-2 space-y-1">
               {loading ? (
                 <div className="py-6 text-center text-[11px] text-[var(--text-muted)]">
                   {isFa ? 'در حال بارگذاری مقادیر...' : 'Loading values...'}
@@ -325,6 +344,7 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
                   </label>
                   {filteredOptions.map((opt) => {
                     const isBlank = opt.token === EMPTY_CELL_TOKEN;
+                    const safeCount = typeof opt.count === 'number' && Number.isFinite(opt.count) ? opt.count : 0;
                     return (
                       <label
                         key={opt.token}
@@ -345,9 +365,11 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
                             {isBlank ? (isFa ? '(خالی)' : '(Blanks)') : opt.label}
                           </span>
                         </span>
-                        <span className="text-[10px] text-[var(--text-muted)] tabular-nums shrink-0">
-                          {opt.count.toLocaleString(isFa ? 'fa-IR' : 'en-US')}
-                        </span>
+                        {safeCount > 0 && (
+                          <span className="text-[10px] text-[var(--text-muted)] tabular-nums shrink-0">
+                            {safeCount.toLocaleString(isFa ? 'fa-IR' : 'en-US')}
+                          </span>
+                        )}
                       </label>
                     );
                   })}

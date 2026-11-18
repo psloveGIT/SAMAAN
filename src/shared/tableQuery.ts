@@ -1,3 +1,4 @@
+import { computeDetailedEntry, roundQty } from './formulas.ts';
 import { convertDotDatesToSlash, formatIsoDate, normalizeDigits } from './jalali.ts';
 import type {
   CalendarMode,
@@ -9,6 +10,12 @@ import type {
 } from './types.ts';
 
 export const EMPTY_CELL_TOKEN = '__EMPTY__';
+
+export interface DistinctColumnValue {
+  token: string;
+  label: string;
+  count: number;
+}
 
 export const DATE_COLUMN_KEYS = new Set<string>([
   'arrivalDate',
@@ -40,10 +47,25 @@ export function normDupPart(val: unknown): string {
     .toLowerCase();
 }
 
+export function normNumDupPart(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'number') {
+    return Number.isFinite(val) ? String(roundQty(val)) : '';
+  }
+  const cleaned = normalizeDigits(String(val))
+    .replace(/[,،٬\s]/g, '')
+    .trim();
+  if (!cleaned || cleaned === '-' || cleaned === '—') return '';
+  const n = Number(cleaned);
+  if (Number.isFinite(n)) return String(roundQty(n));
+  return normDupPart(val);
+}
+
 /**
  * Duplicate key check for General import:
  * packingListNo, packageNo, itemDescription, supplier, dispatchLocation,
- * arrivalDate, system, subSystem, unit, mapnaEntryMinutesNo.
+ * arrivalDate, system, subSystem, unit, mapnaEntryMinutesNo,
+ * billOfLadingNo, vehicleNo, driverName, freightCost, lengthCm, widthCm, heightCm.
  */
 export function buildGeneralDupKey(
   r: Partial<
@@ -59,6 +81,13 @@ export function buildGeneralDupKey(
       | 'subSystem'
       | 'unit'
       | 'mapnaEntryMinutesNo'
+      | 'billOfLadingNo'
+      | 'vehicleNo'
+      | 'driverName'
+      | 'freightCost'
+      | 'lengthCm'
+      | 'widthCm'
+      | 'heightCm'
     >
   >,
 ): string {
@@ -73,6 +102,13 @@ export function buildGeneralDupKey(
     normDupPart(r.subSystem),
     normDupPart(r.unit),
     normDupPart(r.mapnaEntryMinutesNo),
+    normDupPart(r.billOfLadingNo),
+    normDupPart(r.vehicleNo),
+    normDupPart(r.driverName),
+    normNumDupPart(r.freightCost),
+    normNumDupPart(r.lengthCm),
+    normNumDupPart(r.widthCm),
+    normNumDupPart(r.heightCm),
   ];
   if (!parts[0] && !parts[2] && !parts[9]) return '';
   return parts.join('||');
@@ -81,7 +117,7 @@ export function buildGeneralDupKey(
 /**
  * Duplicate key check for Detailed import:
  * shipmentNo (Packing List), packageNo, itemNo, description, itemCode,
- * supplier, system, subSystem, unit, origin.
+ * supplier, system, subSystem, unit, origin, shortage, surplus.
  */
 export function buildDetailedDupKey(
   r: Partial<
@@ -97,9 +133,31 @@ export function buildDetailedDupKey(
       | 'subSystem'
       | 'unit'
       | 'origin'
+      | 'packingQty'
+      | 'actualQty'
+      | 'damagedQty'
+      | 'shortageBackfills'
     >
-  >,
+  > & {
+    shortage?: number | null;
+    surplus?: number | null;
+  },
 ): string {
+  const computed = computeDetailedEntry({
+    packingQty: r.packingQty ?? null,
+    actualQty: r.actualQty ?? null,
+    damagedQty: r.damagedQty ?? null,
+    shortageBackfills: Array.isArray(r.shortageBackfills) ? r.shortageBackfills : [],
+  } as DetailedEntry);
+  const shortageVal =
+    typeof r.shortage === 'number' && Number.isFinite(r.shortage)
+      ? roundQty(r.shortage)
+      : computed.shortage;
+  const surplusVal =
+    typeof r.surplus === 'number' && Number.isFinite(r.surplus)
+      ? roundQty(r.surplus)
+      : computed.surplus;
+
   const parts = [
     normDupPart(r.shipmentNo),
     normDupPart(r.packageNo),
@@ -111,6 +169,8 @@ export function buildDetailedDupKey(
     normDupPart(r.subSystem),
     normDupPart(r.unit),
     normDupPart(r.origin),
+    normNumDupPart(shortageVal),
+    normNumDupPart(surplusVal),
   ];
   if (!parts[0] && !parts[3]) return '';
   return parts.join('||');
@@ -120,7 +180,7 @@ export function buildDetailedDupKey(
  * Duplicate key check for Transit import:
  * packingListNo, packageNo, itemDescription, overallStatus, arrivalDate,
  * mapnaShippingNotice, supplier, dispatchLocation, system, subSystem,
- * unit, releaseNetNo, interimNo.
+ * unit, releaseNetNo, interimNo, billOfLadingNo.
  */
 export function buildTransitDupKey(
   r: Partial<
@@ -139,6 +199,7 @@ export function buildTransitDupKey(
       | 'unit'
       | 'releaseNetNo'
       | 'interimNo'
+      | 'billOfLadingNo'
     >
   >,
 ): string {
@@ -156,6 +217,7 @@ export function buildTransitDupKey(
     normDupPart(r.unit),
     normDupPart(r.releaseNetNo),
     normDupPart(r.interimNo),
+    normDupPart(r.billOfLadingNo),
   ];
   if (!parts[0] && !parts[2] && !parts[3]) return '';
   return parts.join('||');
@@ -248,18 +310,30 @@ export function collectDistinctColumnValues(
   rows: Record<string, unknown>[],
   colKey: string,
   calendar: CalendarMode = 'jalali',
-): string[] {
-  const set = new Set<string>();
+): DistinctColumnValue[] {
+  const counts = new Map<string, number>();
   for (const row of rows) {
-    set.add(getRowFilterToken(row, colKey, calendar));
+    const token = getRowFilterToken(row, colKey, calendar);
+    counts.set(token, (counts.get(token) || 0) + 1);
   }
-  const hasEmpty = set.has(EMPTY_CELL_TOKEN);
-  set.delete(EMPTY_CELL_TOKEN);
-  const sorted = Array.from(set).sort((a, b) =>
+  const emptyCount = counts.get(EMPTY_CELL_TOKEN) || 0;
+  counts.delete(EMPTY_CELL_TOKEN);
+  const sortedTokens = Array.from(counts.keys()).sort((a, b) =>
     normalizeDigits(a).localeCompare(normalizeDigits(b), 'fa', { numeric: true, sensitivity: 'base' }),
   );
-  if (hasEmpty) sorted.push(EMPTY_CELL_TOKEN);
-  return sorted;
+  const result: DistinctColumnValue[] = sortedTokens.map((token) => ({
+    token,
+    label: token,
+    count: counts.get(token) || 0,
+  }));
+  if (emptyCount > 0) {
+    result.push({
+      token: EMPTY_CELL_TOKEN,
+      label: '',
+      count: emptyCount,
+    });
+  }
+  return result;
 }
 
 export function checkDateRangeMulti(isoOrMulti: string, fromDate: string, toDate: string): boolean {

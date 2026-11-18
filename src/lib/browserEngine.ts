@@ -1284,14 +1284,14 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const scope = query.get('scope') || 'general';
     const column = (query.get('column') || '').trim();
     const calendar: CalendarMode = query.get('calendar') === 'gregorian' ? 'gregorian' : 'jalali';
-    if (!column) return { values: [] } as T;
+    if (!column) return { column: '', values: [] } as T;
     const sourceRows: Record<string, unknown>[] =
       scope === 'detailed'
         ? (db.detailed.map(computeDetailedEntry) as unknown as Record<string, unknown>[])
         : scope === 'transit'
           ? (db.transit as unknown as Record<string, unknown>[])
           : (db.general as unknown as Record<string, unknown>[]);
-    return { values: collectDistinctColumnValues(sourceRows, column, calendar) } as T;
+    return { column, values: collectDistinctColumnValues(sourceRows, column, calendar) } as T;
   }
 
   // ---------------- GENERAL ----------------
@@ -4629,6 +4629,11 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         const genDesc = r.generalDescription
           ? formatGeneralDescriptionCase(r.generalDescription)
           : inferGeneralDescription(r.description);
+        const {
+          shortage: _impShortage,
+          surplus: _impSurplus,
+          ...cleanDetailedRow
+        } = r as Omit<DetailedEntry, 'id'> & { shortage?: number | null; surplus?: number | null };
         if (existing && !forceAdd) {
           if (dupPolicy === 'skip') {
             skipped += 1;
@@ -4653,7 +4658,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
             return;
           }
           Object.assign(existing, {
-            ...r,
+            ...cleanDetailedRow,
             generalDescription: genDesc,
             id: existing.id,
             rowNo: existing.rowNo,
@@ -4667,7 +4672,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           return;
         }
         const created: DetailedEntry = {
-          ...r,
+          ...cleanDetailedRow,
           generalDescription: genDesc,
           shortageBackfills: r.shortageBackfills || [],
           createdAt: r.createdAt || now,

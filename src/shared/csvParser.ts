@@ -68,6 +68,8 @@ export const DETAILED_IMPORT_COLUMNS: ImportColumnDef[] = [
   { key: 'expirationDate', labelFa: 'تاریخ انقضاء', labelEn: 'Expiration Date', isDate: true },
   { key: 'packingQty', labelFa: 'مقدار پکینگ', labelEn: 'Packing Qty', isNumeric: true },
   { key: 'actualQty', labelFa: 'مقدار واقعی', labelEn: 'Actual Qty', isNumeric: true },
+  { key: 'shortage', labelFa: 'کسری', labelEn: 'Shortage', isNumeric: true },
+  { key: 'surplus', labelFa: 'اضافی', labelEn: 'Surplus', isNumeric: true },
   { key: 'damagedQty', labelFa: 'آسیب دیده', labelEn: 'Damaged Qty', isNumeric: true },
   { key: 'mtoRef', labelFa: 'MTO', labelEn: 'MTO' },
   { key: 'repNo', labelFa: 'شماره REP', labelEn: 'REP No.' },
@@ -470,6 +472,8 @@ function getAutoDetailedMapping(combinedCols: string[]): Record<string, number> 
     expirationDate: findCol(combinedCols, ['تاریخ انقضا', 'تاریخ انقضاء', 'expiration date', 'expiry'], -1),
     packingQty: findCol(combinedCols, ['مقدار پکینگ', 'packing qty'], 12 + offset),
     actualQty: findCol(combinedCols, ['مقدار واقعی', 'actual qty'], 13 + offset),
+    shortage: findCol(combinedCols, ['کسری', 'مقدار کسری', 'shortage'], -1),
+    surplus: findCol(combinedCols, ['اضافی', 'مقدار اضافی', 'surplus'], -1),
     damagedQty: findCol(combinedCols, ['آسیب دیده', 'damaged qty'], -1),
     mtoRef: findCol(combinedCols, ['mto'], -1),
     repNo: findCol(combinedCols, ['شماره rep', 'rep no'], 16 + offset),
@@ -750,6 +754,8 @@ export function parseDetailedCsv(
   const idxExpirationDate = col('expirationDate');
   const idxPackingQty = col('packingQty');
   const idxActualQty = col('actualQty');
+  const idxShortage = col('shortage');
+  const idxSurplus = col('surplus');
   const idxDamagedQty = col('damagedQty');
   const idxMto = col('mtoRef');
   const idxRepNo = col('repNo');
@@ -808,7 +814,21 @@ export function parseDetailedCsv(
     const parsedCat = idxItemCategory >= 0 ? normalizeItemCategory(line[idxItemCategory]) : '';
     const itemCategory = parsedCat || (chemicalType ? 'chemicals' : '');
 
-    const record: Omit<DetailedEntry, 'id'> = {
+    const packingQtyVal = idxPackingQty >= 0 ? parseNum(line[idxPackingQty]) : null;
+    const rawActualQtyVal = idxActualQty >= 0 ? parseNum(line[idxActualQty]) : null;
+    const parsedShortageVal = idxShortage >= 0 ? parseNum(line[idxShortage]) : null;
+    const parsedSurplusVal = idxSurplus >= 0 ? parseNum(line[idxSurplus]) : null;
+
+    let actualQtyVal = rawActualQtyVal;
+    if (actualQtyVal === null && packingQtyVal !== null) {
+      if (parsedShortageVal !== null && parsedShortageVal > 0) {
+        actualQtyVal = Math.max(0, packingQtyVal - parsedShortageVal);
+      } else if (parsedSurplusVal !== null && parsedSurplusVal > 0) {
+        actualQtyVal = packingQtyVal + parsedSurplusVal;
+      }
+    }
+
+    const record: Omit<DetailedEntry, 'id'> & { shortage?: number | null; surplus?: number | null } = {
       rowNo: idxRowNo >= 0 ? normalizeDigits(cleanStr(line[idxRowNo])) : '',
       arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
       supplier: idxSupplier >= 0 ? cleanStr(line[idxSupplier]) : '',
@@ -824,8 +844,8 @@ export function parseDetailedCsv(
       chemicalType,
       productionDate: idxProductionDate >= 0 ? parseFlexibleDateToIso(line[idxProductionDate] || '', assumedCalendar) : '',
       expirationDate: idxExpirationDate >= 0 ? parseFlexibleDateToIso(line[idxExpirationDate] || '', assumedCalendar) : '',
-      packingQty: idxPackingQty >= 0 ? parseNum(line[idxPackingQty]) : null,
-      actualQty: idxActualQty >= 0 ? parseNum(line[idxActualQty]) : null,
+      packingQty: packingQtyVal,
+      actualQty: actualQtyVal,
       damagedQty: idxDamagedQty >= 0 ? parseNum(line[idxDamagedQty]) : null,
       mtoRef: idxMto >= 0 ? cleanStr(line[idxMto]) : '',
       repNo: idxRepNo >= 0 ? cleanStr(line[idxRepNo]) : '',
@@ -863,6 +883,8 @@ export function parseDetailedCsv(
       mivMapnaQty: idxMivMapQty >= 0 ? parseNum(line[idxMivMapQty]) : null,
       stocktakeInfo: idxStocktake >= 0 ? cleanStr(line[idxStocktake]) : '',
       shortageBackfills: [],
+      ...(idxShortage >= 0 && parsedShortageVal !== null ? { shortage: parsedShortageVal } : {}),
+      ...(idxSurplus >= 0 && parsedSurplusVal !== null ? { surplus: parsedSurplusVal } : {}),
       createdAt: now,
       updatedAt: now,
       createdBy,

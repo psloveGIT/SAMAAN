@@ -875,7 +875,7 @@ async function startServer() {
     const column = String(req.query.column || '').trim();
     const calendar: CalendarMode = req.query.calendar === 'gregorian' ? 'gregorian' : 'jalali';
     if (!column) {
-      res.json({ values: [] });
+      res.json({ column: '', values: [] });
       return;
     }
     const sourceRows: Record<string, unknown>[] =
@@ -885,7 +885,7 @@ async function startServer() {
           ? (store.db.transit as unknown as Record<string, unknown>[])
           : (store.db.general as unknown as Record<string, unknown>[]);
     const values = collectDistinctColumnValues(sourceRows, column, calendar);
-    res.json({ values });
+    res.json({ column, values });
   });
 
   // ---------------- GENERAL (کلی) ----------------
@@ -4912,6 +4912,11 @@ async function startServer() {
         const genDesc = r.generalDescription
           ? formatGeneralDescriptionCase(r.generalDescription)
           : inferGeneralDescription(r.description);
+        const {
+          shortage: _impShortage,
+          surplus: _impSurplus,
+          ...cleanDetailedRow
+        } = r as Omit<DetailedEntry, 'id'> & { shortage?: number | null; surplus?: number | null };
         if (existing && !forceAdd) {
           if (dupPolicy === 'skip') {
             skipped += 1;
@@ -4936,7 +4941,7 @@ async function startServer() {
             return;
           }
           Object.assign(existing, {
-            ...r,
+            ...cleanDetailedRow,
             generalDescription: genDesc,
             id: existing.id,
             rowNo: existing.rowNo,
@@ -4950,7 +4955,7 @@ async function startServer() {
           return;
         }
         const created: DetailedEntry = {
-          ...r,
+          ...cleanDetailedRow,
           generalDescription: genDesc,
           shortageBackfills: r.shortageBackfills || [],
           createdAt: r.createdAt || now,
@@ -5532,6 +5537,38 @@ async function startServer() {
   // ---------------- VITE / STATIC SERVING ----------------
   const httpServer = http.createServer(app);
   if (process.env.NODE_ENV !== 'production') {
+    // Evict any previously registered dev-sw.js or cached registerDevSW script cleanly in dev mode
+    app.get('/@vite-plugin-pwa/pwa-entry-point-loaded', (_req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(`export default function registerDevSW() {
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((reg) => {
+        const urls = [reg.active?.scriptURL, reg.waiting?.scriptURL, reg.installing?.scriptURL];
+        if (urls.some((u) => u && u.includes('dev-sw.js'))) {
+          reg.unregister();
+        }
+      });
+    }).catch(() => {});
+  }
+}`);
+    });
+    app.get('/dev-sw.js', (_req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(`self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      await self.registration.unregister();
+    } catch {}
+  })());
+});`);
+    });
+
     const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
@@ -5549,10 +5586,22 @@ async function startServer() {
                   id.endsWith('/vite/dist/client/client.mjs') ||
                   id.endsWith('\\vite\\dist\\client\\client.mjs')
                 ) {
-                  return code.replace(
-                    'transport.connect(createHMRHandler(handleMessage));',
-                    '/* HMR WebSocket disabled via DISABLE_HMR=true */',
-                  );
+                  return code
+                    .replace(
+                      'transport.connect(createHMRHandler(handleMessage));',
+                      '/* HMR WebSocket disabled via DISABLE_HMR=true */',
+                    )
+                    .replace(
+                      'else throw new SendBeforeConnectError("send was called before connect");',
+                      'else return;',
+                    )
+                    .replace(
+                      'else throw new SendBeforeConnectError("invoke was called before connect");',
+                      'else return null;',
+                    );
+                }
+                if (id.includes('pwa-entry-point-loaded')) {
+                  return 'export default function registerDevSW() {}';
                 }
                 return null;
               },

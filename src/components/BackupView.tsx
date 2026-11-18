@@ -111,7 +111,12 @@ function editableFieldsForScope(scope: 'general' | 'detailed' | 'transit'): stri
       'unit',
       'grossWeight',
       'netWeight',
+      'lengthCm',
+      'widthCm',
+      'heightCm',
+      'billOfLadingNo',
       'vehicleNo',
+      'driverName',
       'freightCost',
     ];
   }
@@ -126,6 +131,8 @@ function editableFieldsForScope(scope: 'general' | 'detailed' | 'transit'): stri
       'itemCode',
       'packingQty',
       'actualQty',
+      'shortage',
+      'surplus',
       'countingUnit',
       'itemCategory',
       'chemicalType',
