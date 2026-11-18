@@ -1,4 +1,4 @@
-import { computeDetailedEntry, roundQty } from './formulas.ts';
+import { computeDetailedEntry, isMerOpen, isRepOpen, roundQty } from './formulas.ts';
 import { convertDotDatesToSlash, formatIsoDate, normalizeDigits } from './jalali.ts';
 import type {
   CalendarMode,
@@ -10,6 +10,8 @@ import type {
 } from './types.ts';
 
 export const EMPTY_CELL_TOKEN = '__EMPTY__';
+
+const FA_NUMERIC_COLLATOR = new Intl.Collator('fa', { numeric: true, sensitivity: 'base' });
 
 export interface DistinctColumnValue {
   token: string;
@@ -47,6 +49,88 @@ export function normDupPart(val: unknown): string {
     .toLowerCase();
 }
 
+export interface PreparedPackageToken {
+  raw: string;
+  digitsOnly: number | null;
+  suffixDigits: number | null;
+}
+
+export interface PreparedPackageInfo {
+  norm: string;
+  compact: string;
+  isPureDigits: boolean;
+  tokens: PreparedPackageToken[];
+}
+
+function parsePackageToken(t: string): PreparedPackageToken {
+  if (/^\d+$/.test(t)) {
+    return { raw: t, digitsOnly: Number(t), suffixDigits: null };
+  }
+  const m = t.match(/^[a-z\u0600-\u06ff]+0*(\d+)$/);
+  if (m) {
+    return { raw: t, digitsOnly: null, suffixDigits: Number(m[1]) };
+  }
+  return { raw: t, digitsOnly: null, suffixDigits: null };
+}
+
+export function preparePackageInfo(raw: string | undefined | null): PreparedPackageInfo {
+  const norm = normDupPart(raw);
+  if (!norm) {
+    return { norm: '', compact: '', isPureDigits: false, tokens: [] };
+  }
+  const compact = norm.replace(/[^a-z0-9\u0600-\u06ff]/g, '');
+  const tokens = norm
+    .split(/[\s,،;|/\\\-_+().:]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map(parsePackageToken);
+  return {
+    norm,
+    compact,
+    isPureDigits: /^\d+$/.test(compact),
+    tokens,
+  };
+}
+
+function preparedTokensEqual(a: PreparedPackageToken, b: PreparedPackageToken): boolean {
+  if (a.raw === b.raw) return true;
+  if (a.digitsOnly !== null && b.digitsOnly !== null) {
+    return a.digitsOnly === b.digitsOnly;
+  }
+  if (a.suffixDigits !== null && b.digitsOnly !== null) {
+    return a.suffixDigits === b.digitsOnly;
+  }
+  if (b.suffixDigits !== null && a.digitsOnly !== null) {
+    return b.suffixDigits === a.digitsOnly;
+  }
+  return false;
+}
+
+export function matchesPreparedPackage(
+  cand: PreparedPackageInfo,
+  query: PreparedPackageInfo,
+): boolean {
+  if (!query.norm) return true;
+  if (!cand.norm) return false;
+  if (cand.norm === query.norm) return true;
+  if (cand.compact && query.compact && cand.compact === query.compact) return true;
+
+  for (let i = 0; i < query.tokens.length; i += 1) {
+    const qt = query.tokens[i];
+    for (let j = 0; j < cand.tokens.length; j += 1) {
+      if (preparedTokensEqual(cand.tokens[j], qt)) return true;
+    }
+  }
+
+  if (!query.isPureDigits && query.compact.length >= 2 && cand.compact.includes(query.compact)) {
+    return true;
+  }
+  if (!cand.isPureDigits && cand.compact.length >= 2 && query.compact.includes(cand.compact)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Flexible package number matching between General and Detailed entries.
  * Handles cases where General contains "PKG-01", "1-2", "1/3", "Box 01"
@@ -62,50 +146,180 @@ export function matchesPackagePartial(
   const cNorm = normDupPart(candidatePkg);
   if (!cNorm) return false;
   if (cNorm === qNorm) return true;
+  return matchesPreparedPackage(preparePackageInfo(cNorm), preparePackageInfo(qNorm));
+}
 
-  const stripNonAlnum = (s: string) => s.replace(/[^a-z0-9\u0600-\u06ff]/g, '');
-  const cCompact = stripNonAlnum(cNorm);
-  const qCompact = stripNonAlnum(qNorm);
-  if (cCompact && qCompact && cCompact === qCompact) return true;
+export interface GeneralLinkedStatus {
+  detailedCount: number;
+  hasLinkedShortage: boolean;
+  hasLinkedDamaged: boolean;
+  hasLinkedDiscrepancy: boolean;
+  hasLinkedReplaced: boolean;
+}
 
-  const tokenize = (s: string) =>
-    s
-      .split(/[\s,،;|/\\\-_+().:]+/)
-      .map((t) => t.trim())
-      .filter(Boolean);
+const EMPTY_LINKED_STATUS: GeneralLinkedStatus = {
+  detailedCount: 0,
+  hasLinkedShortage: false,
+  hasLinkedDamaged: false,
+  hasLinkedDiscrepancy: false,
+  hasLinkedReplaced: false,
+};
 
-  const cTokens = tokenize(cNorm);
-  const qTokens = tokenize(qNorm);
+interface PkgGroupSummary {
+  preparedPkg: PreparedPackageInfo;
+  count: number;
+  hasShortage: boolean;
+  hasDamaged: boolean;
+  hasDiscrepancy: boolean;
+  hasReplaced: boolean;
+}
 
-  const tokensEqual = (a: string, b: string): boolean => {
-    if (a === b) return true;
-    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
-      return Number(a) === Number(b);
+interface PkBucketSummary {
+  groups: PkgGroupSummary[];
+  allInPk: GeneralLinkedStatus;
+}
+
+/**
+ * Builds an O(D) indexed + memoized linker resolving Detailed status flags for General rows.
+ * Optionally restricts indexing to `onlyForPkNorms` when enriching a paginated slice.
+ */
+export function createGeneralDetailedLinker(
+  detailedRows: DetailedEntry[],
+  substitutedIds: Set<string>,
+  onlyForPkNorms?: Set<string>,
+): (packingListNo: string | undefined | null, packageNo: string | undefined | null) => GeneralLinkedStatus {
+  const rawByPk = new Map<string, DetailedEntry[]>();
+  for (let i = 0; i < detailedRows.length; i += 1) {
+    const d = detailedRows[i];
+    const pkNorm = normDupPart(d.shipmentNo);
+    if (!pkNorm) continue;
+    if (onlyForPkNorms && !onlyForPkNorms.has(pkNorm)) continue;
+    let list = rawByPk.get(pkNorm);
+    if (!list) {
+      list = [];
+      rawByPk.set(pkNorm, list);
     }
-    // Check alphanumeric suffix match like "pkg01" vs "1"
-    const mA = a.match(/^([a-z\u0600-\u06ff]+)0*(\d+)$/);
-    const mB = b.match(/^([a-z\u0600-\u06ff]+)0*(\d+)$/);
-    if (mA && /^\d+$/.test(b) && Number(mA[2]) === Number(b)) return true;
-    if (mB && /^\d+$/.test(a) && Number(mB[2]) === Number(a)) return true;
-    return false;
+    list.push(d);
+  }
+
+  const preparedBuckets = new Map<string, PkBucketSummary>();
+  const resultCache = new Map<string, GeneralLinkedStatus>();
+
+  const getBucket = (pkNorm: string): PkBucketSummary | null => {
+    const cached = preparedBuckets.get(pkNorm);
+    if (cached) return cached;
+    const rawList = rawByPk.get(pkNorm);
+    if (!rawList || rawList.length === 0) return null;
+
+    const groupMap = new Map<string, PkgGroupSummary>();
+    let totalCount = 0;
+    let allShortage = false;
+    let allDamaged = false;
+    let allDiscrepancy = false;
+    let allReplaced = false;
+
+    for (let i = 0; i < rawList.length; i += 1) {
+      const d = rawList[i];
+      const c = computeDetailedEntry(d);
+      const hasShortage = c.hasShortage;
+      const hasDamaged = c.hasDamaged;
+      const hasDiscrepancy =
+        isMerOpen(c) ||
+        Boolean(normKey(c.merNo) || normKey(c.merStatus)) ||
+        hasShortage ||
+        hasDamaged;
+      const hasReplaced =
+        isRepOpen(c) ||
+        Boolean(normKey(c.repNo) || normKey(c.repStatus)) ||
+        substitutedIds.has(c.id);
+
+      totalCount += 1;
+      if (hasShortage) allShortage = true;
+      if (hasDamaged) allDamaged = true;
+      if (hasDiscrepancy) allDiscrepancy = true;
+      if (hasReplaced) allReplaced = true;
+
+      const pkgNorm = normDupPart(d.packageNo);
+      let grp = groupMap.get(pkgNorm);
+      if (!grp) {
+        grp = {
+          preparedPkg: preparePackageInfo(pkgNorm),
+          count: 0,
+          hasShortage: false,
+          hasDamaged: false,
+          hasDiscrepancy: false,
+          hasReplaced: false,
+        };
+        groupMap.set(pkgNorm, grp);
+      }
+      grp.count += 1;
+      if (hasShortage) grp.hasShortage = true;
+      if (hasDamaged) grp.hasDamaged = true;
+      if (hasDiscrepancy) grp.hasDiscrepancy = true;
+      if (hasReplaced) grp.hasReplaced = true;
+    }
+
+    const summary: PkBucketSummary = {
+      groups: Array.from(groupMap.values()),
+      allInPk: {
+        detailedCount: totalCount,
+        hasLinkedShortage: allShortage,
+        hasLinkedDamaged: allDamaged,
+        hasLinkedDiscrepancy: allDiscrepancy,
+        hasLinkedReplaced: allReplaced,
+      },
+    };
+    preparedBuckets.set(pkNorm, summary);
+    rawByPk.delete(pkNorm);
+    return summary;
   };
 
-  for (const qt of qTokens) {
-    for (const ct of cTokens) {
-      if (tokensEqual(ct, qt)) return true;
+  return (packingListNo, packageNo) => {
+    const pkNorm = normDupPart(packingListNo);
+    if (!pkNorm) return EMPTY_LINKED_STATUS;
+    const pkgNorm = normDupPart(packageNo);
+    const cacheKey = `${pkNorm}\0${pkgNorm}`;
+    const cached = resultCache.get(cacheKey);
+    if (cached) return cached;
+
+    const bucket = getBucket(pkNorm);
+    if (!bucket) {
+      resultCache.set(cacheKey, EMPTY_LINKED_STATUS);
+      return EMPTY_LINKED_STATUS;
     }
-  }
 
-  // Substring check when non-pure-number or multi-char token exists
-  const isPureDigits = (s: string) => /^\d+$/.test(s);
-  if (!isPureDigits(qCompact) && qCompact.length >= 2 && cCompact.includes(qCompact)) {
-    return true;
-  }
-  if (!isPureDigits(cCompact) && cCompact.length >= 2 && qCompact.includes(cCompact)) {
-    return true;
-  }
+    if (!pkgNorm) {
+      resultCache.set(cacheKey, bucket.allInPk);
+      return bucket.allInPk;
+    }
 
-  return false;
+    const queryPkg = preparePackageInfo(pkgNorm);
+    let detailedCount = 0;
+    let hasLinkedShortage = false;
+    let hasLinkedDamaged = false;
+    let hasLinkedDiscrepancy = false;
+    let hasLinkedReplaced = false;
+
+    for (let i = 0; i < bucket.groups.length; i += 1) {
+      const grp = bucket.groups[i];
+      if (!matchesPreparedPackage(grp.preparedPkg, queryPkg)) continue;
+      detailedCount += grp.count;
+      if (grp.hasShortage) hasLinkedShortage = true;
+      if (grp.hasDamaged) hasLinkedDamaged = true;
+      if (grp.hasDiscrepancy) hasLinkedDiscrepancy = true;
+      if (grp.hasReplaced) hasLinkedReplaced = true;
+    }
+
+    const out: GeneralLinkedStatus = {
+      detailedCount,
+      hasLinkedShortage,
+      hasLinkedDamaged,
+      hasLinkedDiscrepancy,
+      hasLinkedReplaced,
+    };
+    resultCache.set(cacheKey, out);
+    return out;
+  };
 }
 
 export function normNumDupPart(val: unknown): string {
@@ -322,6 +536,31 @@ export function getRowFilterToken(
   return convertDotDatesToSlash(str);
 }
 
+export type CompiledColFilter = [string, Set<string>];
+
+export function compileColFilters(colFilters: ColFilterMap): CompiledColFilter[] {
+  const out: CompiledColFilter[] = [];
+  for (const [colKey, allowed] of Object.entries(colFilters)) {
+    if (!Array.isArray(allowed)) continue;
+    out.push([colKey, new Set(allowed)]);
+  }
+  return out;
+}
+
+export function matchesCompiledColFilters(
+  row: Record<string, unknown>,
+  compiled: CompiledColFilter[],
+  calendar: CalendarMode = 'jalali',
+): boolean {
+  if (compiled.length === 0) return true;
+  for (let i = 0; i < compiled.length; i += 1) {
+    const [colKey, allowedSet] = compiled[i];
+    const token = getRowFilterToken(row, colKey, calendar);
+    if (!allowedSet.has(token)) return false;
+  }
+  return true;
+}
+
 export function matchesColFilters(
   row: Record<string, unknown>,
   colFilters: ColFilterMap,
@@ -344,6 +583,7 @@ export function sortRowsByColumn<T extends Record<string, unknown>>(
 ): T[] {
   if (!sortBy) return rows;
   const factor = sortDir === 'desc' ? -1 : 1;
+  const isDateCol = DATE_COLUMN_KEYS.has(sortBy);
   return [...rows].sort((a, b) => {
     const va = a[sortBy];
     const vb = b[sortBy];
@@ -360,10 +600,10 @@ export function sortRowsByColumn<T extends Record<string, unknown>>(
     const sb = normalizeDigits(String(vb).trim());
     const na = Number(sa);
     const nb = Number(sb);
-    if (sa !== '' && sb !== '' && Number.isFinite(na) && Number.isFinite(nb) && !DATE_COLUMN_KEYS.has(sortBy)) {
+    if (sa !== '' && sb !== '' && Number.isFinite(na) && Number.isFinite(nb) && !isDateCol) {
       return (na - nb) * factor;
     }
-    return sa.localeCompare(sb, 'fa', { numeric: true, sensitivity: 'base' }) * factor;
+    return FA_NUMERIC_COLLATOR.compare(sa, sb) * factor;
   });
 }
 
@@ -380,7 +620,7 @@ export function collectDistinctColumnValues(
   const emptyCount = counts.get(EMPTY_CELL_TOKEN) || 0;
   counts.delete(EMPTY_CELL_TOKEN);
   const sortedTokens = Array.from(counts.keys()).sort((a, b) =>
-    normalizeDigits(a).localeCompare(normalizeDigits(b), 'fa', { numeric: true, sensitivity: 'base' }),
+    FA_NUMERIC_COLLATOR.compare(normalizeDigits(a), normalizeDigits(b)),
   );
   const result: DistinctColumnValue[] = sortedTokens.map((token) => ({
     token,

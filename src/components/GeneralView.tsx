@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -186,18 +186,23 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     sortDir,
   ]);
 
+  const loadSeqRef = useRef(0);
+
   const loadData = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const params = buildFilterParams();
       params.set('page', String(page));
       params.set('pageSize', '50');
       const res = await apiRequest<GeneralListResponse>(`/api/general?${params.toString()}`);
-      setData(res);
+      if (seq === loadSeqRef.current) {
+        setData(res);
+      }
     } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
+      if (seq === loadSeqRef.current && err instanceof ApiError) notify('error', err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [page, buildFilterParams, notify]);
 
@@ -206,7 +211,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   }, [loadData, refreshSignal]);
 
   const items = data?.items || [];
-  const selectedRows = Object.values(selectedMap);
+  const selectedRows = useMemo(() => Object.values(selectedMap), [selectedMap]);
   const selectedIds = useMemo(
     () => (allFilteredIds !== null ? allFilteredIds : selectedRows.map((r) => r.id)),
     [allFilteredIds, selectedRows],
@@ -365,16 +370,20 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   };
 
   const handleOpenPrint = async () => {
-    if (allFilteredIds !== null && allFilteredIds.length > items.length) {
-      try {
-        const params = buildFilterParams();
-        params.set('all', 'true');
-        const res = await apiRequest<GeneralListResponse>(`/api/general?${params.toString()}`);
-        const idSet = new Set(allFilteredIds);
-        setPrintRowsOverride((res.items || []).filter((r) => idSet.has(r.id)));
-      } catch (err) {
-        if (err instanceof ApiError) notify('error', err.message);
-        return;
+    if (allFilteredIds !== null) {
+      if (data && data.totalPages <= 1) {
+        setPrintRowsOverride(items.filter((r) => selectedIdSet.has(r.id)));
+      } else {
+        try {
+          const params = buildFilterParams();
+          params.set('all', 'true');
+          const res = await apiRequest<GeneralListResponse>(`/api/general?${params.toString()}`);
+          const idSet = new Set(allFilteredIds);
+          setPrintRowsOverride((res.items || []).filter((r) => idSet.has(r.id)));
+        } catch (err) {
+          if (err instanceof ApiError) notify('error', err.message);
+          return;
+        }
       }
     } else {
       setPrintRowsOverride(null);
@@ -469,7 +478,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
     try {
       const { rowNo: _ignored, ...rest } = editing;
-      const effectiveReleaseDate = editing.releaseNo.trim()
+      const effectiveReleaseDate = (editing.releaseNo || '').trim()
         ? (editing.releaseDate || editing.arrivalDate)
         : editing.arrivalDate;
       await apiRequest(`/api/general/${editing.id}`, {
@@ -518,7 +527,19 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
             }.`
           : `Row ${deleteTarget.rowNo} moved to Recycle Bin.`,
       );
+      const deletedId = deleteTarget.id;
       setDeleteTarget(null);
+      setSelectedMap((prev) => {
+        if (!prev[deletedId]) return prev;
+        const next = { ...prev };
+        delete next[deletedId];
+        return next;
+      });
+      setAllFilteredIds((prev) => {
+        if (!prev) return prev;
+        const next = prev.filter((id) => id !== deletedId);
+        return next.length > 0 ? next : null;
+      });
       onDataChanged();
       loadData();
     } catch (err) {
@@ -613,6 +634,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
             value={q}
             onChange={(val) => {
               setQ(val);
+              clearSelection();
               setPage(1);
             }}
             placeholder={t.controls.searchPlaceholder}
@@ -726,6 +748,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         delete next[key];
                         return next;
                       });
+                      clearSelection();
                       setPage(1);
                     }}
                     className="hover:opacity-75"
@@ -758,6 +781,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 setColFilters({});
                 setSortBy('');
                 setSortDir('');
+                clearSelection();
                 setPage(1);
               }}
               className="px-2 py-0.5 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] font-semibold"
@@ -768,7 +792,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
         )}
 
         {/* Hidden-Field Category & Date Filters (not present in default visible table) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-2.5">
           <select
             value={dispatchLocation}
             onChange={(e) => { setDispatchLocation(e.target.value); clearSelection(); setPage(1); }}
@@ -950,6 +974,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                           else next[k] = vals;
                           return next;
                         });
+                        clearSelection();
                         setPage(1);
                       }}
                     />
@@ -1303,7 +1328,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     setEditing({
                       ...editing,
                       arrivalDate: v,
-                      releaseDate: editing.releaseNo.trim() ? editing.releaseDate : v,
+                      releaseDate: (editing.releaseNo || '').trim() ? editing.releaseDate : v,
                     })
                   }
                 />
@@ -1409,7 +1434,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   <input
                     type="text"
                     dir={isFa && !editing.releaseNo ? 'rtl' : 'ltr'}
-                    value={editing.releaseNo}
+                    value={editing.releaseNo || ''}
                     onChange={(e) =>
                       setEditing({
                         ...editing,
@@ -1424,8 +1449,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <JalaliDateInput
                   label={t.headers.releaseDate}
-                  disabled={!editing.releaseNo.trim()}
-                  value={editing.releaseNo.trim() ? editing.releaseDate : editing.arrivalDate}
+                  disabled={!(editing.releaseNo || '').trim()}
+                  value={(editing.releaseNo || '').trim() ? editing.releaseDate : editing.arrivalDate}
                   onChange={(v) => setEditing({ ...editing, releaseDate: v })}
                 />
 

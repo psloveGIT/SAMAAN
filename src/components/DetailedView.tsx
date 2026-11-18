@@ -266,6 +266,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   useEffect(() => {
     setShipmentFilter(initialShipmentFilter);
     setPackageFilter(initialPackageFilter);
+    setSelectedMap({});
+    setAllFilteredIds(null);
     setPage(1);
   }, [initialShipmentFilter, initialPackageFilter]);
 
@@ -311,18 +313,23 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     sortDir,
   ]);
 
+  const loadSeqRef = useRef(0);
+
   const loadData = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const params = buildFilterParams();
       params.set('page', String(page));
       params.set('pageSize', '50');
       const res = await apiRequest<DetailedListResponse>(`/api/detailed?${params.toString()}`);
-      setData(res);
+      if (seq === loadSeqRef.current) {
+        setData(res);
+      }
     } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
+      if (seq === loadSeqRef.current && err instanceof ApiError) notify('error', err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [page, buildFilterParams, notify]);
 
@@ -467,7 +474,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   }, [formModalOpen, draft.shipmentNo, draft.packageNo, draft.itemNo, editingId, itemNoManual]);
 
   const items = data?.items || [];
-  const selectedRows = Object.values(selectedMap);
+  const selectedRows = useMemo(() => Object.values(selectedMap), [selectedMap]);
   const selectedIds = useMemo(
     () => (allFilteredIds !== null ? allFilteredIds : selectedRows.map((r) => r.id)),
     [allFilteredIds, selectedRows],
@@ -863,7 +870,19 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           ? `ردیف ${deleteTarget.rowNo} به سطل بازیافت منتقل شد.`
           : `Row ${deleteTarget.rowNo} moved to Recycle Bin.`,
       );
+      const deletedId = deleteTarget.id;
       setDeleteTarget(null);
+      setSelectedMap((prev) => {
+        if (!prev[deletedId]) return prev;
+        const next = { ...prev };
+        delete next[deletedId];
+        return next;
+      });
+      setAllFilteredIds((prev) => {
+        if (!prev) return prev;
+        const next = prev.filter((id) => id !== deletedId);
+        return next.length > 0 ? next : null;
+      });
       onDataChanged();
       loadData();
     } catch (err) {
@@ -1002,16 +1021,20 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   };
 
   const handleOpenPrint = async () => {
-    if (allFilteredIds !== null && allFilteredIds.length > items.length) {
-      try {
-        const params = buildFilterParams();
-        params.set('all', 'true');
-        const res = await apiRequest<DetailedListResponse>(`/api/detailed?${params.toString()}`);
-        const idSet = new Set(allFilteredIds);
-        setPrintRowsOverride((res.items || []).filter((r) => idSet.has(r.id)));
-      } catch (err) {
-        if (err instanceof ApiError) notify('error', err.message);
-        return;
+    if (allFilteredIds !== null) {
+      if (data && data.totalPages <= 1) {
+        setPrintRowsOverride(items.filter((r) => selectedIdSet.has(r.id)));
+      } else {
+        try {
+          const params = buildFilterParams();
+          params.set('all', 'true');
+          const res = await apiRequest<DetailedListResponse>(`/api/detailed?${params.toString()}`);
+          const idSet = new Set(allFilteredIds);
+          setPrintRowsOverride((res.items || []).filter((r) => idSet.has(r.id)));
+        } catch (err) {
+          if (err instanceof ApiError) notify('error', err.message);
+          return;
+        }
       }
     } else {
       setPrintRowsOverride(null);
@@ -1177,7 +1200,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SearchInputWithClear
             value={q}
-            onChange={(val) => { setQ(val); setPage(1); }}
+            onChange={(val) => { setQ(val); clearSelection(); setPage(1); }}
             placeholder={t.controls.searchPlaceholder}
             className="flex-1 min-w-[240px]"
           />
@@ -1325,6 +1348,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         delete next[key];
                         return next;
                       });
+                      clearSelection();
                       setPage(1);
                     }}
                     className="hover:opacity-75"
@@ -1357,6 +1381,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 setColFilters({});
                 setSortBy('');
                 setSortDir('');
+                clearSelection();
                 setPage(1);
               }}
               className="px-2 py-0.5 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] font-semibold"
@@ -1536,6 +1561,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                           else next[k] = vals;
                           return next;
                         });
+                        clearSelection();
                         setPage(1);
                       }}
                     />

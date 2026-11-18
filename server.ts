@@ -57,10 +57,15 @@ import {
   buildTransitDupKey,
   checkDateRangeMulti,
   collectDistinctColumnValues,
+  compileColFilters,
+  createGeneralDetailedLinker,
   matchesColFilters,
+  matchesCompiledColFilters,
   matchesPackagePartial,
+  matchesPreparedPackage,
   normDupPart,
   parseColFiltersParam,
+  preparePackageInfo,
   resolveSiteEntryArrivalAndRelease,
   sortRowsByColumn,
 } from './src/shared/tableQuery.ts';
@@ -922,95 +927,112 @@ async function startServer() {
     const substitutedIds = new Set(
       (store.db.substitutions || []).map((s) => s.detailedId).filter(Boolean),
     );
+    const compiledColFilters = compileColFilters(colFilters);
+    const pkFilterNorm = packingListNo ? normDupPart(packingListNo) : '';
 
-    const enrichedRaw = store.db.general
-      .filter((g) => {
-        if (island && g.island !== island) return false;
-        if (system && g.system !== system) return false;
-        if (subSystem && g.subSystem !== subSystem) return false;
-        if (unit && g.unit !== unit) return false;
-        if (supplier && g.supplier !== supplier) return false;
-        if (dispatchLocation && g.dispatchLocation !== dispatchLocation) return false;
-        if (packageType && (g.packageType || '') !== packageType) return false;
-        if (packingListNo && normDupPart(g.packingListNo) !== normDupPart(packingListNo)) return false;
-        if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
-        if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
-        if (!matchesColFilters(g as unknown as Record<string, unknown>, colFilters, calendar)) return false;
-        if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
-        return matchSearch(
-          [
-            g.rowNo,
-            g.packingListNo,
-            g.packageNo,
-            g.packageType || '',
-            g.itemDescription,
-            g.supplier,
-            g.dispatchLocation,
-            g.employerEntryMinutesNo,
-            g.mapnaEntryMinutesNo,
-            g.releaseNo,
-            g.billOfLadingNo,
-            g.vehicleNo,
-            g.driverName,
-            g.opiInvitationNo,
-            g.island,
-            g.system,
-            g.subSystem,
-            g.unit,
-          ],
-          q,
-        );
-      })
-      .map((g) => {
-        const pk = normKey(g.packingListNo);
-        const pkg = normKey(g.packageNo);
-        const linkedDetails = pk ? store.detailedByPacking.get(pk) || [] : [];
-        const matchingPkgDetails = linkedDetails.filter(
-          (d) => !pkg || matchesPackagePartial(d.packageNo, pkg),
-        );
-        let hasShortage = false;
-        let hasDamaged = false;
-        let hasDiscrepancy = false;
-        let hasReplaced = false;
-        for (const d of matchingPkgDetails) {
-          const c = computeDetailedEntry(d);
-          if (c.hasShortage) hasShortage = true;
-          if (c.hasDamaged) hasDamaged = true;
-          if (isMerOpen(c) || Boolean(normKey(c.merNo) || normKey(c.merStatus)) || c.hasShortage || c.hasDamaged) {
-            hasDiscrepancy = true;
-          }
-          if (isRepOpen(c) || Boolean(normKey(c.repNo) || normKey(c.repStatus)) || substitutedIds.has(c.id)) {
-            hasReplaced = true;
-          }
-        }
-        return {
+    const baseFiltered = store.db.general.filter((g) => {
+      if (island && g.island !== island) return false;
+      if (system && g.system !== system) return false;
+      if (subSystem && g.subSystem !== subSystem) return false;
+      if (unit && g.unit !== unit) return false;
+      if (supplier && g.supplier !== supplier) return false;
+      if (dispatchLocation && g.dispatchLocation !== dispatchLocation) return false;
+      if (packageType && (g.packageType || '') !== packageType) return false;
+      if (pkFilterNorm && normDupPart(g.packingListNo) !== pkFilterNorm) return false;
+      if (!matchesMultiPacking(g.packingListNo, packingNos)) return false;
+      if (!matchesCustomFilters(g as unknown as Record<string, unknown>, customFilters)) return false;
+      if (compiledColFilters.length > 0 && !matchesCompiledColFilters(g as unknown as Record<string, unknown>, compiledColFilters, calendar)) return false;
+      if (!inDateRange(g.arrivalDate, fromDate, toDate)) return false;
+      return matchSearch(
+        [
+          g.rowNo,
+          g.packingListNo,
+          g.packageNo,
+          g.packageType || '',
+          g.itemDescription,
+          g.supplier,
+          g.dispatchLocation,
+          g.employerEntryMinutesNo,
+          g.mapnaEntryMinutesNo,
+          g.releaseNo,
+          g.billOfLadingNo,
+          g.vehicleNo,
+          g.driverName,
+          g.opiInvitationNo,
+          g.island,
+          g.system,
+          g.subSystem,
+          g.unit,
+        ],
+        q,
+      );
+    });
+
+    const needsLinkedFilter = shortageOnly || damagedOnly || discrepancyOnly || replacedOnly;
+    const isPackingClosed = (rawPk: string | undefined | null): boolean => {
+      const pk = normKey(rawPk);
+      if (!pk) return false;
+      return Boolean(store.db.packingMeta[pk]?.isClosed);
+    };
+
+    if (needsLinkedFilter) {
+      const resolveLinked = createGeneralDetailedLinker(store.db.detailed, substitutedIds);
+      const enrichedRaw = [];
+      for (let i = 0; i < baseFiltered.length; i += 1) {
+        const g = baseFiltered[i];
+        const linked = resolveLinked(g.packingListNo, g.packageNo);
+        if (shortageOnly && !linked.hasLinkedShortage) continue;
+        if (damagedOnly && !linked.hasLinkedDamaged) continue;
+        if (discrepancyOnly && !linked.hasLinkedDiscrepancy) continue;
+        if (replacedOnly && !linked.hasLinkedReplaced) continue;
+        enrichedRaw.push({
           ...g,
-          packingClosed: Boolean(pk && store.db.packingMeta[pk]?.isClosed),
-          detailedCount: matchingPkgDetails.length,
-          hasLinkedShortage: hasShortage,
-          hasLinkedDamaged: hasDamaged,
-          hasLinkedDiscrepancy: hasDiscrepancy,
-          hasLinkedReplaced: hasReplaced,
-        };
-      })
-      .filter((g) => {
-        if (shortageOnly && !g.hasLinkedShortage) return false;
-        if (damagedOnly && !g.hasLinkedDamaged) return false;
-        if (discrepancyOnly && !g.hasLinkedDiscrepancy) return false;
-        if (replacedOnly && !g.hasLinkedReplaced) return false;
-        return true;
+          packingClosed: isPackingClosed(g.packingListNo),
+          ...linked,
+        });
+      }
+
+      const filtered = sortBy
+        ? (sortRowsByColumn(enrichedRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as typeof enrichedRaw)
+        : [...enrichedRaw].reverse();
+
+      const total = filtered.length;
+      const filteredSummary = computeSelectionFormulaSummary({ general: filtered });
+
+      if (allIds) {
+        res.json({
+          ids: filtered.map((g) => g.id),
+          total,
+          filteredSummary,
+        });
+        return;
+      }
+
+      const start = (page - 1) * pageSize;
+      const items = fetchAll ? filtered : filtered.slice(start, start + pageSize);
+
+      res.json({
+        items,
+        total,
+        page: fetchAll ? 1 : page,
+        pageSize: fetchAll ? Math.max(1, total) : pageSize,
+        totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
+        filteredSummary,
+        packingMeta: store.db.packingMeta,
       });
+      return;
+    }
 
-    const filtered = sortBy
-      ? (sortRowsByColumn(enrichedRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as typeof enrichedRaw)
-      : [...enrichedRaw].reverse();
+    const sortedBase = sortBy
+      ? (sortRowsByColumn(baseFiltered as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as GeneralEntry[])
+      : [...baseFiltered].reverse();
 
-    const total = filtered.length;
-    const filteredSummary = computeSelectionFormulaSummary({ general: filtered });
+    const total = sortedBase.length;
+    const filteredSummary = computeSelectionFormulaSummary({ general: sortedBase });
 
     if (allIds) {
       res.json({
-        ids: filtered.map((g) => g.id),
+        ids: sortedBase.map((g) => g.id),
         total,
         filteredSummary,
       });
@@ -1018,7 +1040,17 @@ async function startServer() {
     }
 
     const start = (page - 1) * pageSize;
-    const items = fetchAll ? filtered : filtered.slice(start, start + pageSize);
+    const pageRows = fetchAll ? sortedBase : sortedBase.slice(start, start + pageSize);
+    const pagePkNorms = fetchAll
+      ? undefined
+      : new Set(pageRows.map((g) => normDupPart(g.packingListNo)).filter(Boolean));
+    const resolveLinked = createGeneralDetailedLinker(store.db.detailed, substitutedIds, pagePkNorms);
+
+    const items = pageRows.map((g) => ({
+      ...g,
+      packingClosed: isPackingClosed(g.packingListNo),
+      ...resolveLinked(g.packingListNo, g.packageNo),
+    }));
 
     res.json({
       items,
@@ -1491,6 +1523,9 @@ async function startServer() {
     const substitutedIds = new Set(
       (store.db.substitutions || []).map((s) => s.detailedId).filter(Boolean),
     );
+    const shipmentFilterNorm = shipmentNo ? normDupPart(shipmentNo) : '';
+    const preparedPkgFilter = packageNo ? preparePackageInfo(packageNo) : null;
+    const compiledColFilters = compileColFilters(colFilters);
 
     const computedRaw: DetailedComputed[] = [];
     for (const d of store.db.detailed) {
@@ -1501,8 +1536,8 @@ async function startServer() {
       if (supplier && d.supplier !== supplier) continue;
       if (storageLocation && d.storageLocation !== storageLocation) continue;
       if (itemCategory && (d.itemCategory || '') !== itemCategory) continue;
-      if (shipmentNo && normDupPart(d.shipmentNo) !== normDupPart(shipmentNo)) continue;
-      if (packageNo && !matchesPackagePartial(d.packageNo, packageNo)) continue;
+      if (shipmentFilterNorm && normDupPart(d.shipmentNo) !== shipmentFilterNorm) continue;
+      if (preparedPkgFilter && !matchesPreparedPackage(preparePackageInfo(d.packageNo), preparedPkgFilter)) continue;
       if (!matchesMultiPacking(d.shipmentNo, packingNos)) continue;
       if (!inDateRange(d.arrivalDate, fromDate, toDate)) continue;
       if (
@@ -1545,7 +1580,7 @@ async function startServer() {
       }
       const comp = computeDetailedEntry(d);
       if (!matchesCustomFilters(comp as unknown as Record<string, unknown>, customFilters)) continue;
-      if (!matchesColFilters(comp as unknown as Record<string, unknown>, colFilters, calendar)) continue;
+      if (compiledColFilters.length > 0 && !matchesCompiledColFilters(comp as unknown as Record<string, unknown>, compiledColFilters, calendar)) continue;
       if (shortageOnly && !comp.hasShortage) continue;
       if (damagedOnly && !comp.hasDamaged) continue;
       if (
@@ -1947,6 +1982,7 @@ async function startServer() {
     const page = Math.max(1, Number(req.query.page || 1));
     const pageSize = Math.min(5000, Math.max(10, Number(req.query.pageSize || 50)));
 
+    const compiledColFilters = compileColFilters(colFilters);
     const filteredRaw = store.db.transit.filter((t) => {
       if (status && t.overallStatus !== status) return false;
       if (supplier && t.supplier !== supplier) return false;
@@ -1957,7 +1993,7 @@ async function startServer() {
       if (carrierContractor && t.carrierContractor !== carrierContractor) return false;
       if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
       if (!matchesCustomFilters(t as unknown as Record<string, unknown>, customFilters)) return false;
-      if (!matchesColFilters(t as unknown as Record<string, unknown>, colFilters, calendar)) return false;
+      if (compiledColFilters.length > 0 && !matchesCompiledColFilters(t as unknown as Record<string, unknown>, compiledColFilters, calendar)) return false;
       if (!inDateRange(t.arrivalDate, fromDate, toDate)) return false;
       return matchSearch(
         [

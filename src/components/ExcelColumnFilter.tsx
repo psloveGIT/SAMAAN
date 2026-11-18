@@ -53,6 +53,7 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
   const [search, setSearch] = useState('');
   const [draftChecked, setDraftChecked] = useState<Set<string>>(new Set());
   const [addToExisting, setAddToExisting] = useState(false);
+  const [renderLimit, setRenderLimit] = useState(200);
 
   const hasFilter = activeValues !== undefined;
   const isActive = hasFilter || sortDir !== null;
@@ -76,12 +77,16 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
     }
   }, [open, isFa]);
 
+  const activeValuesRef = useRef(activeValues);
+  activeValuesRef.current = activeValues;
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
     setSearch('');
     setAddToExisting(false);
+    setRenderLimit(200);
     apiRequest<ColumnValuesResponse>(
       `/api/column-values?scope=${scope}&column=${encodeURIComponent(colKey)}&calendar=${calendar}`,
     )
@@ -102,10 +107,11 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
           return { token: tok, label: lbl, count: cnt };
         });
         setOptions(vals);
-        if (activeValues === undefined) {
+        const currentActive = activeValuesRef.current;
+        if (currentActive === undefined) {
           setDraftChecked(new Set(vals.map((v) => v.token)));
         } else {
-          setDraftChecked(new Set(activeValues));
+          setDraftChecked(new Set(currentActive));
         }
       })
       .catch(() => {
@@ -117,7 +123,7 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, scope, colKey, calendar, refreshSignal, activeValues]);
+  }, [open, scope, colKey, calendar, refreshSignal]);
 
   useEffect(() => {
     if (!open) return;
@@ -342,7 +348,7 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
                     />
                     <span>{isFa ? '(انتخاب همه)' : '(Select All)'}</span>
                   </label>
-                  {filteredOptions.map((opt) => {
+                  {filteredOptions.slice(0, renderLimit).map((opt) => {
                     const isBlank = opt.token === EMPTY_CELL_TOKEN;
                     const safeCount = typeof opt.count === 'number' && Number.isFinite(opt.count) ? opt.count : 0;
                     return (
@@ -373,6 +379,17 @@ export const ExcelColumnFilter: React.FC<ExcelColumnFilterProps> = ({
                       </label>
                     );
                   })}
+                  {filteredOptions.length > renderLimit && (
+                    <button
+                      type="button"
+                      onClick={() => setRenderLimit((n) => n + 200)}
+                      className="w-full py-1.5 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium text-[var(--accent-primary)] text-center"
+                    >
+                      {isFa
+                        ? `نمایش موارد بیشتر (${(filteredOptions.length - renderLimit).toLocaleString('fa-IR')} مورد باقی‌مانده)`
+                        : `Show more (${filteredOptions.length - renderLimit} remaining)`}
+                    </button>
+                  )}
                 </>
               )}
             </div>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRightCircle,
   ChevronLeft,
@@ -129,18 +129,23 @@ export const TransitView: React.FC<TransitViewProps> = ({
     sortDir,
   ]);
 
+  const loadSeqRef = useRef(0);
+
   const loadData = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const params = buildFilterParams();
       params.set('page', String(page));
       params.set('pageSize', '50');
       const res = await apiRequest<TransitListResponse>(`/api/transit?${params.toString()}`);
-      setData(res);
+      if (seq === loadSeqRef.current) {
+        setData(res);
+      }
     } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
+      if (seq === loadSeqRef.current && err instanceof ApiError) notify('error', err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [page, buildFilterParams, notify]);
 
@@ -149,7 +154,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
   }, [loadData, refreshSignal]);
 
   const items = data?.items || [];
-  const selectedRows = Object.values(selectedMap);
+  const selectedRows = useMemo(() => Object.values(selectedMap), [selectedMap]);
   const selectedIds = useMemo(
     () => (allFilteredIds !== null ? allFilteredIds : selectedRows.map((r) => r.id)),
     [allFilteredIds, selectedRows],
@@ -277,7 +282,19 @@ export const TransitView: React.FC<TransitViewProps> = ({
     try {
       await apiRequest(`/api/transit/${deleteTarget.id}`, { method: 'DELETE' });
       notify('success', isFa ? 'به سطل بازیافت منتقل شد.' : 'Moved to Recycle Bin.');
+      const deletedId = deleteTarget.id;
       setDeleteTarget(null);
+      setSelectedMap((prev) => {
+        if (!prev[deletedId]) return prev;
+        const next = { ...prev };
+        delete next[deletedId];
+        return next;
+      });
+      setAllFilteredIds((prev) => {
+        if (!prev) return prev;
+        const next = prev.filter((id) => id !== deletedId);
+        return next.length > 0 ? next : null;
+      });
       onDataChanged();
       loadData();
     } catch (err) {
@@ -343,16 +360,20 @@ export const TransitView: React.FC<TransitViewProps> = ({
   };
 
   const handleOpenPrint = async () => {
-    if (allFilteredIds !== null && allFilteredIds.length > items.length) {
-      try {
-        const params = buildFilterParams();
-        params.set('all', 'true');
-        const res = await apiRequest<TransitListResponse>(`/api/transit?${params.toString()}`);
-        const idSet = new Set(allFilteredIds);
-        setPrintRowsOverride((res.items || []).filter((r) => idSet.has(r.id)));
-      } catch (err) {
-        if (err instanceof ApiError) notify('error', err.message);
-        return;
+    if (allFilteredIds !== null) {
+      if (data && data.totalPages <= 1) {
+        setPrintRowsOverride(items.filter((r) => selectedIdSet.has(r.id)));
+      } else {
+        try {
+          const params = buildFilterParams();
+          params.set('all', 'true');
+          const res = await apiRequest<TransitListResponse>(`/api/transit?${params.toString()}`);
+          const idSet = new Set(allFilteredIds);
+          setPrintRowsOverride((res.items || []).filter((r) => idSet.has(r.id)));
+        } catch (err) {
+          if (err instanceof ApiError) notify('error', err.message);
+          return;
+        }
       }
     } else {
       setPrintRowsOverride(null);
@@ -446,6 +467,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
             value={q}
             onChange={(val) => {
               setQ(val);
+              clearSelection();
               setPage(1);
             }}
             placeholder={t.controls.searchPlaceholder}
@@ -512,6 +534,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                         delete next[key];
                         return next;
                       });
+                      clearSelection();
                       setPage(1);
                     }}
                     className="hover:opacity-75"
@@ -544,6 +567,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                 setColFilters({});
                 setSortBy('');
                 setSortDir('');
+                clearSelection();
                 setPage(1);
               }}
               className="px-2 py-0.5 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] font-semibold"
@@ -554,7 +578,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
         )}
 
         {/* Hidden-Field Category & Date Filters (not present in default visible table) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-2.5">
           <select
             value={system}
             onChange={(e) => { setSystem(e.target.value); clearSelection(); setPage(1); }}
@@ -724,6 +748,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                           else next[k] = vals;
                           return next;
                         });
+                        clearSelection();
                         setPage(1);
                       }}
                     />

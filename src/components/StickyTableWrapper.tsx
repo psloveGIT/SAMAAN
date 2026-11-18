@@ -29,6 +29,8 @@ export const StickyTableWrapper: React.FC<StickyTableWrapperProps> = ({
   const [scrollWidth, setScrollWidth] = useState(0);
   const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
 
+  const rafRef = useRef<number | null>(null);
+
   const measure = useCallback(() => {
     const body = bodyScrollRef.current;
     if (!body) return;
@@ -39,34 +41,53 @@ export const StickyTableWrapper: React.FC<StickyTableWrapperProps> = ({
     setHasHorizontalOverflow((prev) => (prev !== nextOverflow ? nextOverflow : prev));
   }, []);
 
+  const scheduleMeasure = useCallback(() => {
+    if (rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      measure();
+    });
+  }, [measure]);
+
   useEffect(() => {
     const body = bodyScrollRef.current;
     if (!body) return;
 
-    measure();
+    scheduleMeasure();
 
+    let observedChild = body.firstElementChild;
     const resizeObserver =
-      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measure()) : null;
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => scheduleMeasure()) : null;
     resizeObserver?.observe(body);
-    if (body.firstElementChild) {
-      resizeObserver?.observe(body.firstElementChild);
+    if (observedChild) {
+      resizeObserver?.observe(observedChild);
     }
 
     const mutationObserver =
       typeof MutationObserver !== 'undefined'
         ? new MutationObserver(() => {
-            requestAnimationFrame(measure);
+            const nextChild = body.firstElementChild;
+            if (nextChild !== observedChild) {
+              if (observedChild) resizeObserver?.unobserve(observedChild);
+              observedChild = nextChild;
+              if (observedChild) resizeObserver?.observe(observedChild);
+            }
+            scheduleMeasure();
           })
         : null;
     mutationObserver?.observe(body, { childList: true, subtree: false });
 
-    window.addEventListener('resize', measure);
+    window.addEventListener('resize', scheduleMeasure);
     return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
-      window.removeEventListener('resize', measure);
+      window.removeEventListener('resize', scheduleMeasure);
     };
-  }, [measure, children]);
+  }, [scheduleMeasure]);
 
   // Keep top scrollbar initially aligned with body scroll position when mounted
   useEffect(() => {
