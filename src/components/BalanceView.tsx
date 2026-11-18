@@ -13,6 +13,7 @@ import {
 } from './OfficialSheetHeader.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface BalanceViewProps {
   refreshSignal: number;
@@ -909,7 +910,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
           </button>
         </div>
 
-        <div className="overflow-x-auto">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -991,7 +992,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       {/* Printable Official MD1EX-FQP02/09-03 BMR Landscape Modal */}

@@ -9,6 +9,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PeriodicInspectionPanel } from './PeriodicInspectionPanel.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface StocktakeViewProps {
   refreshSignal: number;
@@ -338,7 +339,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
           </button>
         </div>
 
-        <div className="overflow-x-auto">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -410,7 +411,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       <PrintReportModal

@@ -43,6 +43,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface GeneralRowView extends GeneralEntry {
   packingClosed?: boolean;
@@ -199,13 +200,13 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const columns = useMemo(
     () => [
       { key: 'rowNo', header: t.headers.rowNo, isNum: true, get: (r: GeneralRowView) => r.rowNo },
-      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, get: (r: GeneralRowView) => r.arrivalDate },
       { key: 'packingListNo', header: t.headers.packingListNo, get: (r: GeneralRowView) => r.packingListNo },
       { key: 'packageNo', header: t.headers.packageNo, get: (r: GeneralRowView) => r.packageNo },
-      { key: 'packageType', header: t.headers.packageType, hideInTable: true, get: (r: GeneralRowView) => r.packageType },
-      { key: 'itemCount', header: t.headers.itemCount, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.itemCount },
       { key: 'itemDescription', header: t.headers.itemDescription, get: (r: GeneralRowView) => r.itemDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: GeneralRowView) => r.supplier },
+      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, hideInTable: true, get: (r: GeneralRowView) => r.arrivalDate },
+      { key: 'packageType', header: t.headers.packageType, hideInTable: true, get: (r: GeneralRowView) => r.packageType },
+      { key: 'itemCount', header: t.headers.itemCount, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.itemCount },
       { key: 'dispatchLocation', header: t.headers.dispatchLocation, hideInTable: true, get: (r: GeneralRowView) => r.dispatchLocation },
       { key: 'employerEntryMinutesNo', header: t.headers.employerEntryMinutesNo, hideInTable: true, get: (r: GeneralRowView) => r.employerEntryMinutesNo },
       { key: 'mapnaEntryMinutesNo', header: t.headers.mapnaEntryMinutesNo, hideInTable: true, get: (r: GeneralRowView) => r.mapnaEntryMinutesNo },
@@ -693,8 +694,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       )}
 
       {/* Table */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -705,9 +706,6 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     onChange={toggleAllOnPage}
                     aria-label={t.controls.selectAllPage}
                   />
-                </th>
-                <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
-                  {isFa ? 'وضعیت اتمام پکینگ / جزئیات' : 'Packing Completion / Details'}
                 </th>
                 {visibleColumns.map((col) => (
                   <th
@@ -743,6 +741,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     />
                   </th>
                 ))}
+                <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
+                  {isFa ? 'وضعیت اتمام پکینگ / جزئیات' : 'Packing Completion / Details'}
+                </th>
                 <th className="py-2.5 px-3 text-end font-semibold whitespace-nowrap">
                   {isFa ? 'عملیات' : 'Actions'}
                 </th>
@@ -775,6 +776,30 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         onChange={() => toggleRow(row)}
                       />
                     </td>
+
+                    {visibleColumns.map((col) => {
+                      const rawVal = col.get(row);
+                      const displayVal =
+                        typeof rawVal === 'number'
+                          ? rawVal.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                          : formatMultiValueCell(rawVal, {
+                              isDate: Boolean(col.isDate),
+                              calendar: prefs.calendar,
+                              lang: prefs.language,
+                            });
+                      return (
+                        <td
+                          key={col.key}
+                          className={`py-2 px-3 whitespace-pre-line align-top max-w-[280px] leading-relaxed tabular-nums bidi-plaintext ${
+                            col.isNum ? 'text-end' : 'text-start'
+                          }`}
+                          title={String(displayVal)}
+                        >
+                          {displayVal}
+                        </td>
+                      );
+                    })}
+
                     <td className="py-2 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
                         {row.packingClosed ? (
@@ -801,29 +826,6 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                         </button>
                       </div>
                     </td>
-
-                    {visibleColumns.map((col) => {
-                      const rawVal = col.get(row);
-                      const displayVal =
-                        typeof rawVal === 'number'
-                          ? rawVal.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                          : formatMultiValueCell(rawVal, {
-                              isDate: Boolean(col.isDate),
-                              calendar: prefs.calendar,
-                              lang: prefs.language,
-                            });
-                      return (
-                        <td
-                          key={col.key}
-                          className={`py-2 px-3 whitespace-pre-line align-top max-w-[280px] leading-relaxed tabular-nums bidi-plaintext ${
-                            col.isNum ? 'text-end' : 'text-start'
-                          }`}
-                          title={String(displayVal)}
-                        >
-                          {displayVal}
-                        </td>
-                      );
-                    })}
 
                     <td className="py-2 px-3 whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
                       <div className="inline-flex items-center gap-1">
@@ -882,7 +884,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
 
         {/* Pagination */}
         {data && data.totalPages > 1 && (

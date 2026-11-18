@@ -23,6 +23,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface TransitListResponse {
   items: TransitEntry[];
@@ -137,20 +138,20 @@ export const TransitView: React.FC<TransitViewProps> = ({
   const columns = useMemo(
     () => [
       { key: 'rowNo', header: t.headers.rowNo, isNum: true, get: (r: TransitEntry) => r.rowNo },
-      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, get: (r: TransitEntry) => r.arrivalDate },
       { key: 'overallStatus', header: t.headers.overallStatus, get: (r: TransitEntry) => r.overallStatus },
       { key: 'packingListNo', header: t.headers.packingListNo, get: (r: TransitEntry) => r.packingListNo },
-      { key: 'packageNo', header: t.headers.packageNo, get: (r: TransitEntry) => r.packageNo },
       { key: 'itemDescription', header: t.headers.itemDescription, get: (r: TransitEntry) => r.itemDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: TransitEntry) => r.supplier },
-      { key: 'dispatchLocation', header: t.headers.dispatchLocation, get: (r: TransitEntry) => r.dispatchLocation },
+      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, hideInTable: true, get: (r: TransitEntry) => r.arrivalDate },
+      { key: 'packageNo', header: t.headers.packageNo, hideInTable: true, get: (r: TransitEntry) => r.packageNo },
+      { key: 'dispatchLocation', header: t.headers.dispatchLocation, hideInTable: true, get: (r: TransitEntry) => r.dispatchLocation },
       { key: 'inspectionRequest', header: t.headers.inspectionRequest, hideInTable: true, get: (r: TransitEntry) => r.inspectionRequest },
-      { key: 'releaseNetNo', header: t.headers.releaseNetNo, get: (r: TransitEntry) => r.releaseNetNo },
-      { key: 'releaseNetDate', header: t.headers.releaseNetDate, isDate: true, get: (r: TransitEntry) => r.releaseNetDate },
-      { key: 'mapnaShippingNotice', header: t.headers.mapnaShippingNotice, get: (r: TransitEntry) => r.mapnaShippingNotice },
+      { key: 'releaseNetNo', header: t.headers.releaseNetNo, hideInTable: true, get: (r: TransitEntry) => r.releaseNetNo },
+      { key: 'releaseNetDate', header: t.headers.releaseNetDate, isDate: true, hideInTable: true, get: (r: TransitEntry) => r.releaseNetDate },
+      { key: 'mapnaShippingNotice', header: t.headers.mapnaShippingNotice, hideInTable: true, get: (r: TransitEntry) => r.mapnaShippingNotice },
       { key: 'interimNo', header: t.headers.interimNo, hideInTable: true, get: (r: TransitEntry) => r.interimNo },
       { key: 'interimDate', header: t.headers.interimDate, isDate: true, hideInTable: true, get: (r: TransitEntry) => r.interimDate },
-      { key: 'system', header: t.headers.system, get: (r: TransitEntry) => r.system },
+      { key: 'system', header: t.headers.system, hideInTable: true, get: (r: TransitEntry) => r.system },
       { key: 'subSystem', header: t.headers.subSystem, hideInTable: true, get: (r: TransitEntry) => r.subSystem },
       { key: 'unit', header: t.headers.unit, hideInTable: true, get: (r: TransitEntry) => r.unit },
       { key: 'equipmentSupplyCode', header: t.headers.equipmentSupplyCode, hideInTable: true, get: (r: TransitEntry) => r.equipmentSupplyCode },
@@ -400,8 +401,8 @@ export const TransitView: React.FC<TransitViewProps> = ({
         />
       )}
 
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -516,14 +517,15 @@ export const TransitView: React.FC<TransitViewProps> = ({
                         </button>
                         {canEdit && (
                           <>
-                            {row.overallStatus !== 'رسیده' && (
+                            {(row.overallStatus || '').trim() !== 'رسیده' &&
+                              (row.overallStatus || '').trim() !== 'پایان' && (
                               <button
                                 type="button"
                                 onClick={() => onConvertToGeneral(row)}
                                 className="px-2 py-1 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold flex items-center gap-1"
                               >
                                 <ArrowRightCircle className="w-3 h-3" />
-                                <span>{isFa ? 'انتقال به جنرال' : 'Mark Arrived'}</span>
+                                <span>{isFa ? 'ثبت در تجهیزات کلی' : 'Register in General'}</span>
                               </button>
                             )}
                             <button
@@ -558,7 +560,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
 
         {data && data.totalPages > 1 && (
           <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">

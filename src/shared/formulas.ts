@@ -37,12 +37,27 @@ export function isRepOpen(entry: Pick<DetailedEntry, 'repNo' | 'repStatus'>): bo
   return !CLOSED_STATUS_REGEX.test(st);
 }
 
+export function normalizeIslandBucket(raw: string | undefined | null): { key: string; label: string } {
+  const cleaned = (raw || '')
+    .replace(/\u200c/g, ' ')
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned || cleaned === '-' || cleaned === '—') {
+    return { key: '__other__', label: 'سایر' };
+  }
+  return { key: cleaned.toLowerCase(), label: cleaned };
+}
+
 function daysBetweenIso(fromIso: string, toIso: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromIso) || !/^\d{4}-\d{2}-\d{2}$/.test(toIso)) {
+  const normFrom = fromIso.trim().replace(/\//g, '-');
+  const normTo = toIso.trim().replace(/\//g, '-');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(normTo)) {
     return null;
   }
-  const fromMs = Date.parse(`${fromIso}T00:00:00Z`);
-  const toMs = Date.parse(`${toIso}T00:00:00Z`);
+  const fromMs = Date.parse(`${normFrom}T00:00:00Z`);
+  const toMs = Date.parse(`${normTo}T00:00:00Z`);
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return null;
   return Math.ceil((toMs - fromMs) / (1000 * 60 * 60 * 24));
 }
@@ -54,8 +69,8 @@ export function getExpiringChemicals(
 ): ExpiringChemicalNotice[] {
   const alerts: ExpiringChemicalNotice[] = [];
   for (const d of entries) {
-    const isChemical = d.itemCategory === 'chemicals' || Boolean((d.chemicalType || '').trim());
     const expIso = (d.expirationDate || '').trim();
+    const isChemical = d.itemCategory === 'chemicals' || Boolean((d.chemicalType || '').trim()) || Boolean(expIso);
     if (!isChemical || !expIso) continue;
     const days = daysBetweenIso(todayIso, expIso);
     if (days !== null && days <= thresholdDays) {

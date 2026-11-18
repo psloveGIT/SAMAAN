@@ -21,6 +21,7 @@ import {
   OfficialFormSignatures,
 } from './OfficialSheetHeader.tsx';
 import type { PrintColumnDef } from './PrintReportModal.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -1828,8 +1829,9 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 </div>
 
                 {items.length > 0 && (
-                  <div className="overflow-x-auto rounded-lg border border-[var(--border-subtle)]">
-                    <table className="w-full text-[11px]">
+                  <div className="rounded-lg border border-[var(--border-subtle)] overflow-x-clip">
+                    <StickyTableWrapper maxHeightClass="max-h-80">
+                      <table className="w-full text-[11px]">
                       <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                         <tr>
                           <th className="py-2 px-2 w-20">Item No.</th>
@@ -1908,7 +1910,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                      </table>
+                    </StickyTableWrapper>
                   </div>
                 )}
               </div>
@@ -2045,7 +2048,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
           )}
 
           {/* Minutes History Table */}
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
             <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold">
                 {isFa ? 'صورتجلسه‌های گشایش و بازرسی ثبت‌شده' : 'Recorded Opening & Inspection Minutes'}
@@ -2061,7 +2064,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 </button>
               </div>
             </div>
-            <div className="overflow-x-auto">
+            <StickyTableWrapper>
               <table className="w-full text-xs">
                 <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                   <tr>
@@ -2158,7 +2161,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                   )}
                 </tbody>
               </table>
-            </div>
+            </StickyTableWrapper>
           </div>
         </div>
       )}
@@ -2271,9 +2274,10 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     ? 'اقلام دارای کسری، اضافی یا آسیب‌دیدگی (جهت درج در گزارش مغایرت (MER) انتخاب کنید):'
                     : 'Items with Shortage, Overage, or Damage (select to include in MER):'}
                 </div>
-                <div className="max-h-72 overflow-y-auto rounded-xl border border-[var(--border-subtle)]">
-                  <table className="w-full text-xs">
-                    <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0">
+                <div className="rounded-xl border border-[var(--border-subtle)] overflow-x-clip">
+                  <StickyTableWrapper maxHeightClass="max-h-72">
+                    <table className="w-full text-xs">
+                      <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                       <tr>
                         <th className="py-2 px-3 w-9">{isFa ? 'درج' : 'Add'}</th>
                         <th className="py-2 px-3 text-start">{t.headers.shipmentNo}</th>
@@ -2347,7 +2351,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                         })
                       )}
                     </tbody>
-                  </table>
+                    </table>
+                  </StickyTableWrapper>
                 </div>
               </div>
 
@@ -2395,7 +2400,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
           )}
 
           {/* MER History Table */}
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
             <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold">
                 {isFa ? 'سوابق گزارش‌های مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Issued MER Reports'}
@@ -2411,7 +2416,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 </button>
               </div>
             </div>
-            <div className="overflow-x-auto">
+            <StickyTableWrapper>
               <table className="w-full text-xs">
                 <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                   <tr>
@@ -2483,7 +2488,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                   )}
                 </tbody>
               </table>
-            </div>
+            </StickyTableWrapper>
           </div>
         </div>
       )}

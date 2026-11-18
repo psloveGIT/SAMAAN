@@ -14,6 +14,7 @@ import {
   getExpiringChemicals,
   isMerOpen,
   isRepOpen,
+  normalizeIslandBucket,
   roundQty,
   toNum,
 } from '../shared/formulas.ts';
@@ -485,7 +486,8 @@ function syncTransitArrival(db: StaticDatabase, packingNo: string, user: UserAcc
   for (const t of db.transit) {
     if (normKey(t.packingListNo) === pk) {
       const st = normKey(t.overallStatus);
-      const needsStatus = st !== 'رسیده' && st.toLowerCase() !== 'arrived';
+      const isDoneOrArrived = st === 'رسیده' || st === 'پایان' || st.toLowerCase() === 'arrived';
+      const needsStatus = !isDoneOrArrived;
       const needsDate = Boolean(genArrival && normKey(t.arrivalDate) !== normKey(genArrival));
       if (needsStatus || needsDate) {
         if (needsStatus) t.overallStatus = 'رسیده';
@@ -881,8 +883,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     );
     return {
       submissions: [...submissions].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-      generalEntries: db.general,
-      detailedItems: db.detailed.map(computeDetailedEntry),
+      generalEntries: [...db.general].reverse(),
+      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
       packings,
     } as T;
   }
@@ -912,7 +914,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       createdBy: u.username,
     };
     if (!db.customFormSubmissions) db.customFormSubmissions = [];
-    db.customFormSubmissions.push(record);
+    db.customFormSubmissions.unshift(record);
     addAudit(db, sanitizeUser(u), 'CREATE_CUSTOM_FORM', 'customForm', record.id, `ثبت فرم اختصاصی «${record.formTitle}» (${record.docNo})`);
     await saveActiveDb();
     return { submission: record } as T;
@@ -1339,7 +1341,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
 
     const filtered = sortBy
       ? (sortRowsByColumn(filteredRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as GeneralEntry[])
-      : filteredRaw;
+      : [...filteredRaw].reverse();
 
     const total = filtered.length;
     const start = (page - 1) * pageSize;
@@ -1769,7 +1771,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
 
     const computedAll = sortBy
       ? (sortRowsByColumn(computedRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as DetailedComputed[])
-      : computedRaw;
+      : [...computedRaw].reverse();
 
     const total = computedAll.length;
     const start = (page - 1) * pageSize;
@@ -2086,7 +2088,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
 
     const filtered = sortBy
       ? (sortRowsByColumn(filteredRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as TransitEntry[])
-      : filteredRaw;
+      : [...filteredRaw].reverse();
 
     const total = filtered.length;
     const start = (page - 1) * pageSize;
@@ -2107,12 +2109,19 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       pk && (db.general.some((g) => normKey(g.packingListNo) === pk) || db.detailed.some((d) => normKey(d.shipmentNo) === pk));
     const now = new Date().toISOString();
     const { rowNo: _ignoredRow, ...raw } = body;
+    const requestedStatus = normKey(String(body.overallStatus || '')) || 'در دست ارسال';
+    const resolvedStatus =
+      requestedStatus === 'پایان'
+        ? 'پایان'
+        : alreadyInWarehouse
+          ? 'رسیده'
+          : requestedStatus;
     const created: TransitEntry = {
       ...(raw as unknown as TransitEntry),
       id: makeId(),
       rowNo: '0',
       packingListNo: pk,
-      overallStatus: alreadyInWarehouse ? 'رسیده' : normKey(String(body.overallStatus || '')) || 'در دست ارسال',
+      overallStatus: resolvedStatus,
       linkedGeneralPackingNo: alreadyInWarehouse ? pk : undefined,
       createdAt: now,
       updatedAt: now,
@@ -2279,9 +2288,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     }
     return {
       minutes: db.siteEntryMinutes,
-      generalEntries: db.general,
-      transitEntries: db.transit,
-      detailedItems: db.detailed.map(computeDetailedEntry),
+      generalEntries: [...db.general].reverse(),
+      transitEntries: [...db.transit].reverse(),
+      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     } as T;
   }
@@ -2512,8 +2521,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     }
     return {
       invitations: db.opiInvitations,
-      detailedItems: db.detailed.map(computeDetailedEntry),
-      generalEntries: db.general,
+      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
+      generalEntries: [...db.general].reverse(),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     } as T;
   }
@@ -2788,8 +2797,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       minutes: db.opiMinutes,
       osdrReports: db.osdrReports,
       invitations: db.opiInvitations,
-      detailedItems: db.detailed.map(computeDetailedEntry),
-      generalEntries: db.general,
+      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
+      generalEntries: [...db.general].reverse(),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     } as T;
   }
@@ -3032,8 +3041,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     requireAuth();
     return {
       documents: db.gcvDocuments,
-      detailedItems: db.detailed.map(computeDetailedEntry),
-      generalEntries: db.general,
+      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
+      generalEntries: [...db.general].reverse(),
     } as T;
   }
 
@@ -3297,8 +3306,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     requireAuth();
     return {
       documents: db.mivDocuments,
-      detailedItems: db.detailed.map(computeDetailedEntry),
-      generalEntries: db.general,
+      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
+      generalEntries: [...db.general].reverse(),
     } as T;
   }
 
@@ -3696,8 +3705,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     requireAuth();
     return {
       records: db.substitutions,
-      detailedItems: db.detailed.map(computeDetailedEntry),
-      generalEntries: db.general,
+      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
+      generalEntries: [...db.general].reverse(),
     } as T;
   }
 
@@ -3863,7 +3872,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     requireAuth();
     return {
       records: db.materialEstimates,
-      detailedItems: db.detailed.map(computeDetailedEntry),
+      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
     } as T;
   }
 
@@ -4168,7 +4177,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         g.rowNo, g.packingListNo, g.packageNo, g.packageType || '', g.itemDescription, g.supplier, g.dispatchLocation,
         g.employerEntryMinutesNo, g.mapnaEntryMinutesNo, g.billOfLadingNo, g.vehicleNo, g.driverName, g.island, g.system, g.subSystem, g.unit,
       ], q);
-    }).slice(0, limit);
+    }).reverse().slice(0, limit);
 
     const detailed = db.detailed.filter((d) => {
       if (!matchesMultiPacking(d.shipmentNo, packingNos)) return false;
@@ -4176,7 +4185,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         d.rowNo, d.shipmentNo, d.packageNo, d.itemNo, d.generalDescription, d.description, d.itemCode, d.mtoRef,
         d.supplier, d.gcvReceiptNo, d.mivContractorNo, d.smrContractorNo, d.materialBalanceNo, d.balanceStatus, d.storageLocation, d.stocktakeStatus,
       ], q);
-    }).map(computeDetailedEntry).filter((c) => matchesCustomFilters(c as unknown as Record<string, unknown>, customFilters)).slice(0, limit);
+    }).map(computeDetailedEntry).filter((c) => matchesCustomFilters(c as unknown as Record<string, unknown>, customFilters)).reverse().slice(0, limit);
 
     const transit = db.transit.filter((t) => {
       if (!matchesMultiPacking(t.packingListNo, packingNos)) return false;
@@ -4185,7 +4194,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         t.rowNo, t.packingListNo, t.packageNo, t.itemDescription, t.supplier, t.overallStatus,
         t.releaseNetNo, t.interimNo, t.billOfLadingNo, t.carrierContractor,
       ], q);
-    }).slice(0, limit);
+    }).reverse().slice(0, limit);
 
     return { general, detailed, transit } as T;
   }
@@ -4313,19 +4322,53 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       transitByStatus[st] = (transitByStatus[st] || 0) + 1;
     }
 
-    const byIslandMap: Record<string, { name: string; generalCount: number; detailedCount: number; shortageQty: number; mapnaStock: number; contractorStock: number }> = {};
+    const byIslandMap: Record<
+      string,
+      {
+        name: string;
+        generalCount: number;
+        detailedCount: number;
+        shortageRowCount: number;
+        shortageQty: number;
+        mapnaStock: number;
+        contractorStock: number;
+      }
+    > = {};
     for (const g of db.general) {
-      const isl = normKey(g.island) || 'سایر';
-      if (!byIslandMap[isl]) byIslandMap[isl] = { name: isl, generalCount: 0, detailedCount: 0, shortageQty: 0, mapnaStock: 0, contractorStock: 0 };
-      byIslandMap[isl].generalCount += 1;
+      const bucket = normalizeIslandBucket(g.island);
+      if (!byIslandMap[bucket.key]) {
+        byIslandMap[bucket.key] = {
+          name: bucket.label,
+          generalCount: 0,
+          detailedCount: 0,
+          shortageRowCount: 0,
+          shortageQty: 0,
+          mapnaStock: 0,
+          contractorStock: 0,
+        };
+      }
+      byIslandMap[bucket.key].generalCount += 1;
     }
     for (const d of detailedComputed) {
-      const isl = normKey(d.island) || 'سایر';
-      if (!byIslandMap[isl]) byIslandMap[isl] = { name: isl, generalCount: 0, detailedCount: 0, shortageQty: 0, mapnaStock: 0, contractorStock: 0 };
-      byIslandMap[isl].detailedCount += 1;
-      byIslandMap[isl].shortageQty += d.shortage;
-      byIslandMap[isl].mapnaStock += d.mapnaInventory;
-      byIslandMap[isl].contractorStock += d.contractorInventory;
+      const bucket = normalizeIslandBucket(d.island);
+      if (!byIslandMap[bucket.key]) {
+        byIslandMap[bucket.key] = {
+          name: bucket.label,
+          generalCount: 0,
+          detailedCount: 0,
+          shortageRowCount: 0,
+          shortageQty: 0,
+          mapnaStock: 0,
+          contractorStock: 0,
+        };
+      }
+      byIslandMap[bucket.key].detailedCount += 1;
+      if (d.hasShortage) {
+        byIslandMap[bucket.key].shortageRowCount += 1;
+      }
+      byIslandMap[bucket.key].shortageQty = roundQty(byIslandMap[bucket.key].shortageQty + d.shortage);
+      byIslandMap[bucket.key].mapnaStock = roundQty(byIslandMap[bucket.key].mapnaStock + d.mapnaInventory);
+      byIslandMap[bucket.key].contractorStock = roundQty(byIslandMap[bucket.key].contractorStock + d.contractorInventory);
     }
 
     const monthBuckets: Record<string, { monthKey: string; generalRows: number; detailedRows: number; grossWeight: number }> = {};
@@ -4343,6 +4386,32 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       monthBuckets[mk].detailedRows += 1;
     }
 
+    const openMerItems = detailedComputed
+      .filter((d) => isMerOpen(d))
+      .map((d) => ({
+        id: d.id,
+        rowNo: d.rowNo,
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        itemNo: d.itemNo,
+        description: d.description || d.generalDescription,
+        merNo: d.merNo,
+        merStatus: d.merStatus,
+      }));
+    const openRepItems = detailedComputed
+      .filter((d) => isRepOpen(d))
+      .map((d) => ({
+        id: d.id,
+        rowNo: d.rowNo,
+        shipmentNo: d.shipmentNo,
+        packageNo: d.packageNo,
+        itemNo: d.itemNo,
+        description: d.description || d.generalDescription,
+        repNo: d.repNo,
+        repStatus: d.repStatus,
+      }));
+    const expiringChemicals = getExpiringChemicals(detailedComputed, 30);
+
     return {
       counts: {
         generalRows: db.general.length,
@@ -4353,17 +4422,29 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         closedPackings: closedPackingsCount,
         shortageItemsCount: shortageItems.length,
         damagedItemsCount: damagedItems.length,
+        openMerCount: openMerItems.length,
+        openRepCount: openRepItems.length,
+        expiringChemicalsCount: expiringChemicals.length,
       },
       totals: {
-        ...generalSummary,
         ...detailedSummary,
+        grossWeightSum: generalSummary.grossWeightSum,
+        netWeightSum: generalSummary.netWeightSum,
+        weighbridgeWeightSum: generalSummary.weighbridgeWeightSum,
+        freightCostSum: generalSummary.freightCostSum,
+        packingsByIsland: generalSummary.packingsByIsland,
+        grossWeightTons: roundQty(generalSummary.grossWeightSum / 1000),
+        netWeightTons: roundQty(generalSummary.netWeightSum / 1000),
         transitAmountSum: transitSummary.transitAmountSum,
       },
       transitByStatus: Object.entries(transitByStatus).map(([status, count]) => ({ status, count })),
-      byIsland: Object.values(byIslandMap).sort((a, b) => (b.generalCount + b.detailedCount) - (a.generalCount + a.detailedCount)).slice(0, 8),
+      byIsland: Object.values(byIslandMap).sort((a, b) => (b.generalCount + b.detailedCount) - (a.generalCount + a.detailedCount)),
       monthlyTrend: Object.values(monthBuckets).sort((a, b) => a.monthKey.localeCompare(b.monthKey)).slice(-12),
-      topShortages: shortageItems.slice(0, 8),
-      topDamaged: damagedItems.slice(0, 8),
+      topShortages: [...shortageItems].reverse().slice(0, 12),
+      topDamaged: [...damagedItems].reverse().slice(0, 12),
+      openMerItems: [...openMerItems].reverse().slice(0, 20),
+      openRepItems: [...openRepItems].reverse().slice(0, 20),
+      expiringChemicals,
     } as T;
   }
 
@@ -4753,11 +4834,13 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
             });
             return;
           }
+          const importedStatus = normKey(r.overallStatus);
+          const resolvedStatus = importedStatus === 'پایان' ? 'پایان' : arrived ? 'رسیده' : r.overallStatus;
           Object.assign(existing, {
             ...r,
             id: existing.id,
             rowNo: existing.rowNo,
-            overallStatus: arrived ? 'رسیده' : r.overallStatus,
+            overallStatus: resolvedStatus,
             linkedGeneralPackingNo: arrived ? pk : r.linkedGeneralPackingNo,
             createdAt: existing.createdAt,
             createdBy: existing.createdBy,
@@ -4766,13 +4849,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           replaced += 1;
           return;
         }
+        const importedStatus = normKey(r.overallStatus);
+        const resolvedStatus = importedStatus === 'پایان' ? 'پایان' : arrived ? 'رسیده' : r.overallStatus;
         const created: TransitEntry = {
           ...r,
           createdAt: r.createdAt || now,
           updatedAt: now,
           createdBy: r.createdBy || u.username,
           id: makeId(),
-          overallStatus: arrived ? 'رسیده' : r.overallStatus,
+          overallStatus: resolvedStatus,
           linkedGeneralPackingNo: arrived ? pk : undefined,
         };
         if (k && !forceAdd) batchByKey.set(k, created);

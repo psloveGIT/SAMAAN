@@ -22,6 +22,7 @@ import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface MivApiResponse {
   documents: MivDocumentRecord[];
@@ -1200,9 +1201,10 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
               </div>
             </div>
 
-            <div className="max-h-72 overflow-y-auto rounded-xl border border-[var(--border-subtle)]">
-              <table className="w-full text-xs">
-                <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0">
+            <div className="rounded-xl border border-[var(--border-subtle)] overflow-x-clip">
+              <StickyTableWrapper maxHeightClass="max-h-72">
+                <table className="w-full text-xs">
+                  <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                   <tr>
                     <th className="py-2 px-3">{t.headers.shipmentNo}</th>
                     <th className="py-2 px-3">{t.headers.packageNo}</th>
@@ -1301,7 +1303,8 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                     })
                   )}
                 </tbody>
-              </table>
+                </table>
+              </StickyTableWrapper>
             </div>
           </div>
 
@@ -1331,7 +1334,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
       )}
 
       {/* Document History */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
         <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold">
             {isFa ? 'سوابق درخواست کالا و حواله انبار (MIV)' : 'MIV Issue History'}
@@ -1347,7 +1350,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             </button>
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -1425,7 +1428,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       {/* Printable Official MD1EX-FQP02/05-03 MIV Landscape Modal */}

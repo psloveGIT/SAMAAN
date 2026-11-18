@@ -17,6 +17,7 @@ import {
   OfficialExtraMetaStrip,
   OfficialFormSignatures,
 } from './OfficialSheetHeader.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface ChecklistQuestionDef {
   key: string;
@@ -1010,12 +1011,12 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
             ].map((group) => (
               <div
                 key={group.title}
-                className="rounded-xl border border-[var(--border-subtle)] overflow-hidden"
+                className="rounded-xl border border-[var(--border-subtle)] overflow-x-clip"
               >
                 <div className="px-4 py-2.5 bg-[var(--bg-subtle)] text-xs font-bold text-[var(--text-primary)] border-b border-[var(--border-subtle)]">
                   {group.title}
                 </div>
-                <div className="overflow-x-auto">
+                <StickyTableWrapper maxHeightClass="max-h-[55vh]">
                   <table className="w-full text-xs">
                     <thead className="bg-[var(--bg-canvas)] text-[var(--text-secondary)] border-b border-[var(--border-subtle)]">
                       <tr>
@@ -1097,7 +1098,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                       })}
                     </tbody>
                   </table>
-                </div>
+                </StickyTableWrapper>
               </div>
             ))}
           </div>
@@ -1170,7 +1171,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
       )}
 
       {/* Saved Inspections History */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
         <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
           <h3 className="text-sm font-bold">
             {isFa ? 'سوابق چک‌لیست‌های بازدید ادواری انبار' : 'Periodic Warehouse Inspection History'}
@@ -1182,7 +1183,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
           </span>
         </div>
 
-        <div className="overflow-x-auto">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -1268,7 +1269,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       {/* 5-Page Official A4 Landscape Print Preview Modal */}

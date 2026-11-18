@@ -472,7 +472,8 @@ export class SamaanStore {
     const now = new Date().toISOString();
     for (const t of matches) {
       const st = normKey(t.overallStatus);
-      const needsStatus = st !== 'رسیده' && st.toLowerCase() !== 'arrived';
+      const isDoneOrArrived = st === 'رسیده' || st === 'پایان' || st.toLowerCase() === 'arrived';
+      const needsStatus = !isDoneOrArrived;
       const needsDate = Boolean(genArrival && normKey(t.arrivalDate) !== normKey(genArrival));
       if (needsStatus || needsDate) {
         if (needsStatus) {

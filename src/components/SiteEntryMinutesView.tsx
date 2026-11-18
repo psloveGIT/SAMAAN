@@ -28,6 +28,7 @@ import type {
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface SiteEntryApiResponse {
@@ -1751,8 +1752,9 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             </div>
 
             {items.length > 0 && (
-              <div className="overflow-x-auto rounded-lg border border-[var(--border-subtle)]">
-                <table className="w-full text-[11px]">
+              <div className="rounded-lg border border-[var(--border-subtle)] overflow-x-clip">
+                <StickyTableWrapper maxHeightClass="max-h-80">
+                  <table className="w-full text-[11px]">
                   <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                     <tr>
                       <th className="py-2 px-2 w-10">#</th>
@@ -1863,7 +1865,8 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                  </table>
+                </StickyTableWrapper>
               </div>
             )}
           </div>
@@ -1920,7 +1923,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
       )}
 
       {/* Recorded History */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
         <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold">
             {isFa ? 'سوابق صورتجلسه‌های ورود کالا و تجهیزات به کارگاه' : 'Recorded Site Entry Minutes'}
@@ -1936,7 +1939,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             </button>
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -2024,7 +2027,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       {/* Printable Official MD1EX-FQP02/15-01 Preview Modal */}

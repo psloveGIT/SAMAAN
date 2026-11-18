@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import type { TrashRecord } from '../shared/types.ts';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface TrashViewProps {
   refreshSignal: number;
@@ -122,8 +123,8 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
         </select>
       </div>
 
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -199,7 +200,7 @@ export const TrashView: React.FC<TrashViewProps> = ({ refreshSignal, onDataChang
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       {/* Cascade Restore Confirmation Modal */}

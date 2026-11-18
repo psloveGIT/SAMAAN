@@ -8,6 +8,7 @@ import type { DetailedComputed, GeneralEntry } from '../shared/types.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import { OfficialExtraMetaStrip } from './OfficialSheetHeader.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 const LABEL_META_STORAGE_KEY = 'samaan_storage_label_meta_v1';
 
@@ -859,9 +860,9 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
           </select>
         </div>
 
-        <div className="overflow-x-auto max-h-80 overflow-y-auto">
+        <StickyTableWrapper maxHeightClass="max-h-80">
           <table className="w-full text-xs">
-            <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0">
+            <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
                 <th className="py-2.5 px-3 w-9 text-center">
                   <input
@@ -928,7 +929,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       {/* Live Official Label Preview */}

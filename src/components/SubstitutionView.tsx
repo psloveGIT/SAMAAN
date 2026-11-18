@@ -26,6 +26,7 @@ import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface SubstitutionsApiResponse {
   records: SubstitutionRecord[];
@@ -1377,7 +1378,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -1493,7 +1494,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       {/* Printable Official MD1EX-FQP02/10-03 Replacement Form Modal */}

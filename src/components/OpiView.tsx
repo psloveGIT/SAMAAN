@@ -28,6 +28,7 @@ import type {
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 const joinUnique = (values: (string | undefined | null)[]): string => {
@@ -1346,8 +1347,9 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 </div>
 
                 {items.length > 0 && (
-                  <div className="overflow-x-auto rounded-lg border border-[var(--border-subtle)]">
-                    <table className="w-full text-[11px]">
+                  <div className="rounded-lg border border-[var(--border-subtle)] overflow-x-clip">
+                    <StickyTableWrapper maxHeightClass="max-h-80">
+                      <table className="w-full text-[11px]">
                       <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                         <tr>
                           <th className="py-2 px-2 w-20">Item No.</th>
@@ -1426,7 +1428,8 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                      </table>
+                    </StickyTableWrapper>
                   </div>
                 )}
               </div>
@@ -1527,7 +1530,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
           )}
 
           {/* Issued Invitations History */}
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
             <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold">
                 {isFa ? 'دعوتنامه‌های گشایش و بازرسی صادرشده' : 'Issued Invitations'}
@@ -1543,7 +1546,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 </button>
               </div>
             </div>
-            <div className="overflow-x-auto">
+            <StickyTableWrapper>
               <table className="w-full text-xs">
                 <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                   <tr>
@@ -1650,7 +1653,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                   )}
                 </tbody>
               </table>
-            </div>
+            </StickyTableWrapper>
           </div>
         </div>
       )}
@@ -1717,7 +1720,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
             />
           </div>
 
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
             <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-semibold text-[var(--text-secondary)]">
                 {isFa ? 'اقلام مشمول بازرسی گشایش' : 'Items for Opening Inspection'}
@@ -1734,7 +1737,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <StickyTableWrapper>
               <table className="w-full text-xs">
                 <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                   <tr>
@@ -1853,7 +1856,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                   )}
                 </tbody>
               </table>
-            </div>
+            </StickyTableWrapper>
 
             {canEdit && itemsForResults.length > 0 && (
               <div className="p-4 border-t border-[var(--border-subtle)] flex justify-end">

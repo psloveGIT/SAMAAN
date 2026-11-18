@@ -35,6 +35,7 @@ import { PrintReportModal } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 import { type DetailedAiExtractionResult, SmartIntakeModal } from './SmartIntakeModal.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface DetailedListResponse {
   items: DetailedComputed[];
@@ -477,61 +478,60 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     );
   }, [selectedRows, data]);
 
-  // Note: Alerts column removed cleanly; empty columns auto-hidden when hideEmptyCols=true
+  // Default visible columns (RTL): rowNo, shipmentNo, packageNo, itemNo, description, size, packingQty, countingUnit, subSystem, storageLocation, mapnaInventory, contractorInventory
+  // All remaining columns stay hidden until user activates "نمایش ستون‌های اضافی"
   const columns = useMemo(
     () => [
       { key: 'rowNo', header: t.headers.rowNo, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.rowNo },
-      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.arrivalDate },
       { key: 'shipmentNo', header: t.headers.shipmentNo, isLtr: true, get: (r: DetailedComputed) => r.shipmentNo },
       { key: 'packageNo', header: t.headers.packageNo, isLtr: true, get: (r: DetailedComputed) => r.packageNo },
       { key: 'itemNo', header: t.headers.itemNo, isLtr: true, get: (r: DetailedComputed) => r.itemNo },
-      { key: 'generalDescription', header: t.headers.generalDescription, get: (r: DetailedComputed) => r.generalDescription },
       { key: 'description', header: t.headers.description, get: (r: DetailedComputed) => r.description },
       { key: 'size', header: t.headers.size, isLtr: true, get: (r: DetailedComputed) => r.size },
-      { key: 'itemCode', header: t.headers.itemCode, isLtr: true, get: (r: DetailedComputed) => r.itemCode },
-      { key: 'mtoRef', header: t.headers.mtoRef, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mtoRef },
       { key: 'packingQty', header: t.headers.packingQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.packingQty },
-      { key: 'actualQty', header: t.headers.actualQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.actualQty },
-      { key: 'shortage', header: t.headers.shortage, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.shortage > 0 ? r.shortage : null) },
-      { key: 'surplus', header: t.headers.surplus, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.surplus > 0 ? r.surplus : null) },
-      { key: 'damagedQty', header: t.headers.damagedQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.damagedQty },
       { key: 'countingUnit', header: t.headers.countingUnit, isLtr: true, get: (r: DetailedComputed) => r.countingUnit },
-      { key: 'repNo', header: t.headers.repNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.repNo },
-      { key: 'repStatus', header: t.headers.repStatus, hideInTable: true, get: (r: DetailedComputed) => r.repStatus },
-      { key: 'repDescription', header: t.headers.repDescription, hideInTable: true, get: (r: DetailedComputed) => r.repDescription },
-      { key: 'supplier', header: t.headers.supplier, get: (r: DetailedComputed) => r.supplier },
-      { key: 'origin', header: t.headers.origin, hideInTable: true, get: (r: DetailedComputed) => r.origin },
-      { key: 'island', header: t.headers.island, get: (r: DetailedComputed) => r.island },
-      { key: 'system', header: t.headers.system, get: (r: DetailedComputed) => r.system },
       { key: 'subSystem', header: t.headers.subSystem, get: (r: DetailedComputed) => r.subSystem },
-      { key: 'unit', header: t.headers.unit, get: (r: DetailedComputed) => r.unit },
-      { key: 'opiNo', header: t.headers.opiNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiNo },
-      { key: 'opiDate', header: t.headers.opiDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiDate },
-      { key: 'merNo', header: t.headers.merNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.merNo },
-      { key: 'merStatus', header: t.headers.merStatus, hideInTable: true, get: (r: DetailedComputed) => r.merStatus },
       { key: 'storageLocation', header: t.headers.storageLocation, get: (r: DetailedComputed) => r.storageLocation },
-      { key: 'gcvReceiptNo', header: t.headers.gcvReceiptNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvReceiptNo },
-      { key: 'receiver', header: t.headers.receiver, get: (r: DetailedComputed) => r.receiver },
-      { key: 'gcvDeliveredQty', header: t.headers.gcvDeliveredQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvDeliveredQty },
       {
         key: 'mapnaInventory',
         header: t.headers.mapnaInventory,
         isNum: true,
         isLtr: true,
-        hideInTable: true,
         get: (r: DetailedComputed) => (r.opiPending ? null : r.mapnaInventory),
       },
-      { key: 'mivContractorNo', header: t.headers.mivContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorNo },
-      { key: 'mivContractorDate', header: t.headers.mivContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorDate },
-      { key: 'mivContractorQty', header: t.headers.mivContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorQty },
       {
         key: 'contractorInventory',
         header: t.headers.contractorInventory,
         isNum: true,
         isLtr: true,
-        hideInTable: true,
-        get: (r: DetailedComputed) => (r.contractorInventory > 0 ? r.contractorInventory : null),
+        get: (r: DetailedComputed) => (r.opiPending ? null : r.contractorInventory),
       },
+      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.arrivalDate },
+      { key: 'generalDescription', header: t.headers.generalDescription, hideInTable: true, get: (r: DetailedComputed) => r.generalDescription },
+      { key: 'itemCode', header: t.headers.itemCode, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.itemCode },
+      { key: 'mtoRef', header: t.headers.mtoRef, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mtoRef },
+      { key: 'actualQty', header: t.headers.actualQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.actualQty },
+      { key: 'shortage', header: t.headers.shortage, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.shortage > 0 ? r.shortage : null) },
+      { key: 'surplus', header: t.headers.surplus, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.surplus > 0 ? r.surplus : null) },
+      { key: 'damagedQty', header: t.headers.damagedQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.damagedQty },
+      { key: 'repNo', header: t.headers.repNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.repNo },
+      { key: 'repStatus', header: t.headers.repStatus, hideInTable: true, get: (r: DetailedComputed) => r.repStatus },
+      { key: 'repDescription', header: t.headers.repDescription, hideInTable: true, get: (r: DetailedComputed) => r.repDescription },
+      { key: 'supplier', header: t.headers.supplier, hideInTable: true, get: (r: DetailedComputed) => r.supplier },
+      { key: 'origin', header: t.headers.origin, hideInTable: true, get: (r: DetailedComputed) => r.origin },
+      { key: 'island', header: t.headers.island, hideInTable: true, get: (r: DetailedComputed) => r.island },
+      { key: 'system', header: t.headers.system, hideInTable: true, get: (r: DetailedComputed) => r.system },
+      { key: 'unit', header: t.headers.unit, hideInTable: true, get: (r: DetailedComputed) => r.unit },
+      { key: 'opiNo', header: t.headers.opiNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiNo },
+      { key: 'opiDate', header: t.headers.opiDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiDate },
+      { key: 'merNo', header: t.headers.merNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.merNo },
+      { key: 'merStatus', header: t.headers.merStatus, hideInTable: true, get: (r: DetailedComputed) => r.merStatus },
+      { key: 'gcvReceiptNo', header: t.headers.gcvReceiptNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvReceiptNo },
+      { key: 'receiver', header: t.headers.receiver, hideInTable: true, get: (r: DetailedComputed) => r.receiver },
+      { key: 'gcvDeliveredQty', header: t.headers.gcvDeliveredQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvDeliveredQty },
+      { key: 'mivContractorNo', header: t.headers.mivContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorNo },
+      { key: 'mivContractorDate', header: t.headers.mivContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorDate },
+      { key: 'mivContractorQty', header: t.headers.mivContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorQty },
       { key: 'smrContractorNo', header: t.headers.smrContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorNo },
       { key: 'smrContractorDate', header: t.headers.smrContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorDate },
       { key: 'smrContractorQty', header: t.headers.smrContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorQty },
@@ -556,7 +556,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'chemicalType', header: t.headers.chemicalType, hideInTable: true, get: (r: DetailedComputed) => r.chemicalType || '' },
       { key: 'productionDate', header: t.headers.productionDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.productionDate || '' },
       { key: 'expirationDate', header: t.headers.expirationDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.expirationDate || '' },
-      { key: 'notes', header: t.headers.notes, get: (r: DetailedComputed) => r.notes },
+      { key: 'notes', header: t.headers.notes, hideInTable: true, get: (r: DetailedComputed) => r.notes },
     ],
     [t],
   );
@@ -1252,8 +1252,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       )}
 
       {/* Detailed Table */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -1263,9 +1263,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     checked={items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]))}
                     onChange={toggleAllOnPage}
                   />
-                </th>
-                <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
-                  {isFa ? 'وضعیت / دسته‌بندی' : 'Status / Class'}
                 </th>
                 {visibleColumns.map((col) => (
                   <th
@@ -1301,6 +1298,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     />
                   </th>
                 ))}
+                <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
+                  {isFa ? 'وضعیت / دسته‌بندی' : 'Status / Class'}
+                </th>
                 <th className="py-2.5 px-3 text-end font-semibold whitespace-nowrap">
                   {isFa ? 'عملیات' : 'Actions'}
                 </th>
@@ -1339,6 +1339,44 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         onChange={() => toggleRow(row)}
                       />
                     </td>
+
+                    {visibleColumns.map((col) => {
+                      const raw = col.get(row);
+                      const display =
+                        typeof raw === 'number'
+                          ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
+                          : formatMultiValueCell(raw, {
+                              isDate: Boolean(col.isDate),
+                              calendar: prefs.calendar,
+                              lang: prefs.language,
+                            });
+                      return (
+                        <td
+                          key={col.key}
+                          className={`py-2 px-3 whitespace-pre-line align-top max-w-[280px] leading-relaxed tabular-nums bidi-plaintext ${
+                            col.isNum ? 'text-end' : 'text-start'
+                          } ${
+                            col.key === 'shortage' && row.hasShortage
+                              ? 'font-bold text-[var(--status-danger)]'
+                              : col.key === 'damagedQty' && row.hasDamaged
+                                ? 'font-bold text-[var(--status-warning)]'
+                                : col.key === 'mapnaInventory'
+                                  ? 'font-semibold text-[var(--accent-primary)]'
+                                  : ''
+                          }`}
+                          title={String(display)}
+                        >
+                          {col.isLtr && display ? (
+                            <span dir="ltr" className="inline-block whitespace-pre-line">
+                              {display}
+                            </span>
+                          ) : (
+                            display
+                          )}
+                        </td>
+                      );
+                    })}
+
                     <td className="py-2 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap items-center gap-1">
                         {row.hasShortage && (
@@ -1396,43 +1434,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       </div>
                     </td>
 
-                    {visibleColumns.map((col) => {
-                      const raw = col.get(row);
-                      const display =
-                        typeof raw === 'number'
-                          ? raw.toLocaleString(isFa ? 'fa-IR' : 'en-US')
-                          : formatMultiValueCell(raw, {
-                              isDate: Boolean(col.isDate),
-                              calendar: prefs.calendar,
-                              lang: prefs.language,
-                            });
-                      return (
-                        <td
-                          key={col.key}
-                          className={`py-2 px-3 whitespace-pre-line align-top max-w-[280px] leading-relaxed tabular-nums bidi-plaintext ${
-                            col.isNum ? 'text-end' : 'text-start'
-                          } ${
-                            col.key === 'shortage' && row.hasShortage
-                              ? 'font-bold text-[var(--status-danger)]'
-                              : col.key === 'damagedQty' && row.hasDamaged
-                                ? 'font-bold text-[var(--status-warning)]'
-                                : col.key === 'mapnaInventory'
-                                  ? 'font-semibold text-[var(--accent-primary)]'
-                                  : ''
-                          }`}
-                          title={String(display)}
-                        >
-                          {col.isLtr && display ? (
-                            <span dir="ltr" className="inline-block whitespace-pre-line">
-                              {display}
-                            </span>
-                          ) : (
-                            display
-                          )}
-                        </td>
-                      );
-                    })}
-
                     <td className="py-2 px-3 whitespace-nowrap text-end" onClick={(e) => e.stopPropagation()}>
                       <div className="inline-flex items-center gap-1">
                         <button
@@ -1487,7 +1488,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
 
         {data && data.totalPages > 1 && (
           <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">

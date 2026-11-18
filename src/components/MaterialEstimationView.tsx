@@ -18,6 +18,7 @@ import type {
 } from '../shared/types.ts';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface MaterialEstimationViewProps {
   categories: CategoryStore;
@@ -537,8 +538,8 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
       </div>
 
       {/* Main Comparison Table */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -691,7 +692,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
               )}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
       </div>
 
       {/* Add / Edit Estimation Modal */}

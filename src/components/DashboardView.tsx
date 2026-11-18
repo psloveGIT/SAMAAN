@@ -18,6 +18,8 @@ import type {
   SelectionFormulaSummary,
 } from '../shared/types.ts';
 import type { NavTabKey } from './Layout.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+
 
 interface AnalyticsPayload {
   counts: {
@@ -43,6 +45,7 @@ interface AnalyticsPayload {
     generalCount: number;
     detailedCount: number;
     shortageQty: number;
+    shortageRowCount?: number;
     mapnaStock: number;
     contractorStock: number;
   }[];
@@ -165,17 +168,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           : undefined,
     },
     {
-      label: isFa ? 'ردیف‌های کلی / نگله' : 'General Package Rows',
+      label: isFa ? 'ردیف‌های کلی تجهیزات' : 'General Equipment Rows',
       value: fmt(data.counts.generalRows),
-      sub:
-        data.counts.uniquePackages > 0
-          ? isFa
-            ? `${fmt(data.counts.uniquePackages)} نگله یکتا`
-            : `${fmt(data.counts.uniquePackages)} unique packages`
-          : undefined,
     },
     {
-      label: isFa ? 'اقلام متریال' : 'Detailed Material Lines',
+      label: isFa ? 'شماره نگله‌های یکتا' : 'Unique Package Numbers',
+      value: fmt(data.counts.uniquePackages),
+    },
+    {
+      label: isFa ? 'اقلام تجهیزات' : 'Equipment Items',
       value: fmt(data.counts.detailedRows),
     },
     {
@@ -200,11 +201,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       tone: data.counts.shortageItemsCount > 0 ? 'danger' : undefined,
     },
     {
-      label: isFa ? 'وضعیت MER باز / REP باز' : 'Open MER / Open REP',
+      label: isFa
+        ? 'اقلام دارای مغایرت یا آسیب‌دیدگی / اقلام جایگزین شده'
+        : 'Discrepancy or Damaged / Replaced Items',
       value: `${fmt(openMerCount)} / ${fmt(openRepCount)}`,
       sub: isFa
-        ? `MER باز: ${fmt(openMerCount)} · REP باز: ${fmt(openRepCount)}`
-        : `MER Open: ${fmt(openMerCount)} · REP Open: ${fmt(openRepCount)}`,
+        ? `مغایرت یا آسیب‌دیدگی: ${fmt(openMerCount)} · جایگزین‌شده: ${fmt(openRepCount)}`
+        : `Discrepancy/Damaged: ${fmt(openMerCount)} · Replaced: ${fmt(openRepCount)}`,
       tone: openMerCount + openRepCount > 0 ? 'warning' : undefined,
     },
   ];
@@ -212,13 +215,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3.5">
         {kpis.map((k) => (
           <div
             key={k.label}
             className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-col justify-between"
           >
-            <div className="text-xs font-medium text-[var(--text-secondary)]">{k.label}</div>
+            <div className="text-xs font-medium text-[var(--text-secondary)] leading-snug">{k.label}</div>
             <div
               className={`mt-2 text-2xl font-bold tabular-nums ${
                 k.tone === 'danger'
@@ -402,245 +405,332 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Open MER & Open REP Monitoring Panels */}
-      {(openMerItems.length > 0 || openRepItems.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {openMerItems.length > 0 && (
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
-                  <ClipboardList className="w-4 h-4" />
-                  <span>
-                    {isFa
-                      ? `وضعیت MER باز (${fmt(openMerCount)} قلم)`
-                      : `Open MER Items (${fmt(openMerCount)})`}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onNavigate('detailed')}
-                  className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
-                >
-                  <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="divide-y divide-[var(--border-subtle)]">
-                {openMerItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onInspectDetailedShipment(item.shipmentNo)}
-                    className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold truncate bidi-plaintext">
-                        {item.description || item.generalDescription}
-                      </div>
-                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
-                        <span dir="ltr">{item.shipmentNo}</span>
-                        {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
-                        {item.merNo && <span dir="ltr">· MER: {item.merNo}</span>}
-                      </div>
-                    </div>
-                    <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold">
-                      {item.merStatus || (isFa ? 'باز' : 'Open')}
-                    </span>
-                  </button>
-                ))}
-              </div>
+      {/* Active Monitoring Panels (Shortages, Discrepancy/Damaged, Replaced, Expiring Chemicals) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* اقلام دارای کسری فعال */}
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
+              <AlertTriangle className="w-4 h-4" />
+              <span>
+                {isFa
+                  ? `اقلام دارای کسری فعال (${fmt(data.counts.shortageItemsCount)})`
+                  : `Active Shortage Items (${fmt(data.counts.shortageItemsCount)})`}
+              </span>
             </div>
-          )}
-
-          {openRepItems.length > 0 && (
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
-                  <ClipboardList className="w-4 h-4" />
-                  <span>
-                    {isFa
-                      ? `وضعیت REP باز (${fmt(openRepCount)} قلم)`
-                      : `Open REP Items (${fmt(openRepCount)})`}
-                  </span>
-                </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('detailed')}
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+            >
+              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {data.topShortages.length === 0 ? (
+            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
+              {isFa ? 'اقلام دارای کسری فعالی یافت نشد.' : 'No active shortage items.'}
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--border-subtle)]">
+              {data.topShortages.map((item) => (
                 <button
+                  key={item.id}
                   type="button"
-                  onClick={() => onNavigate('detailed')}
-                  className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+                  onClick={() => onInspectDetailedShipment(item.shipmentNo)}
+                  className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
                 >
-                  <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="divide-y divide-[var(--border-subtle)]">
-                {openRepItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onInspectDetailedShipment(item.shipmentNo)}
-                    className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold truncate bidi-plaintext">
-                        {item.description || item.generalDescription}
-                      </div>
-                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
-                        <span dir="ltr">{item.shipmentNo}</span>
-                        {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
-                        {item.repNo && <span dir="ltr">· REP: {item.repNo}</span>}
-                      </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold truncate bidi-plaintext">
+                      {item.description || item.generalDescription}
                     </div>
-                    <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold">
-                      {item.repStatus || (isFa ? 'باز' : 'Open')}
+                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                      <span dir="ltr">{item.shipmentNo}</span>
+                      {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
+                      {item.arrivalDate && <span dir="ltr">· {formatDate(item.arrivalDate)}</span>}
+                      {item.mtoRef && <span dir="ltr">· MTO: {item.mtoRef}</span>}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-end">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-bold tabular-nums">
+                      {t.headers.shortage}: {fmt(item.shortage)}
                     </span>
-                  </button>
-                ))}
-              </div>
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </div>
-      )}
+
+        {/* اقلام دارای مغایرت یا آسیب‌دیدگی فعال */}
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
+              <ClipboardList className="w-4 h-4" />
+              <span>
+                {isFa
+                  ? `اقلام دارای مغایرت یا آسیب‌دیدگی فعال (${fmt(openMerCount)})`
+                  : `Active Discrepancy or Damaged Items (${fmt(openMerCount)})`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('detailed')}
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+            >
+              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {openMerItems.length === 0 ? (
+            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
+              {isFa ? 'اقلام دارای مغایرت یا آسیب‌دیدگی فعالی یافت نشد.' : 'No active discrepancy or damaged items.'}
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--border-subtle)]">
+              {openMerItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onInspectDetailedShipment(item.shipmentNo)}
+                  className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold truncate bidi-plaintext">
+                      {item.description || item.generalDescription}
+                    </div>
+                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                      <span dir="ltr">{item.shipmentNo}</span>
+                      {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
+                      {item.merNo && <span dir="ltr">· MER: {item.merNo}</span>}
+                    </div>
+                  </div>
+                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold">
+                    {item.merStatus || (isFa ? 'باز' : 'Open')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* اقلام جایگزین شده فعال */}
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
+              <ClipboardList className="w-4 h-4" />
+              <span>
+                {isFa
+                  ? `اقلام جایگزین شده فعال (${fmt(openRepCount)})`
+                  : `Active Replaced Items (${fmt(openRepCount)})`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('detailed')}
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+            >
+              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {openRepItems.length === 0 ? (
+            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
+              {isFa ? 'اقلام جایگزین‌شده فعالی یافت نشد.' : 'No active replaced items.'}
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--border-subtle)]">
+              {openRepItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onInspectDetailedShipment(item.shipmentNo)}
+                  className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold truncate bidi-plaintext">
+                      {item.description || item.generalDescription}
+                    </div>
+                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                      <span dir="ltr">{item.shipmentNo}</span>
+                      {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
+                      {item.repNo && <span dir="ltr">· REP: {item.repNo}</span>}
+                    </div>
+                  </div>
+                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold">
+                    {item.repStatus || (isFa ? 'باز' : 'Open')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* مواد شیمیایی با تاریخ انقضای زیر یک ماه */}
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
+              <FlaskConical className="w-4 h-4" />
+              <span>
+                {isFa
+                  ? `مواد شیمیایی با تاریخ انقضای زیر یک ماه (${fmt(expiringChemicals.length)})`
+                  : `Chemicals Expiring Within 1 Month (${fmt(expiringChemicals.length)})`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('detailed')}
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+            >
+              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {expiringChemicals.length === 0 ? (
+            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
+              {isFa ? 'ماده شیمیایی با انقضای زیر یک ماه یافت نشد.' : 'No chemicals expiring within 1 month.'}
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--border-subtle)]">
+              {expiringChemicals.map((chem) => (
+                <button
+                  key={chem.id}
+                  type="button"
+                  onClick={() => onInspectDetailedShipment(chem.shipmentNo)}
+                  className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold truncate bidi-plaintext">
+                      {chem.chemicalType || chem.description}
+                    </div>
+                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                      <span dir="ltr">{chem.shipmentNo}</span>
+                      {chem.packageNo && <span dir="ltr">· {chem.packageNo}</span>}
+                      {chem.itemNo && <span dir="ltr">· #{chem.itemNo}</span>}
+                      {chem.expirationDate && <span dir="ltr">· {formatDate(chem.expirationDate)}</span>}
+                    </div>
+                  </div>
+                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-bold tabular-nums">
+                    {chem.daysRemaining < 0
+                      ? isFa
+                        ? `منقضی (${fmt(Math.abs(chem.daysRemaining))} روز)`
+                        : `Expired (${fmt(Math.abs(chem.daysRemaining))}d)`
+                      : isFa
+                        ? `${fmt(chem.daysRemaining)} روز مانده`
+                        : `${fmt(chem.daysRemaining)}d left`}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Island Breakdown Table */}
       {data.byIsland.length > 0 && (
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
             <h3 className="text-sm font-bold">
               {isFa ? 'تفکیک اقلام و موجودی بر اساس جزیره' : 'Breakdown by Island'}
             </h3>
           </div>
-          <div className="overflow-x-auto">
+          <StickyTableWrapper>
             <table className="w-full text-xs">
               <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                 <tr>
-                  <th className="py-2.5 px-4 text-start font-semibold">{t.headers.island}</th>
-                  <th className="py-2.5 px-4 text-end font-semibold">
+                  <th className="py-2.5 px-4 text-start font-semibold whitespace-nowrap">{t.headers.island}</th>
+                  <th className="py-2.5 px-4 text-end font-semibold whitespace-nowrap">
                     {isFa ? 'ردیف‌های کلی' : 'General Rows'}
                   </th>
-                  <th className="py-2.5 px-4 text-end font-semibold">
+                  <th className="py-2.5 px-4 text-end font-semibold whitespace-nowrap">
                     {isFa ? 'ردیف‌های جزئیات' : 'Detailed Rows'}
                   </th>
-                  {data.byIsland.some((i) => i.shortageQty > 0) && (
-                    <th className="py-2.5 px-4 text-end font-semibold text-[var(--status-danger)]">
-                      {t.headers.shortage}
-                    </th>
-                  )}
+                  <th className="py-2.5 px-4 text-end font-semibold text-[var(--status-danger)] whitespace-nowrap">
+                    {isFa ? 'تعداد ردیف دارای کسری' : 'Shortage Rows Count'}
+                  </th>
+                  <th className="py-2.5 px-4 text-end font-semibold whitespace-nowrap">
+                    {t.headers.mapnaInventory}
+                  </th>
+                  <th className="py-2.5 px-4 text-end font-semibold whitespace-nowrap">
+                    {t.headers.contractorInventory}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
-                {data.byIsland.map((isl) => (
-                  <tr key={isl.name} className="hover:bg-[var(--bg-subtle)]/50">
-                    <td className="py-2.5 px-4 font-semibold">{isl.name}</td>
-                    <td className="py-2.5 px-4 text-end tabular-nums">
-                      {isl.generalCount > 0 ? fmt(isl.generalCount) : ''}
-                    </td>
-                    <td className="py-2.5 px-4 text-end tabular-nums">
-                      {isl.detailedCount > 0 ? fmt(isl.detailedCount) : ''}
-                    </td>
-                    {data.byIsland.some((i) => i.shortageQty > 0) && (
-                      <td className="py-2.5 px-4 text-end tabular-nums font-semibold text-[var(--status-danger)]">
-                        {isl.shortageQty > 0 ? fmt(isl.shortageQty) : ''}
+                {data.byIsland.map((isl) => {
+                  const rowShortageCount = isl.shortageRowCount ?? 0;
+                  return (
+                    <tr key={isl.name} className="hover:bg-[var(--bg-subtle)]/50">
+                      <td className="py-2.5 px-4 font-semibold whitespace-nowrap">{isl.name}</td>
+                      <td className="py-2.5 px-4 text-end tabular-nums">
+                        {fmt(isl.generalCount)}
                       </td>
-                    )}
-                  </tr>
-                ))}
+                      <td className="py-2.5 px-4 text-end tabular-nums">
+                        {fmt(isl.detailedCount)}
+                      </td>
+                      <td
+                        className={`py-2.5 px-4 text-end tabular-nums font-semibold ${
+                          rowShortageCount > 0 ? 'text-[var(--status-danger)]' : 'text-[var(--text-muted)]'
+                        }`}
+                      >
+                        {fmt(rowShortageCount)}
+                      </td>
+                      <td className="py-2.5 px-4 text-end tabular-nums">
+                        {fmt(isl.mapnaStock)}
+                      </td>
+                      <td className="py-2.5 px-4 text-end tabular-nums">
+                        {fmt(isl.contractorStock)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-          </div>
+          </StickyTableWrapper>
         </div>
       )}
 
-      {/* Shortage & Damaged Alerts */}
-      {(data.topShortages.length > 0 || data.topDamaged.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {data.topShortages.length > 0 && (
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span>{isFa ? 'اقلام دارای کسری فعال' : 'Active Shortage Alerts'}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onNavigate('detailed')}
-                  className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
-                >
-                  <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="divide-y divide-[var(--border-subtle)]">
-                {data.topShortages.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onInspectDetailedShipment(item.shipmentNo)}
-                    className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold truncate bidi-plaintext">
-                        {item.description || item.generalDescription}
-                      </div>
-                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
-                        <span dir="ltr">{item.shipmentNo}</span>
-                        {item.packageNo && <span dir="ltr">· {item.packageNo}</span>}
-                        {item.arrivalDate && <span dir="ltr">· {formatDate(item.arrivalDate)}</span>}
-                        {item.mtoRef && <span dir="ltr">· MTO: {item.mtoRef}</span>}
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-end">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-bold tabular-nums">
-                        {t.headers.shortage}: {fmt(item.shortage)}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
+      {/* Damaged Items Summary if any */}
+      {data.topDamaged.length > 0 && (
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
+              <AlertTriangle className="w-4 h-4" />
+              <span>{isFa ? 'اقلام آسیب‌دیده ثبت‌شده' : 'Damaged Items'}</span>
             </div>
-          )}
-
-          {data.topDamaged.length > 0 && (
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span>{isFa ? 'اقلام آسیب‌دیده ثبت‌شده' : 'Damaged Items'}</span>
+            <button
+              type="button"
+              onClick={() => onNavigate('detailed')}
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+            >
+              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="divide-y divide-[var(--border-subtle)]">
+            {data.topDamaged.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onInspectDetailedShipment(item.shipmentNo)}
+                className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
+              >
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold truncate">
+                    {item.description || item.generalDescription}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums">
+                    {item.shipmentNo}
+                    {item.packageNo ? ` · ${item.packageNo}` : ''}
+                    {item.arrivalDate ? ` · ${formatDate(item.arrivalDate)}` : ''}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onNavigate('detailed')}
-                  className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
-                >
-                  <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="divide-y divide-[var(--border-subtle)]">
-                {data.topDamaged.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onInspectDetailedShipment(item.shipmentNo)}
-                    className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold truncate">
-                        {item.description || item.generalDescription}
-                      </div>
-                      <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums">
-                        {item.shipmentNo}
-                        {item.packageNo ? ` · ${item.packageNo}` : ''}
-                        {item.arrivalDate ? ` · ${formatDate(item.arrivalDate)}` : ''}
-                      </div>
-                    </div>
-                    <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold tabular-nums">
-                      {t.headers.damagedQty}: {fmt(item.damagedQty || 0)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+                <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold tabular-nums">
+                  {t.headers.damagedQty}: {fmt(item.damagedQty || 0)}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

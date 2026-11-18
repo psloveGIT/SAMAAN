@@ -169,6 +169,43 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
   background: var(--text-muted);
 }
 
+/* Sticky data table headers & always-accessible top horizontal scrollbar */
+.samaan-top-scrollbar {
+  height: 12px;
+  scrollbar-width: thin;
+}
+
+.samaan-top-scrollbar::-webkit-scrollbar {
+  height: 10px;
+}
+
+.samaan-top-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: 5px;
+}
+
+.samaan-table-scroll thead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.samaan-table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background-color: var(--bg-subtle);
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
+}
+
+@media print {
+  .samaan-table-scroll thead,
+  .samaan-table-scroll thead th {
+    position: static !important;
+    box-shadow: none !important;
+  }
+}
+
 /* Official A4 Dynamic Printable Sheets */
 .samaan-a4-portrait {
   width: 100%;

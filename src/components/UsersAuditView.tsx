@@ -21,6 +21,7 @@ import type { AuditLogEntry, UserAccount, UserRole } from '../shared/types.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
 interface AuditResponse {
   items: AuditLogEntry[];
@@ -650,7 +651,7 @@ export const UsersAuditView: React.FC = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
               <tr>
@@ -689,7 +690,7 @@ export const UsersAuditView: React.FC = () => {
               ))}
             </tbody>
           </table>
-        </div>
+        </StickyTableWrapper>
 
         {auditData && auditData.totalPages > 1 && (
           <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">

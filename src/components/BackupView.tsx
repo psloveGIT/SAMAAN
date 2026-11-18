@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError, isStaticFallbackMode } from '../lib/api.ts';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import {
   deleteIndexedDbSnapshot,
   downloadJsonBackup,
@@ -1057,9 +1058,10 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     </span>
                   </div>
 
-                  <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-auto max-h-80">
-                    <table className="w-full text-[11px]">
-                      <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
+                  <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+                    <StickyTableWrapper maxHeightClass="max-h-80">
+                      <table className="w-full text-[11px]">
+                        <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                         <tr>
                           <th className="py-2 px-2">#</th>
                           {activeFieldDefs.map((tf) => (
@@ -1104,7 +1106,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                      </table>
+                    </StickyTableWrapper>
                   </div>
                 </div>
               )}

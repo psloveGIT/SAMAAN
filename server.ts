@@ -38,6 +38,7 @@ import {
   getExpiringChemicals,
   isMerOpen,
   isRepOpen,
+  normalizeIslandBucket,
   roundQty,
   toNum,
 } from './src/shared/formulas.ts';
@@ -359,8 +360,8 @@ async function startServer() {
     ).sort((a, b) => a.localeCompare(b));
     res.json({
       submissions: [...submissions].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-      generalEntries: store.db.general,
-      detailedItems: store.getDetailedComputedList(),
+      generalEntries: [...store.db.general].reverse(),
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
       packings,
     });
   });
@@ -392,7 +393,7 @@ async function startServer() {
       createdBy: req.currentUser!.username,
     };
     if (!store.db.customFormSubmissions) store.db.customFormSubmissions = [];
-    store.db.customFormSubmissions.push(record);
+    store.db.customFormSubmissions.unshift(record);
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'CREATE_CUSTOM_FORM',
@@ -946,7 +947,7 @@ async function startServer() {
 
     const filtered = sortBy
       ? sortRowsByColumn(filteredRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as GeneralEntry[]
-      : filteredRaw;
+      : [...filteredRaw].reverse();
 
     const total = filtered.length;
     const start = (page - 1) * pageSize;
@@ -1491,7 +1492,7 @@ async function startServer() {
 
     const computedAll = sortBy
       ? (sortRowsByColumn(computedRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as DetailedComputed[])
-      : computedRaw;
+      : [...computedRaw].reverse();
 
     const total = computedAll.length;
     const start = (page - 1) * pageSize;
@@ -1882,7 +1883,7 @@ async function startServer() {
 
     const filtered = sortBy
       ? (sortRowsByColumn(filteredRaw as unknown as Record<string, unknown>[], sortBy, sortDir) as unknown as TransitEntry[])
-      : filteredRaw;
+      : [...filteredRaw].reverse();
 
     const total = filtered.length;
     const start = (page - 1) * pageSize;
@@ -1906,11 +1907,19 @@ async function startServer() {
     const alreadyInWarehouse =
       pk && ((store.generalByPacking.get(pk)?.length || 0) > 0 || (store.detailedByPacking.get(pk)?.length || 0) > 0);
 
+    const requestedStatus = normKey(raw.overallStatus) || 'در دست ارسال';
+    const resolvedStatus =
+      requestedStatus === 'پایان'
+        ? 'پایان'
+        : alreadyInWarehouse
+          ? 'رسیده'
+          : requestedStatus;
+
     const created: TransitEntry = {
       id: makeId(),
       rowNo: '0',
       arrivalDate: normKey(raw.arrivalDate),
-      overallStatus: alreadyInWarehouse ? 'رسیده' : normKey(raw.overallStatus) || 'در دست ارسال',
+      overallStatus: resolvedStatus,
       inspectionRequest: normKey(raw.inspectionRequest),
       releaseNetNo: normKey(raw.releaseNetNo),
       releaseNetDate: normKey(raw.releaseNetDate),
@@ -2128,9 +2137,9 @@ async function startServer() {
     }
     res.json({
       minutes: store.db.siteEntryMinutes,
-      generalEntries: store.db.general,
-      transitEntries: store.db.transit,
-      detailedItems: store.getDetailedComputedList(),
+      generalEntries: [...store.db.general].reverse(),
+      transitEntries: [...store.db.transit].reverse(),
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     });
   });
@@ -2377,8 +2386,8 @@ async function startServer() {
     }
     res.json({
       invitations: store.db.opiInvitations,
-      detailedItems: store.getDetailedComputedList(),
-      generalEntries: store.db.general,
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
+      generalEntries: [...store.db.general].reverse(),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     });
   });
@@ -2695,8 +2704,8 @@ async function startServer() {
       minutes: store.db.opiMinutes,
       osdrReports: store.db.osdrReports,
       invitations: store.db.opiInvitations,
-      detailedItems: store.getDetailedComputedList(),
-      generalEntries: store.db.general,
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
+      generalEntries: [...store.db.general].reverse(),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
     });
   });
@@ -2999,8 +3008,8 @@ async function startServer() {
   app.get('/api/gcv', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
     res.json({
       documents: store.db.gcvDocuments,
-      detailedItems: store.getDetailedComputedList(),
-      generalEntries: store.db.general,
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
+      generalEntries: [...store.db.general].reverse(),
     });
   });
 
@@ -3305,8 +3314,8 @@ async function startServer() {
   app.get('/api/miv', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
     res.json({
       documents: store.db.mivDocuments,
-      detailedItems: store.getDetailedComputedList(),
-      generalEntries: store.db.general,
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
+      generalEntries: [...store.db.general].reverse(),
     });
   });
 
@@ -3718,8 +3727,8 @@ async function startServer() {
   app.get('/api/substitutions', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
     res.json({
       records: store.db.substitutions,
-      detailedItems: store.getDetailedComputedList(),
-      generalEntries: store.db.general,
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
+      generalEntries: [...store.db.general].reverse(),
     });
   });
 
@@ -3923,7 +3932,7 @@ async function startServer() {
   app.get('/api/estimations', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
     res.json({
       records: store.db.materialEstimates,
-      detailedItems: store.getDetailedComputedList(),
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
     });
   });
 
@@ -4271,6 +4280,7 @@ async function startServer() {
           q,
         );
       })
+      .reverse()
       .slice(0, limit);
 
     const detailed = store.db.detailed
@@ -4305,6 +4315,7 @@ async function startServer() {
       })
       .map(computeDetailedEntry)
       .filter((comp) => matchesCustomFilters(comp as unknown as Record<string, unknown>, customFilters))
+      .reverse()
       .slice(0, limit);
 
     const transit = store.db.transit
@@ -4327,6 +4338,7 @@ async function startServer() {
           q,
         );
       })
+      .reverse()
       .slice(0, limit);
 
     res.json({ general, detailed, transit });
@@ -4503,23 +4515,55 @@ async function startServer() {
       transitByStatus[st] = (transitByStatus[st] || 0) + 1;
     }
 
-    const byIslandMap: Record<string, { name: string; generalCount: number; detailedCount: number; shortageQty: number; mapnaStock: number; contractorStock: number }> = {};
-    for (const g of store.db.general) {
-      const isl = normKey(g.island) || 'سایر';
-      if (!byIslandMap[isl]) {
-        byIslandMap[isl] = { name: isl, generalCount: 0, detailedCount: 0, shortageQty: 0, mapnaStock: 0, contractorStock: 0 };
+    const byIslandMap: Record<
+      string,
+      {
+        name: string;
+        generalCount: number;
+        detailedCount: number;
+        shortageRowCount: number;
+        shortageQty: number;
+        mapnaStock: number;
+        contractorStock: number;
       }
-      byIslandMap[isl].generalCount += 1;
+    > = {};
+    for (const g of store.db.general) {
+      const bucket = normalizeIslandBucket(g.island);
+      if (!byIslandMap[bucket.key]) {
+        byIslandMap[bucket.key] = {
+          name: bucket.label,
+          generalCount: 0,
+          detailedCount: 0,
+          shortageRowCount: 0,
+          shortageQty: 0,
+          mapnaStock: 0,
+          contractorStock: 0,
+        };
+      }
+      byIslandMap[bucket.key].generalCount += 1;
     }
     for (const d of detailedComputed) {
-      const isl = normKey(d.island) || 'سایر';
-      if (!byIslandMap[isl]) {
-        byIslandMap[isl] = { name: isl, generalCount: 0, detailedCount: 0, shortageQty: 0, mapnaStock: 0, contractorStock: 0 };
+      const bucket = normalizeIslandBucket(d.island);
+      if (!byIslandMap[bucket.key]) {
+        byIslandMap[bucket.key] = {
+          name: bucket.label,
+          generalCount: 0,
+          detailedCount: 0,
+          shortageRowCount: 0,
+          shortageQty: 0,
+          mapnaStock: 0,
+          contractorStock: 0,
+        };
       }
-      byIslandMap[isl].detailedCount += 1;
-      byIslandMap[isl].shortageQty += d.shortage;
-      byIslandMap[isl].mapnaStock += d.mapnaInventory;
-      byIslandMap[isl].contractorStock += d.contractorInventory;
+      byIslandMap[bucket.key].detailedCount += 1;
+      if (d.hasShortage) {
+        byIslandMap[bucket.key].shortageRowCount += 1;
+      }
+      byIslandMap[bucket.key].shortageQty = roundQty(byIslandMap[bucket.key].shortageQty + d.shortage);
+      byIslandMap[bucket.key].mapnaStock = roundQty(byIslandMap[bucket.key].mapnaStock + d.mapnaInventory);
+      byIslandMap[bucket.key].contractorStock = roundQty(
+        byIslandMap[bucket.key].contractorStock + d.contractorInventory,
+      );
     }
 
     const monthBuckets: Record<string, { monthKey: string; generalRows: number; detailedRows: number; grossWeight: number }> = {};
@@ -4586,19 +4630,25 @@ async function startServer() {
         expiringChemicalsCount: expiringChemicals.length,
       },
       totals: {
-        ...generalSummary,
         ...detailedSummary,
+        grossWeightSum: generalSummary.grossWeightSum,
+        netWeightSum: generalSummary.netWeightSum,
+        weighbridgeWeightSum: generalSummary.weighbridgeWeightSum,
+        freightCostSum: generalSummary.freightCostSum,
+        packingsByIsland: generalSummary.packingsByIsland,
         grossWeightTons: roundQty(generalSummary.grossWeightSum / 1000),
         netWeightTons: roundQty(generalSummary.netWeightSum / 1000),
         transitAmountSum: transitSummary.transitAmountSum,
       },
       transitByStatus: Object.entries(transitByStatus).map(([status, count]) => ({ status, count })),
-      byIsland: Object.values(byIslandMap).sort((a, b) => (b.generalCount + b.detailedCount) - (a.generalCount + a.detailedCount)).slice(0, 8),
+      byIsland: Object.values(byIslandMap).sort(
+        (a, b) => (b.generalCount + b.detailedCount) - (a.generalCount + a.detailedCount),
+      ),
       monthlyTrend,
-      topShortages: shortageItems.slice(0, 8),
-      topDamaged: damagedItems.slice(0, 8),
-      openMerItems: openMerItems.slice(0, 20),
-      openRepItems: openRepItems.slice(0, 20),
+      topShortages: [...shortageItems].reverse().slice(0, 12),
+      topDamaged: [...damagedItems].reverse().slice(0, 12),
+      openMerItems: [...openMerItems].reverse().slice(0, 20),
+      openRepItems: [...openRepItems].reverse().slice(0, 20),
       expiringChemicals,
     });
   });
@@ -5041,11 +5091,13 @@ async function startServer() {
             });
             return;
           }
+          const importedStatus = normKey(r.overallStatus);
+          const resolvedStatus = importedStatus === 'پایان' ? 'پایان' : alreadyArrived ? 'رسیده' : r.overallStatus;
           Object.assign(existing, {
             ...r,
             id: existing.id,
             rowNo: existing.rowNo,
-            overallStatus: alreadyArrived ? 'رسیده' : r.overallStatus,
+            overallStatus: resolvedStatus,
             linkedGeneralPackingNo: alreadyArrived ? pk : r.linkedGeneralPackingNo,
             createdAt: existing.createdAt,
             createdBy: existing.createdBy,
@@ -5054,13 +5106,15 @@ async function startServer() {
           replaced += 1;
           return;
         }
+        const importedStatus = normKey(r.overallStatus);
+        const resolvedStatus = importedStatus === 'پایان' ? 'پایان' : alreadyArrived ? 'رسیده' : r.overallStatus;
         const created: TransitEntry = {
           ...r,
           createdAt: r.createdAt || now,
           updatedAt: now,
           createdBy: r.createdBy || req.currentUser!.username,
           id: makeId(),
-          overallStatus: alreadyArrived ? 'رسیده' : r.overallStatus,
+          overallStatus: resolvedStatus,
           linkedGeneralPackingNo: alreadyArrived ? pk : undefined,
         };
         if (k && !forceAdd) batchByKey.set(k, created);
