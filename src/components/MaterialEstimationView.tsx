@@ -12,6 +12,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { formatDisplayNumber } from '../shared/jalali.ts';
+import { formatCountingUnit, normalizeCountingUnitToFa } from '../shared/normalizers.ts';
 import type {
   CategoryStore,
   DetailedComputed,
@@ -80,7 +81,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
   const [itemCode, setItemCode] = useState('');
   const [size, setSize] = useState('');
   const [estimatedQty, setEstimatedQty] = useState('');
-  const [countingUnit, setCountingUnit] = useState('PC');
+  const [countingUnit, setCountingUnit] = useState('عدد');
   const [island, setIsland] = useState('');
   const [system, setSystem] = useState('');
   const [subSystem, setSubSystem] = useState('');
@@ -256,7 +257,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
     setItemCode('');
     setSize('');
     setEstimatedQty('');
-    setCountingUnit('PC');
+    setCountingUnit('عدد');
     setIsland('');
     setSystem('');
     setSubSystem('');
@@ -276,7 +277,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
     setItemCode(rec.itemCode || '');
     setSize(rec.size || '');
     setEstimatedQty(String(rec.estimatedQty));
-    setCountingUnit(rec.countingUnit || 'PC');
+    setCountingUnit(normalizeCountingUnitToFa(rec.countingUnit) || 'عدد');
     setIsland(rec.island || '');
     setSystem(rec.system || '');
     setSubSystem(rec.subSystem || '');
@@ -299,7 +300,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
     setItemCode(d.itemCode || '');
     setMtoCode(d.mtoRef || '');
     setSize(d.size || '');
-    setCountingUnit(d.countingUnit || 'PC');
+    setCountingUnit(normalizeCountingUnitToFa(d.countingUnit) || 'عدد');
     setIsland(d.island || '');
     setSystem(d.system || '');
     setSubSystem(d.subSystem || '');
@@ -345,7 +346,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
         itemCode,
         size,
         estimatedQty: qtyNum,
-        countingUnit: countingUnit.trim() || 'PC',
+        countingUnit: normalizeCountingUnitToFa(countingUnit) || 'عدد',
         island,
         system,
         subSystem,
@@ -401,7 +402,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
       { key: 'description', header: t.headers.description, getValue: (r) => r.description },
       { key: 'itemCode', header: t.headers.itemCode, getValue: (r) => r.itemCode },
       { key: 'size', header: t.headers.size, getValue: (r) => r.size },
-      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => r.countingUnit },
+      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => formatCountingUnit(r.countingUnit, prefs.language) },
       { key: 'estimatedQty', header: isFa ? 'مقدار برآورد' : 'Estimated Qty', getValue: (r) => r.estimatedQty },
       { key: 'packingQtySum', header: t.headers.packingQty, getValue: (r) => r.packingQtySum },
       { key: 'actualReceivedQty', header: isFa ? 'تامین‌شده واقعی (OPI)' : 'Actual Received (OPI)', getValue: (r) => r.actualReceivedQty },
@@ -628,7 +629,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
                         {r.size || '—'}
                       </td>
                       <td className="py-2.5 px-3 whitespace-nowrap tabular-nums font-bold">
-                        {fmtNum(r.estimatedQty)} <span className="text-[10px] font-normal text-[var(--text-muted)]">{r.countingUnit}</span>
+                        {fmtNum(r.estimatedQty)} <span className="text-[10px] font-normal text-[var(--text-muted)]">{formatCountingUnit(r.countingUnit, prefs.language)}</span>
                       </td>
                       <td className="py-2.5 px-3 whitespace-nowrap tabular-nums">
                         {fmtNum(r.packingQtySum)}
@@ -841,7 +842,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
                     dir={!countingUnit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={countingUnit}
                     onChange={(e) => setCountingUnit(e.target.value)}
-                    placeholder="PC / M / KG / SET"
+                    placeholder={isFa ? 'عدد / متر / کیلوگرم / ست' : 'PC / M / KG / SET'}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>

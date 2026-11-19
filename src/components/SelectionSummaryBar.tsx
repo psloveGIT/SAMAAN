@@ -75,7 +75,7 @@ const SelectionSummaryBarInner: React.FC<SelectionSummaryBarProps> = ({
     });
   } else {
     metrics.push({
-      label: isFa ? 'پکینگ‌های رسیده / پایان' : 'Arrived / Completed Packings',
+      label: isFa ? 'پکینگ‌های رسیده' : 'Arrived Packings',
       value: summary.transitArrivedPackingsCount ?? 0,
       highlight: (summary.transitArrivedPackingsCount ?? 0) > 0 ? 'accent' : undefined,
     });

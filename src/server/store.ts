@@ -35,6 +35,12 @@ import type {
 } from '../shared/types.ts';
 import { computeDetailedEntry } from '../shared/formulas.ts';
 import { normalizeDigits } from '../shared/jalali.ts';
+import {
+  DEFAULT_TRANSIT_STATUSES,
+  getTransitStatusOptions,
+  normalizeCountingUnitToFa,
+  normalizeTransitStatus,
+} from '../shared/normalizers.ts';
 import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../shared/sorting.ts';
 import type { StoredUser } from './auth.ts';
 
@@ -66,7 +72,7 @@ const DB_FILE = path.join(DATA_DIR, 'samaan-db.json');
 const PROJECTS_DIR = path.join(DATA_DIR, 'projects');
 const PROJECTS_REGISTRY_FILE = path.join(DATA_DIR, 'samaan-projects.json');
 
-function createEmptyCategories(): CategoryStore {
+export function createEmptyCategories(): CategoryStore {
   return {
     island: [],
     system: [],
@@ -74,8 +80,19 @@ function createEmptyCategories(): CategoryStore {
     unit: [],
     supplier: [],
     dispatchLocation: [],
+    origin: [],
     storageLocation: [],
     carrierContractor: [],
+    countingUnit: [],
+    packageType: [],
+    generalDescription: [],
+    stocktakeStatus: [],
+    transitStatus: [...DEFAULT_TRANSIT_STATUSES],
+    receiver: [],
+    merStatus: [],
+    repStatus: [],
+    balanceStatus: [],
+    chemicalType: [],
   };
 }
 
@@ -143,18 +160,28 @@ export class SamaanStore {
       const raw = fs.readFileSync(this.dbFile, 'utf8');
       const parsed = JSON.parse(raw) as Partial<PersistedDatabase>;
       const empty = createEmptyDb();
+      const mergedCategories: CategoryStore = {
+        ...createEmptyCategories(),
+        ...(parsed.categories || {}),
+        transitStatus: getTransitStatusOptions(parsed.categories?.transitStatus),
+      };
+      const detailedList: DetailedEntry[] = (Array.isArray(parsed.detailed) ? parsed.detailed : []).map((d) => ({
+        ...d,
+        countingUnit: normalizeCountingUnitToFa(d.countingUnit),
+      }));
+      const transitList: TransitEntry[] = (Array.isArray(parsed.transit) ? parsed.transit : []).map((t) => ({
+        ...t,
+        overallStatus: normalizeTransitStatus(t.overallStatus, mergedCategories.transitStatus),
+      }));
       return {
         version: parsed.version || 2,
         sessionSecret: parsed.sessionSecret || empty.sessionSecret,
         users: Array.isArray(parsed.users) ? parsed.users : [],
         general: Array.isArray(parsed.general) ? parsed.general : [],
-        detailed: Array.isArray(parsed.detailed) ? parsed.detailed : [],
-        transit: Array.isArray(parsed.transit) ? parsed.transit : [],
+        detailed: detailedList,
+        transit: transitList,
         packingMeta: parsed.packingMeta || {},
-        categories: {
-          ...createEmptyCategories(),
-          ...(parsed.categories || {}),
-        },
+        categories: mergedCategories,
         auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
         trash: Array.isArray(parsed.trash) ? parsed.trash : [],
         opiInvitations: Array.isArray(parsed.opiInvitations) ? parsed.opiInvitations : [],
@@ -249,6 +276,7 @@ export class SamaanStore {
           unit: g.unit,
           supplier: g.supplier,
           dispatchLocation: g.dispatchLocation,
+          packageType: g.packageType,
         });
       }
     }
@@ -269,8 +297,16 @@ export class SamaanStore {
           subSystem: d.subSystem,
           unit: d.unit,
           supplier: d.supplier,
-          dispatchLocation: d.origin,
+          origin: d.origin,
           storageLocation: d.storageLocation,
+          countingUnit: d.countingUnit,
+          generalDescription: d.generalDescription,
+          stocktakeStatus: d.stocktakeStatus,
+          receiver: d.receiver,
+          merStatus: d.merStatus,
+          repStatus: d.repStatus,
+          balanceStatus: d.balanceStatus,
+          chemicalType: d.chemicalType,
         });
       }
     }
@@ -292,18 +328,24 @@ export class SamaanStore {
           supplier: t.supplier,
           dispatchLocation: t.dispatchLocation,
           carrierContractor: t.carrierContractor,
+          transitStatus: t.overallStatus,
         });
       }
     }
+    this.db.categories.transitStatus = getTransitStatusOptions(this.db.categories.transitStatus);
   }
 
   public registerCategoryValue(group: CategoryGroupKey, rawVal: string | undefined | null): void {
     const val = normKey(rawVal);
     if (!val || val === '-' || val === '—') return;
+    if (group === 'transitStatus' && val === 'پایان') return;
     const arr = this.db.categories[group];
+    if (!arr) return;
     if (!arr.includes(val)) {
       arr.push(val);
-      arr.sort((a, b) => a.localeCompare(b, 'fa'));
+      if (group !== 'transitStatus') {
+        arr.sort((a, b) => a.localeCompare(b, 'fa'));
+      }
     }
   }
 
@@ -415,7 +457,7 @@ export class SamaanStore {
   }
 
   public getLastDetailedDefaults() {
-    if (this.db.detailed.length === 0) return { shipmentNo: '', packageNo: '', countingUnit: 'PC' };
+    if (this.db.detailed.length === 0) return { shipmentNo: '', packageNo: '', countingUnit: 'عدد' };
     // Pick most recently created/updated detailed item rather than sorted index 0
     let latest = this.db.detailed[0];
     for (const d of this.db.detailed) {
@@ -426,7 +468,7 @@ export class SamaanStore {
     return {
       shipmentNo: normKey(latest.shipmentNo),
       packageNo: normKey(latest.packageNo),
-      countingUnit: normKey(latest.countingUnit) || 'PC',
+      countingUnit: normalizeCountingUnitToFa(latest.countingUnit) || 'عدد',
     };
   }
 
@@ -472,8 +514,7 @@ export class SamaanStore {
     const now = new Date().toISOString();
     for (const t of matches) {
       const st = normKey(t.overallStatus);
-      const isDoneOrArrived = st === 'رسیده' || st === 'پایان' || st.toLowerCase() === 'arrived';
-      const needsStatus = !isDoneOrArrived;
+      const needsStatus = st !== 'رسیده';
       const needsDate = Boolean(genArrival && normKey(t.arrivalDate) !== normKey(genArrival));
       if (needsStatus || needsDate) {
         if (needsStatus) {
@@ -529,14 +570,22 @@ export class SamaanStore {
   }
 
   public restoreSnapshot(snapshot: DatabaseSnapshot, user: UserAccount): void {
-    this.db.general = Array.isArray(snapshot.general) ? snapshot.general : [];
-    this.db.detailed = Array.isArray(snapshot.detailed) ? snapshot.detailed : [];
-    this.db.transit = Array.isArray(snapshot.transit) ? snapshot.transit : [];
-    this.db.packingMeta = snapshot.packingMeta || {};
-    this.db.categories = {
+    const nextCategories: CategoryStore = {
       ...createEmptyCategories(),
       ...(snapshot.categories || {}),
+      transitStatus: getTransitStatusOptions(snapshot.categories?.transitStatus),
     };
+    this.db.general = Array.isArray(snapshot.general) ? snapshot.general : [];
+    this.db.detailed = (Array.isArray(snapshot.detailed) ? snapshot.detailed : []).map((d) => ({
+      ...d,
+      countingUnit: normalizeCountingUnitToFa(d.countingUnit),
+    }));
+    this.db.transit = (Array.isArray(snapshot.transit) ? snapshot.transit : []).map((t) => ({
+      ...t,
+      overallStatus: normalizeTransitStatus(t.overallStatus, nextCategories.transitStatus),
+    }));
+    this.db.packingMeta = snapshot.packingMeta || {};
+    this.db.categories = nextCategories;
     if (Array.isArray(snapshot.auditLogs)) {
       this.db.auditLogs = snapshot.auditLogs;
     }
@@ -548,7 +597,10 @@ export class SamaanStore {
     this.db.substitutions = Array.isArray(snapshot.substitutions) ? snapshot.substitutions : [];
     this.db.gcvDocuments = Array.isArray(snapshot.gcvDocuments) ? snapshot.gcvDocuments : [];
     this.db.mivDocuments = Array.isArray(snapshot.mivDocuments) ? snapshot.mivDocuments : [];
-    this.db.materialEstimates = Array.isArray(snapshot.materialEstimates) ? snapshot.materialEstimates : [];
+    this.db.materialEstimates = (Array.isArray(snapshot.materialEstimates) ? snapshot.materialEstimates : []).map((m) => ({
+      ...m,
+      countingUnit: normalizeCountingUnitToFa(m.countingUnit),
+    }));
     this.db.periodicInspections = Array.isArray(snapshot.periodicInspections) ? snapshot.periodicInspections : [];
     this.db.customFormSubmissions = Array.isArray(snapshot.customFormSubmissions) ? snapshot.customFormSubmissions : [];
     this.renumberScope('general');

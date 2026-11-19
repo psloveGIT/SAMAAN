@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { formatCountingUnit } from '../shared/normalizers.ts';
 import type { DetailedComputed } from '../shared/types.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PeriodicInspectionPanel } from './PeriodicInspectionPanel.tsx';
@@ -166,7 +167,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
       { key: 'itemCode', header: t.headers.itemCode, getValue: (r) => r.itemCode },
       { key: 'storageLocation', header: t.headers.storageLocation, getValue: (r) => r.storageLocation },
       { key: 'mapnaInventory', header: t.headers.mapnaInventory, getValue: (r) => (r.opiPending ? '' : r.mapnaInventory) },
-      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => r.countingUnit },
+      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => formatCountingUnit(r.countingUnit, prefs.language) },
       {
         key: 'stocktakeStatus',
         header: t.headers.stocktakeStatus,

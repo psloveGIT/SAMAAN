@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Edit3, Plus, Trash2, X } from 'lucide-react';
+import { Edit3, Lock, Plus, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { formatDisplayNumber } from '../shared/jalali.ts';
+import { DEFAULT_TRANSIT_STATUSES } from '../shared/normalizers.ts';
 import type { CategoryGroupKey, CategoryStore } from '../shared/types.ts';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
@@ -31,8 +33,19 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
     { key: 'unit', label: t.categories.unit },
     { key: 'supplier', label: t.categories.supplier },
     { key: 'dispatchLocation', label: t.categories.dispatchLocation },
+    { key: 'origin', label: t.categories.origin },
     { key: 'storageLocation', label: t.categories.storageLocation },
     { key: 'carrierContractor', label: t.categories.carrierContractor },
+    { key: 'countingUnit', label: t.categories.countingUnit },
+    { key: 'packageType', label: t.categories.packageType },
+    { key: 'generalDescription', label: t.categories.generalDescription },
+    { key: 'stocktakeStatus', label: t.categories.stocktakeStatus },
+    { key: 'transitStatus', label: t.categories.transitStatus },
+    { key: 'receiver', label: t.categories.receiver },
+    { key: 'merStatus', label: t.categories.merStatus },
+    { key: 'repStatus', label: t.categories.repStatus },
+    { key: 'balanceStatus', label: t.categories.balanceStatus },
+    { key: 'chemicalType', label: t.categories.chemicalType },
   ];
 
   const [activeGroup, setActiveGroup] = useState<CategoryGroupKey>('island');
@@ -83,7 +96,7 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
       notify(
         'success',
         isFa
-          ? `تغییر نام/ادغام انجام شد (${res.updatedCount} رکورد به‌روزرسانی شد).`
+          ? `تغییر نام/ادغام انجام شد (${formatDisplayNumber(res.updatedCount, 'fa')} رکورد به‌روزرسانی شد).`
           : `Renamed/merged (${res.updatedCount} records updated).`,
       );
       setRenameTarget(null);
@@ -112,17 +125,19 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
     v.toLowerCase().includes(filterText.trim().toLowerCase()),
   );
   const currentCounts = data?.counts[activeGroup] || {};
+  const isProtectedTransitDefault = (val: string) =>
+    activeGroup === 'transitStatus' && (DEFAULT_TRANSIT_STATUSES as readonly string[]).includes(val);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
       {/* Group Selector */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 space-y-1 h-fit">
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 space-y-1 h-fit lg:max-h-[78vh] lg:overflow-y-auto">
         {groups.map((g) => (
           <button
             key={g.key}
             type="button"
             onClick={() => { setActiveGroup(g.key); setFilterText(''); }}
-            className={`w-full px-3 py-2.5 rounded-lg text-start text-xs font-medium flex items-center justify-between transition-colors ${
+            className={`w-full px-3 py-2 rounded-lg text-start text-xs font-medium flex items-center justify-between transition-colors ${
               activeGroup === g.key
                 ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
                 : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
@@ -130,7 +145,7 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
           >
             <span>{g.label}</span>
             <span className="tabular-nums text-[11px] opacity-80">
-              {(data?.categories[g.key] || []).length}
+              {formatDisplayNumber((data?.categories[g.key] || []).length, prefs.language)}
             </span>
           </button>
         ))}
@@ -138,6 +153,14 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
 
       {/* Category Values Manager */}
       <div className="lg:col-span-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4">
+        {activeGroup === 'transitStatus' && (
+          <div className="rounded-lg border border-[var(--accent-primary)]/30 bg-[var(--accent-soft)] px-3.5 py-2.5 text-xs text-[var(--text-primary)] leading-relaxed">
+            {isFa
+              ? 'سه وضعیت پیش‌فرض «در دست ارسال»، «در دست بازرسی» و «رسیده» به‌عنوان دسته‌های اصلی بخش در راه ثابت هستند و هنگام ورود فایل یا ثبت پکینگ، وضعیت‌ها به‌صورت خودکار به یکی از این سه دسته تبدیل می‌شوند. در صورت نیاز می‌توانید وضعیت‌های سفارشی جدیدی نیز در اینجا اضافه کنید.'
+              : 'The 3 default statuses ("در دست ارسال", "در دست بازرسی", "رسیده") are core categories for In-Transit shipments and incoming records normalize into them automatically. You can add additional custom statuses here.'}
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SearchInputWithClear
             value={filterText}
@@ -172,42 +195,51 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
           {currentValues.length === 0 ? (
             <div className="p-8 text-center text-xs text-[var(--text-muted)]">{t.controls.noData}</div>
           ) : (
-            currentValues.map((val) => (
-              <div
-                key={val}
-                className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-[var(--bg-subtle)]/50"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="font-semibold">{val}</span>
-                  {(currentCounts[val] || 0) > 0 && (
-                    <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
-                      ({currentCounts[val]} {isFa ? 'رکورد' : 'records'})
-                    </span>
-                  )}
-                </div>
-                {canEdit && (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => { setRenameTarget(val); setRenameValue(val); }}
-                      title={isFa ? 'تغییر نام یا ادغام' : 'Rename / Merge'}
-                      className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(val)}
-                        className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+            currentValues.map((val) => {
+              const locked = isProtectedTransitDefault(val);
+              return (
+                <div
+                  key={val}
+                  className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-[var(--bg-subtle)]/50"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="font-semibold">{val}</span>
+                    {locked && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-subtle)] text-[10px] text-[var(--text-muted)]">
+                        <Lock className="w-2.5 h-2.5" />
+                        <span>{isFa ? 'پیش‌فرض سیستمی' : 'System Default'}</span>
+                      </span>
+                    )}
+                    {(currentCounts[val] || 0) > 0 && (
+                      <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                        ({formatDisplayNumber(currentCounts[val], prefs.language)} {isFa ? 'رکورد' : 'records'})
+                      </span>
                     )}
                   </div>
-                )}
-              </div>
-            ))
+                  {canEdit && !locked && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => { setRenameTarget(val); setRenameValue(val); }}
+                        title={isFa ? 'تغییر نام یا ادغام' : 'Rename / Merge'}
+                        className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(val)}
+                          className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </div>

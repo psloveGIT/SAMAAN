@@ -13,6 +13,7 @@ import {
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { parseDetailedCsv, parseGeneralCsv } from '../shared/csvParser.ts';
+import { normalizeCountingUnitToFa } from '../shared/normalizers.ts';
 import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
 import { matrixToCsvText, parseSpreadsheetFile } from '../shared/spreadsheetImport.ts';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
@@ -197,7 +198,7 @@ function normalizeRawResult(
       packingQty: toOptionalNumber(item.packingQty as number | null | undefined),
       actualQty: toOptionalNumber(item.actualQty as number | null | undefined),
       damagedQty: toOptionalNumber(item.damagedQty as number | null | undefined),
-      countingUnit: typeof item.countingUnit === 'string' ? item.countingUnit : undefined,
+      countingUnit: typeof item.countingUnit === 'string' ? normalizeCountingUnitToFa(item.countingUnit) : undefined,
       itemCategory:
         item.itemCategory === 'special_tools' ||
         item.itemCategory === 'chemicals' ||
@@ -297,7 +298,7 @@ export const SmartIntakeModal: React.FC<SmartIntakeModalProps> = ({
     items:
       res.items && res.items.length > 0
         ? res.items
-        : [{ itemNo: '1', description: '', generalDescription: '', packingQty: 1, countingUnit: 'PC', itemCategory: '' }],
+        : [{ itemNo: '1', description: '', generalDescription: '', packingQty: 1, countingUnit: 'عدد', itemCategory: '' }],
   });
 
   const handleSpreadsheetOrFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1084,7 +1085,7 @@ export const SmartIntakeModal: React.FC<SmartIntakeModalProps> = ({
                         type="text"
                         value={it.countingUnit || ''}
                         onChange={(e) => updateDetItem(idx, { countingUnit: e.target.value })}
-                        placeholder="PC"
+                        placeholder={isFa ? 'عدد' : 'PC'}
                         className="flex-1 h-8 px-2 rounded border border-[var(--border-subtle)]"
                       />
                       {(detailedResult.items?.length || 0) > 1 && (

@@ -20,6 +20,12 @@ import {
 } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { buildYearMonths, getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
+import {
+  DEFAULT_TRANSIT_STATUSES,
+  getTransitStatusOptions,
+  normalizeCountingUnitToFa,
+  normalizeTransitStatus,
+} from '../shared/normalizers.ts';
 import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../shared/sorting.ts';
 import {
   matchesCustomFilters,
@@ -140,8 +146,19 @@ function createEmptyCategories(): CategoryStore {
     unit: [],
     supplier: [],
     dispatchLocation: [],
+    origin: [],
     storageLocation: [],
     carrierContractor: [],
+    countingUnit: [],
+    packageType: [],
+    generalDescription: [],
+    stocktakeStatus: [],
+    transitStatus: [...DEFAULT_TRANSIT_STATUSES],
+    receiver: [],
+    merStatus: [],
+    repStatus: [],
+    balanceStatus: [],
+    chemicalType: [],
   };
 }
 
@@ -317,11 +334,26 @@ async function getDb(projectId = DEFAULT_PROJECT_ID): Promise<StaticDatabase> {
   });
   idb.close();
   const empty = createEmptyDb();
+  const mergedCats: CategoryStore = loaded
+    ? {
+        ...createEmptyCategories(),
+        ...(loaded.categories || {}),
+        transitStatus: getTransitStatusOptions(loaded.categories?.transitStatus),
+      }
+    : createEmptyCategories();
   const hydrated: StaticDatabase = loaded
     ? {
         ...empty,
         ...loaded,
-        categories: { ...createEmptyCategories(), ...(loaded.categories || {}) },
+        detailed: (Array.isArray(loaded.detailed) ? loaded.detailed : []).map((d) => ({
+          ...d,
+          countingUnit: normalizeCountingUnitToFa(d.countingUnit),
+        })),
+        transit: (Array.isArray(loaded.transit) ? loaded.transit : []).map((t) => ({
+          ...t,
+          overallStatus: normalizeTransitStatus(t.overallStatus, mergedCats.transitStatus),
+        })),
+        categories: mergedCats,
         trash: Array.isArray(loaded.trash) ? loaded.trash : [],
         opiInvitations: Array.isArray(loaded.opiInvitations) ? loaded.opiInvitations : [],
         siteEntryMinutes: Array.isArray(loaded.siteEntryMinutes) ? loaded.siteEntryMinutes : [],
@@ -338,6 +370,7 @@ async function getDb(projectId = DEFAULT_PROJECT_ID): Promise<StaticDatabase> {
   renumberScope(hydrated, 'general');
   renumberScope(hydrated, 'detailed');
   renumberScope(hydrated, 'transit');
+  rebuildCategories(hydrated);
   cachedDbs.set(projectId, hydrated);
   return hydrated;
 }
@@ -426,10 +459,14 @@ function removeRefToken(existing: string, token: string): string {
 function registerCategoryValue(db: StaticDatabase, group: CategoryGroupKey, rawVal: string | undefined | null) {
   const val = normKey(rawVal);
   if (!val || val === '-' || val === '—') return;
+  if (group === 'transitStatus' && val === 'پایان') return;
   const arr = db.categories[group];
+  if (!arr) return;
   if (!arr.includes(val)) {
     arr.push(val);
-    arr.sort((a, b) => a.localeCompare(b, 'fa'));
+    if (group !== 'transitStatus') {
+      arr.sort((a, b) => a.localeCompare(b, 'fa'));
+    }
   }
 }
 
@@ -441,6 +478,7 @@ function rebuildCategories(db: StaticDatabase) {
     registerCategoryValue(db, 'unit', g.unit);
     registerCategoryValue(db, 'supplier', g.supplier);
     registerCategoryValue(db, 'dispatchLocation', g.dispatchLocation);
+    registerCategoryValue(db, 'packageType', g.packageType);
   }
   for (const d of db.detailed) {
     registerCategoryValue(db, 'island', d.island);
@@ -448,8 +486,16 @@ function rebuildCategories(db: StaticDatabase) {
     registerCategoryValue(db, 'subSystem', d.subSystem);
     registerCategoryValue(db, 'unit', d.unit);
     registerCategoryValue(db, 'supplier', d.supplier);
-    registerCategoryValue(db, 'dispatchLocation', d.origin);
+    registerCategoryValue(db, 'origin', d.origin);
     registerCategoryValue(db, 'storageLocation', d.storageLocation);
+    registerCategoryValue(db, 'countingUnit', d.countingUnit);
+    registerCategoryValue(db, 'generalDescription', d.generalDescription);
+    registerCategoryValue(db, 'stocktakeStatus', d.stocktakeStatus);
+    registerCategoryValue(db, 'receiver', d.receiver);
+    registerCategoryValue(db, 'merStatus', d.merStatus);
+    registerCategoryValue(db, 'repStatus', d.repStatus);
+    registerCategoryValue(db, 'balanceStatus', d.balanceStatus);
+    registerCategoryValue(db, 'chemicalType', d.chemicalType);
   }
   for (const t of db.transit) {
     registerCategoryValue(db, 'system', t.system);
@@ -458,7 +504,9 @@ function rebuildCategories(db: StaticDatabase) {
     registerCategoryValue(db, 'supplier', t.supplier);
     registerCategoryValue(db, 'dispatchLocation', t.dispatchLocation);
     registerCategoryValue(db, 'carrierContractor', t.carrierContractor);
+    registerCategoryValue(db, 'transitStatus', t.overallStatus);
   }
+  db.categories.transitStatus = getTransitStatusOptions(db.categories.transitStatus);
 }
 
 function addAudit(
@@ -493,8 +541,7 @@ function syncTransitArrival(db: StaticDatabase, packingNo: string, user: UserAcc
   for (const t of db.transit) {
     if (normKey(t.packingListNo) === pk) {
       const st = normKey(t.overallStatus);
-      const isDoneOrArrived = st === 'رسیده' || st === 'پایان' || st.toLowerCase() === 'arrived';
-      const needsStatus = !isDoneOrArrived;
+      const needsStatus = st !== 'رسیده';
       const needsDate = Boolean(genArrival && normKey(t.arrivalDate) !== normKey(genArrival));
       if (needsStatus || needsDate) {
         if (needsStatus) t.overallStatus = 'رسیده';
@@ -618,11 +665,11 @@ function getLastDetailedDefaults(db: StaticDatabase) {
       latest = d;
     }
   }
-  if (!latest) return { shipmentNo: '', packageNo: '', countingUnit: 'PC' };
+  if (!latest) return { shipmentNo: '', packageNo: '', countingUnit: 'عدد' };
   return {
     shipmentNo: normKey(latest.shipmentNo),
     packageNo: normKey(latest.packageNo),
-    countingUnit: normKey(latest.countingUnit) || 'PC',
+    countingUnit: normalizeCountingUnitToFa(latest.countingUnit) || 'عدد',
   };
 }
 
@@ -1808,6 +1855,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const subSystem = query.get('subSystem') || '';
     const unit = query.get('unit') || '';
     const supplier = query.get('supplier') || '';
+    const origin = query.get('origin') || '';
     const storageLocation = query.get('storageLocation') || '';
     const itemCategory = query.get('itemCategory') || '';
     const shipmentNo = normKey(query.get('shipmentNo'));
@@ -1843,6 +1891,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (subSystem && d.subSystem !== subSystem) continue;
       if (unit && d.unit !== unit) continue;
       if (supplier && d.supplier !== supplier) continue;
+      if (origin && d.origin !== origin) continue;
       if (storageLocation && d.storageLocation !== storageLocation) continue;
       if (itemCategory && (d.itemCategory || '') !== itemCategory) continue;
       if (shipmentFilterNorm && normDupPart(d.shipmentNo) !== shipmentFilterNorm) continue;
@@ -1964,7 +2013,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       repNo: normKey(rawDet.repNo),
       repStatus: normKey(rawDet.repStatus),
       repDescription: normKey(rawDet.repDescription),
-      countingUnit: normKey(rawDet.countingUnit),
+      countingUnit: normalizeCountingUnitToFa(rawDet.countingUnit),
       island: normKey(rawDet.island) || shared?.island || '',
       system: normKey(rawDet.system) || shared?.system || '',
       subSystem: normKey(rawDet.subSystem) || shared?.subSystem || '',
@@ -2073,6 +2122,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (patch.generalDescription !== undefined) {
       patch.generalDescription = formatGeneralDescriptionCase(patch.generalDescription);
     }
+    if (patch.countingUnit !== undefined) {
+      patch.countingUnit = normalizeCountingUnitToFa(patch.countingUnit);
+    }
 
     Object.assign(item, {
       ...patch,
@@ -2126,7 +2178,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     ];
     for (const k of stringFields) {
       if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
-        cleanPatch[k] = normKey(String(patch[k]));
+        cleanPatch[k] = k === 'countingUnit'
+          ? normalizeCountingUnitToFa(String(patch[k]))
+          : normKey(String(patch[k]));
       }
     }
     const now = new Date().toISOString();
@@ -2254,13 +2308,11 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       pk && (db.general.some((g) => normKey(g.packingListNo) === pk) || db.detailed.some((d) => normKey(d.shipmentNo) === pk));
     const now = new Date().toISOString();
     const { rowNo: _ignoredRow, ...raw } = body;
-    const requestedStatus = normKey(String(body.overallStatus || '')) || 'در دست ارسال';
-    const resolvedStatus =
-      requestedStatus === 'پایان'
-        ? 'پایان'
-        : alreadyInWarehouse
-          ? 'رسیده'
-          : requestedStatus;
+    const requestedStatus = normalizeTransitStatus(
+      String(body.overallStatus || ''),
+      db.categories.transitStatus,
+    );
+    const resolvedStatus = alreadyInWarehouse ? 'رسیده' : requestedStatus;
     const created: TransitEntry = {
       ...(raw as unknown as TransitEntry),
       id: makeId(),
@@ -2296,7 +2348,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     ];
     for (const k of stringFields) {
       if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
-        cleanPatch[k] = normKey(String(patch[k]));
+        cleanPatch[k] = k === 'overallStatus'
+          ? normalizeTransitStatus(String(patch[k]), db.categories.transitStatus)
+          : normKey(String(patch[k]));
       }
     }
     if (patch.amount !== undefined && patch.amount !== null && Number.isFinite(Number(patch.amount))) {
@@ -2355,7 +2409,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const id = pathname.split('/').pop()!;
     const item = db.transit.find((t) => t.id === id);
     if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
-    const { rowNo: _ignoredRow, ...patch } = body;
+    const { rowNo: _ignoredRow, ...patch } = body as Partial<TransitEntry>;
+    if (patch.overallStatus !== undefined) {
+      patch.overallStatus = normalizeTransitStatus(patch.overallStatus, db.categories.transitStatus);
+    }
     Object.assign(item, { ...patch, rowNo: item.rowNo, updatedAt: new Date().toISOString() });
     renumberScope(db, 'transit');
     rebuildCategories(db);
@@ -3975,7 +4032,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       substituteDrawingNo: normKey(raw.substituteDrawingNo),
       substituteRemarks: normKey(raw.substituteRemarks),
       qty: numQty,
-      countingUnit: d.countingUnit || 'PC',
+      countingUnit: normalizeCountingUnitToFa(d.countingUnit) || 'عدد',
       reason: cleanReason,
       supplierNotes: normKey(raw.supplierNotes),
       reprocureBy: normKey(raw.reprocureBy),
@@ -4020,7 +4077,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       rec.itemNo = d.itemNo;
       rec.originalDescription = d.description || d.generalDescription;
       rec.originalItemCode = d.itemCode;
-      rec.countingUnit = d.countingUnit || 'PC';
+      rec.countingUnit = normalizeCountingUnitToFa(d.countingUnit) || 'عدد';
     }
     if (raw.qty !== undefined) {
       const numQty = Number(raw.qty);
@@ -4113,7 +4170,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       description: cleanDesc,
       itemCode: normKey(raw.itemCode),
       size: normKey(raw.size),
-      countingUnit: normKey(raw.countingUnit) || 'PC',
+      countingUnit: normalizeCountingUnitToFa(raw.countingUnit) || 'عدد',
       estimatedQty: roundQty(estQty),
       island: normKey(raw.island),
       system: normKey(raw.system),
@@ -4173,7 +4230,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (raw.mtoCode !== undefined) rec.mtoCode = normKey(raw.mtoCode);
     if (raw.itemCode !== undefined) rec.itemCode = normKey(raw.itemCode);
     if (raw.size !== undefined) rec.size = normKey(raw.size);
-    if (raw.countingUnit !== undefined) rec.countingUnit = normKey(raw.countingUnit) || 'PC';
+    if (raw.countingUnit !== undefined) rec.countingUnit = normalizeCountingUnitToFa(raw.countingUnit) || 'عدد';
     if (raw.island !== undefined) rec.island = normKey(raw.island);
     if (raw.system !== undefined) rec.system = normKey(raw.system);
     if (raw.subSystem !== undefined) rec.subSystem = normKey(raw.subSystem);
@@ -4419,34 +4476,45 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     requireAuth();
     const counts: Record<CategoryGroupKey, Record<string, number>> = {
       island: {}, system: {}, subSystem: {}, unit: {}, supplier: {},
-      dispatchLocation: {}, storageLocation: {}, carrierContractor: {},
+      dispatchLocation: {}, origin: {}, storageLocation: {}, carrierContractor: {},
+      countingUnit: {}, packageType: {}, generalDescription: {}, stocktakeStatus: {},
+      transitStatus: {}, receiver: {}, merStatus: {}, repStatus: {}, balanceStatus: {}, chemicalType: {},
     };
-    const bump = (group: CategoryGroupKey, v: string) => {
+    const bump = (group: CategoryGroupKey, v: string | undefined | null) => {
       const k = normKey(v);
       if (k) counts[group][k] = (counts[group][k] || 0) + 1;
     };
     for (const g of db.general) {
       bump('island', g.island); bump('system', g.system); bump('subSystem', g.subSystem);
       bump('unit', g.unit); bump('supplier', g.supplier); bump('dispatchLocation', g.dispatchLocation);
+      bump('packageType', g.packageType);
     }
     for (const d of db.detailed) {
       bump('island', d.island); bump('system', d.system); bump('subSystem', d.subSystem);
-      bump('unit', d.unit); bump('supplier', d.supplier); bump('dispatchLocation', d.origin);
-      bump('storageLocation', d.storageLocation);
+      bump('unit', d.unit); bump('supplier', d.supplier); bump('origin', d.origin);
+      bump('storageLocation', d.storageLocation); bump('countingUnit', d.countingUnit);
+      bump('generalDescription', d.generalDescription); bump('stocktakeStatus', d.stocktakeStatus);
+      bump('receiver', d.receiver); bump('merStatus', d.merStatus); bump('repStatus', d.repStatus);
+      bump('balanceStatus', d.balanceStatus); bump('chemicalType', d.chemicalType);
     }
     for (const t of db.transit) {
       bump('system', t.system); bump('subSystem', t.subSystem); bump('unit', t.unit);
       bump('supplier', t.supplier); bump('dispatchLocation', t.dispatchLocation);
-      bump('carrierContractor', t.carrierContractor);
+      bump('carrierContractor', t.carrierContractor); bump('transitStatus', t.overallStatus);
     }
+    db.categories.transitStatus = getTransitStatusOptions(db.categories.transitStatus);
     return { categories: db.categories, counts } as T;
   }
 
   if (pathname.startsWith('/api/categories/') && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
     const group = pathname.split('/').pop() as CategoryGroupKey;
-    const val = normKey(String(body.value || ''));
+    const rawVal = String(body.value || '');
+    const val = group === 'countingUnit' ? normalizeCountingUnitToFa(rawVal) : normKey(rawVal);
     if (!db.categories[group] || !val) throw new StaticEngineError(errMsg('گروه یا مقدار نامعتبر است', 'Invalid category group or value'), 400);
+    if (group === 'transitStatus' && val === 'پایان') {
+      throw new StaticEngineError(errMsg('وضعیت «پایان» به‌صورت خودکار به «رسیده» تبدیل می‌شود.', 'Legacy status "پایان" maps automatically to "رسیده".'), 400);
+    }
     registerCategoryValue(db, group, val);
     addAudit(db, sanitizeUser(u), 'ADD_CATEGORY', 'category', `${group}:${val}`, `افزودن دسته‌بندی «${val}»`);
     await saveActiveDb();
@@ -4457,8 +4525,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin', 'operator']);
     const group = pathname.split('/').pop() as CategoryGroupKey;
     const from = normKey(String(body.oldValue || ''));
-    const to = normKey(String(body.newValue || ''));
+    const rawTo = String(body.newValue || '');
+    const to = group === 'countingUnit' ? normalizeCountingUnitToFa(rawTo) : normKey(rawTo);
     if (!db.categories[group] || !from || !to) throw new StaticEngineError(errMsg('مقادیر تغییر نام نامعتبر است', 'Invalid rename request'), 400);
+    if (group === 'transitStatus' && (DEFAULT_TRANSIT_STATUSES as readonly string[]).includes(from)) {
+      throw new StaticEngineError(errMsg('سه وضعیت اصلی در راه قابل تغییر نام نیستند.', 'The 3 core In-Transit statuses cannot be renamed.'), 400);
+    }
     let updatedCount = 0;
     for (const g of db.general) {
       if (group === 'island' && g.island === from) { g.island = to; updatedCount += 1; }
@@ -4467,6 +4539,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (group === 'unit' && g.unit === from) { g.unit = to; updatedCount += 1; }
       if (group === 'supplier' && g.supplier === from) { g.supplier = to; updatedCount += 1; }
       if (group === 'dispatchLocation' && g.dispatchLocation === from) { g.dispatchLocation = to; updatedCount += 1; }
+      if (group === 'packageType' && g.packageType === from) { g.packageType = to; updatedCount += 1; }
     }
     for (const d of db.detailed) {
       if (group === 'island' && d.island === from) { d.island = to; updatedCount += 1; }
@@ -4474,8 +4547,16 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (group === 'subSystem' && d.subSystem === from) { d.subSystem = to; updatedCount += 1; }
       if (group === 'unit' && d.unit === from) { d.unit = to; updatedCount += 1; }
       if (group === 'supplier' && d.supplier === from) { d.supplier = to; updatedCount += 1; }
-      if (group === 'dispatchLocation' && d.origin === from) { d.origin = to; updatedCount += 1; }
+      if (group === 'origin' && d.origin === from) { d.origin = to; updatedCount += 1; }
       if (group === 'storageLocation' && d.storageLocation === from) { d.storageLocation = to; updatedCount += 1; }
+      if (group === 'countingUnit' && d.countingUnit === from) { d.countingUnit = to; updatedCount += 1; }
+      if (group === 'generalDescription' && d.generalDescription === from) { d.generalDescription = to; updatedCount += 1; }
+      if (group === 'stocktakeStatus' && d.stocktakeStatus === from) { d.stocktakeStatus = to; updatedCount += 1; }
+      if (group === 'receiver' && d.receiver === from) { d.receiver = to; updatedCount += 1; }
+      if (group === 'merStatus' && d.merStatus === from) { d.merStatus = to; updatedCount += 1; }
+      if (group === 'repStatus' && d.repStatus === from) { d.repStatus = to; updatedCount += 1; }
+      if (group === 'balanceStatus' && d.balanceStatus === from) { d.balanceStatus = to; updatedCount += 1; }
+      if (group === 'chemicalType' && d.chemicalType === from) { d.chemicalType = to; updatedCount += 1; }
     }
     for (const t of db.transit) {
       if (group === 'system' && t.system === from) { t.system = to; updatedCount += 1; }
@@ -4484,6 +4565,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (group === 'supplier' && t.supplier === from) { t.supplier = to; updatedCount += 1; }
       if (group === 'dispatchLocation' && t.dispatchLocation === from) { t.dispatchLocation = to; updatedCount += 1; }
       if (group === 'carrierContractor' && t.carrierContractor === from) { t.carrierContractor = to; updatedCount += 1; }
+      if (group === 'transitStatus' && t.overallStatus === from) { t.overallStatus = to; updatedCount += 1; }
+    }
+    if (group === 'countingUnit') {
+      for (const m of db.materialEstimates) {
+        if (m.countingUnit === from) { m.countingUnit = to; updatedCount += 1; }
+      }
+      for (const s of db.substitutions) {
+        if (s.countingUnit === from) { s.countingUnit = to; updatedCount += 1; }
+      }
     }
     db.categories[group] = db.categories[group].filter((v) => v !== from);
     registerCategoryValue(db, group, to);
@@ -4496,6 +4586,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const u = requireAuth(['admin']);
     const group = pathname.split('/').pop() as CategoryGroupKey;
     const val = normKey(query.get('value'));
+    if (group === 'transitStatus' && (DEFAULT_TRANSIT_STATUSES as readonly string[]).includes(val)) {
+      throw new StaticEngineError(errMsg('سه وضعیت اصلی در راه قابل حذف نیستند.', 'The 3 core In-Transit statuses cannot be deleted.'), 400);
+    }
     db.categories[group] = db.categories[group].filter((v) => v !== val);
     addAudit(db, sanitizeUser(u), 'DELETE_CATEGORY', 'category', `${group}:${val}`, `حذف «${val}»`);
     await saveActiveDb();
@@ -4989,6 +5082,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           }
           Object.assign(existing, {
             ...cleanDetailedRow,
+            countingUnit: normalizeCountingUnitToFa(cleanDetailedRow.countingUnit),
             generalDescription: genDesc,
             id: existing.id,
             rowNo: existing.rowNo,
@@ -5003,6 +5097,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         }
         const created: DetailedEntry = {
           ...cleanDetailedRow,
+          countingUnit: normalizeCountingUnitToFa(cleanDetailedRow.countingUnit),
           generalDescription: genDesc,
           shortageBackfills: r.shortageBackfills || [],
           createdAt: r.createdAt || now,
@@ -5083,8 +5178,11 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
             });
             return;
           }
-          const importedStatus = normKey(r.overallStatus);
-          const resolvedStatus = importedStatus === 'پایان' ? 'پایان' : arrived ? 'رسیده' : r.overallStatus;
+          const normalizedStatus = normalizeTransitStatus(
+            r.overallStatus,
+            db.categories.transitStatus,
+          );
+          const resolvedStatus = arrived ? 'رسیده' : normalizedStatus;
           Object.assign(existing, {
             ...r,
             id: existing.id,
@@ -5098,8 +5196,11 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           replaced += 1;
           return;
         }
-        const importedStatus = normKey(r.overallStatus);
-        const resolvedStatus = importedStatus === 'پایان' ? 'پایان' : arrived ? 'رسیده' : r.overallStatus;
+        const normalizedStatus = normalizeTransitStatus(
+          r.overallStatus,
+          db.categories.transitStatus,
+        );
+        const resolvedStatus = arrived ? 'رسیده' : normalizedStatus;
         const created: TransitEntry = {
           ...r,
           createdAt: r.createdAt || now,
@@ -5221,11 +5322,22 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   if (pathname === '/api/backup/restore' && method === 'POST') {
     const u = requireAuth(['admin']);
     const snap = body as unknown as DatabaseSnapshot;
+    const nextCats: CategoryStore = {
+      ...createEmptyCategories(),
+      ...(snap.categories || {}),
+      transitStatus: getTransitStatusOptions(snap.categories?.transitStatus),
+    };
     db.general = Array.isArray(snap.general) ? snap.general : [];
-    db.detailed = Array.isArray(snap.detailed) ? snap.detailed : [];
-    db.transit = Array.isArray(snap.transit) ? snap.transit : [];
+    db.detailed = (Array.isArray(snap.detailed) ? snap.detailed : []).map((d) => ({
+      ...d,
+      countingUnit: normalizeCountingUnitToFa(d.countingUnit),
+    }));
+    db.transit = (Array.isArray(snap.transit) ? snap.transit : []).map((t) => ({
+      ...t,
+      overallStatus: normalizeTransitStatus(t.overallStatus, nextCats.transitStatus),
+    }));
     db.packingMeta = snap.packingMeta || {};
-    db.categories = { ...createEmptyCategories(), ...(snap.categories || {}) };
+    db.categories = nextCats;
     if (Array.isArray(snap.auditLogs)) db.auditLogs = snap.auditLogs;
     db.trash = Array.isArray(snap.trash) ? snap.trash : [];
     db.opiInvitations = Array.isArray(snap.opiInvitations) ? snap.opiInvitations : [];
@@ -5235,7 +5347,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.substitutions = Array.isArray(snap.substitutions) ? snap.substitutions : [];
     db.gcvDocuments = Array.isArray(snap.gcvDocuments) ? snap.gcvDocuments : [];
     db.mivDocuments = Array.isArray(snap.mivDocuments) ? snap.mivDocuments : [];
-    db.materialEstimates = Array.isArray(snap.materialEstimates) ? snap.materialEstimates : [];
+    db.materialEstimates = (Array.isArray(snap.materialEstimates) ? snap.materialEstimates : []).map((m) => ({
+      ...m,
+      countingUnit: normalizeCountingUnitToFa(m.countingUnit),
+    }));
     db.periodicInspections = Array.isArray(snap.periodicInspections) ? snap.periodicInspections : [];
     db.customFormSubmissions = Array.isArray(snap.customFormSubmissions) ? snap.customFormSubmissions : [];
     renumberScope(db, 'general');

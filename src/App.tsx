@@ -11,6 +11,7 @@ import { PackingWizardModal } from './components/PackingWizardModal.tsx';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { apiRequest } from './lib/api.ts';
 import type { CategoryStore, TransitEntry } from './shared/types.ts';
+import { DEFAULT_TRANSIT_STATUSES } from './shared/normalizers.ts';
 
 const BackupView = lazy(() => import('./components/BackupView.tsx').then((m) => ({ default: m.BackupView })));
 const BalanceView = lazy(() => import('./components/BalanceView.tsx').then((m) => ({ default: m.BalanceView })));
@@ -42,8 +43,19 @@ const EMPTY_CATEGORIES: CategoryStore = {
   unit: [],
   supplier: [],
   dispatchLocation: [],
+  origin: [],
   storageLocation: [],
   carrierContractor: [],
+  countingUnit: [],
+  packageType: [],
+  generalDescription: [],
+  stocktakeStatus: [],
+  transitStatus: [...DEFAULT_TRANSIT_STATUSES],
+  receiver: [],
+  merStatus: [],
+  repStatus: [],
+  balanceStatus: [],
+  chemicalType: [],
 };
 
 const SamaanWorkspace: React.FC = () => {

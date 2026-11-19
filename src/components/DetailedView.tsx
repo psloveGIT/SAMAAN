@@ -22,6 +22,11 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { computeSelectionFormulaSummary, isMerOpen, isRepOpen } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { formatDisplayNumber, formatMultiValueCell, getTodayIso } from '../shared/jalali.ts';
+import {
+  formatCountingUnit,
+  normalizeCountingUnitToFa,
+  PERSIAN_COUNTING_UNIT_SUGGESTIONS,
+} from '../shared/normalizers.ts';
 import { EMPTY_CELL_TOKEN } from '../shared/tableQuery.ts';
 import type {
   CategoryStore,
@@ -33,7 +38,6 @@ import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { ExcelColumnFilter } from './ExcelColumnFilter.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
-import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 import { type DetailedAiExtractionResult, SmartIntakeModal } from './SmartIntakeModal.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
@@ -166,7 +170,7 @@ function getChemDaysRemaining(expIso?: string): number | null {
   return Math.ceil((toMs - fromMs) / (1000 * 60 * 60 * 24));
 }
 
-const COUNTING_UNIT_SUGGESTIONS = ['PC', 'PCs', 'SET', 'M', 'KG', 'BOX', 'ROLL', 'PAIR'];
+const ENGLISH_COUNTING_UNIT_SUGGESTIONS = ['PC', 'PCs', 'SET', 'M', 'KG', 'L', 'BOX', 'ROLL', 'PAIR'];
 
 export const DetailedView: React.FC<DetailedViewProps> = ({
   categories,
@@ -181,13 +185,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
 
-  const [q, setQ] = useState('');
   const [shipmentFilter, setShipmentFilter] = useState(initialShipmentFilter);
   const [packageFilter, setPackageFilter] = useState(initialPackageFilter);
   const [island, setIsland] = useState('');
   const [system, setSystem] = useState('');
   const [unit, setUnit] = useState('');
   const [supplier, setSupplier] = useState('');
+  const [origin, setOrigin] = useState('');
   const [itemCategoryFilter, setItemCategoryFilter] = useState('');
   const [shortageOnly, setShortageOnly] = useState(false);
   const [damagedOnly, setDamagedOnly] = useState(false);
@@ -271,15 +275,25 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     setPage(1);
   }, [initialShipmentFilter, initialPackageFilter]);
 
+  const countingUnitOptions = useMemo(() => {
+    const base = isFa ? PERSIAN_COUNTING_UNIT_SUGGESTIONS : ENGLISH_COUNTING_UNIT_SUGGESTIONS;
+    const set = new Set<string>(base);
+    for (const v of categories.countingUnit || []) {
+      const formatted = formatCountingUnit(v, prefs.language);
+      if (formatted) set.add(formatted);
+    }
+    return Array.from(set);
+  }, [isFa, prefs.language, categories.countingUnit]);
+
   const buildFilterParams = useCallback(() => {
     return new URLSearchParams({
-      ...(q ? { q } : {}),
       ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
       ...(packageFilter ? { packageNo: packageFilter } : {}),
       ...(island ? { island } : {}),
       ...(system ? { system } : {}),
       ...(unit ? { unit } : {}),
       ...(supplier ? { supplier } : {}),
+      ...(origin ? { origin } : {}),
       ...(itemCategoryFilter ? { itemCategory: itemCategoryFilter } : {}),
       ...(shortageOnly ? { shortageOnly: 'true' } : {}),
       ...(damagedOnly ? { damagedOnly: 'true' } : {}),
@@ -293,13 +307,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       ...(sortBy && sortDir ? { sortBy, sortDir } : {}),
     });
   }, [
-    q,
     shipmentFilter,
     packageFilter,
     island,
     system,
     unit,
     supplier,
+    origin,
     itemCategoryFilter,
     shortageOnly,
     damagedOnly,
@@ -379,7 +393,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           shipmentNo: finalShipment,
           packageNo: finalPackage,
           itemNo: check.nextSuggestedItemNo || '1',
-          countingUnit: lookup.lastDetailedDefaults.countingUnit || 'PC',
+          countingUnit: normalizeCountingUnitToFa(lookup.lastDetailedDefaults.countingUnit) || 'عدد',
           arrivalDate: shared?.arrivalDate || base.arrivalDate,
           supplier: shared?.supplier || '',
           origin: shared?.dispatchLocation || '',
@@ -396,7 +410,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           shipmentNo: targetShipment,
           packageNo: targetPackage,
           itemNo: '1',
-          countingUnit: 'PC',
+          countingUnit: 'عدد',
         });
       }
       setFormModalOpen(true);
@@ -547,7 +561,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'description', header: t.headers.description, get: (r: DetailedComputed) => r.description },
       { key: 'size', header: t.headers.size, isLtr: true, get: (r: DetailedComputed) => r.size },
       { key: 'packingQty', header: t.headers.packingQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.packingQty },
-      { key: 'countingUnit', header: t.headers.countingUnit, isLtr: true, get: (r: DetailedComputed) => r.countingUnit },
+      {
+        key: 'countingUnit',
+        header: t.headers.countingUnit,
+        isLtr: !isFa,
+        get: (r: DetailedComputed) => formatCountingUnit(r.countingUnit, prefs.language),
+      },
       { key: 'subSystem', header: t.headers.subSystem, get: (r: DetailedComputed) => r.subSystem },
       { key: 'storageLocation', header: t.headers.storageLocation, get: (r: DetailedComputed) => r.storageLocation },
       {
@@ -616,7 +635,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'expirationDate', header: t.headers.expirationDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.expirationDate || '' },
       { key: 'notes', header: t.headers.notes, hideInTable: true, get: (r: DetailedComputed) => r.notes },
     ],
-    [t],
+    [t, isFa, prefs.language],
   );
 
   // Extra columns are hidden by default until user enables "نمایش ستون‌های اضافی"
@@ -660,7 +679,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       let nextUnit = currentUnit;
       if (!currentUnit || upper === 'PC' || upper === 'PCS') {
         if (qty !== null && Number.isFinite(qty)) {
-          nextUnit = qty === 1 ? 'PC' : 'PCs';
+          nextUnit = isFa ? 'عدد' : qty === 1 ? 'PC' : 'PCs';
         }
       }
       return { ...prev, packingQty: qty, countingUnit: nextUnit };
@@ -796,7 +815,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             system: prev.system,
             subSystem: prev.subSystem,
             unit: prev.unit,
-            countingUnit: prev.countingUnit || 'PC',
+            countingUnit: normalizeCountingUnitToFa(prev.countingUnit) || 'عدد',
           }));
           setSaving(false);
           return;
@@ -1113,7 +1132,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         itemCode: first.itemCode || prev.itemCode || '',
         mtoRef: first.mtoRef || prev.mtoRef || '',
         packingQty: first.packingQty ?? prev.packingQty ?? null,
-        countingUnit: first.countingUnit || prev.countingUnit || 'PC',
+        countingUnit: normalizeCountingUnitToFa(first.countingUnit || prev.countingUnit) || 'عدد',
         itemCategory: first.itemCategory || prev.itemCategory || '',
         chemicalType: first.chemicalType || prev.chemicalType || '',
         productionDate: first.productionDate || prev.productionDate || '',
@@ -1157,7 +1176,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             packingQty: it.packingQty ?? 1,
             actualQty: null,
             damagedQty: null,
-            countingUnit: it.countingUnit || draft.countingUnit || 'PC',
+            countingUnit: normalizeCountingUnitToFa(it.countingUnit || draft.countingUnit) || 'عدد',
             itemCategory: it.itemCategory || '',
             chemicalType: it.chemicalType || '',
             productionDate: it.productionDate || '',
@@ -1193,18 +1212,43 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
   const numInput = (val: number | null | undefined) => (val === null || val === undefined ? '' : String(val));
 
+  const hasTopFilters = Boolean(
+    island ||
+      system ||
+      unit ||
+      supplier ||
+      origin ||
+      itemCategoryFilter ||
+      fromDate ||
+      toDate ||
+      shortageOnly ||
+      damagedOnly ||
+      discrepancyOnly ||
+      replacedOnly,
+  );
+
+  const clearTopFilters = () => {
+    setIsland('');
+    setSystem('');
+    setUnit('');
+    setSupplier('');
+    setOrigin('');
+    setItemCategoryFilter('');
+    setFromDate('');
+    setToDate('');
+    setShortageOnly(false);
+    setDamagedOnly(false);
+    setDiscrepancyOnly(false);
+    setReplacedOnly(false);
+    clearSelection();
+    setPage(1);
+  };
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SearchInputWithClear
-            value={q}
-            onChange={(val) => { setQ(val); clearSelection(); setPage(1); }}
-            placeholder={t.controls.searchPlaceholder}
-            className="flex-1 min-w-[240px]"
-          />
-
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -1258,6 +1302,19 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               <span>{isFa ? 'جایگزین شده' : 'Replaced'}</span>
             </button>
 
+            {hasTopFilters && (
+              <button
+                type="button"
+                onClick={clearTopFilters}
+                className="h-9 px-2.5 rounded-lg border border-[var(--status-danger)]/30 bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-semibold flex items-center gap-1 hover:opacity-90 whitespace-nowrap"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>{isFa ? 'پاک‌کردن فیلترها' : 'Clear Filters'}</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setShowExtraCols((v) => !v)}
@@ -1424,6 +1481,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           >
             <option value="">{t.headers.supplier}: {t.controls.all}</option>
             {categories.supplier.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+          <select
+            value={origin}
+            onChange={(e) => { setOrigin(e.target.value); clearSelection(); setPage(1); }}
+            className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+          >
+            <option value="">{t.headers.origin}: {t.controls.all}</option>
+            {(categories.origin || []).map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
           <select
             value={itemCategoryFilter}
@@ -1832,7 +1897,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             {inspected.hasShortage && canEdit && (
               <div className="p-3.5 rounded-xl border border-[var(--status-danger)] bg-[var(--status-danger-bg)] flex items-center justify-between gap-3">
                 <div className="text-xs font-semibold text-[var(--status-danger)] tabular-nums">
-                  {t.shortage.remainingShortage}: {inspected.shortage}
+                  {t.shortage.remainingShortage}: {formatDisplayNumber(inspected.shortage, prefs.language)}
+                  {inspected.countingUnit ? ` ${formatCountingUnit(inspected.countingUnit, prefs.language)}` : ''}
                 </div>
                 <button
                   type="button"
@@ -1954,7 +2020,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             <div className="p-3 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs space-y-1">
               <div className="font-semibold bidi-plaintext">{backfillTarget.description || backfillTarget.generalDescription}</div>
               <div className="text-[var(--status-danger)] font-bold tabular-nums">
-                {t.shortage.remainingShortage}: {backfillTarget.shortage}
+                {t.shortage.remainingShortage}: {formatDisplayNumber(backfillTarget.shortage, prefs.language)}
+                {backfillTarget.countingUnit ? ` ${formatCountingUnit(backfillTarget.countingUnit, prefs.language)}` : ''}
               </div>
             </div>
             <form onSubmit={handleSubmitBackfill} className="space-y-3">
@@ -2322,17 +2389,23 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    dir={isFa && !draft.countingUnit ? 'rtl' : 'ltr'}
+                    dir={!draft.countingUnit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     list="counting-unit-datalist"
                     value={draft.countingUnit || ''}
                     onChange={(e) => setDraft({ ...draft, countingUnit: e.target.value })}
-                    placeholder="PC / PCs"
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs ${
-                      isFa && !draft.countingUnit ? 'text-right' : 'text-left'
-                    }`}
+                    onBlur={() => {
+                      if (isFa && draft.countingUnit?.trim()) {
+                        setDraft((prev) => ({
+                          ...prev,
+                          countingUnit: normalizeCountingUnitToFa(prev.countingUnit),
+                        }));
+                      }
+                    }}
+                    placeholder={isFa ? 'عدد / متر / ست / کیلوگرم...' : 'PC / SET / M / KG...'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                   <datalist id="counting-unit-datalist">
-                    {COUNTING_UNIT_SUGGESTIONS.map((u) => (
+                    {countingUnitOptions.map((u) => (
                       <option key={u} value={u} />
                     ))}
                   </datalist>
@@ -2414,10 +2487,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   <input
                     type="text"
                     dir={!draft.supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    list="detailed-supplier-datalist"
                     value={draft.supplier || ''}
                     onChange={(e) => setDraft({ ...draft, supplier: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
+                  <datalist id="detailed-supplier-datalist">
+                    {(categories.supplier || []).map((v) => <option key={v} value={v} />)}
+                  </datalist>
                 </div>
 
                 <div>
@@ -2427,10 +2504,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   <input
                     type="text"
                     dir={!draft.origin ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    list="detailed-origin-datalist"
                     value={draft.origin || ''}
                     onChange={(e) => setDraft({ ...draft, origin: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
+                  <datalist id="detailed-origin-datalist">
+                    {(categories.origin || []).map((v) => <option key={v} value={v} />)}
+                  </datalist>
                 </div>
 
                 <div>
@@ -2457,10 +2538,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   <input
                     type="text"
                     dir={!draft.receiver ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    list="detailed-receiver-datalist"
                     value={draft.receiver || ''}
                     onChange={(e) => setDraft({ ...draft, receiver: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
+                  <datalist id="detailed-receiver-datalist">
+                    {(categories.receiver || []).map((v) => <option key={v} value={v} />)}
+                  </datalist>
                 </div>
 
                 <div className="sm:col-span-2 lg:col-span-3">

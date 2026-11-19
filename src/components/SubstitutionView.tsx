@@ -12,6 +12,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { formatCountingUnit } from '../shared/normalizers.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -285,7 +286,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
           origPackageText,
           rec.originalDescription,
           rec.originalItemCode || '',
-          `${rec.qty} ${rec.countingUnit}`,
+          `${rec.qty} ${formatCountingUnit(rec.countingUnit, 'fa')}`,
           rec.originalDrawingNo || '',
           rec.originalRemarks || '',
         )}
@@ -309,7 +310,7 @@ const OfficialRepSheet: React.FC<OfficialRepSheetProps> = ({ rec, formatDate }) 
           subPackageText,
           subDescText,
           rec.substituteItemCode || '',
-          `${rec.qty} ${rec.countingUnit}`,
+          `${rec.qty} ${formatCountingUnit(rec.countingUnit, 'fa')}`,
           rec.substituteDrawingNo || '',
           rec.substituteRemarks || rec.notes || '',
         )}
@@ -790,7 +791,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
       { key: 'substituteDescription', header: isFa ? 'کالای جایگزین (ب)' : 'Substitute Item (B)', getValue: (r) => r.substituteDescription },
       { key: 'substituteItemCode', header: isFa ? 'Tag جایگزین' : 'Substitute Tag', getValue: (r) => r.substituteItemCode },
       { key: 'qty', header: isFa ? 'تعداد' : 'Qty', getValue: (r) => r.qty },
-      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => r.countingUnit },
+      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => formatCountingUnit(r.countingUnit, prefs.language) },
       { key: 'reason', header: isFa ? 'علت تعویض' : 'Reason', getValue: (r) => r.reason },
       { key: 'status', header: isFa ? 'وضعیت' : 'Status', getValue: (r) => statusLabel(r.status) },
       { key: 'approvedBy', header: isFa ? 'تاییدکننده' : 'Approved By', getValue: (r) => r.approvedBy || '' },
@@ -957,7 +958,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
               )}
               <span>
                 <strong className="text-[var(--text-muted)]">{t.headers.countingUnit}:</strong>{' '}
-                {selectedOriginal.countingUnit || 'PC'}
+                {formatCountingUnit(selectedOriginal.countingUnit, prefs.language) || (isFa ? 'عدد' : 'PC')}
               </span>
             </div>
           )}
@@ -1424,7 +1425,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                       {rec.substituteDescription}
                     </td>
                     <td className="py-2.5 px-3 tabular-nums font-semibold">
-                      {rec.qty} {rec.countingUnit}
+                      {rec.qty} {formatCountingUnit(rec.countingUnit, prefs.language)}
                     </td>
                     <td className="py-2.5 px-3">
                       <span

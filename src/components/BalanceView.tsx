@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { roundQty, toNum } from '../shared/formulas.ts';
+import { formatCountingUnit } from '../shared/normalizers.ts';
 import type { DetailedComputed, GeneralEntry, MaterialEstimateRecord } from '../shared/types.ts';
 import {
   BuiltInSheetHeaderRow,
@@ -289,7 +290,7 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
                     className="bidi-plaintext samaan-col-compact"
                     style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
                   >
-                    {row?.countingUnit || ''}
+                    {row ? formatCountingUnit(row.countingUnit, 'fa') : ''}
                   </td>
                   <td
                     className="tabular-nums samaan-col-compact"
@@ -659,7 +660,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
       { key: 'itemNo', header: t.headers.itemNo, getValue: (r) => r.itemNo },
       { key: 'description', header: t.headers.description, getValue: (r) => r.description || r.generalDescription },
       { key: 'itemCode', header: t.headers.itemCode, getValue: (r) => r.itemCode },
-      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => r.countingUnit },
+      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => formatCountingUnit(r.countingUnit, prefs.language) },
       { key: 'packingQty', header: t.headers.packingQty, getValue: (r) => r.packingQty },
       { key: 'actualQty', header: t.headers.actualQty, getValue: (r) => r.actualQty },
       { key: 'shortage', header: t.headers.shortage, getValue: (r) => (r.shortage > 0 ? r.shortage : 0) },

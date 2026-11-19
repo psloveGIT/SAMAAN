@@ -7,11 +7,11 @@ import {
   FlaskConical,
   PackageCheck,
   Plus,
-  Scale,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest } from '../lib/api.ts';
 import { buildYearMonths, formatDisplayNumber, formatMonthLabel } from '../shared/jalali.ts';
+import { formatCountingUnit } from '../shared/normalizers.ts';
 import type {
   DetailedComputed,
   ExpiringChemicalNotice,
@@ -210,15 +210,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       value: fmt(data.counts.generalRows),
     },
     {
-      label: isFa ? 'اقلام تجهیزات' : 'Equipment Items',
+      label: isFa ? 'ردیف‌های جزئیات تجهیزات' : 'Detailed Equipment Rows',
       value: fmt(data.counts.detailedRows),
     },
     {
-      label: isFa ? 'جمع وزن ناخالص / خالص (تن)' : 'Gross / Net Weight (Tons)',
-      value: `${fmt(grossTons, 3)} ${isFa ? 'تن' : 't'}`,
+      label: isFa ? 'جمع وزن خالص (تن)' : 'Total Net Weight (Tons)',
+      value: `${fmt(netTons, 3)} ${isFa ? 'تن' : 't'}`,
       sub: isFa
-        ? `وزن خالص: ${fmt(netTons, 3)} تن`
-        : `Net Weight: ${fmt(netTons, 3)} tons`,
+        ? `وزن ناخالص: ${fmt(grossTons, 3)} تن`
+        : `Gross Weight: ${fmt(grossTons, 3)} tons`,
       tone: 'accent',
       compactValue: true,
     },
@@ -401,8 +401,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </div>
 
-        {/* Transit Pipeline & Tonnage Weight / Freight Totals */}
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-5">
+        {/* Transit Pipeline */}
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5">
           <div>
             <h3 className="text-sm font-bold mb-3">
               {isFa ? 'وضعیت محموله‌های در راه' : 'In-Transit Pipeline'}
@@ -423,41 +423,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             )}
           </div>
-
-          {(grossTons > 0 || netTons > 0 || data.totals.freightCostSum > 0) && (
-            <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2 text-xs">
-              <h4 className="font-bold text-[var(--text-primary)] flex items-center gap-1.5">
-                <Scale className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                <span>{isFa ? 'خلاصه وزن (به تن) و حمل' : 'Weight Summary (Tons) & Freight'}</span>
-              </h4>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">
-                  {isFa ? 'جمع وزن ناخالص' : 'Total Gross Weight'}
-                </span>
-                <span className="font-semibold tabular-nums">
-                  {fmt(grossTons, 3)} {isFa ? 'تن' : 'Tons'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">
-                  {isFa ? 'جمع وزن خالص' : 'Total Net Weight'}
-                </span>
-                <span className="font-semibold tabular-nums">
-                  {fmt(netTons, 3)} {isFa ? 'تن' : 'Tons'}
-                </span>
-              </div>
-              {data.totals.freightCostSum > 0 && (
-                <div className="flex justify-between gap-2">
-                  <span className="text-[var(--text-muted)]">
-                    {isFa ? 'کل مبلغ کرایه حمل (ریال)' : 'Total Freight Cost (IRR)'}
-                  </span>
-                  <span className="font-semibold tabular-nums text-[var(--accent-primary)]">
-                    {fmt(data.totals.freightCostSum)} {isFa ? 'ریال' : 'IRR'}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -510,6 +475,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div className="shrink-0 text-end">
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-bold tabular-nums">
                       {t.headers.shortage}: {fmt(item.shortage)}
+                      {item.countingUnit ? ` ${formatCountingUnit(item.countingUnit, prefs.language)}` : ''}
                     </span>
                   </div>
                 </button>
@@ -625,7 +591,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                     <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold tabular-nums">
                       {isFa ? `تعداد: ${fmt(qtyVal)}` : `Qty: ${fmt(qtyVal)}`}
-                      {item.countingUnit ? ` ${item.countingUnit}` : ''}
+                      {item.countingUnit ? ` ${formatCountingUnit(item.countingUnit, prefs.language)}` : ''}
                     </span>
                   </button>
                 );
@@ -687,7 +653,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                     <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold tabular-nums">
                       {isFa ? `تعداد: ${fmt(qtyVal)}` : `Qty: ${fmt(qtyVal)}`}
-                      {item.countingUnit ? ` ${item.countingUnit}` : ''}
+                      {item.countingUnit ? ` ${formatCountingUnit(item.countingUnit, prefs.language)}` : ''}
                     </span>
                   </button>
                 );
@@ -798,6 +764,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-bold tabular-nums">
                   {t.headers.damagedQty}: {fmt(item.damagedQty || 0)}
+                  {item.countingUnit ? ` ${formatCountingUnit(item.countingUnit, prefs.language)}` : ''}
                 </span>
               </button>
             ))}

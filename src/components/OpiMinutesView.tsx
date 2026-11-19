@@ -15,6 +15,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { formatCountingUnit } from '../shared/normalizers.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -1316,7 +1317,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       itemNo: d.itemNo,
       description: d.description || d.generalDescription,
       itemCode: d.itemCode,
-      countingUnit: d.countingUnit || 'PC',
+      countingUnit: formatCountingUnit(d.countingUnit, prefs.language) || (isFa ? 'عدد' : 'PC'),
       packingQty: d.packingQty || 0,
       actualQty: d.actualQty || 0,
       shortage: d.shortage,

@@ -4,6 +4,7 @@ import { CheckSquare, Eye, Printer, Square, Tag, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
+import { formatCountingUnit } from '../shared/normalizers.ts';
 import type { DetailedComputed, GeneralEntry } from '../shared/types.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import { OfficialExtraMetaStrip } from './OfficialSheetHeader.tsx';
@@ -52,7 +53,7 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
   formatDate,
   compact = false,
 }) => {
-  const { activeEmployer, activeProject } = useApp();
+  const { activeEmployer, activeProject, prefs } = useApp();
   const design = resolveBuiltInFormDesign(activeEmployer, 'storageLabel');
   const formCode = design.docCode;
   const displayProjectName = meta.projectName.trim() || activeProject?.name || '.................';
@@ -101,8 +102,8 @@ const OfficialStorageLabelSheet: React.FC<OfficialStorageLabelSheetProps> = ({
   if (fields.qty) {
     extraFooterLines.push({
       label: 'Qty:',
-      value: `${qtyValue} ${item.countingUnit || ''}`.trim(),
-      ltr: true,
+      value: `${qtyValue} ${formatCountingUnit(item.countingUnit, prefs.language)}`.trim(),
+      ltr: prefs.language !== 'fa',
     });
   }
   if (fields.arrivalDate && effectiveArrivalDate) {
@@ -922,7 +923,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
                       {item.storageLocation || '-'}
                     </td>
                     <td className="py-2 px-3 text-center tabular-nums font-semibold">
-                      {item.opiPending ? item.packingQty ?? '-' : item.mapnaInventory} {item.countingUnit}
+                      {item.opiPending ? item.packingQty ?? '-' : item.mapnaInventory} {formatCountingUnit(item.countingUnit, prefs.language)}
                     </td>
                   </tr>
                 ))

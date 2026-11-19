@@ -14,6 +14,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { formatCountingUnit } from '../shared/normalizers.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -1016,7 +1017,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       { key: 'packageNo', header: t.headers.packageNo, getValue: (r) => r.packageNo },
       { key: 'itemNo', header: t.headers.itemNo, getValue: (r) => r.itemNo },
       { key: 'description', header: t.headers.description, getValue: (r) => r.description || r.generalDescription },
-      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => r.countingUnit },
+      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => formatCountingUnit(r.countingUnit, prefs.language) },
       { key: 'packingQty', header: t.headers.packingQty, getValue: (r) => r.packingQty },
       { key: 'actualQty', header: t.headers.actualQty, getValue: (r) => r.actualQty },
       { key: 'damagedQty', header: t.headers.damagedQty, getValue: (r) => r.damagedQty },
@@ -1800,7 +1801,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                             {item.description || item.generalDescription}
                           </td>
                           <td className="py-2 px-3 text-end tabular-nums font-semibold">
-                            {item.packingQty ?? '-'} {item.countingUnit}
+                            {item.packingQty ?? '-'} {formatCountingUnit(item.countingUnit, prefs.language)}
                           </td>
                           <td className="py-2 px-3 w-28">
                             <input

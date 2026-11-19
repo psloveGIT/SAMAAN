@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -42,7 +41,6 @@ import { ExcelColumnFilter } from './ExcelColumnFilter.tsx';
 import { IranianPlateInput } from './IranianPlateInput.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
-import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
@@ -245,17 +243,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
 
-  const [q, setQ] = useState('');
   const [island, setIsland] = useState('');
   const [system, setSystem] = useState('');
   const [subSystem, setSubSystem] = useState('');
   const [unit, setUnit] = useState('');
   const [dispatchLocation, setDispatchLocation] = useState('');
   const [packageType, setPackageType] = useState('');
-  const [shortageOnly, setShortageOnly] = useState(false);
-  const [damagedOnly, setDamagedOnly] = useState(false);
-  const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
-  const [replacedOnly, setReplacedOnly] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
@@ -309,17 +302,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
 
   const buildFilterParams = useCallback(() => {
     return new URLSearchParams({
-      ...(q ? { q } : {}),
       ...(island ? { island } : {}),
       ...(system ? { system } : {}),
       ...(subSystem ? { subSystem } : {}),
       ...(unit ? { unit } : {}),
       ...(dispatchLocation ? { dispatchLocation } : {}),
       ...(packageType ? { packageType } : {}),
-      ...(shortageOnly ? { shortageOnly: 'true' } : {}),
-      ...(damagedOnly ? { damagedOnly: 'true' } : {}),
-      ...(discrepancyOnly ? { discrepancyOnly: 'true' } : {}),
-      ...(replacedOnly ? { replacedOnly: 'true' } : {}),
       ...(fromDate ? { fromDate } : {}),
       ...(toDate ? { toDate } : {}),
       ...(Object.keys(colFilters).length > 0
@@ -328,17 +316,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       ...(sortBy && sortDir ? { sortBy, sortDir } : {}),
     });
   }, [
-    q,
     island,
     system,
     subSystem,
     unit,
     dispatchLocation,
     packageType,
-    shortageOnly,
-    damagedOnly,
-    discrepancyOnly,
-    replacedOnly,
     fromDate,
     toDate,
     colFilters,
@@ -839,77 +822,55 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     }
   };
 
-  const editPackageTypeOptions = isFa ? PACKAGE_TYPE_OPTIONS_FA : PACKAGE_TYPE_OPTIONS_EN;
+  const editPackageTypeOptions = useMemo(() => {
+    const base = isFa ? PACKAGE_TYPE_OPTIONS_FA : PACKAGE_TYPE_OPTIONS_EN;
+    const set = new Set<string>(base);
+    for (const v of categories.packageType || []) {
+      const trimmed = String(v || '').trim();
+      if (trimmed) set.add(trimmed);
+    }
+    return Array.from(set);
+  }, [isFa, categories.packageType]);
+
+  const hasHiddenFilters = Boolean(
+    dispatchLocation || packageType || island || system || subSystem || unit || fromDate || toDate,
+  );
+
+  const clearHiddenFilters = () => {
+    setDispatchLocation('');
+    setPackageType('');
+    setIsland('');
+    setSystem('');
+    setSubSystem('');
+    setUnit('');
+    setFromDate('');
+    setToDate('');
+    clearSelection();
+    setPage(1);
+  };
 
   return (
     <div className="space-y-4">
-      {/* Filter & Search Toolbar */}
+      {/* Hidden-Field Filters & Actions Toolbar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SearchInputWithClear
-            value={q}
-            onChange={(val) => {
-              setQ(val);
-              clearSelection();
-              setPage(1);
-            }}
-            placeholder={t.controls.searchPlaceholder}
-            className="flex-1 min-w-[240px]"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-[var(--text-secondary)]">
+              {isFa ? 'فیلتر فیلدهای تکمیلی (ستون‌های مخفی جدول)' : 'Filters for Additional (Hidden) Columns'}
+            </span>
+            {hasHiddenFilters && (
+              <button
+                type="button"
+                onClick={clearHiddenFilters}
+                className="h-7 px-2.5 rounded-md border border-[var(--status-danger)]/30 bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[11px] font-semibold flex items-center gap-1 hover:opacity-90"
+              >
+                <X className="w-3 h-3" />
+                <span>{isFa ? 'پاک‌کردن فیلترها' : 'Clear Filters'}</span>
+              </button>
+            )}
+          </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => { setShortageOnly((v) => !v); clearSelection(); setPage(1); }}
-              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
-                shortageOnly
-                  ? 'border-[var(--status-danger)] bg-[var(--status-danger-bg)] text-[var(--status-danger)]'
-                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>{t.shortage.hasShortageBadge}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setDamagedOnly((v) => !v); clearSelection(); setPage(1); }}
-              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
-                damagedOnly
-                  ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
-                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>{t.shortage.hasDamagedBadge}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setDiscrepancyOnly((v) => !v); clearSelection(); setPage(1); }}
-              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
-                discrepancyOnly
-                  ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
-                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>{isFa ? 'دارای مغایرت' : 'Discrepancy'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setReplacedOnly((v) => !v); clearSelection(); setPage(1); }}
-              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap ${
-                replacedOnly
-                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
-              }`}
-            >
-              <Link2 className="w-3.5 h-3.5" />
-              <span>{isFa ? 'جایگزین شده' : 'Replaced'}</span>
-            </button>
-
             <button
               type="button"
               onClick={() => setShowExtraCols((v) => !v)}

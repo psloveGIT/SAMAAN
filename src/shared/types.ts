@@ -738,8 +738,19 @@ export type CategoryGroupKey =
   | 'unit'
   | 'supplier'
   | 'dispatchLocation'
+  | 'origin'
   | 'storageLocation'
-  | 'carrierContractor';
+  | 'carrierContractor'
+  | 'countingUnit'
+  | 'packageType'
+  | 'generalDescription'
+  | 'stocktakeStatus'
+  | 'transitStatus'
+  | 'receiver'
+  | 'merStatus'
+  | 'repStatus'
+  | 'balanceStatus'
+  | 'chemicalType';
 
 export interface CategoryStore {
   island: string[];
@@ -748,8 +759,19 @@ export interface CategoryStore {
   unit: string[];
   supplier: string[];
   dispatchLocation: string[];
+  origin: string[];
   storageLocation: string[];
   carrierContractor: string[];
+  countingUnit: string[];
+  packageType: string[];
+  generalDescription: string[];
+  stocktakeStatus: string[];
+  transitStatus: string[];
+  receiver: string[];
+  merStatus: string[];
+  repStatus: string[];
+  balanceStatus: string[];
+  chemicalType: string[];
 }
 
 export interface AuditLogEntry {

@@ -182,8 +182,8 @@ interface PkBucketSummary {
   byTokenRaw: Map<string, number[]>;
   byDigitsOnly: Map<number, number[]>;
   bySuffixDigits: Map<number, number[]>;
-  byCompactBigram: Map<string, number[]>;
-  byCompactTrigram: Map<string, number[]>;
+  byCompactBigram: Map<string, number[]> | null;
+  byCompactTrigram: Map<string, number[]> | null;
   byNonPureLen2: Map<string, number[]>;
   byNonPureLastTrigram: Map<string, number[]>;
 }
@@ -204,8 +204,6 @@ function buildPkBucketIndexes(groups: PkgGroupSummary[]): Omit<PkBucketSummary, 
   const byTokenRaw = new Map<string, number[]>();
   const byDigitsOnly = new Map<number, number[]>();
   const bySuffixDigits = new Map<number, number[]>();
-  const byCompactBigram = new Map<string, number[]>();
-  const byCompactTrigram = new Map<string, number[]>();
   const byNonPureLen2 = new Map<string, number[]>();
   const byNonPureLastTrigram = new Map<string, number[]>();
 
@@ -222,23 +220,11 @@ function buildPkBucketIndexes(groups: PkgGroupSummary[]): Omit<PkBucketSummary, 
     }
 
     const cLen = p.compact.length;
-    if (cLen >= 2) {
+    if (cLen >= 2 && !p.isPureDigits) {
       if (cLen === 2) {
-        pushIdx(byCompactBigram, p.compact, idx);
+        pushIdx(byNonPureLen2, p.compact, idx);
       } else {
-        for (let j = 0; j <= cLen - 2; j += 1) {
-          pushIdx(byCompactBigram, p.compact.slice(j, j + 2), idx);
-        }
-        for (let j = 0; j <= cLen - 3; j += 1) {
-          pushIdx(byCompactTrigram, p.compact.slice(j, j + 3), idx);
-        }
-      }
-      if (!p.isPureDigits) {
-        if (cLen === 2) {
-          pushIdx(byNonPureLen2, p.compact, idx);
-        } else {
-          pushIdx(byNonPureLastTrigram, p.compact.slice(cLen - 3), idx);
-        }
+        pushIdx(byNonPureLastTrigram, p.compact.slice(cLen - 3), idx);
       }
     }
   }
@@ -249,11 +235,43 @@ function buildPkBucketIndexes(groups: PkgGroupSummary[]): Omit<PkBucketSummary, 
     byTokenRaw,
     byDigitsOnly,
     bySuffixDigits,
-    byCompactBigram,
-    byCompactTrigram,
+    byCompactBigram: null,
+    byCompactTrigram: null,
     byNonPureLen2,
     byNonPureLastTrigram,
   };
+}
+
+function getBucketBigramIndex(bucket: PkBucketSummary): Map<string, number[]> {
+  if (bucket.byCompactBigram) return bucket.byCompactBigram;
+  const map = new Map<string, number[]>();
+  for (let idx = 0; idx < bucket.groups.length; idx += 1) {
+    const c = bucket.groups[idx].preparedPkg.compact;
+    const cLen = c.length;
+    if (cLen >= 2) {
+      for (let j = 0; j <= cLen - 2; j += 1) {
+        pushIdx(map, c.slice(j, j + 2), idx);
+      }
+    }
+  }
+  bucket.byCompactBigram = map;
+  return map;
+}
+
+function getBucketTrigramIndex(bucket: PkBucketSummary): Map<string, number[]> {
+  if (bucket.byCompactTrigram) return bucket.byCompactTrigram;
+  const map = new Map<string, number[]>();
+  for (let idx = 0; idx < bucket.groups.length; idx += 1) {
+    const c = bucket.groups[idx].preparedPkg.compact;
+    const cLen = c.length;
+    if (cLen >= 3) {
+      for (let j = 0; j <= cLen - 3; j += 1) {
+        pushIdx(map, c.slice(j, j + 3), idx);
+      }
+    }
+  }
+  bucket.byCompactTrigram = map;
+  return map;
 }
 
 /**
@@ -428,7 +446,7 @@ export function createGeneralDetailedLinker(
       const qCompact = queryPkg.compact;
       if (!queryPkg.isPureDigits && qCompact.length >= 2) {
         if (qCompact.length === 2) {
-          const list = bucket.byCompactBigram.get(qCompact);
+          const list = getBucketBigramIndex(bucket).get(qCompact);
           if (list) {
             for (let i = 0; i < list.length; i += 1) {
               const idx = list[i];
@@ -439,10 +457,11 @@ export function createGeneralDetailedLinker(
           }
         } else {
           // Pick the rarest 3-gram of queryPkg.compact to minimize candidates
+          const trigramIndex = getBucketTrigramIndex(bucket);
           let rarestList: number[] | undefined;
           let impossible = false;
           for (let j = 0; j <= qCompact.length - 3; j += 1) {
-            const list = bucket.byCompactTrigram.get(qCompact.slice(j, j + 3));
+            const list = trigramIndex.get(qCompact.slice(j, j + 3));
             if (!list) {
               impossible = true;
               break;

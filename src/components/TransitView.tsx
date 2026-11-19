@@ -14,6 +14,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
 import { formatDisplayNumber, formatMultiValueCell, getTodayIso } from '../shared/jalali.ts';
+import { getTransitStatusOptions } from '../shared/normalizers.ts';
 import { EMPTY_CELL_TOKEN } from '../shared/tableQuery.ts';
 import type { CategoryStore, SelectionFormulaSummary, TransitEntry } from '../shared/types.ts';
 import { formatThousands, parseNumericInput } from '../shared/validation.ts';
@@ -21,7 +22,6 @@ import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { ExcelColumnFilter } from './ExcelColumnFilter.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
-import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 
@@ -51,7 +51,6 @@ export const TransitView: React.FC<TransitViewProps> = ({
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
 
-  const [q, setQ] = useState('');
   const [system, setSystem] = useState('');
   const [subSystem, setSubSystem] = useState('');
   const [unit, setUnit] = useState('');
@@ -99,9 +98,13 @@ export const TransitView: React.FC<TransitViewProps> = ({
     billOfLadingNo: '',
   });
 
+  const transitStatusOptions = useMemo(
+    () => getTransitStatusOptions(categories.transitStatus),
+    [categories.transitStatus],
+  );
+
   const buildFilterParams = useCallback(() => {
     return new URLSearchParams({
-      ...(q ? { q } : {}),
       ...(system ? { system } : {}),
       ...(subSystem ? { subSystem } : {}),
       ...(unit ? { unit } : {}),
@@ -115,7 +118,6 @@ export const TransitView: React.FC<TransitViewProps> = ({
       ...(sortBy && sortDir ? { sortBy, sortDir } : {}),
     });
   }, [
-    q,
     system,
     subSystem,
     unit,
@@ -459,20 +461,41 @@ export const TransitView: React.FC<TransitViewProps> = ({
     }
   };
 
+  const hasHiddenFilters = Boolean(
+    system || subSystem || unit || dispatchLocation || carrierContractor || fromDate || toDate,
+  );
+
+  const clearHiddenFilters = () => {
+    setSystem('');
+    setSubSystem('');
+    setUnit('');
+    setDispatchLocation('');
+    setCarrierContractor('');
+    setFromDate('');
+    setToDate('');
+    clearSelection();
+    setPage(1);
+  };
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SearchInputWithClear
-            value={q}
-            onChange={(val) => {
-              setQ(val);
-              clearSelection();
-              setPage(1);
-            }}
-            placeholder={t.controls.searchPlaceholder}
-            className="flex-1 min-w-[240px]"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-[var(--text-secondary)]">
+              {isFa ? 'فیلتر فیلدهای تکمیلی (ستون‌های مخفی جدول)' : 'Filters for Additional (Hidden) Columns'}
+            </span>
+            {hasHiddenFilters && (
+              <button
+                type="button"
+                onClick={clearHiddenFilters}
+                className="h-7 px-2.5 rounded-md border border-[var(--status-danger)]/30 bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[11px] font-semibold flex items-center gap-1 hover:opacity-90"
+              >
+                <X className="w-3 h-3" />
+                <span>{isFa ? 'پاک‌کردن فیلترها' : 'Clear Filters'}</span>
+              </button>
+            )}
+          </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -824,8 +847,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                         </button>
                         {canEdit && (
                           <>
-                            {(row.overallStatus || '').trim() !== 'رسیده' &&
-                              (row.overallStatus || '').trim() !== 'پایان' && (
+                            {(row.overallStatus || '').trim() !== 'رسیده' && (
                               <button
                                 type="button"
                                 onClick={() => onConvertToGeneral(row)}
@@ -1022,10 +1044,11 @@ export const TransitView: React.FC<TransitViewProps> = ({
                     onChange={(e) => setDraft({ ...draft, overallStatus: e.target.value })}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
                   >
-                    <option value="در دست بازرسی">در دست بازرسی</option>
-                    <option value="در دست ارسال">در دست ارسال</option>
-                    <option value="پایان">پایان</option>
-                    <option value="رسیده">رسیده</option>
+                    {transitStatusOptions.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -1209,10 +1232,11 @@ export const TransitView: React.FC<TransitViewProps> = ({
                     className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
                   >
                     <option value="">{isFa ? '-- بدون تغییر --' : '-- No Change --'}</option>
-                    <option value="در دست بازرسی">در دست بازرسی</option>
-                    <option value="در دست ارسال">در دست ارسال</option>
-                    <option value="پایان">پایان</option>
-                    <option value="رسیده">رسیده</option>
+                    {transitStatusOptions.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>

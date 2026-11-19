@@ -1,5 +1,6 @@
 import { inferGeneralDescription } from './generalDescription.ts';
 import { getTodayIso, normalizeDigits, parseFlexibleDateToIso } from './jalali.ts';
+import { normalizeCountingUnitToFa } from './normalizers.ts';
 import { parseCsvMatrix, parseDetailedCsv, parseGeneralCsv } from './csvParser.ts';
 import type { CalendarMode, DetailedEntry } from './types.ts';
 
@@ -403,9 +404,11 @@ export function extractEquipmentOffline(params: {
     /(?:مقدار\s*پکینگ|تعداد|مقدار|qty|quantity)\s*[:：=]?\s*([\d,،.]+)/i,
   ]);
   const countingUnit =
-    extractRegexGroup(text, [
-      /(?:واحد\s*شمارش|uom|counting\s*unit)\s*[:：=]?\s*([A-Za-z\u0600-\u06FF]+)/i,
-    ]) || 'PC';
+    normalizeCountingUnitToFa(
+      extractRegexGroup(text, [
+        /(?:واحد\s*شمارش|uom|counting\s*unit)\s*[:：=]?\s*([A-Za-z\u0600-\u06FF]+)/i,
+      ]),
+    ) || 'عدد';
 
   let itemCategory: DetailedEntry['itemCategory'] = '';
   if (/ماده\s*شیمیایی|مواد\s*شیمیایی|chemical/i.test(text)) itemCategory = 'chemicals';

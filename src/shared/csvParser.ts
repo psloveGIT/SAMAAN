@@ -1,4 +1,5 @@
 import { normalizeDigits, parseFlexibleDateToIso } from './jalali.ts';
+import { normalizeCountingUnitToFa, normalizeTransitStatus } from './normalizers.ts';
 import type {
   CalendarMode,
   DetailedEntry,
@@ -851,7 +852,7 @@ export function parseDetailedCsv(
       repNo: idxRepNo >= 0 ? cleanStr(line[idxRepNo]) : '',
       repStatus: idxRepStatus >= 0 ? cleanStr(line[idxRepStatus]) : '',
       repDescription: idxRepDesc >= 0 ? cleanStr(line[idxRepDesc]) : '',
-      countingUnit: idxCountingUnit >= 0 ? cleanStr(line[idxCountingUnit]) : '',
+      countingUnit: idxCountingUnit >= 0 ? normalizeCountingUnitToFa(cleanStr(line[idxCountingUnit])) : '',
       island: idxIsland >= 0 ? cleanStr(line[idxIsland]) : '',
       system: idxSystem >= 0 ? cleanStr(line[idxSystem]) : '',
       subSystem: idxSubSystem >= 0 ? cleanStr(line[idxSubSystem]) : '',
@@ -962,12 +963,13 @@ export function parseTransitCsv(
 
     const packingListNo = idxPackingList >= 0 ? cleanStr(line[idxPackingList]) : '';
     const itemDescription = idxItemDescription >= 0 ? cleanStr(line[idxItemDescription]) : '';
-    const overallStatus = idxOverallStatus >= 0 ? cleanStr(line[idxOverallStatus]) : '';
+    const rawOverallStatus = idxOverallStatus >= 0 ? cleanStr(line[idxOverallStatus]) : '';
+    const overallStatus = rawOverallStatus ? normalizeTransitStatus(rawOverallStatus) : '';
 
     const record: Omit<TransitEntry, 'id'> = {
       rowNo: String(rows.length + 1),
       arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
-      overallStatus,
+      overallStatus: overallStatus || 'در دست ارسال',
       inspectionRequest: idxInspectionReq >= 0 ? cleanStr(line[idxInspectionReq]) : '',
       releaseNetNo: idxReleaseNetNo >= 0 ? cleanStr(line[idxReleaseNetNo]) : '',
       releaseNetDate: idxReleaseNetDate >= 0 ? parseFlexibleDateToIso(line[idxReleaseNetDate] || '', assumedCalendar) : '',
