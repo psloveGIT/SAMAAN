@@ -245,6 +245,7 @@ export interface UserPreferences {
   calendar: CalendarMode;
   theme: ThemeMode;
   eyeComfort: boolean;
+  spellCheck?: boolean;
 }
 
 export interface UserAccount {

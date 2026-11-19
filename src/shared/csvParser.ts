@@ -1,5 +1,5 @@
 import { normalizeDigits, parseFlexibleDateToIso } from './jalali.ts';
-import { normalizeCountingUnitToFa, normalizeTransitStatus } from './normalizers.ts';
+import { inferItemClassification, normalizeCountingUnitToFa, normalizeTransitStatus } from './normalizers.ts';
 import type {
   CalendarMode,
   DetailedEntry,
@@ -810,10 +810,15 @@ export function parseDetailedCsv(
     const shipmentNo = idxShipmentNo >= 0 ? cleanStr(line[idxShipmentNo]) : '';
     const description = idxDesc >= 0 ? cleanStr(line[idxDesc]) : '';
     const generalDescription = idxGenDesc >= 0 ? cleanStr(line[idxGenDesc]) : '';
+    const notesVal = idxNotes >= 0 ? cleanStr(line[idxNotes]) : '';
 
-    const chemicalType = idxChemicalType >= 0 ? cleanStr(line[idxChemicalType]) : '';
+    const rawChemicalType = idxChemicalType >= 0 ? cleanStr(line[idxChemicalType]) : '';
     const parsedCat = idxItemCategory >= 0 ? normalizeItemCategory(line[idxItemCategory]) : '';
-    const itemCategory = parsedCat || (chemicalType ? 'chemicals' : '');
+    const inferred = !parsedCat
+      ? inferItemClassification(description, notesVal, generalDescription)
+      : { itemCategory: parsedCat, chemicalType: '' };
+    const itemCategory = parsedCat || (rawChemicalType ? 'chemicals' : inferred.itemCategory);
+    const chemicalType = rawChemicalType || (itemCategory === 'chemicals' ? inferred.chemicalType : '');
 
     const packingQtyVal = idxPackingQty >= 0 ? parseNum(line[idxPackingQty]) : null;
     const rawActualQtyVal = idxActualQty >= 0 ? parseNum(line[idxActualQty]) : null;
@@ -861,7 +866,7 @@ export function parseDetailedCsv(
       opiDate: idxOpiDate >= 0 ? parseFlexibleDateToIso(line[idxOpiDate] || '', assumedCalendar) : '',
       merNo: idxMerNo >= 0 ? cleanStr(line[idxMerNo]) : '',
       merStatus: idxMerStatus >= 0 ? cleanStr(line[idxMerStatus]) : '',
-      notes: idxNotes >= 0 ? cleanStr(line[idxNotes]) : '',
+      notes: notesVal,
       materialBalanceNo: idxBalNo >= 0 ? cleanStr(line[idxBalNo]) : '',
       balanceStatus: idxBalanceStatus >= 0 ? cleanStr(line[idxBalanceStatus]) : '',
       storageLocation: idxStorageLoc >= 0 ? cleanStr(line[idxStorageLoc]) : '',

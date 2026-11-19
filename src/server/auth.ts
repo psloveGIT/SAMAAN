@@ -118,6 +118,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   calendar: 'jalali',
   theme: 'dark',
   eyeComfort: false,
+  spellCheck: true,
 };
 
 export function requireRole(allowedRoles: UserRole[]) {

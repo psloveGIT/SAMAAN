@@ -7,6 +7,7 @@ import type {
   GeneralEntry,
   SiteEntryMinutesRecord,
   TransitEntry,
+  TrashRecord,
 } from './types.ts';
 
 export const EMPTY_CELL_TOKEN = '__EMPTY__';
@@ -33,6 +34,7 @@ export const DATE_COLUMN_KEYS = new Set<string>([
   'expirationDate',
   'releaseNetDate',
   'interimDate',
+  'deletedDate',
 ]);
 
 function normKey(s: string | undefined | null): string {
@@ -905,5 +907,96 @@ export function resolveSiteEntryArrivalAndRelease(
   };
 }
 
-export type QueryScope = 'general' | 'detailed' | 'transit';
+export type QueryScope = 'general' | 'detailed' | 'transit' | 'trash';
 export type ScopeRowAny = GeneralEntry | DetailedComputed | TransitEntry | SiteEntryMinutesRecord;
+
+export interface TrashProjectedRow extends Record<string, unknown> {
+  id: string;
+  scope: TrashRecord['scope'];
+  targetLabel: string;
+  packingNo: string;
+  packageNo: string;
+  itemNo: string;
+  description: string;
+  supplier: string;
+  island: string;
+  deletedBy: string;
+  deletedAt: string;
+  deletedDate: string;
+}
+
+export function projectTrashRowForQuery(item: TrashRecord): TrashProjectedRow {
+  const d = item.data as Partial<GeneralEntry & DetailedEntry & TransitEntry>;
+  const packingNo =
+    item.scope === 'detailed'
+      ? normKey(d.shipmentNo)
+      : normKey(d.packingListNo);
+  const packageNo = normKey(d.packageNo);
+  const itemNo = item.scope === 'detailed' ? normKey(d.itemNo) : '';
+  const description =
+    item.scope === 'detailed'
+      ? normKey(d.description || d.generalDescription)
+      : normKey(d.itemDescription);
+  const supplier = normKey(d.supplier);
+  const island = normKey(d.island);
+  const deletedDate = item.deletedAt ? item.deletedAt.slice(0, 10) : '';
+  return {
+    id: item.id,
+    scope: item.scope,
+    targetLabel: item.targetLabel,
+    packingNo,
+    packageNo,
+    itemNo,
+    description,
+    supplier,
+    island,
+    deletedBy: item.deletedBy,
+    deletedAt: item.deletedAt,
+    deletedDate,
+  };
+}
+
+/**
+ * Computes linked deleted Detailed counts for General trash items in O(M) instead of O(N*M).
+ */
+export function buildTrashLinkedDetailedCounts(trash: TrashRecord[]): {
+  getLinkedCount: (item: TrashRecord) => number;
+  scopeCounts: { all: number; general: number; detailed: number; transit: number };
+} {
+  const byPk = new Map<string, number>();
+  const byPkPkg = new Map<string, number>();
+  const scopeCounts = { all: trash.length, general: 0, detailed: 0, transit: 0 };
+
+  for (let i = 0; i < trash.length; i += 1) {
+    const tr = trash[i];
+    if (tr.scope === 'general') scopeCounts.general += 1;
+    else if (tr.scope === 'detailed') {
+      scopeCounts.detailed += 1;
+      const d = tr.data as DetailedEntry;
+      const pk = normKey(d.shipmentNo);
+      if (pk) {
+        byPk.set(pk, (byPk.get(pk) || 0) + 1);
+        const pkg = normKey(d.packageNo);
+        if (pkg) {
+          const composite = `${pk}\u0000${pkg}`;
+          byPkPkg.set(composite, (byPkPkg.get(composite) || 0) + 1);
+        }
+      }
+    } else if (tr.scope === 'transit') {
+      scopeCounts.transit += 1;
+    }
+  }
+
+  return {
+    scopeCounts,
+    getLinkedCount(item: TrashRecord): number {
+      if (item.scope !== 'general') return 0;
+      const g = item.data as GeneralEntry;
+      const pk = normKey(g.packingListNo);
+      if (!pk) return 0;
+      const pkg = normKey(g.packageNo);
+      return pkg ? (byPkPkg.get(`${pk}\u0000${pkg}`) || 0) : (byPk.get(pk) || 0);
+    },
+  };
+}
+

@@ -8,6 +8,7 @@ import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { PackingWizardModal } from './components/PackingWizardModal.tsx';
+import { SpellCheckAssistant } from './components/SpellCheckAssistant.tsx';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { apiRequest } from './lib/api.ts';
 import type { CategoryStore, TransitEntry } from './shared/types.ts';
@@ -355,6 +356,7 @@ const SamaanWorkspace: React.FC = () => {
           ))}
         </div>
       )}
+      <SpellCheckAssistant />
       <OfflineIndicator />
     </>
   );

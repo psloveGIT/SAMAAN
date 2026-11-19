@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildTrashLinkedDetailedCounts,
   compileColFilters,
   createGeneralDetailedLinker,
   EMPTY_CELL_TOKEN,
@@ -8,9 +9,10 @@ import {
   matchesPackagePartial,
   matchesPreparedPackage,
   preparePackageInfo,
+  projectTrashRowForQuery,
   sortRowsByColumn,
 } from './tableQuery.ts';
-import type { DetailedEntry, GeneralEntry } from './types.ts';
+import type { DetailedEntry, GeneralEntry, TrashRecord } from './types.ts';
 
 function makeDetailed(overrides: Partial<DetailedEntry>): DetailedEntry {
   return {
@@ -275,4 +277,45 @@ test('createGeneralDetailedLinker preserves non-digit substring matching and sta
   assert.equal(twoCharMatch.detailedCount, 1);
   assert.ok(shortageCount >= 199, `Expected >=199 shortages, got ${shortageCount}`);
   assert.ok(elapsedMs < 250, `Expected <250ms for 5000x5000 same-PK pass, got ${elapsedMs.toFixed(1)}ms`);
+});
+
+test('buildTrashLinkedDetailedCounts and projectTrashRowForQuery scale to 25,000 trash rows in under 150ms', () => {
+  const trash: TrashRecord[] = [];
+  for (let i = 0; i < 200; i += 1) {
+    const pk = `PK-TR-${i}`;
+    trash.push({
+      id: `tg-${i}`,
+      scope: 'general',
+      deletedAt: '2025-10-01T10:00:00.000Z',
+      deletedBy: 'admin',
+      targetLabel: `${pk} / 1`,
+      data: makeGeneral({ id: `g-${i}`, packingListNo: pk, packageNo: '1', supplier: 'MAPNA' }),
+    });
+  }
+  for (let i = 0; i < 24800; i += 1) {
+    const pk = `PK-TR-${i % 200}`;
+    trash.push({
+      id: `td-${i}`,
+      scope: 'detailed',
+      deletedAt: '2025-10-02T12:30:00.000Z',
+      deletedBy: 'operator',
+      targetLabel: `${pk} / 1 / ${i}`,
+      data: makeDetailed({ id: `d-${i}`, shipmentNo: pk, packageNo: '1', itemNo: String(i + 1) }),
+    });
+  }
+
+  const start = performance.now();
+  const { getLinkedCount, scopeCounts } = buildTrashLinkedDetailedCounts(trash);
+  const firstGeneralCount = getLinkedCount(trash[0]);
+  const projected = projectTrashRowForQuery(trash[200]);
+  const elapsedMs = performance.now() - start;
+
+  assert.equal(scopeCounts.all, 25000);
+  assert.equal(scopeCounts.general, 200);
+  assert.equal(scopeCounts.detailed, 24800);
+  assert.equal(scopeCounts.transit, 0);
+  assert.equal(firstGeneralCount, 124);
+  assert.equal(projected.packingNo, 'PK-TR-0');
+  assert.equal(projected.deletedDate, '2025-10-02');
+  assert.ok(elapsedMs < 150, `Expected <150ms for 25,000 trash rows, got ${elapsedMs.toFixed(1)}ms`);
 });

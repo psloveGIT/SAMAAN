@@ -25,6 +25,7 @@ const INITIAL_PREFS: UserPreferences = {
   calendar: 'jalali',
   theme: 'dark',
   eyeComfort: false,
+  spellCheck: true,
 };
 
 function readStoredPrefs(): UserPreferences {
@@ -37,6 +38,7 @@ function readStoredPrefs(): UserPreferences {
       calendar: parsed.calendar === 'gregorian' ? 'gregorian' : 'jalali',
       theme: parsed.theme === 'light' ? 'light' : 'dark',
       eyeComfort: Boolean(parsed.eyeComfort),
+      spellCheck: parsed.spellCheck !== false,
     };
   } catch {
     return INITIAL_PREFS;
@@ -88,6 +90,7 @@ interface AppContextValue {
   setCalendar: (cal: CalendarMode) => void;
   setTheme: (theme: ThemeMode) => void;
   setEyeComfort: (enabled: boolean) => void;
+  setSpellCheck: (enabled: boolean) => void;
   refreshAuth: () => Promise<void>;
   setAuthenticatedUser: (u: UserAccount | null) => void;
   logout: () => Promise<void>;
@@ -117,6 +120,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     root.dir = p.language === 'fa' ? 'rtl' : 'ltr';
     root.classList.toggle('dark', p.theme === 'dark');
     root.classList.toggle('eye-comfort', p.eyeComfort);
+    root.setAttribute('spellcheck', p.spellCheck !== false ? 'true' : 'false');
     try {
       localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(p));
     } catch {
@@ -339,6 +343,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setCalendar = useCallback((calendar: CalendarMode) => updatePrefs({ calendar }), [updatePrefs]);
   const setTheme = useCallback((theme: ThemeMode) => updatePrefs({ theme }), [updatePrefs]);
   const setEyeComfort = useCallback((eyeComfort: boolean) => updatePrefs({ eyeComfort }), [updatePrefs]);
+  const setSpellCheck = useCallback((spellCheck: boolean) => updatePrefs({ spellCheck }), [updatePrefs]);
 
   const setAuthenticatedUser = useCallback((u: UserAccount | null) => {
     setUser(u);
@@ -417,6 +422,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCalendar,
       setTheme,
       setEyeComfort,
+      setSpellCheck,
       refreshAuth,
       setAuthenticatedUser,
       logout,
@@ -451,6 +457,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCalendar,
       setTheme,
       setEyeComfort,
+      setSpellCheck,
       refreshAuth,
       setAuthenticatedUser,
       logout,

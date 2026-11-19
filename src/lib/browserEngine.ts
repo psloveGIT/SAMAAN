@@ -23,9 +23,15 @@ import { buildYearMonths, getMonthKeyFromIso, normalizeDigits } from '../shared/
 import {
   DEFAULT_TRANSIT_STATUSES,
   getTransitStatusOptions,
+  inferItemClassification,
   normalizeCountingUnitToFa,
   normalizeTransitStatus,
 } from '../shared/normalizers.ts';
+import {
+  answerLocalWarehouseQuestion,
+  classifyItemLocally,
+  runLocalWarehouseAnalysis,
+} from '../shared/localAiEngine.ts';
 import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../shared/sorting.ts';
 import {
   matchesCustomFilters,
@@ -38,6 +44,7 @@ import {
   buildDetailedDupKey,
   buildGeneralDupKey,
   buildTransitDupKey,
+  buildTrashLinkedDetailedCounts,
   checkDateRangeMulti,
   collectDistinctColumnValues,
   compileColFilters,
@@ -49,6 +56,7 @@ import {
   normDupPart,
   parseColFiltersParam,
   preparePackageInfo,
+  projectTrashRowForQuery,
   resolveSiteEntryArrivalAndRelease,
   sortRowsByColumn,
 } from '../shared/tableQuery.ts';
@@ -74,6 +82,7 @@ import type {
   GcvDocumentRecord,
   GeneralEntry,
   ImportRejectedRecord,
+  Language,
   MaterialEstimateRecord,
   MivDocType,
   MivDocumentRecord,
@@ -1346,7 +1355,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         ? (db.detailed.map(computeDetailedEntry) as unknown as Record<string, unknown>[])
         : scope === 'transit'
           ? (db.transit as unknown as Record<string, unknown>[])
-          : (db.general as unknown as Record<string, unknown>[]);
+          : scope === 'trash'
+            ? (db.trash.map(projectTrashRowForQuery) as unknown as Record<string, unknown>[])
+            : (db.general as unknown as Record<string, unknown>[]);
     return { column, values: collectDistinctColumnValues(sourceRows, column, calendar) } as T;
   }
 
@@ -1635,6 +1646,51 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { createdGeneral: preparedGeneral, createdDetailedCount: 0, transitUpdated } as T;
   }
 
+  if (pathname === '/api/general/bulk' && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const patch = (body.patch || {}) as Partial<GeneralEntry>;
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('شناسه ردیف‌ها الزامی است', 'Row IDs are required'), 400);
+    }
+    const idSet = new Set(ids);
+    const cleanPatch: Record<string, unknown> = {};
+    const stringFields: (keyof GeneralEntry)[] = [
+      'arrivalDate', 'releaseNo', 'releaseDate', 'supplier', 'dispatchLocation',
+      'employerEntryMinutesNo', 'packageType', 'island', 'system', 'subSystem',
+      'unit', 'billOfLadingNo', 'vehicleNo', 'opiInvitationNo', 'opiInvitationDate', 'driverName',
+    ];
+    for (const k of stringFields) {
+      if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
+        cleanPatch[k] = normKey(String(patch[k]));
+      }
+    }
+    if (cleanPatch.employerEntryMinutesNo && !isValidDigitsOnly(String(cleanPatch.employerEntryMinutesNo))) {
+      throw new StaticEngineError(errMsg('شماره صورتجلسه کارفرما فقط باید شامل عدد باشد.', 'Employer Entry Minutes No. must contain digits only.'), 400);
+    }
+    if (patch.freightCost !== undefined && patch.freightCost !== null && Number.isFinite(Number(patch.freightCost))) {
+      cleanPatch.freightCost = Number(patch.freightCost);
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    const touchedPackings = new Set<string>();
+    for (const g of db.general) {
+      if (!idSet.has(g.id)) continue;
+      Object.assign(g, cleanPatch, { updatedAt: now });
+      if (g.packingListNo) touchedPackings.add(g.packingListNo);
+      updatedCount += 1;
+    }
+    renumberScope(db, 'general');
+    rebuildCategories(db);
+    let transitUpdated = 0;
+    for (const pk of touchedPackings) {
+      transitUpdated += syncTransitArrival(db, pk, sanitizeUser(u));
+    }
+    addAudit(db, sanitizeUser(u), 'BULK_UPDATE_GENERAL', 'general', `${updatedCount} rows`, `ویرایش گروهی ${updatedCount} ردیف در ثبت کلی تجهیزات`);
+    await saveActiveDb();
+    return { ok: true, updatedCount, transitUpdated } as T;
+  }
+
   if (pathname.startsWith('/api/general/') && method === 'PATCH') {
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
@@ -1744,50 +1800,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { ok: true, trashedDetailedCount } as T;
   }
 
-  if (pathname === '/api/general/bulk' && method === 'PATCH') {
-    const u = requireAuth(['admin', 'operator']);
-    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
-    const patch = (body.patch || {}) as Partial<GeneralEntry>;
-    if (ids.length === 0) {
-      throw new StaticEngineError(errMsg('شناسه ردیف‌ها الزامی است', 'Row IDs are required'), 400);
-    }
-    const idSet = new Set(ids);
-    const cleanPatch: Record<string, unknown> = {};
-    const stringFields: (keyof GeneralEntry)[] = [
-      'arrivalDate', 'releaseNo', 'releaseDate', 'supplier', 'dispatchLocation',
-      'employerEntryMinutesNo', 'packageType', 'island', 'system', 'subSystem',
-      'unit', 'billOfLadingNo', 'vehicleNo', 'opiInvitationNo', 'opiInvitationDate', 'driverName',
-    ];
-    for (const k of stringFields) {
-      if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
-        cleanPatch[k] = normKey(String(patch[k]));
-      }
-    }
-    if (cleanPatch.employerEntryMinutesNo && !isValidDigitsOnly(String(cleanPatch.employerEntryMinutesNo))) {
-      throw new StaticEngineError(errMsg('شماره صورتجلسه کارفرما فقط باید شامل عدد باشد.', 'Employer Entry Minutes No. must contain digits only.'), 400);
-    }
-    if (patch.freightCost !== undefined && patch.freightCost !== null && Number.isFinite(Number(patch.freightCost))) {
-      cleanPatch.freightCost = Number(patch.freightCost);
-    }
-    const now = new Date().toISOString();
-    let updatedCount = 0;
-    const touchedPackings = new Set<string>();
-    for (const g of db.general) {
-      if (!idSet.has(g.id)) continue;
-      Object.assign(g, cleanPatch, { updatedAt: now });
-      if (g.packingListNo) touchedPackings.add(g.packingListNo);
-      updatedCount += 1;
-    }
-    renumberScope(db, 'general');
-    rebuildCategories(db);
-    let transitUpdated = 0;
-    for (const pk of touchedPackings) {
-      transitUpdated += syncTransitArrival(db, pk, sanitizeUser(u));
-    }
-    addAudit(db, sanitizeUser(u), 'BULK_UPDATE_GENERAL', 'general', `${updatedCount} rows`, `ویرایش گروهی ${updatedCount} ردیف در ثبت کلی تجهیزات`);
-    await saveActiveDb();
-    return { ok: true, updatedCount, transitUpdated } as T;
-  }
+  // (PATCH /api/general/bulk handled above /api/general/:id to avoid route shadowing)
 
   if (pathname === '/api/general/bulk-delete' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
@@ -1988,10 +2001,17 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const { acknowledgeClosed: _ack, rowNo: _ignoredRow, ...raw } = body;
     const rawDet = raw as Partial<DetailedEntry>;
     const cleanDescription = normKey(rawDet.description);
+    const cleanNotes = normKey(rawDet.notes);
     const rawGenDesc = normKey(rawDet.generalDescription);
     const resolvedGeneralDesc = rawGenDesc
       ? formatGeneralDescriptionCase(rawGenDesc)
       : inferGeneralDescription(cleanDescription);
+    const rawChemType = normKey(rawDet.chemicalType);
+    const inferredCls = !rawDet.itemCategory
+      ? inferItemClassification(cleanDescription, cleanNotes, resolvedGeneralDesc)
+      : { itemCategory: rawDet.itemCategory, chemicalType: '' };
+    const resolvedItemCategory = rawDet.itemCategory || (rawChemType ? 'chemicals' : inferredCls.itemCategory);
+    const resolvedChemType = rawChemType || (resolvedItemCategory === 'chemicals' ? inferredCls.chemicalType : '');
 
     const created: DetailedEntry = {
       id: makeId(),
@@ -2022,7 +2042,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       opiDate: normKey(rawDet.opiDate),
       merNo: normKey(rawDet.merNo),
       merStatus: normKey(rawDet.merStatus),
-      notes: normKey(rawDet.notes),
+      notes: cleanNotes,
       materialBalanceNo: normKey(rawDet.materialBalanceNo),
       balanceStatus: normKey(rawDet.balanceStatus),
       storageLocation: normKey(rawDet.storageLocation),
@@ -2046,8 +2066,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       stocktakeInfo: normKey(rawDet.stocktakeInfo),
       stocktakeStatus: normKey(rawDet.stocktakeStatus),
       stocktakeDate: normKey(rawDet.stocktakeDate),
-      itemCategory: rawDet.itemCategory || '',
-      chemicalType: normKey(rawDet.chemicalType),
+      itemCategory: resolvedItemCategory,
+      chemicalType: resolvedChemType,
       productionDate: normKey(rawDet.productionDate),
       expirationDate: normKey(rawDet.expirationDate),
       shortageBackfills: [],
@@ -2090,6 +2110,41 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     addAudit(db, sanitizeUser(u), 'BACKFILL_SHORTAGE', 'detailed', `${item.shipmentNo} (#${item.rowNo})`, `جبران کسری به مقدار ${qty}`);
     await saveActiveDb();
     return { item: computed, transitUpdated } as T;
+  }
+
+  if (pathname === '/api/detailed/bulk' && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const patch = (body.patch || {}) as Partial<DetailedEntry>;
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('شناسه ردیف‌ها الزامی است', 'Row IDs are required'), 400);
+    }
+    const idSet = new Set(ids);
+    const cleanPatch: Record<string, unknown> = {};
+    const stringFields: (keyof DetailedEntry)[] = [
+      'arrivalDate', 'supplier', 'origin', 'island', 'system', 'subSystem', 'unit',
+      'countingUnit', 'storageLocation', 'receiver', 'notes', 'itemCategory',
+      'chemicalType', 'productionDate', 'expirationDate', 'merStatus', 'repStatus', 'balanceStatus',
+    ];
+    for (const k of stringFields) {
+      if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
+        cleanPatch[k] = k === 'countingUnit'
+          ? normalizeCountingUnitToFa(String(patch[k]))
+          : normKey(String(patch[k]));
+      }
+    }
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    for (const d of db.detailed) {
+      if (!idSet.has(d.id)) continue;
+      Object.assign(d, cleanPatch, { updatedAt: now });
+      updatedCount += 1;
+    }
+    renumberScope(db, 'detailed');
+    rebuildCategories(db);
+    addAudit(db, sanitizeUser(u), 'BULK_UPDATE_DETAILED', 'detailed', `${updatedCount} rows`, `ویرایش گروهی ${updatedCount} ردیف در ثبت جزئیات تجهیزات`);
+    await saveActiveDb();
+    return { ok: true, updatedCount } as T;
   }
 
   if (pathname.startsWith('/api/detailed/') && method === 'PATCH') {
@@ -2162,40 +2217,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     return { ok: true } as T;
   }
 
-  if (pathname === '/api/detailed/bulk' && method === 'PATCH') {
-    const u = requireAuth(['admin', 'operator']);
-    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
-    const patch = (body.patch || {}) as Partial<DetailedEntry>;
-    if (ids.length === 0) {
-      throw new StaticEngineError(errMsg('شناسه ردیف‌ها الزامی است', 'Row IDs are required'), 400);
-    }
-    const idSet = new Set(ids);
-    const cleanPatch: Record<string, unknown> = {};
-    const stringFields: (keyof DetailedEntry)[] = [
-      'arrivalDate', 'supplier', 'origin', 'island', 'system', 'subSystem', 'unit',
-      'countingUnit', 'storageLocation', 'receiver', 'notes', 'itemCategory',
-      'chemicalType', 'productionDate', 'expirationDate', 'merStatus', 'repStatus', 'balanceStatus',
-    ];
-    for (const k of stringFields) {
-      if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
-        cleanPatch[k] = k === 'countingUnit'
-          ? normalizeCountingUnitToFa(String(patch[k]))
-          : normKey(String(patch[k]));
-      }
-    }
-    const now = new Date().toISOString();
-    let updatedCount = 0;
-    for (const d of db.detailed) {
-      if (!idSet.has(d.id)) continue;
-      Object.assign(d, cleanPatch, { updatedAt: now });
-      updatedCount += 1;
-    }
-    renumberScope(db, 'detailed');
-    rebuildCategories(db);
-    addAudit(db, sanitizeUser(u), 'BULK_UPDATE_DETAILED', 'detailed', `${updatedCount} rows`, `ویرایش گروهی ${updatedCount} ردیف در ثبت جزئیات تجهیزات`);
-    await saveActiveDb();
-    return { ok: true, updatedCount } as T;
-  }
+  // (PATCH /api/detailed/bulk handled above /api/detailed/:id to avoid route shadowing)
 
   if (pathname === '/api/detailed/bulk-delete' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
@@ -2444,28 +2466,235 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   // ---------------- RECYCLE BIN / TRASH ----------------
   if (pathname === '/api/trash' && method === 'GET') {
     requireAuth();
-    const scope = query.get('scope') || '';
+    const scope = (query.get('scope') || '').trim();
     const q = query.get('q') || '';
-    const detailedTrash = db.trash.filter((t) => t.scope === 'detailed');
-    const items = db.trash
-      .filter((item) => {
-        if (scope && item.scope !== scope) return false;
-        return matchSearch([item.targetLabel, item.deletedBy, item.scope], q);
-      })
-      .map((item) => {
-        if (item.scope !== 'general') return item;
-        const g = item.data as GeneralEntry;
-        const pk = normKey(g.packingListNo);
-        const pkg = normKey(g.packageNo);
-        const linkedTrashDetailedCount = pk
-          ? detailedTrash.filter((dt) => {
-              const d = dt.data as DetailedEntry;
-              return normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
-            }).length
-          : 0;
-        return { ...item, linkedTrashDetailedCount };
-      });
-    return { items } as T;
+    const colFilters = parseColFiltersParam(query.get('colFilters'));
+    const calendar: CalendarMode = query.get('calendar') === 'gregorian' ? 'gregorian' : 'jalali';
+    const sortBy = (query.get('sortBy') || '').trim();
+    const sortDir = query.get('sortDir') === 'asc' ? 'asc' : query.get('sortDir') === 'desc' ? 'desc' : '';
+    const idsOnly = query.get('idsOnly') === 'true';
+    const page = Math.max(1, Number(query.get('page') || 1));
+    const pageSize = Math.min(500, Math.max(10, Number(query.get('pageSize') || 50)));
+
+    const { getLinkedCount, scopeCounts } = buildTrashLinkedDetailedCounts(db.trash);
+    const hasColFilters = Object.keys(colFilters).length > 0;
+    const compiledColFilters = hasColFilters ? compileColFilters(colFilters) : null;
+    const needProjection = hasColFilters || Boolean(sortBy) || Boolean(q.trim());
+
+    const matchedEntries: Array<{ item: TrashRecord; projected?: Record<string, unknown> }> = [];
+    for (let i = 0; i < db.trash.length; i += 1) {
+      const item = db.trash[i];
+      if (scope && item.scope !== scope) continue;
+      if (needProjection) {
+        const proj = projectTrashRowForQuery(item);
+        if (
+          q.trim() &&
+          !matchSearch(
+            [
+              item.targetLabel,
+              item.deletedBy,
+              item.scope,
+              proj.packingNo,
+              proj.packageNo,
+              proj.itemNo,
+              proj.description,
+              proj.supplier,
+              proj.island,
+            ],
+            q,
+          )
+        ) {
+          continue;
+        }
+        if (compiledColFilters && !matchesCompiledColFilters(proj, compiledColFilters, calendar)) {
+          continue;
+        }
+        matchedEntries.push({ item, projected: proj });
+      } else {
+        matchedEntries.push({ item });
+      }
+    }
+
+    if (sortBy && sortDir) {
+      const projectedList = matchedEntries.map((entry, idx) => ({
+        ...(entry.projected || projectTrashRowForQuery(entry.item)),
+        __origIdx: idx,
+      }));
+      const sorted = sortRowsByColumn(projectedList, sortBy, sortDir);
+      const reordered: typeof matchedEntries = new Array(sorted.length);
+      for (let i = 0; i < sorted.length; i += 1) {
+        reordered[i] = matchedEntries[Number(sorted[i].__origIdx)];
+      }
+      matchedEntries.length = 0;
+      matchedEntries.push(...reordered);
+    }
+
+    const total = matchedEntries.length;
+    if (idsOnly) {
+      return {
+        ids: matchedEntries.map((e) => e.item.id),
+        total,
+        scopeCounts,
+      } as T;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * pageSize;
+    const slice = matchedEntries.slice(start, start + pageSize);
+    const items = slice.map(({ item }) =>
+      item.scope === 'general'
+        ? { ...item, linkedTrashDetailedCount: getLinkedCount(item) }
+        : item,
+    );
+
+    return {
+      items,
+      total,
+      page: safePage,
+      pageSize,
+      totalPages,
+      scopeCounts,
+    } as T;
+  }
+
+  if (pathname === '/api/trash/bulk-restore' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const restoreDetailed = Boolean(body.restoreDetailed);
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('هیچ ردیفی برای بازیابی انتخاب نشده است', 'No rows selected for restore'), 400);
+    }
+
+    const idSet = new Set(ids);
+    const now = new Date().toISOString();
+    const existingDetailedKeys = new Set<string>();
+    for (let i = 0; i < db.detailed.length; i += 1) {
+      const d = db.detailed[i];
+      if (d.itemNo) {
+        existingDetailedKeys.add(
+          `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`,
+        );
+      }
+    }
+
+    const restoredGeneral: GeneralEntry[] = [];
+    const restoredDetailed: DetailedEntry[] = [];
+    const restoredTransit: TransitEntry[] = [];
+    const linkedGeneralPairs: Array<{ pk: string; pkg: string }> = [];
+    const remainingAfterPrimary: TrashRecord[] = [];
+    let restoredCount = 0;
+    let restoredDetailedCount = 0;
+    let skippedConflicts = 0;
+
+    for (let i = 0; i < db.trash.length; i += 1) {
+      const entry = db.trash[i];
+      if (!idSet.has(entry.id)) {
+        remainingAfterPrimary.push(entry);
+        continue;
+      }
+      if (entry.scope === 'general') {
+        const g = entry.data as GeneralEntry;
+        restoredGeneral.push({ ...g, updatedAt: now });
+        restoredCount += 1;
+        if (restoreDetailed) {
+          const pk = normKey(g.packingListNo);
+          if (pk) linkedGeneralPairs.push({ pk, pkg: normKey(g.packageNo) });
+        }
+      } else if (entry.scope === 'detailed') {
+        const d = entry.data as DetailedEntry;
+        const itemKey = d.itemNo
+          ? `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`
+          : '';
+        if (itemKey && existingDetailedKeys.has(itemKey)) {
+          skippedConflicts += 1;
+          remainingAfterPrimary.push(entry);
+          continue;
+        }
+        if (itemKey) existingDetailedKeys.add(itemKey);
+        restoredDetailed.push({ ...d, updatedAt: now });
+        restoredCount += 1;
+      } else {
+        const t = entry.data as TransitEntry;
+        restoredTransit.push({ ...t, updatedAt: now });
+        restoredCount += 1;
+      }
+    }
+
+    let finalRemainingTrash = remainingAfterPrimary;
+    if (restoreDetailed && linkedGeneralPairs.length > 0) {
+      const exactPairs = new Set<string>();
+      const wholePackings = new Set<string>();
+      for (const pair of linkedGeneralPairs) {
+        if (pair.pkg) exactPairs.add(`${pair.pk}\u0000${pair.pkg}`);
+        else wholePackings.add(pair.pk);
+      }
+      const nextRemaining: TrashRecord[] = [];
+      for (let i = 0; i < remainingAfterPrimary.length; i += 1) {
+        const tr = remainingAfterPrimary[i];
+        if (tr.scope === 'detailed') {
+          const d = tr.data as DetailedEntry;
+          const pk = normKey(d.shipmentNo);
+          const pkg = normKey(d.packageNo);
+          const matches = wholePackings.has(pk) || exactPairs.has(`${pk}\u0000${pkg}`);
+          if (matches) {
+            const itemKey = d.itemNo
+              ? `${pk}\u0000${pkg}\u0000${normalizeDigits(normKey(d.itemNo))}`
+              : '';
+            if (!itemKey || !existingDetailedKeys.has(itemKey)) {
+              if (itemKey) existingDetailedKeys.add(itemKey);
+              restoredDetailed.push({ ...d, updatedAt: now });
+              restoredDetailedCount += 1;
+              continue;
+            }
+          }
+        }
+        nextRemaining.push(tr);
+      }
+      finalRemainingTrash = nextRemaining;
+    }
+
+    db.trash = finalRemainingTrash;
+    if (restoredGeneral.length > 0) {
+      db.general = [...restoredGeneral, ...db.general];
+      renumberScope(db, 'general');
+    }
+    if (restoredDetailed.length > 0) {
+      db.detailed = [...restoredDetailed, ...db.detailed];
+      renumberScope(db, 'detailed');
+    }
+    if (restoredTransit.length > 0) {
+      db.transit = [...restoredTransit, ...db.transit];
+      renumberScope(db, 'transit');
+    }
+    rebuildCategories(db);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'BULK_RESTORE_TRASH',
+      'trash',
+      `${restoredCount} rows`,
+      `بازیابی گروهی ${restoredCount} ردیف از سطل بازیافت${
+        restoredDetailedCount > 0 ? ` همراه با ${restoredDetailedCount} ردیف جزئیات مرتبط` : ''
+      }${skippedConflicts > 0 ? ` (${skippedConflicts} مورد تکراری رد شد)` : ''}`,
+    );
+    await saveActiveDb();
+    return { ok: true, restoredCount, restoredDetailedCount, skippedConflicts } as T;
+  }
+
+  if (pathname === '/api/trash/bulk-delete' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    if (ids.length === 0) {
+      throw new StaticEngineError(errMsg('هیچ ردیفی برای حذف دائمی انتخاب نشده است', 'No rows selected for permanent deletion'), 400);
+    }
+    const idSet = new Set(ids);
+    const before = db.trash.length;
+    db.trash = db.trash.filter((item) => !idSet.has(item.id));
+    const deletedCount = before - db.trash.length;
+    addAudit(db, sanitizeUser(u), 'BULK_PURGE_TRASH', 'trash', `${deletedCount} rows`, `حذف دائمی گروهی ${deletedCount} ردیف از سطل بازیافت`);
+    await saveActiveDb();
+    return { ok: true, deletedCount } as T;
   }
 
   if (pathname.startsWith('/api/trash/') && pathname.endsWith('/restore') && method === 'POST') {
@@ -2486,13 +2715,22 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (restoreDetailed) {
         const pk = normKey(g.packingListNo);
         const pkg = normKey(g.packageNo);
+        const existingKeys = new Set<string>();
+        for (const d of db.detailed) {
+          if (d.itemNo) {
+            existingKeys.add(`${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`);
+          }
+        }
+        const restoredLinked: DetailedEntry[] = [];
         const remainingTrash: TrashRecord[] = [];
         for (const tr of db.trash) {
           if (tr.scope === 'detailed') {
             const d = tr.data as DetailedEntry;
             const matches = normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
-            if (matches && !(d.itemNo && isDetailedItemNoTaken(db, d.shipmentNo, d.packageNo, d.itemNo))) {
-              db.detailed.unshift({ ...d, updatedAt: new Date().toISOString() });
+            const itemKey = d.itemNo ? `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}` : '';
+            if (matches && (!itemKey || !existingKeys.has(itemKey))) {
+              if (itemKey) existingKeys.add(itemKey);
+              restoredLinked.push({ ...d, updatedAt: new Date().toISOString() });
               restoredDetailedCount += 1;
               continue;
             }
@@ -2500,7 +2738,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           remainingTrash.push(tr);
         }
         db.trash = remainingTrash;
-        if (restoredDetailedCount > 0) {
+        if (restoredLinked.length > 0) {
+          db.detailed = [...restoredLinked, ...db.detailed];
           renumberScope(db, 'detailed');
         }
       }
@@ -5052,6 +5291,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         const genDesc = r.generalDescription
           ? formatGeneralDescriptionCase(r.generalDescription)
           : inferGeneralDescription(r.description);
+        const rawChem = normKey(r.chemicalType);
+        const inferredCls = !r.itemCategory
+          ? inferItemClassification(r.description, r.notes, genDesc)
+          : { itemCategory: r.itemCategory, chemicalType: '' };
+        const resolvedItemCategory = r.itemCategory || (rawChem ? 'chemicals' : inferredCls.itemCategory);
+        const resolvedChemicalType = rawChem || (resolvedItemCategory === 'chemicals' ? inferredCls.chemicalType : '');
         const {
           shortage: _impShortage,
           surplus: _impSurplus,
@@ -5084,6 +5329,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
             ...cleanDetailedRow,
             countingUnit: normalizeCountingUnitToFa(cleanDetailedRow.countingUnit),
             generalDescription: genDesc,
+            itemCategory: resolvedItemCategory,
+            chemicalType: resolvedChemicalType,
             id: existing.id,
             rowNo: existing.rowNo,
             shortageBackfills: existing.shortageBackfills || [],
@@ -5099,6 +5346,8 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           ...cleanDetailedRow,
           countingUnit: normalizeCountingUnitToFa(cleanDetailedRow.countingUnit),
           generalDescription: genDesc,
+          itemCategory: resolvedItemCategory,
+          chemicalType: resolvedChemicalType,
           shortageBackfills: r.shortageBackfills || [],
           createdAt: r.createdAt || now,
           updatedAt: now,
@@ -5265,6 +5514,44 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     }
     const result = extractEquipmentOffline({ target, mode, textData, base64Data, mimeType });
     return { result } as T;
+  }
+
+  if (pathname === '/api/ai/assistant' && method === 'POST') {
+    requireAuth(['admin', 'operator', 'viewer']);
+    const question = String(body.prompt || body.message || '').trim();
+    const lang: Language = body.lang === 'en' ? 'en' : 'fa';
+    if (!question) {
+      throw new StaticEngineError(errMsg('پرسش نمی‌تواند خالی باشد', 'Prompt cannot be empty'), 400);
+    }
+    const result = answerLocalWarehouseQuestion(
+      { general: db.general, detailed: db.detailed, transit: db.transit },
+      question,
+      lang,
+    );
+    return result as T;
+  }
+
+  if (pathname === '/api/ai/analyze-warehouse' && method === 'POST') {
+    requireAuth(['admin', 'operator', 'viewer']);
+    const lang: Language = body.lang === 'en' ? 'en' : 'fa';
+    const result = runLocalWarehouseAnalysis(
+      { general: db.general, detailed: db.detailed, transit: db.transit },
+      lang,
+    );
+    return result as T;
+  }
+
+  if (pathname === '/api/ai/classify-item' && method === 'POST') {
+    requireAuth(['admin', 'operator']);
+    const description = String(body.description || '').trim();
+    const size = String(body.size || '').trim();
+    const itemCode = String(body.itemCode || '').trim();
+    const lang: Language = body.lang === 'en' ? 'en' : 'fa';
+    if (!description) {
+      throw new StaticEngineError(errMsg('شرح کالا برای دسته‌بندی الزامی است', 'Item description is required for classification'), 400);
+    }
+    const classification = classifyItemLocally(description, size, itemCode, lang);
+    return { classification } as T;
   }
 
   // ---------------- AUDIT & BACKUP ----------------

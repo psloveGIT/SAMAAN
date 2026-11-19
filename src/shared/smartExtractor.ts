@@ -1,6 +1,6 @@
 import { inferGeneralDescription } from './generalDescription.ts';
 import { getTodayIso, normalizeDigits, parseFlexibleDateToIso } from './jalali.ts';
-import { normalizeCountingUnitToFa } from './normalizers.ts';
+import { inferItemClassification, normalizeCountingUnitToFa } from './normalizers.ts';
 import { parseCsvMatrix, parseDetailedCsv, parseGeneralCsv } from './csvParser.ts';
 import type { CalendarMode, DetailedEntry } from './types.ts';
 
@@ -243,20 +243,26 @@ function tryTabularParse(
     unit: first.unit,
     storageLocation: first.storageLocation,
     receiver: first.receiver,
-    items: parsed.rows.map((r) => ({
-      itemNo: r.itemNo,
-      description: r.description,
-      generalDescription: r.generalDescription || inferGeneralDescription(r.description),
-      itemCode: r.itemCode,
-      size: r.size,
-      packingQty: r.packingQty,
-      countingUnit: r.countingUnit || 'PC',
-      itemCategory: r.itemCategory || '',
-      chemicalType: r.chemicalType || '',
-      productionDate: r.productionDate || '',
-      expirationDate: r.expirationDate || '',
-      notes: r.notes,
-    })),
+    items: parsed.rows.map((r) => {
+      const inferred = !r.itemCategory
+        ? inferItemClassification(r.description, r.notes, r.generalDescription)
+        : { itemCategory: r.itemCategory, chemicalType: '' };
+      const finalCategory = r.itemCategory || inferred.itemCategory;
+      return {
+        itemNo: r.itemNo,
+        description: r.description,
+        generalDescription: r.generalDescription || inferGeneralDescription(r.description),
+        itemCode: r.itemCode,
+        size: r.size,
+        packingQty: r.packingQty,
+        countingUnit: normalizeCountingUnitToFa(r.countingUnit) || 'عدد',
+        itemCategory: finalCategory,
+        chemicalType: r.chemicalType || (finalCategory === 'chemicals' ? inferred.chemicalType : ''),
+        productionDate: r.productionDate || '',
+        expirationDate: r.expirationDate || '',
+        notes: r.notes,
+      };
+    }),
     offlineFallback: true,
   };
 }
@@ -415,9 +421,14 @@ export function extractEquipmentOffline(params: {
   else if (/ابزار\s*(?:های\s*)?مخصوص|special\s*tool/i.test(text)) itemCategory = 'special_tools';
   else if (/لوازم\s*یدکی|قطعه\s*یدکی|spare\s*part/i.test(text)) itemCategory = 'spare_parts';
 
-  const chemicalType = extractRegexGroup(text, [
+  const rawChemicalType = extractRegexGroup(text, [
     new RegExp(`(?:نوع\\s*ماده\\s*شیمیایی|ماده\\s*شیمیایی|chemical\\s*type)\\s*[:：=]?\\s*([^\\n]+?)${stopLookahead}`, 'i'),
   ]);
+  const inferredCls = !itemCategory
+    ? inferItemClassification(description || text, '', generalDescription)
+    : { itemCategory, chemicalType: '' };
+  itemCategory = itemCategory || (rawChemicalType ? 'chemicals' : inferredCls.itemCategory);
+  const chemicalType = rawChemicalType || (itemCategory === 'chemicals' ? inferredCls.chemicalType : '');
   const prodRaw = extractRegexGroup(text, [
     /(?:تاریخ\s*تولید|production\s*date|mfg)\s*[:：=]?\s*([0-9\u06F0-\u06F9]{2,4}[./-][0-9\u06F0-\u06F9]{1,2}[./-][0-9\u06F0-\u06F9]{1,2})/i,
   ]);

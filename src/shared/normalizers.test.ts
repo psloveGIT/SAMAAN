@@ -4,6 +4,7 @@ import {
   DEFAULT_TRANSIT_STATUSES,
   formatCountingUnit,
   getTransitStatusOptions,
+  inferItemClassification,
   isTransitArrivedStatus,
   normalizeCountingUnitToFa,
   normalizeTransitStatus,
@@ -42,6 +43,20 @@ test('normalizeCountingUnitToFa converts common English industrial abbreviations
   assert.equal(normalizeCountingUnitToFa('PALLET'), 'پالت');
   assert.equal(normalizeCountingUnitToFa('TON'), 'تن');
   assert.equal(normalizeCountingUnitToFa('REEL'), 'قرقره');
+  // Extended industrial units requested by testers
+  assert.equal(normalizeCountingUnitToFa('BLOCK'), 'بلوک');
+  assert.equal(normalizeCountingUnitToFa('Block(s)'), 'بلوک');
+  assert.equal(normalizeCountingUnitToFa('CC'), 'سی‌سی');
+  assert.equal(normalizeCountingUnitToFa('CELL'), 'سلول');
+  assert.equal(normalizeCountingUnitToFa('MM2'), 'میلی‌مترمربع');
+  assert.equal(normalizeCountingUnitToFa('mm2'), 'میلی‌مترمربع');
+  assert.equal(normalizeCountingUnitToFa('mm²'), 'میلی‌مترمربع');
+  assert.equal(normalizeCountingUnitToFa('CM2'), 'سانتی‌مترمربع');
+  assert.equal(normalizeCountingUnitToFa('CM3'), 'سانتی‌مترمکعب');
+  assert.equal(normalizeCountingUnitToFa('ML'), 'میلی‌لیتر');
+  assert.equal(normalizeCountingUnitToFa('CYL'), 'سیلندر');
+  assert.equal(normalizeCountingUnitToFa('GAL'), 'گالن');
+  assert.equal(normalizeCountingUnitToFa('PC/SET'), 'عدد/ست');
 });
 
 test('normalizeCountingUnitToFa preserves already Persian units and unknown tokens', () => {
@@ -57,8 +72,48 @@ test('normalizeCountingUnitToFa preserves already Persian units and unknown toke
 test('formatCountingUnit respects active UI language', () => {
   assert.equal(formatCountingUnit('PCs', 'fa'), 'عدد');
   assert.equal(formatCountingUnit('MTR', 'fa'), 'متر');
+  assert.equal(formatCountingUnit('BLOCK', 'fa'), 'بلوک');
+  assert.equal(formatCountingUnit('mm2', 'fa'), 'میلی‌مترمربع');
   assert.equal(formatCountingUnit('PCs', 'en'), 'PCs');
   assert.equal(formatCountingUnit('عدد', 'fa'), 'عدد');
+  assert.equal(formatCountingUnit('عدد', 'en'), 'PC');
+  assert.equal(formatCountingUnit('بلوک', 'en'), 'BLOCK');
+  assert.equal(formatCountingUnit('سلول', 'en'), 'CELL');
+  assert.equal(formatCountingUnit('سی‌سی', 'en'), 'CC');
+  assert.equal(formatCountingUnit('میلی‌مترمربع', 'en'), 'mm²');
+});
+
+test('inferItemClassification accurately detects chemicals, special tools, and spare parts while guarding hardware false positives', () => {
+  const epoxy = inferItemClassification('Two Component Epoxy Primer Paint 20L', '');
+  assert.equal(epoxy.itemCategory, 'chemicals');
+  assert.ok(epoxy.chemicalType.length > 0);
+
+  const oil = inferItemClassification('ISO VG 46 Turbine Oil Drum', '');
+  assert.equal(oil.itemCategory, 'chemicals');
+  assert.equal(oil.chemicalType, 'روغن صنعتی / روان‌کار');
+
+  const sf6 = inferItemClassification('SF6 Gas Cylinder 50kg', '');
+  assert.equal(sf6.itemCategory, 'chemicals');
+
+  const wrench = inferItemClassification('Hydraulic Torque Wrench 1000 Nm', '');
+  assert.equal(wrench.itemCategory, 'special_tools');
+  assert.equal(wrench.chemicalType, '');
+
+  const persianTool = inferItemClassification('آچار گشتاور مخصوص نصب توربین', '');
+  assert.equal(persianTool.itemCategory, 'special_tools');
+
+  const spareKit = inferItemClassification('Mechanical Seal Kit for Boiler Feed Pump', '2-Year Spare Parts');
+  assert.equal(spareKit.itemCategory, 'spare_parts');
+
+  const explicitNote = inferItemClassification('Stainless Bolt M16', 'لوازم یدکی بهره‌برداری');
+  assert.equal(explicitNote.itemCategory, 'spare_parts');
+
+  // Hardware false-positive guards (must NOT be misclassified as chemicals)
+  assert.equal(inferItemClassification('Lube Oil Filter Element 10 Micron', '').itemCategory, '');
+  assert.equal(inferItemClassification('Main Lube Oil Pump Assembly', '').itemCategory, '');
+  assert.equal(inferItemClassification('Gas Turbine Rotor Blade', '').itemCategory, '');
+  assert.equal(inferItemClassification('Epoxy Coated Carbon Steel Pipe DN200', '').itemCategory, '');
+  assert.equal(inferItemClassification('Gate Valve 6 inch ANSI 300', '').itemCategory, '');
 });
 
 test('normalizeTransitStatus maps legacy and synonym statuses to the 3 canonical categories', () => {

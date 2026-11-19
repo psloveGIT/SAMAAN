@@ -16,7 +16,7 @@ interface ColumnValuesResponse {
 }
 
 interface ExcelColumnFilterProps {
-  scope: 'general' | 'detailed' | 'transit';
+  scope: 'general' | 'detailed' | 'transit' | 'trash';
   colKey: string;
   label: string;
   calendar: 'jalali' | 'gregorian';

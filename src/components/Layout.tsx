@@ -34,6 +34,7 @@ import {
   Search,
   Shield,
   Sparkles,
+  SpellCheck2,
   Sun,
   Tag,
   Trash2,
@@ -102,6 +103,7 @@ export const Layout: React.FC<LayoutProps> = ({
     setCalendar,
     setTheme,
     setEyeComfort,
+    setSpellCheck,
     logout,
     formatDate,
   } = useApp();
@@ -551,6 +553,25 @@ export const Layout: React.FC<LayoutProps> = ({
             >
               <Eye className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">{t.controls.eyeComfort}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSpellCheck(prefs.spellCheck === false)}
+              title={t.controls.spellCheckTooltip}
+              aria-pressed={prefs.spellCheck !== false}
+              className={`h-7 px-2 rounded-lg border text-[11px] font-medium flex items-center justify-center gap-1 whitespace-nowrap transition-colors ${
+                sidebarCollapsed ? 'lg:hidden col-span-2' : 'col-span-2'
+              } ${
+                prefs.spellCheck !== false
+                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <SpellCheck2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">
+                {t.controls.spellCheck} ({prefs.spellCheck !== false ? (isFa ? 'فعال' : 'ON') : (isFa ? 'خاموش' : 'OFF')})
+              </span>
             </button>
           </div>
 
