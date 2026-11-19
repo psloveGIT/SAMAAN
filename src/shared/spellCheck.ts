@@ -714,8 +714,8 @@ export function checkTextSpelling(
     }
   }
 
-  // Pass 2: Individual Persian & English tokens
-  const tokenRe = /[A-Za-z0-9_-]+|[\u0600-\u06FF\u200C]+/g;
+  // Pass 2: Individual Persian & English tokens (exclude Arabic/Persian punctuation ؟ ، ؛ and digits)
+  const tokenRe = /[A-Za-z0-9_-]+|[\u0621-\u064A\u067E\u0686\u0698\u06A9\u06AF\u06CC\u06C0\u064B-\u065F\u200C]+/g;
   let match: RegExpExecArray | null = tokenRe.exec(text);
   while (match) {
     const token = match[0];
@@ -757,7 +757,7 @@ export function checkTextSpelling(
             }
           }
         }
-      } else if (/^[\u0600-\u06FF\u200C]+$/.test(token)) {
+      } else if (/^[\u0621-\u064A\u067E\u0686\u0698\u06A9\u06AF\u06CC\u06C0\u064B-\u065F\u200C]+$/.test(token)) {
         const cleanFa = normalizeFaWord(token);
         const directTarget = FA_DIRECT_FIXES[token] || FA_DIRECT_FIXES[cleanFa];
         if (directTarget && !customDict.has(token) && !customDict.has(cleanFa)) {

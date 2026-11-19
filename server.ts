@@ -6,7 +6,8 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
 import type { Request, Response } from 'express';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import type { Content, FunctionDeclaration, Part } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import {
   clearSessionCookie,
@@ -52,6 +53,7 @@ import {
 } from './src/shared/normalizers.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
 import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
+import type { HistoryChange } from './src/shared/undoHistory.ts';
 import {
   matchesCustomFilters,
   matchesMultiPacking,
@@ -78,6 +80,20 @@ import {
   resolveSiteEntryArrivalAndRelease,
   sortRowsByColumn,
 } from './src/shared/tableQuery.ts';
+import {
+  aggregateWarehouseByField,
+  getPackingListDetails,
+  getWarehouseOverview,
+  queryOperationalAlerts,
+  searchWarehouseDocuments,
+  searchWarehouseItems,
+  type AggregateGroupBy,
+  type DocumentSearchType,
+  type OperationalAlertType,
+  type SearchWarehouseItemsParams,
+  type WarehouseQueryDb,
+} from './src/shared/warehouseQueryTools.ts';
+import { extractEntitySubjectFromQuestion } from './src/shared/localAiEngine.ts';
 import { isValidDigitsOnly } from './src/shared/validation.ts';
 import type {
   CalendarMode,
@@ -558,6 +574,14 @@ async function startServer() {
   app.patch('/api/auth/preferences', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
     const user = req.currentUser!;
     const prefs = req.body as Partial<UserPreferences>;
+    const nextShortcuts =
+      prefs.shortcuts && typeof prefs.shortcuts === 'object'
+        ? Object.fromEntries(
+            Object.entries(prefs.shortcuts)
+              .filter(([k, v]) => typeof k === 'string' && typeof v === 'string')
+              .slice(0, 60),
+          )
+        : undefined;
     user.preferences = {
       ...user.preferences,
       ...(prefs.language ? { language: prefs.language } : {}),
@@ -565,9 +589,39 @@ async function startServer() {
       ...(prefs.theme ? { theme: prefs.theme } : {}),
       ...(typeof prefs.eyeComfort === 'boolean' ? { eyeComfort: prefs.eyeComfort } : {}),
       ...(typeof prefs.spellCheck === 'boolean' ? { spellCheck: prefs.spellCheck } : {}),
+      ...(nextShortcuts !== undefined ? { shortcuts: nextShortcuts } : {}),
     };
     store.saveImmediate();
     res.json({ user: sanitizeUser(user) });
+  });
+
+  // ---------------- UNDO / REDO HISTORY (بازگردانی و انجام مجدد) ----------------
+  app.get('/api/history/status', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    res.json(store.history.getStatus());
+  });
+
+  app.post('/api/history/undo', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const result = store.applyHistoryAction('undo', sanitizeUser(req.currentUser!));
+    if (!result) {
+      res.status(400).json({
+        error: errMsg(req, 'عملیاتی برای بازگردانی وجود ندارد.', 'Nothing to undo.'),
+        status: store.history.getStatus(),
+      });
+      return;
+    }
+    res.json({ ok: true, undone: { labelFa: result.labelFa, labelEn: result.labelEn }, status: result.status });
+  });
+
+  app.post('/api/history/redo', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const result = store.applyHistoryAction('redo', sanitizeUser(req.currentUser!));
+    if (!result) {
+      res.status(400).json({
+        error: errMsg(req, 'عملیاتی برای انجام مجدد وجود ندارد.', 'Nothing to redo.'),
+        status: store.history.getStatus(),
+      });
+      return;
+    }
+    res.json({ ok: true, redone: { labelFa: result.labelFa, labelEn: result.labelEn }, status: result.status });
   });
 
   app.post('/api/auth/change-password', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
@@ -1225,6 +1279,18 @@ async function startServer() {
     store.renumberScope('general');
     store.rebuildIndexes();
 
+    store.history.push({
+      labelFa: `ثبت کلی پکینگ ${pk} (${preparedGeneral.length} ردیف)`,
+      labelEn: `Add General Packing ${pk} (${preparedGeneral.length} rows)`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: preparedGeneral.map((g) => ({
+        scope: 'general',
+        op: 'insert',
+        id: g.id,
+        after: g,
+      })),
+    });
+
     const transitUpdated = store.syncTransitArrival(pk, sanitizeUser(req.currentUser!));
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
@@ -1271,15 +1337,26 @@ async function startServer() {
     const now = new Date().toISOString();
     let updatedCount = 0;
     const touchedPackings = new Set<string>();
+    const historyChanges: HistoryChange[] = [];
     for (const g of store.db.general) {
       if (!idSet.has(g.id)) continue;
+      const before = { ...g };
       Object.assign(g, cleanPatch, { updatedAt: now });
+      historyChanges.push({ scope: 'general', op: 'update', id: g.id, before, after: { ...g } });
       if (g.packingListNo) touchedPackings.add(g.packingListNo);
       updatedCount += 1;
     }
 
     store.renumberScope('general');
     store.rebuildIndexes();
+    if (historyChanges.length > 0) {
+      store.history.push({
+        labelFa: `ویرایش گروهی ${updatedCount} ردیف کلی`,
+        labelEn: `Bulk Edit ${updatedCount} General Rows`,
+        user: req.currentUser!.fullName || req.currentUser!.username,
+        changes: historyChanges,
+      });
+    }
     let transitUpdated = 0;
     for (const pk of touchedPackings) {
       transitUpdated += store.syncTransitArrival(pk, sanitizeUser(req.currentUser!));
@@ -1348,6 +1425,7 @@ async function startServer() {
           : null;
     }
 
+    const beforeGeneral = { ...item };
     Object.assign(item, {
       ...patch,
       releaseNo: finalReleaseNo,
@@ -1357,6 +1435,12 @@ async function startServer() {
     });
     store.renumberScope('general');
     store.rebuildIndexes();
+    store.history.push({
+      labelFa: `ویرایش ردیف کلی ${item.packingListNo || item.rowNo}`,
+      labelEn: `Edit General Row ${item.packingListNo || item.rowNo}`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'general', op: 'update', id: item.id, before: beforeGeneral, after: { ...item } }],
+    });
     const transitUpdated = store.syncTransitArrival(item.packingListNo, sanitizeUser(req.currentUser!));
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
@@ -1379,6 +1463,9 @@ async function startServer() {
     const [removed] = store.db.general.splice(idx, 1);
     const now = new Date().toISOString();
     const deletedBy = req.currentUser!.fullName || req.currentUser!.username;
+    const historyChanges: HistoryChange[] = [
+      { scope: 'general', op: 'delete', id: removed.id, before: removed, index: idx },
+    ];
 
     const trashEntry: TrashRecord = {
       id: makeId(),
@@ -1389,24 +1476,29 @@ async function startServer() {
       data: removed,
     };
     store.db.trash.unshift(trashEntry);
+    historyChanges.push({ scope: 'trash', op: 'insert', id: trashEntry.id, after: trashEntry });
 
     let trashedDetailedCount = 0;
     if (cascadeDetailed) {
       const pk = normKey(removed.packingListNo);
       const pkg = normKey(removed.packageNo);
       const remainingDetailed: DetailedEntry[] = [];
-      for (const d of store.db.detailed) {
+      for (let di = 0; di < store.db.detailed.length; di += 1) {
+        const d = store.db.detailed[di];
         const matches = normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
         if (matches) {
           trashedDetailedCount += 1;
-          store.db.trash.unshift({
+          const dTrash: TrashRecord = {
             id: makeId(),
             scope: 'detailed',
             deletedAt: now,
             deletedBy,
             targetLabel: `${d.shipmentNo} / ${d.packageNo || '-'} / #${d.itemNo || d.rowNo}`,
             data: d,
-          });
+          };
+          store.db.trash.unshift(dTrash);
+          historyChanges.push({ scope: 'detailed', op: 'delete', id: d.id, before: d, index: di });
+          historyChanges.push({ scope: 'trash', op: 'insert', id: dTrash.id, after: dTrash });
         } else {
           remainingDetailed.push(d);
         }
@@ -1419,6 +1511,12 @@ async function startServer() {
 
     store.renumberScope('general');
     store.rebuildIndexes();
+    store.history.push({
+      labelFa: `حذف ردیف کلی ${removed.packingListNo || removed.rowNo}`,
+      labelEn: `Delete General Row ${removed.packingListNo || removed.rowNo}`,
+      user: deletedBy,
+      changes: historyChanges,
+    });
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_GENERAL',
@@ -1444,22 +1542,26 @@ async function startServer() {
     const now = new Date().toISOString();
     const deletedBy = req.currentUser!.fullName || req.currentUser!.username;
     const removedRows: GeneralEntry[] = [];
-    store.db.general = store.db.general.filter((g) => {
+    const historyChanges: HistoryChange[] = [];
+    store.db.general = store.db.general.filter((g, gi) => {
       if (idSet.has(g.id)) {
         removedRows.push(g);
+        historyChanges.push({ scope: 'general', op: 'delete', id: g.id, before: g, index: gi });
         return false;
       }
       return true;
     });
     for (const removed of removedRows) {
-      store.db.trash.unshift({
+      const tr: TrashRecord = {
         id: makeId(),
         scope: 'general',
         deletedAt: now,
         deletedBy,
         targetLabel: `${removed.packingListNo || '-'} (${removed.packageNo || '-'})`,
         data: removed,
-      });
+      };
+      store.db.trash.unshift(tr);
+      historyChanges.push({ scope: 'trash', op: 'insert', id: tr.id, after: tr });
     }
 
     let trashedDetailedCount = 0;
@@ -1470,19 +1572,22 @@ async function startServer() {
       const packingsNoPkg = new Set(
         removedRows.filter((r) => !normKey(r.packageNo)).map((r) => normKey(r.packingListNo).toLowerCase()),
       );
-      store.db.detailed = store.db.detailed.filter((d) => {
+      store.db.detailed = store.db.detailed.filter((d, di) => {
         const pk = normKey(d.shipmentNo).toLowerCase();
         const pkg = normKey(d.packageNo).toLowerCase();
         if (pairs.has(`${pk}::${pkg}`) || packingsNoPkg.has(pk)) {
           trashedDetailedCount += 1;
-          store.db.trash.unshift({
+          const tr: TrashRecord = {
             id: makeId(),
             scope: 'detailed',
             deletedAt: now,
             deletedBy,
             targetLabel: `${d.shipmentNo} / ${d.packageNo || '-'} / #${d.itemNo || d.rowNo}`,
             data: d,
-          });
+          };
+          store.db.trash.unshift(tr);
+          historyChanges.push({ scope: 'detailed', op: 'delete', id: d.id, before: d, index: di });
+          historyChanges.push({ scope: 'trash', op: 'insert', id: tr.id, after: tr });
           return false;
         }
         return true;
@@ -1492,6 +1597,14 @@ async function startServer() {
 
     store.renumberScope('general');
     store.rebuildIndexes();
+    if (historyChanges.length > 0) {
+      store.history.push({
+        labelFa: `حذف گروهی ${removedRows.length} ردیف کلی`,
+        labelEn: `Bulk Delete ${removedRows.length} General Rows`,
+        user: deletedBy,
+        changes: historyChanges,
+      });
+    }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'BULK_DELETE_GENERAL',
@@ -1762,6 +1875,12 @@ async function startServer() {
     store.db.detailed.unshift(created);
     store.renumberScope('detailed');
     store.rebuildIndexes();
+    store.history.push({
+      labelFa: `ثبت ردیف جزئیات ${pk} / #${itemNo}`,
+      labelEn: `Add Detailed Item ${pk} / #${itemNo}`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'detailed', op: 'insert', id: created.id, after: created }],
+    });
     const transitUpdated = store.syncTransitArrival(pk, sanitizeUser(req.currentUser!));
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
@@ -1796,13 +1915,24 @@ async function startServer() {
     }
     const now = new Date().toISOString();
     let updatedCount = 0;
+    const historyChanges: HistoryChange[] = [];
     for (const d of store.db.detailed) {
       if (!idSet.has(d.id)) continue;
+      const before = { ...d };
       Object.assign(d, cleanPatch, { updatedAt: now });
+      historyChanges.push({ scope: 'detailed', op: 'update', id: d.id, before, after: { ...d } });
       updatedCount += 1;
     }
     store.renumberScope('detailed');
     store.rebuildIndexes();
+    if (historyChanges.length > 0) {
+      store.history.push({
+        labelFa: `ویرایش گروهی ${updatedCount} ردیف جزئیات`,
+        labelEn: `Bulk Edit ${updatedCount} Detailed Rows`,
+        user: req.currentUser!.fullName || req.currentUser!.username,
+        changes: historyChanges,
+      });
+    }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'BULK_UPDATE_DETAILED',
@@ -1853,6 +1983,7 @@ async function startServer() {
       patch.countingUnit = normalizeCountingUnitToFa(patch.countingUnit);
     }
 
+    const beforeDetailed = { ...item };
     Object.assign(item, {
       ...patch,
       shipmentNo: pk,
@@ -1863,6 +1994,12 @@ async function startServer() {
     });
     store.renumberScope('detailed');
     store.rebuildIndexes();
+    store.history.push({
+      labelFa: `ویرایش ردیف جزئیات ${item.shipmentNo} (#${item.rowNo})`,
+      labelEn: `Edit Detailed Row ${item.shipmentNo} (#${item.rowNo})`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'detailed', op: 'update', id: item.id, before: beforeDetailed, after: { ...item } }],
+    });
     const transitUpdated = store.syncTransitArrival(item.shipmentNo, sanitizeUser(req.currentUser!));
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
@@ -1903,8 +2040,15 @@ async function startServer() {
       recordedBy: req.currentUser!.fullName || req.currentUser!.username,
       recordedAt: new Date().toISOString(),
     };
+    const beforeBackfill = { ...item, shortageBackfills: [...(item.shortageBackfills || [])] };
     item.shortageBackfills = [...(item.shortageBackfills || []), record];
     item.updatedAt = new Date().toISOString();
+    store.history.push({
+      labelFa: `جبران کسری ردیف ${item.rowNo} (${qty})`,
+      labelEn: `Backfill Shortage Row ${item.rowNo} (${qty})`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'detailed', op: 'update', id: item.id, before: beforeBackfill, after: { ...item } }],
+    });
 
     const computed = computeDetailedEntry(item);
     const transitUpdated = store.syncTransitArrival(record.shipmentNo, sanitizeUser(req.currentUser!));
@@ -1926,16 +2070,26 @@ async function startServer() {
       return;
     }
     const [removed] = store.db.detailed.splice(idx, 1);
-    store.db.trash.unshift({
+    const trashEntry: TrashRecord = {
       id: makeId(),
       scope: 'detailed',
       deletedAt: new Date().toISOString(),
       deletedBy: req.currentUser!.fullName || req.currentUser!.username,
       targetLabel: `${removed.shipmentNo} / ${removed.packageNo || '-'} / #${removed.itemNo || removed.rowNo}`,
       data: removed,
-    });
+    };
+    store.db.trash.unshift(trashEntry);
     store.renumberScope('detailed');
     store.rebuildIndexes();
+    store.history.push({
+      labelFa: `حذف ردیف جزئیات ${removed.shipmentNo} (#${removed.rowNo})`,
+      labelEn: `Delete Detailed Row ${removed.shipmentNo} (#${removed.rowNo})`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [
+        { scope: 'detailed', op: 'delete', id: removed.id, before: removed, index: idx },
+        { scope: 'trash', op: 'insert', id: trashEntry.id, after: trashEntry },
+      ],
+    });
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_DETAILED',
@@ -1959,25 +2113,37 @@ async function startServer() {
     const now = new Date().toISOString();
     const deletedBy = req.currentUser!.fullName || req.currentUser!.username;
     const removedRows: DetailedEntry[] = [];
-    store.db.detailed = store.db.detailed.filter((d) => {
+    const historyChanges: HistoryChange[] = [];
+    store.db.detailed = store.db.detailed.filter((d, di) => {
       if (idSet.has(d.id)) {
         removedRows.push(d);
+        historyChanges.push({ scope: 'detailed', op: 'delete', id: d.id, before: d, index: di });
         return false;
       }
       return true;
     });
     for (const removed of removedRows) {
-      store.db.trash.unshift({
+      const tr: TrashRecord = {
         id: makeId(),
         scope: 'detailed',
         deletedAt: now,
         deletedBy,
         targetLabel: `${removed.shipmentNo} / ${removed.packageNo || '-'} / #${removed.itemNo || removed.rowNo}`,
         data: removed,
-      });
+      };
+      store.db.trash.unshift(tr);
+      historyChanges.push({ scope: 'trash', op: 'insert', id: tr.id, after: tr });
     }
     store.renumberScope('detailed');
     store.rebuildIndexes();
+    if (historyChanges.length > 0) {
+      store.history.push({
+        labelFa: `حذف گروهی ${removedRows.length} ردیف جزئیات`,
+        labelEn: `Bulk Delete ${removedRows.length} Detailed Rows`,
+        user: deletedBy,
+        changes: historyChanges,
+      });
+    }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'BULK_DELETE_DETAILED',
@@ -2121,6 +2287,12 @@ async function startServer() {
     store.db.transit.unshift(created);
     store.renumberScope('transit');
     store.rebuildIndexes();
+    store.history.push({
+      labelFa: `ثبت محموله در راه ${pk || created.rowNo}`,
+      labelEn: `Add In-Transit Shipment ${pk || created.rowNo}`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'transit', op: 'insert', id: created.id, after: created }],
+    });
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'CREATE_TRANSIT',
@@ -2158,14 +2330,25 @@ async function startServer() {
 
     const now = new Date().toISOString();
     let updatedCount = 0;
+    const historyChanges: HistoryChange[] = [];
     for (const t of store.db.transit) {
       if (!idSet.has(t.id)) continue;
+      const before = { ...t };
       Object.assign(t, cleanPatch, { updatedAt: now });
+      historyChanges.push({ scope: 'transit', op: 'update', id: t.id, before, after: { ...t } });
       updatedCount += 1;
     }
 
     store.renumberScope('transit');
     store.rebuildIndexes();
+    if (historyChanges.length > 0) {
+      store.history.push({
+        labelFa: `ویرایش گروهی ${updatedCount} ردیف در راه`,
+        labelEn: `Bulk Edit ${updatedCount} In-Transit Rows`,
+        user: req.currentUser!.fullName || req.currentUser!.username,
+        changes: historyChanges,
+      });
+    }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'BULK_UPDATE_TRANSIT',
@@ -2187,25 +2370,37 @@ async function startServer() {
     const now = new Date().toISOString();
     const deletedBy = req.currentUser!.fullName || req.currentUser!.username;
     const removedRows: TransitEntry[] = [];
-    store.db.transit = store.db.transit.filter((t) => {
+    const historyChanges: HistoryChange[] = [];
+    store.db.transit = store.db.transit.filter((t, ti) => {
       if (idSet.has(t.id)) {
         removedRows.push(t);
+        historyChanges.push({ scope: 'transit', op: 'delete', id: t.id, before: t, index: ti });
         return false;
       }
       return true;
     });
     for (const removed of removedRows) {
-      store.db.trash.unshift({
+      const tr: TrashRecord = {
         id: makeId(),
         scope: 'transit',
         deletedAt: now,
         deletedBy,
         targetLabel: `${removed.packingListNo || '-'} (#${removed.rowNo})`,
         data: removed,
-      });
+      };
+      store.db.trash.unshift(tr);
+      historyChanges.push({ scope: 'trash', op: 'insert', id: tr.id, after: tr });
     }
     store.renumberScope('transit');
     store.rebuildIndexes();
+    if (historyChanges.length > 0) {
+      store.history.push({
+        labelFa: `حذف گروهی ${removedRows.length} ردیف در راه`,
+        labelEn: `Bulk Delete ${removedRows.length} In-Transit Rows`,
+        user: deletedBy,
+        changes: historyChanges,
+      });
+    }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'BULK_DELETE_TRANSIT',
@@ -2230,6 +2425,7 @@ async function startServer() {
         store.db.categories.transitStatus,
       );
     }
+    const beforeTransit = { ...item };
     Object.assign(item, {
       ...patch,
       rowNo: item.rowNo,
@@ -2237,6 +2433,12 @@ async function startServer() {
     });
     store.renumberScope('transit');
     store.rebuildIndexes();
+    store.history.push({
+      labelFa: `ویرایش محموله در راه ${item.packingListNo || item.rowNo}`,
+      labelEn: `Edit In-Transit ${item.packingListNo || item.rowNo}`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'transit', op: 'update', id: item.id, before: beforeTransit, after: { ...item } }],
+    });
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'UPDATE_TRANSIT',
@@ -2255,16 +2457,26 @@ async function startServer() {
       return;
     }
     const [removed] = store.db.transit.splice(idx, 1);
-    store.db.trash.unshift({
+    const trashEntry: TrashRecord = {
       id: makeId(),
       scope: 'transit',
       deletedAt: new Date().toISOString(),
       deletedBy: req.currentUser!.fullName || req.currentUser!.username,
       targetLabel: `${removed.packingListNo || '-'} (#${removed.rowNo})`,
       data: removed,
-    });
+    };
+    store.db.trash.unshift(trashEntry);
     store.renumberScope('transit');
     store.rebuildIndexes();
+    store.history.push({
+      labelFa: `حذف محموله در راه ${removed.packingListNo || removed.rowNo}`,
+      labelEn: `Delete In-Transit ${removed.packingListNo || removed.rowNo}`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [
+        { scope: 'transit', op: 'delete', id: removed.id, before: removed, index: idx },
+        { scope: 'trash', op: 'insert', id: trashEntry.id, after: trashEntry },
+      ],
+    });
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_TRANSIT',
@@ -2466,6 +2678,18 @@ async function startServer() {
       finalRemainingTrash = nextRemaining;
     }
 
+    const removedTrashSet = new Set(finalRemainingTrash.map((x) => x.id));
+    const restoreHistoryChanges: HistoryChange[] = [];
+    for (let ti = 0; ti < store.db.trash.length; ti += 1) {
+      const tr = store.db.trash[ti];
+      if (!removedTrashSet.has(tr.id)) {
+        restoreHistoryChanges.push({ scope: 'trash', op: 'delete', id: tr.id, before: tr, index: ti });
+      }
+    }
+    for (const g of restoredGeneral) restoreHistoryChanges.push({ scope: 'general', op: 'insert', id: g.id, after: g });
+    for (const d of restoredDetailed) restoreHistoryChanges.push({ scope: 'detailed', op: 'insert', id: d.id, after: d });
+    for (const t of restoredTransit) restoreHistoryChanges.push({ scope: 'transit', op: 'insert', id: t.id, after: t });
+
     store.db.trash = finalRemainingTrash;
     if (restoredGeneral.length > 0) {
       store.db.general = [...restoredGeneral, ...store.db.general];
@@ -2480,6 +2704,14 @@ async function startServer() {
       store.renumberScope('transit');
     }
     store.rebuildIndexes();
+    if (restoreHistoryChanges.length > 0) {
+      store.history.push({
+        labelFa: `بازیابی گروهی ${restoredCount} ردیف از سطل بازیافت`,
+        labelEn: `Bulk Restore ${restoredCount} Rows from Trash`,
+        user: req.currentUser!.fullName || req.currentUser!.username,
+        changes: restoreHistoryChanges,
+      });
+    }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'BULK_RESTORE_TRASH',
@@ -2524,10 +2756,14 @@ async function startServer() {
     const entry = store.db.trash[idx];
     let restoredDetailedCount = 0;
 
+    const restoreSingleChanges: HistoryChange[] = [];
     if (entry.scope === 'general') {
       const g = entry.data as GeneralEntry;
+      const restoredG = { ...g, updatedAt: new Date().toISOString() };
       store.db.trash.splice(idx, 1);
-      store.db.general.unshift({ ...g, updatedAt: new Date().toISOString() });
+      restoreSingleChanges.push({ scope: 'trash', op: 'delete', id: entry.id, before: entry, index: idx });
+      store.db.general.unshift(restoredG);
+      restoreSingleChanges.push({ scope: 'general', op: 'insert', id: restoredG.id, after: restoredG });
       store.renumberScope('general');
 
       if (restoreDetailed) {
@@ -2541,14 +2777,18 @@ async function startServer() {
         }
         const restoredLinked: DetailedEntry[] = [];
         const remainingTrash: TrashRecord[] = [];
-        for (const tr of store.db.trash) {
+        for (let ti = 0; ti < store.db.trash.length; ti += 1) {
+          const tr = store.db.trash[ti];
           if (tr.scope === 'detailed') {
             const d = tr.data as DetailedEntry;
             const matches = normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
             const itemKey = d.itemNo ? `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}` : '';
             if (matches && (!itemKey || !existingKeys.has(itemKey))) {
               if (itemKey) existingKeys.add(itemKey);
-              restoredLinked.push({ ...d, updatedAt: new Date().toISOString() });
+              const restoredD = { ...d, updatedAt: new Date().toISOString() };
+              restoredLinked.push(restoredD);
+              restoreSingleChanges.push({ scope: 'trash', op: 'delete', id: tr.id, before: tr, index: ti });
+              restoreSingleChanges.push({ scope: 'detailed', op: 'insert', id: restoredD.id, after: restoredD });
               restoredDetailedCount += 1;
               continue;
             }
@@ -2573,17 +2813,31 @@ async function startServer() {
         });
         return;
       }
+      const restoredD = { ...d, updatedAt: new Date().toISOString() };
       store.db.trash.splice(idx, 1);
-      store.db.detailed.unshift({ ...d, updatedAt: new Date().toISOString() });
+      restoreSingleChanges.push({ scope: 'trash', op: 'delete', id: entry.id, before: entry, index: idx });
+      store.db.detailed.unshift(restoredD);
+      restoreSingleChanges.push({ scope: 'detailed', op: 'insert', id: restoredD.id, after: restoredD });
       store.renumberScope('detailed');
     } else {
       const t = entry.data as TransitEntry;
+      const restoredT = { ...t, updatedAt: new Date().toISOString() };
       store.db.trash.splice(idx, 1);
-      store.db.transit.unshift({ ...t, updatedAt: new Date().toISOString() });
+      restoreSingleChanges.push({ scope: 'trash', op: 'delete', id: entry.id, before: entry, index: idx });
+      store.db.transit.unshift(restoredT);
+      restoreSingleChanges.push({ scope: 'transit', op: 'insert', id: restoredT.id, after: restoredT });
       store.renumberScope('transit');
     }
 
     store.rebuildIndexes();
+    if (restoreSingleChanges.length > 0) {
+      store.history.push({
+        labelFa: `بازیابی ردیف (${entry.targetLabel})`,
+        labelEn: `Restore Row (${entry.targetLabel})`,
+        user: req.currentUser!.fullName || req.currentUser!.username,
+        changes: restoreSingleChanges,
+      });
+    }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'RESTORE_TRASH',
@@ -4913,7 +5167,14 @@ async function startServer() {
       res.status(400).json({ error: errMsg(req, 'وضعیت «پایان» به‌صورت خودکار به «رسیده» تبدیل می‌شود و نیازی به افزودن آن نیست.', 'Legacy status "پایان" maps automatically to "رسیده".') });
       return;
     }
+    const beforeCats = JSON.parse(JSON.stringify(store.db.categories));
     store.registerCategoryValue(group, cleanVal);
+    store.history.push({
+      labelFa: `افزودن دسته‌بندی «${cleanVal}»`,
+      labelEn: `Add Category "${cleanVal}"`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'categories', before: beforeCats, after: JSON.parse(JSON.stringify(store.db.categories)) }],
+    });
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'ADD_CATEGORY',
@@ -5020,7 +5281,14 @@ async function startServer() {
       });
       return;
     }
+    const beforeCatsDel = JSON.parse(JSON.stringify(store.db.categories));
     store.db.categories[group] = store.db.categories[group].filter((v) => v !== value);
+    store.history.push({
+      labelFa: `حذف دسته‌بندی «${value}»`,
+      labelEn: `Delete Category "${value}"`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'categories', before: beforeCatsDel, after: JSON.parse(JSON.stringify(store.db.categories)) }],
+    });
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_CATEGORY',
@@ -5954,116 +6222,350 @@ async function startServer() {
     }
   });
 
-  function buildWarehouseAiContext(queryText = '') {
-    const detailedComputed = store.getDetailedComputedList();
-    const shortageItems = detailedComputed.filter((d) => d.hasShortage);
-    const damagedItems = detailedComputed.filter((d) => d.hasDamaged);
-    const openMer = detailedComputed.filter((d) => isMerOpen(d));
-    const openRep = detailedComputed.filter((d) => isRepOpen(d));
-    const opiPending = detailedComputed.filter((d) => d.opiPending);
-    const expiringChemicals = getExpiringChemicals(detailedComputed, 30);
-
-    const uniquePackings = new Set<string>();
-    for (const g of store.db.general) {
-      if (normKey(g.packingListNo)) uniquePackings.add(normKey(g.packingListNo));
-    }
-    for (const d of store.db.detailed) {
-      if (normKey(d.shipmentNo)) uniquePackings.add(normKey(d.shipmentNo));
-    }
-
-    const transitSummary = computeSelectionFormulaSummary({ transit: store.db.transit });
-    const generalSummary = computeSelectionFormulaSummary({ general: store.db.general });
-    const detailedSummary = computeSelectionFormulaSummary({ detailed: detailedComputed });
-
-    const tokens = normalizeDigits(queryText || '')
-      .toLowerCase()
-      .split(/\s+/)
-      .map((w) => w.trim())
-      .filter((w) => w.length >= 2);
-
-    const matchedGeneral = tokens.length > 0
-      ? store.db.general
-          .filter((g) => {
-            const hay = `${g.packingListNo} ${g.packageNo} ${g.itemDescription} ${g.supplier} ${g.island} ${g.system}`.toLowerCase();
-            return tokens.some((tok) => hay.includes(tok));
-          })
-          .slice(0, 10)
-          .map((g) => ({
-            packingListNo: g.packingListNo,
-            packageNo: g.packageNo,
-            itemDescription: g.itemDescription,
-            supplier: g.supplier,
-            island: g.island,
-            arrivalDate: g.arrivalDate,
-            grossWeight: g.grossWeight,
-          }))
-      : [];
-
-    const matchedDetailed = tokens.length > 0
-      ? detailedComputed
-          .filter((d) => {
-            const hay = `${d.shipmentNo} ${d.packageNo} ${d.itemNo} ${d.description} ${d.generalDescription} ${d.itemCode} ${d.island} ${d.supplier} ${d.merNo} ${d.repNo}`.toLowerCase();
-            return tokens.some((tok) => hay.includes(tok));
-          })
-          .slice(0, 15)
-          .map((d) => ({
-            shipmentNo: d.shipmentNo,
-            packageNo: d.packageNo,
-            itemNo: d.itemNo,
-            description: d.description,
-            packingQty: d.packingQty,
-            actualQty: d.actualQty,
-            shortage: d.shortage,
-            damagedQty: d.damagedQty,
-            mapnaInventory: d.mapnaInventory,
-            contractorInventory: d.contractorInventory,
-            merNo: d.merNo,
-            repNo: d.repNo,
-          }))
-      : [];
-
+  function getLiveWarehouseQueryDb(): WarehouseQueryDb {
     return {
-      metrics: {
-        generalRows: store.db.general.length,
-        detailedRows: store.db.detailed.length,
-        transitRows: store.db.transit.length,
-        uniquePackings: uniquePackings.size,
-        grossWeightTons: roundQty(generalSummary.grossWeightSum / 1000),
-        netWeightTons: roundQty(generalSummary.netWeightSum / 1000),
-        shortageItemsCount: shortageItems.length,
-        shortageQtySum: detailedSummary.shortageSum,
-        damagedItemsCount: damagedItems.length,
-        openMerCount: openMer.length,
-        openRepCount: openRep.length,
-        opiPendingCount: opiPending.length,
-        expiringChemicalsCount: expiringChemicals.length,
-        transitArrivedPackingsCount: transitSummary.transitArrivedPackingsCount || 0,
-        transitShippingPackingsCount: transitSummary.transitShippingPackingsCount || 0,
-        transitInspectionPackingsCount: transitSummary.transitInspectionPackingsCount || 0,
-      },
-      topShortages: shortageItems.slice(0, 8).map((d) => ({
-        shipmentNo: d.shipmentNo,
-        packageNo: d.packageNo,
-        description: d.description,
-        shortage: d.shortage,
-        island: d.island,
-      })),
-      expiringChemicals: expiringChemicals.slice(0, 8).map((c) => ({
-        shipmentNo: c.shipmentNo,
-        description: c.description,
-        chemicalType: c.chemicalType,
-        expirationDate: c.expirationDate,
-        daysRemaining: c.daysRemaining,
-      })),
-      openMerSample: openMer.slice(0, 8).map((d) => ({
-        shipmentNo: d.shipmentNo,
-        description: d.description,
-        merNo: d.merNo,
-        merStatus: d.merStatus,
-      })),
-      matchedGeneral,
-      matchedDetailed,
+      general: store.db.general,
+      detailed: store.db.detailed,
+      detailedComputed: store.getDetailedComputedList(),
+      transit: store.db.transit,
+      gcvDocuments: store.db.gcvDocuments,
+      mivDocuments: store.db.mivDocuments,
+      opiInvitations: store.db.opiInvitations,
+      opiMinutes: store.db.opiMinutes,
+      siteEntryMinutes: store.db.siteEntryMinutes,
+      osdrReports: store.db.osdrReports,
+      substitutions: store.db.substitutions,
+      materialEstimates: store.db.materialEstimates,
+      periodicInspections: store.db.periodicInspections,
     };
+  }
+
+  function buildCompactWarehouseMetrics(dbSlice: WarehouseQueryDb) {
+    const ov = getWarehouseOverview(dbSlice);
+    return {
+      generalRows: ov.generalRows,
+      detailedRows: ov.detailedRows,
+      transitRows: ov.transitRows,
+      uniquePackings: ov.uniquePackings,
+      grossWeightTons: ov.grossWeightTons,
+      netWeightTons: ov.netWeightTons,
+      shortageItemsCount: ov.shortageItemsCount,
+      shortageQtySum: ov.shortageQtySum,
+      damagedItemsCount: ov.damagedItemsCount,
+      openMerCount: ov.openMerCount,
+      openRepCount: ov.openRepCount,
+      opiPendingCount: ov.opiPendingCount,
+      expiringChemicalsCount: ov.expiringChemicalsCount,
+      transitArrivedPackingsCount: ov.transitArrivedPackingsCount,
+      transitShippingPackingsCount: ov.transitShippingPackingsCount,
+      transitInspectionPackingsCount: ov.transitInspectionPackingsCount,
+    };
+  }
+
+  function createGeminiClient(apiKey: string) {
+    return new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+  }
+
+  async function callGeminiWithRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        const isTransient = /503|429|UNAVAILABLE|RESOURCE_EXHAUSTED|high demand|overloaded|DEADLINE_EXCEEDED|timeout/i.test(msg);
+        if (!isTransient || attempt === maxAttempts) {
+          throw err;
+        }
+        const delayMs = attempt === 1 ? 650 : 1500;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw lastErr;
+  }
+
+  const WAREHOUSE_AI_TOOLS: FunctionDeclaration[] = [
+    {
+      name: 'search_warehouse_items',
+      description:
+        'Search power-plant warehouse items across Detailed Equipment, General Equipment, and In-Transit records. Supports bilingual Persian/English queries, pipe/valve sizes (e.g., 8", 8 inch, DN200, 1/2"), item codes, packing lists, suppliers, islands, systems, storage locations, categories, and stock/alert status filters. Returns EXACT aggregated stock totals grouped by counting unit across ALL matching rows (mainWarehouseStock, contractorStock, totalSiteStock, packingQty, actualQty, shortage, damagedQty) plus top matching rows and closestSuggestions when 0 exact rows match.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          query: {
+            type: Type.STRING,
+            description:
+              'Free-text item search query such as "Pipe 8\\"", "Gate Valve DN100", "Cable 3x120", "لوله ۸ اینچ", or item description keywords.',
+          },
+          size: {
+            type: Type.STRING,
+            description: 'Optional explicit size filter such as "8\\"", "DN200", "4 inch", "1/2\\"".',
+          },
+          itemCode: {
+            type: Type.STRING,
+            description: 'Optional item code / tag / part number filter.',
+          },
+          packingListNo: {
+            type: Type.STRING,
+            description: 'Optional packing list / shipment number filter.',
+          },
+          supplier: {
+            type: Type.STRING,
+            description: 'Optional supplier/vendor name filter.',
+          },
+          island: {
+            type: Type.STRING,
+            description: 'Optional plant island filter (e.g., GT, ST, HRSG, BOP, Electrical).',
+          },
+          system: {
+            type: Type.STRING,
+            description: 'Optional system or sub-system filter.',
+          },
+          storageLocation: {
+            type: Type.STRING,
+            description: 'Optional warehouse shed / storage location filter.',
+          },
+          itemCategory: {
+            type: Type.STRING,
+            enum: ['special_tools', 'chemicals', 'spare_parts'],
+            description: 'Optional specialized item category filter. Omit if not filtering by category.',
+          },
+          statusFilter: {
+            type: Type.STRING,
+            enum: ['all', 'in_stock', 'main_stock', 'contractor_stock', 'shortage', 'damaged', 'open_mer', 'open_rep', 'opi_pending'],
+            description: 'Optional operational status filter.',
+          },
+          scope: {
+            type: Type.STRING,
+            enum: ['all', 'detailed', 'general', 'transit'],
+            description: 'Which warehouse section(s) to search. Defaults to "all".',
+          },
+          limit: {
+            type: Type.NUMBER,
+            description: 'Max sample item rows to return (1-50, default 20). Totals are always computed across ALL matching rows.',
+          },
+        },
+      },
+    },
+    {
+      name: 'get_warehouse_overview',
+      description:
+        'Get complete live warehouse overview KPIs: unique packings, unique packages, general/detailed/transit row counts, gross/net weight in tons, total freight cost, shortages, damages, open MER/REP, pending OPI, expiring chemicals (<30 days), stock row counts, special categories, and official document counts.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {},
+      },
+    },
+    {
+      name: 'get_packing_list_details',
+      description:
+        'Retrieve a complete 360-degree report for a specific packing list number across General packages, Detailed items (with unit-grouped stock totals), In-Transit status, weights, shortages/MER/REP, and all linked official documents (Site Entry, OPI, OSDR, GCV, MIV/SMR, Substitutions).',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          packingListNo: {
+            type: Type.STRING,
+            description: 'Exact or partial packing list / shipment number.',
+          },
+        },
+        required: ['packingListNo'],
+      },
+    },
+    {
+      name: 'aggregate_warehouse_by_field',
+      description:
+        'Run a GROUP BY analytical breakdown of the warehouse by island, supplier, system, subSystem, unit, storageLocation, generalDescription, itemCategory, countingUnit, overallStatus (for transit), arrivalMonth, or arrivalYear.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          groupBy: {
+            type: Type.STRING,
+            enum: [
+              'island',
+              'supplier',
+              'system',
+              'subSystem',
+              'unit',
+              'storageLocation',
+              'generalDescription',
+              'itemCategory',
+              'countingUnit',
+              'overallStatus',
+              'arrivalMonth',
+              'arrivalYear',
+            ],
+            description: 'Field to group records by.',
+          },
+          scope: {
+            type: Type.STRING,
+            enum: ['detailed', 'general', 'transit'],
+            description: 'Table to aggregate. Use "general" for weights/freight, "transit" for overallStatus, "detailed" for stock/shortages/locations.',
+          },
+          island: { type: Type.STRING, description: 'Optional island filter.' },
+          supplier: { type: Type.STRING, description: 'Optional supplier filter.' },
+          system: { type: Type.STRING, description: 'Optional system filter.' },
+          year: { type: Type.STRING, description: 'Optional arrival year filter (e.g., "1403" or "2024").' },
+          sortBy: {
+            type: Type.STRING,
+            enum: ['rows', 'mainStockRows', 'contractorStockRows', 'shortageRows', 'damagedRows', 'grossWeight', 'netWeight', 'freightCost'],
+            description: 'Metric to sort groups descending by.',
+          },
+          limit: { type: Type.NUMBER, description: 'Max groups to return (default 15, max 30).' },
+        },
+        required: ['groupBy'],
+      },
+    },
+    {
+      name: 'query_operational_alerts',
+      description:
+        'List active operational alerts or special equipment groups: shortages, damaged items, open MER, open REP, pending OPI, expiring chemicals (within N days), special tools, spare parts, chemicals, or in-transit shipments by status.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          alertType: {
+            type: Type.STRING,
+            enum: [
+              'shortages',
+              'damaged',
+              'open_mer',
+              'open_rep',
+              'opi_pending',
+              'expiring_chemicals',
+              'special_tools',
+              'spare_parts',
+              'chemicals',
+              'transit_shipping',
+              'transit_inspection',
+              'transit_arrived',
+            ],
+            description: 'Type of alert or operational list to retrieve.',
+          },
+          island: { type: Type.STRING, description: 'Optional island filter.' },
+          supplier: { type: Type.STRING, description: 'Optional supplier filter.' },
+          days: { type: Type.NUMBER, description: 'Window in days for expiring_chemicals (default 30).' },
+          limit: { type: Type.NUMBER, description: 'Max items to return (default 20, max 40).' },
+        },
+        required: ['alertType'],
+      },
+    },
+    {
+      name: 'search_warehouse_documents',
+      description:
+        'Search official warehouse documents: GCV receipts, MIV/SMR issuance/return vouchers, OPI invitations & minutes, Site Entry minutes, OSDR discrepancy reports, Substitution forms, Material Estimates (MTO), and Periodic Inspections.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          docType: {
+            type: Type.STRING,
+            enum: ['all', 'gcv', 'miv', 'opi_invitation', 'opi_minutes', 'site_entry', 'osdr', 'substitution', 'material_estimate', 'periodic_inspection'],
+            description: 'Document type to search. Defaults to "all".',
+          },
+          query: {
+            type: Type.STRING,
+            description: 'Search keywords (document number, packing list number, item description, receiver, supplier).',
+          },
+          limit: { type: Type.NUMBER, description: 'Max documents to return (default 15).' },
+        },
+      },
+    },
+  ];
+
+  function executeWarehouseAiTool(
+    dbSlice: WarehouseQueryDb,
+    toolName: string,
+    args: Record<string, unknown>,
+    lang: Language,
+  ): Record<string, unknown> {
+    if (toolName === 'get_warehouse_overview') {
+      return { overview: getWarehouseOverview(dbSlice) };
+    }
+    if (toolName === 'search_warehouse_items') {
+      const params: SearchWarehouseItemsParams = {
+        query: typeof args.query === 'string' ? args.query : undefined,
+        size: typeof args.size === 'string' ? args.size : undefined,
+        itemCode: typeof args.itemCode === 'string' ? args.itemCode : undefined,
+        packingListNo: typeof args.packingListNo === 'string' ? args.packingListNo : undefined,
+        supplier: typeof args.supplier === 'string' ? args.supplier : undefined,
+        island: typeof args.island === 'string' ? args.island : undefined,
+        system: typeof args.system === 'string' ? args.system : undefined,
+        storageLocation: typeof args.storageLocation === 'string' ? args.storageLocation : undefined,
+        itemCategory:
+          args.itemCategory === 'special_tools' || args.itemCategory === 'chemicals' || args.itemCategory === 'spare_parts'
+            ? args.itemCategory
+            : undefined,
+        statusFilter:
+          typeof args.statusFilter === 'string'
+            ? (args.statusFilter as SearchWarehouseItemsParams['statusFilter'])
+            : undefined,
+        scope:
+          args.scope === 'detailed' || args.scope === 'general' || args.scope === 'transit' || args.scope === 'all'
+            ? args.scope
+            : 'all',
+        limit: typeof args.limit === 'number' ? args.limit : 20,
+      };
+      return { result: searchWarehouseItems(dbSlice, params, lang) };
+    }
+    if (toolName === 'get_packing_list_details') {
+      const packingNo = typeof args.packingListNo === 'string' ? args.packingListNo : '';
+      return { result: getPackingListDetails(dbSlice, packingNo, lang) };
+    }
+    if (toolName === 'aggregate_warehouse_by_field') {
+      const groupBy = (typeof args.groupBy === 'string' ? args.groupBy : 'island') as AggregateGroupBy;
+      return {
+        result: aggregateWarehouseByField(
+          dbSlice,
+          {
+            groupBy,
+            scope:
+              args.scope === 'detailed' || args.scope === 'general' || args.scope === 'transit'
+                ? args.scope
+                : undefined,
+            island: typeof args.island === 'string' ? args.island : undefined,
+            supplier: typeof args.supplier === 'string' ? args.supplier : undefined,
+            system: typeof args.system === 'string' ? args.system : undefined,
+            year: typeof args.year === 'string' ? args.year : undefined,
+            sortBy: typeof args.sortBy === 'string' ? (args.sortBy as any) : undefined,
+            limit: typeof args.limit === 'number' ? args.limit : 15,
+          },
+          lang,
+        ),
+      };
+    }
+    if (toolName === 'query_operational_alerts') {
+      const alertType = (typeof args.alertType === 'string' ? args.alertType : 'shortages') as OperationalAlertType;
+      return {
+        result: queryOperationalAlerts(
+          dbSlice,
+          {
+            alertType,
+            island: typeof args.island === 'string' ? args.island : undefined,
+            supplier: typeof args.supplier === 'string' ? args.supplier : undefined,
+            days: typeof args.days === 'number' ? args.days : undefined,
+            limit: typeof args.limit === 'number' ? args.limit : 20,
+          },
+          lang,
+        ),
+      };
+    }
+    if (toolName === 'search_warehouse_documents') {
+      const docType = (typeof args.docType === 'string' ? args.docType : 'all') as DocumentSearchType;
+      return {
+        result: searchWarehouseDocuments(dbSlice, {
+          docType,
+          query: typeof args.query === 'string' ? args.query : undefined,
+          limit: typeof args.limit === 'number' ? args.limit : 15,
+        }),
+      };
+    }
+    return { error: `Unknown tool: ${toolName}` };
   }
 
   app.post('/api/ai/assistant', requireRole(['admin', 'operator', 'viewer']), async (req: AuthedRequest, res: Response) => {
@@ -6078,7 +6580,10 @@ async function startServer() {
       return;
     }
 
-    const contextData = buildWarehouseAiContext(question);
+    const activeLang: Language = lang === 'en' ? 'en' : 'fa';
+    const dbSlice = getLiveWarehouseQueryDb();
+    const metrics = buildCompactWarehouseMetrics(dbSlice);
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       res.status(503).json({
@@ -6088,39 +6593,127 @@ async function startServer() {
           'کلید GEMINI_API_KEY در متغیرهای محیطی سرور تنظیم نشده است. پس از تنظیم کلید، پاسخ هوشمند فعال می‌شود.',
           'GEMINI_API_KEY is not configured in the server environment variables.',
         ),
-        metrics: contextData.metrics,
+        metrics,
       });
       return;
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
-      const outLang = lang === 'en' ? 'English' : 'Persian (Farsi)';
-      const historyText = Array.isArray(history)
-        ? history
-            .slice(-6)
-            .map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.text}`)
-            .join('\n')
-        : '';
+      const ai = createGeminiClient(apiKey);
+      const outLang = activeLang === 'en' ? 'English' : 'Persian (Farsi)';
 
-      const systemInstruction = `You are the SAMAAN Power Plant Warehouse AI Analyst & Assistant. Answer strictly based on the provided live warehouse JSON context. Be concise, accurate, structured with bullet points where helpful, and respond in ${outLang}. If specific records are absent in the context, state clearly what is visible and never fabricate packing list numbers or item quantities.`;
+      const systemInstruction = `You are SAMAAN's expert Power Plant Warehouse AI Analyst & Assistant.
+You are directly connected to the live warehouse database through function-calling tools.
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Live Warehouse Context:\n${JSON.stringify(contextData)}\n\n${historyText ? `Recent Conversation:\n${historyText}\n\n` : ''}User Question:\n${question}`,
-        config: { systemInstruction },
+CRITICAL OPERATING RULES:
+1. You may receive a pre-fetched \`LIVE_PREFETCH_DATA\` JSON block with the latest user message containing live warehouse overview metrics and/or an automatic \`search_warehouse_items\` lookup. If that pre-fetched data ALREADY completely and accurately answers the user's question (e.g., exact item matches & totalsByUnit for the item/size asked), answer directly without redundant tool calls to minimize latency!
+2. Otherwise, ALWAYS call the appropriate warehouse query tool(s) BEFORE answering ANY factual question about items, inventory/stock, sizes, packing lists, suppliers, islands, storage locations, shortages, damages, MER/REP, OPI, chemicals, in-transit shipments, weights, or official documents (GCV, MIV, SMR, OSDR, Substitutions, Material Estimates). NEVER guess, fabricate, or give generic unrelated summaries!
+3. When the user asks about a specific item, equipment, material, or size (for example: "موجودی Pipe 8\\"", "چند متر لوله ۸ اینچ داریم؟", "Valve DN100", "کابل 3x120"):
+   - Verify via \`LIVE_PREFETCH_DATA\` or call \`search_warehouse_items\`. If 0 exact rows match and \`closestSuggestions\` is empty, try a broader keyword or bilingual synonym (e.g. "Pipe" or "لوله", or equivalent DN/inch size) via \`search_warehouse_items\`.
+   - ALWAYS report the EXACT aggregated stock grouped by counting unit from \`totalsByUnit\`:
+     * **Main Warehouse Stock (موجودی انبار اصلی / مپنا)**: \`mainWarehouseStockSum\`
+     * **Contractor Stock (موجودی پیمانکار)**: \`contractorStockSum\`
+     * **Total Site Stock (جمع کل موجودی سایت)**: \`totalSiteStockSum\`
+     * Also include Packing Qty, Actual Qty, Shortage/Damaged (if any), Packing List numbers, Storage Locations, and Suppliers.
+   - NEVER add quantities that have different counting units together.
+   - If \`totalDetailedMatches === 0\` for the exact item/size requested (e.g., Pipe 16" does not exist in the DB), state clearly and honestly that NO matching records were found for that exact item/size, and then list any related items from \`closestSuggestions\` (e.g., other Pipe sizes found in the warehouse) so the user gets genuinely helpful information.
+4. For follow-up questions in the conversation (e.g. "تامین‌کننده کدومه؟", "کدام سوله هستن؟", "آیا کسری دارند؟"), use the conversation context and call the relevant tool if you need additional fields.
+5. Format answers clearly and concisely in ${outLang} using clean Markdown (short headings, bold key numbers, bullet points, and compact Markdown tables with at most 5-6 essential columns when showing multiple items). Keep technical item descriptions, codes, sizes, and packing list numbers exact as stored in the database.`;
+
+      const prefetch: Record<string, unknown> = {
+        overview: metrics,
+      };
+      const extractedSubject = extractEntitySubjectFromQuestion(question);
+      if (extractedSubject) {
+        prefetch.autoItemSearch = {
+          subject: extractedSubject,
+          ...searchWarehouseItems(dbSlice, { query: extractedSubject, scope: 'all', limit: 20 }, activeLang),
+        };
+      }
+
+      const contents: Content[] = [];
+      if (Array.isArray(history)) {
+        for (const h of history.slice(-10)) {
+          const cleanText = normKey(h?.text);
+          if (!cleanText) continue;
+          contents.push({
+            role: h.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: cleanText }],
+          });
+        }
+      }
+      contents.push({
+        role: 'user',
+        parts: [{ text: `User Question:\n${question}\n\nLIVE_PREFETCH_DATA:\n${JSON.stringify(prefetch)}` }],
       });
+
+      const toolsUsed: string[] = [];
+      let finalAnswer = '';
+      const MAX_TOOL_ROUNDS = 5;
+
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const response = await callGeminiWithRetry(() =>
+          ai.models.generateContent({
+            model: 'gemini-4-hydrogen',
+            contents,
+            config: {
+              systemInstruction,
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+              tools: [{ functionDeclarations: WAREHOUSE_AI_TOOLS }],
+            },
+          }),
+        );
+
+        const modelContent = response.candidates?.[0]?.content;
+        const fnCalls = response.functionCalls;
+
+        if (fnCalls && fnCalls.length > 0 && modelContent) {
+          contents.push(modelContent);
+          const responseParts: Part[] = [];
+
+          for (const call of fnCalls) {
+            const toolName = call.name || '';
+            toolsUsed.push(toolName);
+            const toolArgs = (call.args && typeof call.args === 'object' ? call.args : {}) as Record<string, unknown>;
+            const toolOutput = executeWarehouseAiTool(dbSlice, toolName, toolArgs, activeLang);
+            responseParts.push({
+              functionResponse: {
+                id: call.id,
+                name: toolName,
+                response: toolOutput,
+              },
+            });
+          }
+
+          contents.push({
+            role: 'user',
+            parts: responseParts,
+          });
+          continue;
+        }
+
+        finalAnswer = (response.text || '').trim();
+        break;
+      }
+
+      if (!finalAnswer) {
+        const synthesis = await callGeminiWithRetry(() =>
+          ai.models.generateContent({
+            model: 'gemini-4-hydrogen',
+            contents,
+            config: {
+              systemInstruction,
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            },
+          }),
+        );
+        finalAnswer = (synthesis.text || '').trim();
+      }
 
       res.json({
-        answer: (response.text || '').trim(),
-        metrics: contextData.metrics,
+        answer: finalAnswer,
+        metrics,
+        toolsUsed: Array.from(new Set(toolsUsed)),
       });
     } catch (err) {
       res.status(502).json({
@@ -6129,14 +6722,18 @@ async function startServer() {
           `خطا در ارتباط با سرویس هوش مصنوعی: ${err instanceof Error ? err.message : 'Unknown error'}`,
           `AI service error: ${err instanceof Error ? err.message : 'Unknown error'}`,
         ),
-        metrics: contextData.metrics,
+        metrics,
       });
     }
   });
 
   app.post('/api/ai/analyze-warehouse', requireRole(['admin', 'operator', 'viewer']), async (req: AuthedRequest, res: Response) => {
     const { lang } = req.body as { lang?: Language };
-    const contextData = buildWarehouseAiContext('');
+    const activeLang: Language = lang === 'en' ? 'en' : 'fa';
+    const dbSlice = getLiveWarehouseQueryDb();
+    const overview = getWarehouseOverview(dbSlice);
+    const metrics = buildCompactWarehouseMetrics(dbSlice);
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       res.status(503).json({
@@ -6146,41 +6743,46 @@ async function startServer() {
           'کلید GEMINI_API_KEY در متغیرهای محیطی سرور تنظیم نشده است.',
           'GEMINI_API_KEY is not configured in server environment variables.',
         ),
-        metrics: contextData.metrics,
+        metrics,
       });
       return;
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
-      const outLang = lang === 'en' ? 'English' : 'Persian (Farsi)';
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Analyze this power-plant warehouse operational snapshot and provide an executive risk briefing and priority action items in ${outLang}:\n${JSON.stringify(contextData)}`,
-        config: {
-          systemInstruction: `You are an industrial power-plant warehouse operations auditor for SAMAAN. Output structured JSON in ${outLang} strictly grounded in the provided metrics.`,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              summary: { type: Type.STRING },
-              riskLevel: { type: Type.STRING, enum: ['low', 'medium', 'high'] },
-              priorityActions: { type: Type.ARRAY, items: { type: Type.STRING } },
-              followUpSuggestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+      const ai = createGeminiClient(apiKey);
+      const outLang = activeLang === 'en' ? 'English' : 'Persian (Farsi)';
+      const analysisContext = {
+        overview,
+        topShortages: queryOperationalAlerts(dbSlice, { alertType: 'shortages', limit: 8 }, activeLang).items,
+        expiringChemicals: queryOperationalAlerts(dbSlice, { alertType: 'expiring_chemicals', days: 30, limit: 8 }, activeLang).items,
+        openMerSample: queryOperationalAlerts(dbSlice, { alertType: 'open_mer', limit: 8 }, activeLang).items,
+        islandBreakdown: aggregateWarehouseByField(dbSlice, { groupBy: 'island', scope: 'detailed', limit: 10 }, activeLang).groups,
+        topSuppliers: aggregateWarehouseByField(dbSlice, { groupBy: 'supplier', scope: 'general', sortBy: 'grossWeight', limit: 8 }, activeLang).groups,
+      };
+
+      const response = await callGeminiWithRetry(() =>
+        ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: `Analyze this power-plant warehouse operational snapshot and provide an executive risk briefing and priority action items in ${outLang}:\n${JSON.stringify(analysisContext)}`,
+          config: {
+            systemInstruction: `You are an industrial power-plant warehouse operations auditor for SAMAAN. Output structured JSON in ${outLang} strictly grounded in the provided live metrics and breakdowns.`,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                summary: { type: Type.STRING },
+                riskLevel: { type: Type.STRING, enum: ['low', 'medium', 'high'] },
+                priorityActions: { type: Type.ARRAY, items: { type: Type.STRING } },
+                followUpSuggestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: ['summary', 'riskLevel', 'priorityActions', 'followUpSuggestions'],
             },
-            required: ['summary', 'riskLevel', 'priorityActions', 'followUpSuggestions'],
           },
-        },
-      });
+        }),
+      );
       const parsed = JSON.parse((response.text || '{}').trim());
-      res.json({ analysis: parsed, metrics: contextData.metrics });
+      res.json({ analysis: parsed, metrics });
     } catch (err) {
       res.status(502).json({
         error: errMsg(
@@ -6188,7 +6790,7 @@ async function startServer() {
           `خطا در تحلیل هوشمند انبار: ${err instanceof Error ? err.message : 'Unknown error'}`,
           `Warehouse AI analysis error: ${err instanceof Error ? err.message : 'Unknown error'}`,
         ),
-        metrics: contextData.metrics,
+        metrics,
       });
     }
   });
@@ -6220,35 +6822,34 @@ async function startServer() {
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
+      const ai = createGeminiClient(apiKey);
       const outLang = lang === 'en' ? 'English' : 'Persian';
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Classify this power-plant warehouse item:\nDescription: ${desc}\nSize: ${size || '-'}\nItem Code: ${itemCode || '-'}`,
-        config: {
-          systemInstruction: `You are a power-plant warehouse engineering classifier. Classify the equipment item into standard SAMAAN fields: generalDescription (Title Case English or concise category name), itemCategory ('special_tools' | 'chemicals' | 'spare_parts' | ''), chemicalType (only if chemical, else empty), countingUnit (e.g. EA, PC, SET, KG, L, M), and brief warehouse handling notes in ${outLang}.`,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              generalDescription: { type: Type.STRING },
-              itemCategory: { type: Type.STRING, enum: ['special_tools', 'chemicals', 'spare_parts', ''] },
-              chemicalType: { type: Type.STRING },
-              countingUnit: { type: Type.STRING },
-              notes: { type: Type.STRING },
+      const response = await callGeminiWithRetry(() =>
+        ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: `Classify this power-plant warehouse item:\nDescription: ${desc}\nSize: ${size || '-'}\nItem Code: ${itemCode || '-'}`,
+          config: {
+            systemInstruction: `You are a power-plant warehouse engineering classifier. Classify the equipment item into standard SAMAAN fields: generalDescription (Title Case English or concise category name), itemCategory ('special_tools' | 'chemicals' | 'spare_parts' | 'none'), chemicalType (only if chemical, else empty), countingUnit (e.g. EA, PC, SET, KG, L, M), and brief warehouse handling notes in ${outLang}.`,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                generalDescription: { type: Type.STRING },
+                itemCategory: { type: Type.STRING, enum: ['special_tools', 'chemicals', 'spare_parts', 'none'] },
+                chemicalType: { type: Type.STRING },
+                countingUnit: { type: Type.STRING },
+                notes: { type: Type.STRING },
+              },
+              required: ['generalDescription', 'itemCategory', 'chemicalType', 'countingUnit', 'notes'],
             },
-            required: ['generalDescription', 'itemCategory', 'chemicalType', 'countingUnit', 'notes'],
           },
-        },
-      });
+        }),
+      );
       const parsed = JSON.parse((response.text || '{}').trim());
+      if (parsed && parsed.itemCategory === 'none') {
+        parsed.itemCategory = '';
+      }
       if (parsed && typeof parsed.countingUnit === 'string') {
         parsed.countingUnit = normalizeCountingUnitToFa(parsed.countingUnit);
       }
@@ -6497,6 +7098,7 @@ async function startServer() {
     }
 
     store.rebuildIndexes(!selected.includes('categories'));
+    store.history.clear();
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: isFullWipe ? 'PURGE_ALL_DATABASE' : 'PURGE_DATABASE_SECTIONS',

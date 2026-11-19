@@ -61,12 +61,26 @@ function getActiveLang(): 'fa' | 'en' {
   return 'fa';
 }
 
+function notifyIfMutated(url: string, options: RequestInit): void {
+  if (typeof window === 'undefined') return;
+  const method = (options.method || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD') return;
+  if (
+    url.startsWith('/api/auth/') ||
+    url.startsWith('/api/ai/') ||
+    url.startsWith('/api/history/')
+  ) {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent('samaan:mutation-done', { detail: { url, method } }));
+}
+
 async function runFallback<T>(url: string, options: RequestInit): Promise<T> {
   staticFallbackActive = true;
   const lang = getActiveLang();
   const projectId = getActiveProjectId();
   try {
-    return await handleStaticApiRequest<T>(url, {
+    const result = await handleStaticApiRequest<T>(url, {
       ...options,
       headers: {
         'X-Samaan-Lang': lang,
@@ -74,6 +88,8 @@ async function runFallback<T>(url: string, options: RequestInit): Promise<T> {
         ...((options.headers as Record<string, string>) || {}),
       },
     });
+    notifyIfMutated(url, options);
+    return result;
   } catch (err) {
     if (err instanceof StaticEngineError) {
       throw new ApiError(err.message, err.status, err.code);
@@ -133,5 +149,6 @@ export async function apiRequest<T>(
     );
   }
 
+  notifyIfMutated(url, options);
   return data as T;
 }

@@ -42,6 +42,7 @@ import {
   normalizeTransitStatus,
 } from '../shared/normalizers.ts';
 import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../shared/sorting.ts';
+import { WarehouseHistoryManager, type HistoryStatus } from '../shared/undoHistory.ts';
 import type { StoredUser } from './auth.ts';
 
 export interface PersistedDatabase {
@@ -133,6 +134,7 @@ export class SamaanStore {
   public generalByPacking = new Map<string, GeneralEntry[]>();
   public detailedByPacking = new Map<string, DetailedEntry[]>();
   public transitByPacking = new Map<string, TransitEntry[]>();
+  public history = new WarehouseHistoryManager(50);
 
   private saveTimer: NodeJS.Timeout | null = null;
   public readonly dbFile: string;
@@ -607,6 +609,7 @@ export class SamaanStore {
     this.renumberScope('detailed');
     this.renumberScope('transit');
     this.rebuildIndexes();
+    this.history.clear();
     this.addAudit({
       user,
       action: 'RESTORE_SNAPSHOT',
@@ -615,6 +618,40 @@ export class SamaanStore {
       summary: `بازیابی کامل نسخه پشتیبان (${this.db.general.length} جنرال، ${this.db.detailed.length} دیتیل، ${this.db.transit.length} در راه)`,
     });
     this.saveImmediate();
+  }
+
+  public applyHistoryAction(
+    direction: 'undo' | 'redo',
+    user: UserAccount,
+  ): {
+    labelFa: string;
+    labelEn: string;
+    status: HistoryStatus;
+  } | null {
+    const res = direction === 'undo' ? this.history.undo(this.db) : this.history.redo(this.db);
+    if (!res) return null;
+
+    if (res.touchedScopes.has('general')) this.renumberScope('general');
+    if (res.touchedScopes.has('detailed')) this.renumberScope('detailed');
+    if (res.touchedScopes.has('transit')) this.renumberScope('transit');
+    this.rebuildIndexes(!res.touchedScopes.has('categories'));
+
+    this.addAudit({
+      user,
+      action: direction === 'undo' ? 'UNDO_ACTION' : 'REDO_ACTION',
+      scope: 'history',
+      targetId: res.command.id,
+      summary:
+        direction === 'undo'
+          ? `بازگردانی عملیات (Undo): ${res.command.labelFa}`
+          : `انجام مجدد عملیات (Redo): ${res.command.labelFa}`,
+    });
+    this.saveImmediate();
+    return {
+      labelFa: res.command.labelFa,
+      labelEn: res.command.labelEn,
+      status: this.history.getStatus(),
+    };
   }
 }
 

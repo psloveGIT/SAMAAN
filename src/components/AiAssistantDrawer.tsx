@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Send,
   ShieldAlert,
   Sparkles,
@@ -14,6 +15,7 @@ import {
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { formatDisplayNumber } from '../shared/jalali.ts';
+import { MarkdownMessage } from './MarkdownMessage.tsx';
 
 interface AiAssistantDrawerProps {
   open: boolean;
@@ -133,7 +135,7 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
     const nextHistory = [
       ...messages
         .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .slice(-6)
+        .slice(-10)
         .map((m) => ({
           role: m.role as 'user' | 'assistant',
           text: m.text,
@@ -200,37 +202,37 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
     ? [
         {
           label: 'وضعیت کسری و مغایرت‌ها',
-          prompt: 'وضعیت اقلام دارای کسری، آسیب‌دیدگی، MER و REP باز را خلاصه کن و اولویت‌ها را بگو.',
+          prompt: 'وضعیت اقلام دارای کسری، آسیب‌دیدگی، MER و REP باز را خلاصه کن و مهم‌ترین موارد را لیست کن.',
         },
         {
           label: 'مواد شیمیایی رو به انقضا',
           prompt: 'کدام مواد شیمیایی در آستانه انقضا (زیر ۳۰ روز) هستند و چه اقدامی لازم است؟',
         },
         {
-          label: 'خلاصه محموله‌های در راه',
-          prompt: 'وضعیت پکینگ لیست‌های در راه (ارسال‌شده، در دست بازرسی، رسیده) چگونه است؟',
+          label: 'تفکیک موجودی جزایر',
+          prompt: 'تفکیک تعداد ردیف‌ها و موجودی انبار اصلی و پیمانکار را بر اساس جزیره نشان بده.',
         },
         {
           label: 'گزارش وزن و پکینگ‌ها',
-          prompt: 'خلاصه تعداد پکینگ‌ها، ردیف‌های ثبتی و وزن ناخالص/خالص کل انبار را گزارش بده.',
+          prompt: 'خلاصه تعداد پکینگ‌ها، ردیف‌های ثبتی، محموله‌های در راه و وزن خالص/ناخالص کل انبار را گزارش بده.',
         },
       ]
     : [
         {
           label: 'Shortages & Discrepancies',
-          prompt: 'Summarize active shortages, damaged items, and open MER/REP priorities.',
+          prompt: 'Summarize active shortages, damaged items, and open MER/REP priorities with top items.',
         },
         {
           label: 'Expiring Chemicals',
           prompt: 'Which chemicals are expiring within 30 days and what actions are recommended?',
         },
         {
-          label: 'In-Transit Summary',
-          prompt: 'Summarize in-transit packing lists across shipping, inspection, and arrived statuses.',
+          label: 'Stock by Island',
+          prompt: 'Show the breakdown of item rows and main vs contractor stock counts by island.',
         },
         {
           label: 'Weight & Packing Totals',
-          prompt: 'Provide an overview of unique packing lists, registered rows, and total gross/net tonnage.',
+          prompt: 'Provide an overview of unique packing lists, in-transit shipments, and total net/gross tonnage.',
         },
       ];
 
@@ -257,7 +259,7 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
       aria-label={isFa ? 'دستیار هوشمند سمان' : 'SAMAAN AI Assistant'}
     >
       <div
-        className="w-full max-w-xl h-full bg-[var(--bg-surface)] border-s border-[var(--border-subtle)] shadow-2xl flex flex-col overflow-hidden"
+        className="w-full max-w-2xl h-full bg-[var(--bg-surface)] border-s border-[var(--border-subtle)] shadow-2xl flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -272,19 +274,33 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
               </h2>
               <p className="text-[11px] text-[var(--text-muted)] truncate">
                 {isFa
-                  ? 'تحلیل ریسک عملیاتی و پرسش‌وپاسخ زنده بر اساس داده‌های انبار'
-                  : 'Operational risk briefing & live Q&A grounded in warehouse data'}
+                  ? 'پرسش‌وپاسخ دقیق با جستجوی زنده در موجودی، سایزها، پکینگ‌ها و اسناد انبار'
+                  : 'Natural-language Q&A with live search across inventory, sizes, packings & documents'}
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={isFa ? 'بستن دستیار هوشمند' : 'Close AI Assistant'}
-            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setMessages([])}
+                disabled={sending}
+                title={isFa ? 'شروع گفت‌وگوی جدید' : 'Start new conversation'}
+                className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] text-[11px] font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{isFa ? 'گفت‌وگوی جدید' : 'New Chat'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={isFa ? 'بستن دستیار هوشمند' : 'Close AI Assistant'}
+              className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -359,8 +375,8 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
                   </div>
                 </div>
                 <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-2">
-                  <div className="text-[var(--text-muted)]">{isFa ? 'وزن ناخالص (تن)' : 'Gross (t)'}</div>
-                  <div className="font-bold text-sm tabular-nums mt-0.5">{fmt(metrics.grossWeightTons)}</div>
+                  <div className="text-[var(--text-muted)]">{isFa ? 'وزن خالص (تن)' : 'Net (t)'}</div>
+                  <div className="font-bold text-sm tabular-nums mt-0.5">{fmt(metrics.netWeightTons)}</div>
                 </div>
               </div>
             )}
@@ -438,10 +454,17 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
           {/* Chat Conversation */}
           <section className="space-y-2.5">
             {messages.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-[var(--border-subtle)] px-4 py-6 text-center text-xs text-[var(--text-muted)]">
-                {isFa
-                  ? 'پرسش خود را درباره محموله‌ها، پکینگ لیست‌ها، کسری‌ها، موجودی جزایر یا مواد شیمیایی بپرسید.'
-                  : 'Ask anything about shipments, packing lists, shortages, island stock, or chemicals.'}
+              <div className="rounded-xl border border-dashed border-[var(--border-subtle)] px-4 py-6 text-center space-y-1.5">
+                <p className="text-xs font-medium text-[var(--text-primary)]">
+                  {isFa
+                    ? 'هر پرسشی درباره موجودی کالا، سایز، محل نگهداری، پکینگ لیست، کسری یا اسناد انبار دارید بپرسید.'
+                    : 'Ask any question about item stock, sizes, storage locations, packing lists, shortages, or documents.'}
+                </p>
+                <p className="text-[11px] text-[var(--text-muted)]" dir="auto">
+                  {isFa
+                    ? 'مثال: «موجودی Pipe 8" چقدر است و در کدام انبار نگهداری می‌شود؟» یا «وضعیت پکینگ PL-100 چیست؟»'
+                    : 'Example: "How much Pipe 8\\" do we have in stock and where is it stored?" or "Status of packing PL-100"'}
+                </p>
               </div>
             ) : (
               messages.map((m) => (
@@ -462,14 +485,20 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
                   ) : (
                     <Bot className="w-4 h-4 text-[var(--accent-primary)] shrink-0 mt-1" />
                   )}
-                  <div className="whitespace-pre-wrap break-words flex-1 bidi-plaintext">{m.text}</div>
+                  {m.role === 'assistant' ? (
+                    <MarkdownMessage text={m.text} />
+                  ) : (
+                    <div dir="auto" className="whitespace-pre-wrap break-words flex-1 min-w-0">
+                      {m.text}
+                    </div>
+                  )}
                 </div>
               ))
             )}
             {sending && (
               <div className="rounded-xl px-3.5 py-2.5 text-xs bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-[var(--text-muted)] flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
-                <span>{isFa ? 'در حال بررسی داده‌های انبار...' : 'Analyzing warehouse data...'}</span>
+                <span>{isFa ? 'در حال جستجو و تحلیل داده‌های زنده انبار...' : 'Querying and analyzing live warehouse data...'}</span>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -490,8 +519,8 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
             onChange={(e) => setPrompt(e.target.value)}
             placeholder={
               isFa
-                ? 'پرسش درباره انبار، پکینگ، کسری یا تجهیزات...'
-                : 'Ask about inventory, packings, shortages...'
+                ? 'مثلاً: موجودی Pipe 8" چقدر است و در کدام انبار است؟'
+                : 'e.g. How much Pipe 8" is in stock and where is it stored?'
             }
             className="flex-1 h-10 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)]"
           />

@@ -8,11 +8,17 @@ import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { PackingWizardModal } from './components/PackingWizardModal.tsx';
+import { ShortcutsSettingsModal } from './components/ShortcutsSettingsModal.tsx';
 import { SpellCheckAssistant } from './components/SpellCheckAssistant.tsx';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { apiRequest } from './lib/api.ts';
 import type { CategoryStore, TransitEntry } from './shared/types.ts';
 import { DEFAULT_TRANSIT_STATUSES } from './shared/normalizers.ts';
+import {
+  SHORTCUT_DEFINITIONS,
+  isEditableTarget,
+  matchesShortcutEvent,
+} from './shared/shortcuts.ts';
 
 const BackupView = lazy(() => import('./components/BackupView.tsx').then((m) => ({ default: m.BackupView })));
 const BalanceView = lazy(() => import('./components/BalanceView.tsx').then((m) => ({ default: m.BalanceView })));
@@ -60,14 +66,30 @@ const EMPTY_CATEGORIES: CategoryStore = {
 };
 
 const SamaanWorkspace: React.FC = () => {
-  const { user, loadingAuth, toasts, dismissToast, t, activeProjectId } = useApp();
+  const {
+    user,
+    loadingAuth,
+    toasts,
+    dismissToast,
+    t,
+    prefs,
+    activeProjectId,
+    shortcuts,
+    performUndo,
+    performRedo,
+    refreshHistoryStatus,
+    setTheme,
+    setLanguage,
+    notify,
+  } = useApp();
   const [activeTab, setActiveTab] = useState<NavTabKey>('dashboard');
   const [categories, setCategories] = useState<CategoryStore>(EMPTY_CATEGORIES);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
-  // Packing Wizard Modal state
+  // Packing Wizard Modal & Drawers state
   const [packingModalOpen, setPackingModalOpen] = useState(false);
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
+  const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
   const [transitPrefill, setTransitPrefill] = useState<TransitEntry | null>(null);
   const [prefillPackingNo, setPrefillPackingNo] = useState<string>('');
 
@@ -79,6 +101,15 @@ const SamaanWorkspace: React.FC = () => {
   const bumpRefresh = useCallback(() => {
     setRefreshSignal((s) => s + 1);
   }, []);
+
+  // Automatically refresh active views whenever Undo or Redo is executed
+  useEffect(() => {
+    const onHistoryApplied = () => {
+      bumpRefresh();
+    };
+    window.addEventListener('samaan:history-applied', onHistoryApplied);
+    return () => window.removeEventListener('samaan:history-applied', onHistoryApplied);
+  }, [bumpRefresh]);
 
   const loadCategories = useCallback(async () => {
     if (!user) return;
@@ -166,6 +197,202 @@ const SamaanWorkspace: React.FC = () => {
     setActiveTab('detailed');
   };
 
+  // Global Excel-style customizable keyboard shortcuts handler
+  useEffect(() => {
+    if (!user) return;
+    const canEditUser = user.role === 'admin' || user.role === 'operator';
+    const isFa = prefs.language === 'fa';
+
+    const switchTabClean = (tab: NavTabKey) => {
+      if (tab !== 'detailed') {
+        setDetailedShipmentFilter('');
+        setDetailedPackageFilter('');
+      }
+      setActiveTab(tab);
+    };
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const win = window as unknown as { __samaanCapturingShortcut?: boolean };
+      if (win.__samaanCapturingShortcut) return;
+
+      // Escape closes top-most open modal/drawer
+      if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+        if (shortcutsModalOpen) {
+          e.preventDefault();
+          setShortcutsModalOpen(false);
+          return;
+        }
+        if (aiDrawerOpen) {
+          e.preventDefault();
+          setAiDrawerOpen(false);
+          return;
+        }
+        if (packingModalOpen) {
+          e.preventDefault();
+          setPackingModalOpen(false);
+          return;
+        }
+        return;
+      }
+
+      const inEditable = isEditableTarget(e.target);
+
+      for (const def of SHORTCUT_DEFINITIONS) {
+        const combo = shortcuts[def.id];
+        if (!combo) continue;
+        if (!matchesShortcutEvent(e, combo)) continue;
+
+        // Inside text inputs, skip shortcuts that should yield to native text editing (like Ctrl+Z / Ctrl+Y)
+        if (inEditable && !def.allowInInputs) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        switch (def.id) {
+          case 'undo':
+            if (canEditUser) void performUndo();
+            return;
+          case 'redo':
+            if (canEditUser) void performRedo();
+            return;
+          case 'save': {
+            const ev = new CustomEvent('samaan:shortcut-action', {
+              cancelable: true,
+              detail: { action: 'save' },
+            });
+            const notHandled = window.dispatchEvent(ev);
+            if (notHandled) {
+              // Auto-submit the topmost visible modal form if present
+              const forms = Array.from(document.querySelectorAll('form'));
+              const topForm = forms[forms.length - 1];
+              if (topForm && typeof topForm.requestSubmit === 'function') {
+                topForm.requestSubmit();
+              }
+            }
+            return;
+          }
+          case 'find': {
+            const ev = new CustomEvent('samaan:shortcut-action', {
+              cancelable: true,
+              detail: { action: 'find' },
+            });
+            const notHandled = window.dispatchEvent(ev);
+            if (notHandled) {
+              const mainEl = document.querySelector('main');
+              const searchInput = mainEl?.querySelector<HTMLInputElement>(
+                'input[data-samaan-search="true"], input[type="search"], input[placeholder*="جست"], input[placeholder*="Search"], input[placeholder*="search"]',
+              );
+              if (searchInput) {
+                searchInput.focus();
+                searchInput.select();
+              } else {
+                switchTabClean('search');
+              }
+            }
+            return;
+          }
+          case 'newPacking':
+            if (canEditUser) openNewPacking('');
+            return;
+          case 'exportExcel': {
+            const ev = new CustomEvent('samaan:shortcut-action', {
+              cancelable: true,
+              detail: { action: 'exportExcel' },
+            });
+            const notHandled = window.dispatchEvent(ev);
+            if (notHandled) {
+              notify(
+                'info',
+                isFa
+                  ? 'خروجی اکسل در این صفحه فعال نیست یا از دکمه خروجی بالای جدول استفاده کنید.'
+                  : 'Excel export shortcut is available on data table views.',
+              );
+            }
+            return;
+          }
+          case 'print': {
+            const ev = new CustomEvent('samaan:shortcut-action', {
+              cancelable: true,
+              detail: { action: 'print' },
+            });
+            const notHandled = window.dispatchEvent(ev);
+            if (notHandled) {
+              window.print();
+            }
+            return;
+          }
+          case 'clearFilters': {
+            window.dispatchEvent(
+              new CustomEvent('samaan:shortcut-action', {
+                cancelable: true,
+                detail: { action: 'clearFilters' },
+              }),
+            );
+            return;
+          }
+          case 'refreshData':
+            bumpRefresh();
+            void refreshHistoryStatus();
+            notify('info', isFa ? 'اطلاعات بروزرسانی شد.' : 'Data refreshed.');
+            return;
+          case 'aiAssistant':
+            setAiDrawerOpen((v) => !v);
+            return;
+          case 'shortcutsSettings':
+            setShortcutsModalOpen((v) => !v);
+            return;
+          case 'navDashboard':
+            switchTabClean('dashboard');
+            return;
+          case 'navGeneral':
+            switchTabClean('general');
+            return;
+          case 'navDetailed':
+            switchTabClean('detailed');
+            return;
+          case 'navTransit':
+            switchTabClean('transit');
+            return;
+          case 'navGlobalSearch':
+            switchTabClean('search');
+            return;
+          case 'navCategories':
+            switchTabClean('categories');
+            return;
+          case 'navTrash':
+            switchTabClean('trash');
+            return;
+          case 'toggleTheme':
+            setTheme(prefs.theme === 'light' ? 'dark' : 'light');
+            return;
+          case 'toggleLanguage':
+            setLanguage(prefs.language === 'fa' ? 'en' : 'fa');
+            return;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [
+    user,
+    shortcuts,
+    prefs.language,
+    prefs.theme,
+    shortcutsModalOpen,
+    aiDrawerOpen,
+    packingModalOpen,
+    performUndo,
+    performRedo,
+    bumpRefresh,
+    refreshHistoryStatus,
+    setTheme,
+    setLanguage,
+    notify,
+  ]);
+
   if (loadingAuth) {
     return (
       <div className="min-h-[100dvh] flex items-center justify-center bg-[var(--bg-canvas)] text-sm text-[var(--text-muted)]">
@@ -191,6 +418,7 @@ const SamaanWorkspace: React.FC = () => {
           }}
           onOpenNewPacking={() => openNewPacking('')}
           onOpenAiAssistant={() => setAiDrawerOpen(true)}
+          onOpenShortcuts={() => setShortcutsModalOpen(true)}
         >
           <Suspense
             fallback={
@@ -331,6 +559,10 @@ const SamaanWorkspace: React.FC = () => {
             prefillPackingNo={prefillPackingNo}
           />
           <AiAssistantDrawer open={aiDrawerOpen} onClose={() => setAiDrawerOpen(false)} />
+          <ShortcutsSettingsModal
+            open={shortcutsModalOpen}
+            onClose={() => setShortcutsModalOpen(false)}
+          />
         </Layout>
       )}
 

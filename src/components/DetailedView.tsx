@@ -1061,6 +1061,24 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     setPrintOpen(true);
   };
 
+  useEffect(() => {
+    const onShortcutAction = (e: Event) => {
+      const action = (e as CustomEvent<{ action?: string }>).detail?.action;
+      if (action === 'print' || action === 'exportExcel') {
+        e.preventDefault();
+        void handleOpenPrint();
+      } else if (action === 'clearFilters') {
+        e.preventDefault();
+        setColFilters({});
+        setSortBy('');
+        setPage(1);
+        notify('info', isFa ? 'فیلترهای جدول پاک شد.' : 'Table filters cleared.');
+      }
+    };
+    window.addEventListener('samaan:shortcut-action', onShortcutAction);
+    return () => window.removeEventListener('samaan:shortcut-action', onShortcutAction);
+  });
+
   const handleAiClassifyDraft = async () => {
     if (!draft.description?.trim()) {
       notify('warning', isFa ? 'ابتدا شرح کالا را وارد کنید تا هوش مصنوعی دسته‌بندی را انجام دهد.' : 'Enter item description first for AI classification.');

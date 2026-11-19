@@ -40,6 +40,7 @@ import {
   parsePackingNosParam,
 } from '../shared/customFilters.ts';
 import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
+import { WarehouseHistoryManager, type HistoryChange } from '../shared/undoHistory.ts';
 import {
   buildDetailedDupKey,
   buildGeneralDupKey,
@@ -707,6 +708,16 @@ export class StaticEngineError extends Error {
   }
 }
 
+const projectHistories = new Map<string, WarehouseHistoryManager>();
+function getProjectHistory(projectId: string): WarehouseHistoryManager {
+  let mgr = projectHistories.get(projectId);
+  if (!mgr) {
+    mgr = new WarehouseHistoryManager(50);
+    projectHistories.set(projectId, mgr);
+  }
+  return mgr;
+}
+
 export async function handleStaticApiRequest<T>(url: string, options: RequestInit = {}): Promise<T> {
   const parsedUrl = new URL(url, 'http://localhost');
   const pathname = parsedUrl.pathname;
@@ -718,6 +729,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   const projectHeader = String(headers['X-Samaan-Project'] || headers['x-samaan-project'] || '').trim();
   const activeProjectId = await resolveProjectId(projectHeader);
   const db = await getDb(activeProjectId);
+  const history = getProjectHistory(activeProjectId);
   const saveActiveDb = (targetDb: StaticDatabase = db) => saveDb(targetDb, activeProjectId);
 
   const currentUserObj = db.currentUserId
@@ -1088,6 +1100,50 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     u.preferences = { ...u.preferences, ...(body as Partial<UserPreferences>) };
     await saveActiveDb();
     return { user: sanitizeUser(u) } as T;
+  }
+
+  // ---------------- UNDO / REDO HISTORY ----------------
+  if (pathname === '/api/history/status' && method === 'GET') {
+    requireAuth();
+    return history.getStatus() as T;
+  }
+
+  if (pathname === '/api/history/undo' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const result = history.undo(db);
+    if (!result) {
+      throw new StaticEngineError(errMsg('عملیاتی برای بازگردانی وجود ندارد.', 'Nothing to undo.'), 400);
+    }
+    if (result.touchedScopes.has('general')) renumberScope(db, 'general');
+    if (result.touchedScopes.has('detailed')) renumberScope(db, 'detailed');
+    if (result.touchedScopes.has('transit')) renumberScope(db, 'transit');
+    if (!result.touchedScopes.has('categories')) rebuildCategories(db);
+    addAudit(db, sanitizeUser(u), 'UNDO_ACTION', 'history', result.command.id, `بازگردانی عملیات (Undo): ${result.command.labelFa}`);
+    await saveActiveDb();
+    return {
+      ok: true,
+      undone: { labelFa: result.command.labelFa, labelEn: result.command.labelEn },
+      status: history.getStatus(),
+    } as T;
+  }
+
+  if (pathname === '/api/history/redo' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const result = history.redo(db);
+    if (!result) {
+      throw new StaticEngineError(errMsg('عملیاتی برای انجام مجدد وجود ندارد.', 'Nothing to redo.'), 400);
+    }
+    if (result.touchedScopes.has('general')) renumberScope(db, 'general');
+    if (result.touchedScopes.has('detailed')) renumberScope(db, 'detailed');
+    if (result.touchedScopes.has('transit')) renumberScope(db, 'transit');
+    if (!result.touchedScopes.has('categories')) rebuildCategories(db);
+    addAudit(db, sanitizeUser(u), 'REDO_ACTION', 'history', result.command.id, `انجام مجدد عملیات (Redo): ${result.command.labelFa}`);
+    await saveActiveDb();
+    return {
+      ok: true,
+      redone: { labelFa: result.command.labelFa, labelEn: result.command.labelEn },
+      status: history.getStatus(),
+    } as T;
   }
 
   if (pathname === '/api/auth/change-password' && method === 'POST') {
@@ -1633,6 +1689,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.general.unshift(...preparedGeneral);
     renumberScope(db, 'general');
     rebuildCategories(db);
+    history.push({
+      labelFa: `ثبت کلی پکینگ ${pk} (${preparedGeneral.length} ردیف)`,
+      labelEn: `Add General Packing ${pk} (${preparedGeneral.length} rows)`,
+      user: u.fullName || u.username,
+      changes: preparedGeneral.map((g) => ({ scope: 'general', op: 'insert', id: g.id, after: g })),
+    });
     const transitUpdated = syncTransitArrival(db, pk, sanitizeUser(u));
     addAudit(
       db,
@@ -1674,14 +1736,25 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const now = new Date().toISOString();
     let updatedCount = 0;
     const touchedPackings = new Set<string>();
+    const historyChanges: HistoryChange[] = [];
     for (const g of db.general) {
       if (!idSet.has(g.id)) continue;
+      const before = { ...g };
       Object.assign(g, cleanPatch, { updatedAt: now });
+      historyChanges.push({ scope: 'general', op: 'update', id: g.id, before, after: { ...g } });
       if (g.packingListNo) touchedPackings.add(g.packingListNo);
       updatedCount += 1;
     }
     renumberScope(db, 'general');
     rebuildCategories(db);
+    if (historyChanges.length > 0) {
+      history.push({
+        labelFa: `ویرایش گروهی ${updatedCount} ردیف کلی`,
+        labelEn: `Bulk Edit ${updatedCount} General Rows`,
+        user: u.fullName || u.username,
+        changes: historyChanges,
+      });
+    }
     let transitUpdated = 0;
     for (const pk of touchedPackings) {
       transitUpdated += syncTransitArrival(db, pk, sanitizeUser(u));
@@ -1734,6 +1807,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const finalReleaseNo = normKey(patch.releaseNo ?? item.releaseNo);
     const finalReleaseDate = finalReleaseNo ? (normKey(patch.releaseDate ?? item.releaseDate) || finalArrival) : finalArrival;
 
+    const beforeGeneral = { ...item };
     Object.assign(item, {
       ...patch,
       releaseNo: finalReleaseNo,
@@ -1743,6 +1817,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     });
     renumberScope(db, 'general');
     rebuildCategories(db);
+    history.push({
+      labelFa: `ویرایش ردیف کلی ${item.packingListNo || item.rowNo}`,
+      labelEn: `Edit General Row ${item.packingListNo || item.rowNo}`,
+      user: u.fullName || u.username,
+      changes: [{ scope: 'general', op: 'update', id: item.id, before: beforeGeneral, after: { ...item } }],
+    });
     const transitUpdated = syncTransitArrival(db, item.packingListNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'UPDATE_GENERAL', 'general', `${item.packingListNo} (#${item.rowNo})`, `ویرایش ردیف جنرال ${item.rowNo}`);
     await saveActiveDb();
@@ -1758,32 +1838,40 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const [removed] = db.general.splice(idx, 1);
     const now = new Date().toISOString();
     const deletedBy = u.fullName || u.username;
-
-    db.trash.unshift({
+    const historyChanges: HistoryChange[] = [
+      { scope: 'general', op: 'delete', id: removed.id, before: removed, index: idx },
+    ];
+    const gTrash: TrashRecord = {
       id: makeId(),
       scope: 'general',
       deletedAt: now,
       deletedBy,
       targetLabel: `${removed.packingListNo || '-'} (${removed.packageNo || '-'})`,
       data: removed,
-    });
+    };
+    db.trash.unshift(gTrash);
+    historyChanges.push({ scope: 'trash', op: 'insert', id: gTrash.id, after: gTrash });
 
     let trashedDetailedCount = 0;
     if (cascadeDetailed) {
       const pk = normKey(removed.packingListNo);
       const pkg = normKey(removed.packageNo);
       const remaining: DetailedEntry[] = [];
-      for (const d of db.detailed) {
+      for (let di = 0; di < db.detailed.length; di += 1) {
+        const d = db.detailed[di];
         if (normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg)) {
           trashedDetailedCount += 1;
-          db.trash.unshift({
+          const dTrash: TrashRecord = {
             id: makeId(),
             scope: 'detailed',
             deletedAt: now,
             deletedBy,
             targetLabel: `${d.shipmentNo} / ${d.packageNo || '-'} / #${d.itemNo || d.rowNo}`,
             data: d,
-          });
+          };
+          db.trash.unshift(dTrash);
+          historyChanges.push({ scope: 'detailed', op: 'delete', id: d.id, before: d, index: di });
+          historyChanges.push({ scope: 'trash', op: 'insert', id: dTrash.id, after: dTrash });
         } else {
           remaining.push(d);
         }
@@ -1795,6 +1883,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     }
 
     renumberScope(db, 'general');
+    history.push({
+      labelFa: `حذف ردیف کلی ${removed.packingListNo || removed.rowNo}`,
+      labelEn: `Delete General Row ${removed.packingListNo || removed.rowNo}`,
+      user: deletedBy,
+      changes: historyChanges,
+    });
     addAudit(db, sanitizeUser(u), 'DELETE_GENERAL', 'general', `${removed.packingListNo} (#${removed.rowNo})`, `انتقال ردیف جنرال ${removed.rowNo} به سطل بازیافت`);
     await saveActiveDb();
     return { ok: true, trashedDetailedCount } as T;
@@ -2078,6 +2172,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.detailed.unshift(created);
     renumberScope(db, 'detailed');
     rebuildCategories(db);
+    history.push({
+      labelFa: `ثبت ردیف جزئیات ${pk} / #${itemNo}`,
+      labelEn: `Add Detailed Item ${pk} / #${itemNo}`,
+      user: u.fullName || u.username,
+      changes: [{ scope: 'detailed', op: 'insert', id: created.id, after: created }],
+    });
     const transitUpdated = syncTransitArrival(db, pk, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'CREATE_DETAILED', 'detailed', `${pk} / ${pkgNo || '-'} (#${itemNo})`, `ثبت آیتم جزئیات ردیف ${created.rowNo}`);
     await saveActiveDb();
@@ -2135,13 +2235,24 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     }
     const now = new Date().toISOString();
     let updatedCount = 0;
+    const historyChanges: HistoryChange[] = [];
     for (const d of db.detailed) {
       if (!idSet.has(d.id)) continue;
+      const before = { ...d };
       Object.assign(d, cleanPatch, { updatedAt: now });
+      historyChanges.push({ scope: 'detailed', op: 'update', id: d.id, before, after: { ...d } });
       updatedCount += 1;
     }
     renumberScope(db, 'detailed');
     rebuildCategories(db);
+    if (historyChanges.length > 0) {
+      history.push({
+        labelFa: `ویرایش گروهی ${updatedCount} ردیف جزئیات`,
+        labelEn: `Bulk Edit ${updatedCount} Detailed Rows`,
+        user: u.fullName || u.username,
+        changes: historyChanges,
+      });
+    }
     addAudit(db, sanitizeUser(u), 'BULK_UPDATE_DETAILED', 'detailed', `${updatedCount} rows`, `ویرایش گروهی ${updatedCount} ردیف در ثبت جزئیات تجهیزات`);
     await saveActiveDb();
     return { ok: true, updatedCount } as T;
@@ -2181,6 +2292,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       patch.countingUnit = normalizeCountingUnitToFa(patch.countingUnit);
     }
 
+    const beforeDetailed = { ...item };
     Object.assign(item, {
       ...patch,
       shipmentNo: pk,
@@ -2191,6 +2303,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     });
     renumberScope(db, 'detailed');
     rebuildCategories(db);
+    history.push({
+      labelFa: `ویرایش ردیف جزئیات ${item.shipmentNo} (#${item.rowNo})`,
+      labelEn: `Edit Detailed Row ${item.shipmentNo} (#${item.rowNo})`,
+      user: u.fullName || u.username,
+      changes: [{ scope: 'detailed', op: 'update', id: item.id, before: beforeDetailed, after: { ...item } }],
+    });
     const transitUpdated = syncTransitArrival(db, item.shipmentNo, sanitizeUser(u));
     addAudit(db, sanitizeUser(u), 'UPDATE_DETAILED', 'detailed', `${item.shipmentNo} (#${item.rowNo})`, `ویرایش آیتم جزئیات ${item.rowNo}`);
     await saveActiveDb();
@@ -2203,15 +2321,25 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const idx = db.detailed.findIndex((d) => d.id === id);
     if (idx === -1) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const [removed] = db.detailed.splice(idx, 1);
-    db.trash.unshift({
+    const dTrash: TrashRecord = {
       id: makeId(),
       scope: 'detailed',
       deletedAt: new Date().toISOString(),
       deletedBy: u.fullName || u.username,
       targetLabel: `${removed.shipmentNo} / ${removed.packageNo || '-'} / #${removed.itemNo || removed.rowNo}`,
       data: removed,
-    });
+    };
+    db.trash.unshift(dTrash);
     renumberScope(db, 'detailed');
+    history.push({
+      labelFa: `حذف ردیف جزئیات ${removed.shipmentNo} (#${removed.rowNo})`,
+      labelEn: `Delete Detailed Row ${removed.shipmentNo} (#${removed.rowNo})`,
+      user: u.fullName || u.username,
+      changes: [
+        { scope: 'detailed', op: 'delete', id: removed.id, before: removed, index: idx },
+        { scope: 'trash', op: 'insert', id: dTrash.id, after: dTrash },
+      ],
+    });
     addAudit(db, sanitizeUser(u), 'DELETE_DETAILED', 'detailed', `${removed.shipmentNo} (#${removed.rowNo})`, `انتقال ردیف جزئیات ${removed.rowNo} به سطل بازیافت`);
     await saveActiveDb();
     return { ok: true } as T;
@@ -2349,6 +2477,12 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     db.transit.unshift(created);
     renumberScope(db, 'transit');
     rebuildCategories(db);
+    history.push({
+      labelFa: `ثبت محموله در راه ${pk || created.rowNo}`,
+      labelEn: `Add In-Transit Shipment ${pk || created.rowNo}`,
+      user: u.fullName || u.username,
+      changes: [{ scope: 'transit', op: 'insert', id: created.id, after: created }],
+    });
     addAudit(db, sanitizeUser(u), 'CREATE_TRANSIT', 'transit', pk || created.rowNo, `ثبت محموله در راه ${pk || created.rowNo}`);
     await saveActiveDb();
     return { item: created } as T;
@@ -2435,9 +2569,16 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     if (patch.overallStatus !== undefined) {
       patch.overallStatus = normalizeTransitStatus(patch.overallStatus, db.categories.transitStatus);
     }
+    const beforeTransit = { ...item };
     Object.assign(item, { ...patch, rowNo: item.rowNo, updatedAt: new Date().toISOString() });
     renumberScope(db, 'transit');
     rebuildCategories(db);
+    history.push({
+      labelFa: `ویرایش محموله در راه ${item.packingListNo || item.rowNo}`,
+      labelEn: `Edit In-Transit ${item.packingListNo || item.rowNo}`,
+      user: u.fullName || u.username,
+      changes: [{ scope: 'transit', op: 'update', id: item.id, before: beforeTransit, after: { ...item } }],
+    });
     addAudit(db, sanitizeUser(u), 'UPDATE_TRANSIT', 'transit', item.packingListNo || item.rowNo, `ویرایش محموله در راه`);
     await saveActiveDb();
     return { item } as T;
@@ -2449,15 +2590,25 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const idx = db.transit.findIndex((t) => t.id === id);
     if (idx === -1) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
     const [removed] = db.transit.splice(idx, 1);
-    db.trash.unshift({
+    const tTrash: TrashRecord = {
       id: makeId(),
       scope: 'transit',
       deletedAt: new Date().toISOString(),
       deletedBy: u.fullName || u.username,
       targetLabel: `${removed.packingListNo || '-'} (#${removed.rowNo})`,
       data: removed,
-    });
+    };
+    db.trash.unshift(tTrash);
     renumberScope(db, 'transit');
+    history.push({
+      labelFa: `حذف محموله در راه ${removed.packingListNo || removed.rowNo}`,
+      labelEn: `Delete In-Transit ${removed.packingListNo || removed.rowNo}`,
+      user: u.fullName || u.username,
+      changes: [
+        { scope: 'transit', op: 'delete', id: removed.id, before: removed, index: idx },
+        { scope: 'trash', op: 'insert', id: tTrash.id, after: tTrash },
+      ],
+    });
     addAudit(db, sanitizeUser(u), 'DELETE_TRANSIT', 'transit', removed.packingListNo || removed.rowNo, `انتقال ردیف در راه به سطل بازیافت`);
     await saveActiveDb();
     return { ok: true } as T;
@@ -5524,7 +5675,20 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       throw new StaticEngineError(errMsg('پرسش نمی‌تواند خالی باشد', 'Prompt cannot be empty'), 400);
     }
     const result = answerLocalWarehouseQuestion(
-      { general: db.general, detailed: db.detailed, transit: db.transit },
+      {
+        general: db.general,
+        detailed: db.detailed,
+        transit: db.transit,
+        gcvDocuments: db.gcvDocuments,
+        mivDocuments: db.mivDocuments,
+        opiInvitations: db.opiInvitations,
+        opiMinutes: db.opiMinutes,
+        siteEntryMinutes: db.siteEntryMinutes,
+        osdrReports: db.osdrReports,
+        substitutions: db.substitutions,
+        materialEstimates: db.materialEstimates,
+        periodicInspections: db.periodicInspections,
+      },
       question,
       lang,
     );
@@ -5535,7 +5699,20 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     requireAuth(['admin', 'operator', 'viewer']);
     const lang: Language = body.lang === 'en' ? 'en' : 'fa';
     const result = runLocalWarehouseAnalysis(
-      { general: db.general, detailed: db.detailed, transit: db.transit },
+      {
+        general: db.general,
+        detailed: db.detailed,
+        transit: db.transit,
+        gcvDocuments: db.gcvDocuments,
+        mivDocuments: db.mivDocuments,
+        opiInvitations: db.opiInvitations,
+        opiMinutes: db.opiMinutes,
+        siteEntryMinutes: db.siteEntryMinutes,
+        osdrReports: db.osdrReports,
+        substitutions: db.substitutions,
+        materialEstimates: db.materialEstimates,
+        periodicInspections: db.periodicInspections,
+      },
       lang,
     );
     return result as T;

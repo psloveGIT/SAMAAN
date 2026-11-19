@@ -250,3 +250,67 @@ test('classifyItemLocally infers category, chemicalType, and language-appropriat
   const cableFa = classifyItemLocally('Power Cable 3x120 mm2', '120mm2', 'CB-1', 'fa');
   assert.equal(cableFa.countingUnit, 'متر');
 });
+
+test('answerLocalWarehouseQuestion accurately answers "موجودی Pipe 8\"" without dumping unrelated island breakdown', () => {
+  const db = buildFixtureDb();
+  db.detailed.push(
+    {
+      ...db.detailed[0],
+      id: 'd-pipe-8',
+      shipmentNo: 'PL-PIPE-88',
+      packageNo: 'P-8',
+      itemNo: '1',
+      generalDescription: 'Pipe',
+      description: 'Seamless Carbon Steel Pipe Sch 40',
+      size: '8"',
+      itemCode: 'PIP-8',
+      packingQty: 200,
+      actualQty: 200,
+      damagedQty: 0,
+      countingUnit: 'M',
+      gcvDeliveredQty: 45,
+      mivContractorQty: 0,
+      storageLocation: 'Yard-Pipe-8',
+      merNo: '',
+      merStatus: '',
+      repNo: '',
+      repStatus: '',
+    },
+    {
+      ...db.detailed[0],
+      id: 'd-pipe-4',
+      shipmentNo: 'PL-PIPE-44',
+      packageNo: 'P-4',
+      itemNo: '1',
+      generalDescription: 'Pipe',
+      description: 'Seamless Carbon Steel Pipe Sch 40',
+      size: '4"',
+      itemCode: 'PIP-4',
+      packingQty: 50,
+      actualQty: 50,
+      damagedQty: 0,
+      countingUnit: 'M',
+      mivContractorQty: 0,
+      storageLocation: 'Yard-Pipe-4',
+      merNo: '',
+      merStatus: '',
+      repNo: '',
+      repStatus: '',
+    },
+  );
+
+  // Exact match: Pipe 8" -> Main stock = 155, Contractor stock = 45, Total = 200, location = Yard-Pipe-8
+  const pipe8Ans = answerLocalWarehouseQuestion(db, 'موجودی Pipe 8" چقدر است و در کدام انبار است؟', 'fa');
+  assert.ok(pipe8Ans.answer.includes('Yard-Pipe-8'), 'Should cite exact storage location of Pipe 8"');
+  assert.ok(pipe8Ans.answer.includes('PL-PIPE-88'), 'Should cite packing list of Pipe 8"');
+  assert.ok(pipe8Ans.answer.includes('۱۵۵') || pipe8Ans.answer.includes('155'), 'Should report exact Main Stock 155m');
+  assert.ok(pipe8Ans.answer.includes('۴۵') || pipe8Ans.answer.includes('45'), 'Should report exact Contractor Stock 45m');
+  assert.ok(!pipe8Ans.answer.includes('Yard-Pipe-4'), 'Must NOT mix Pipe 4" into Pipe 8" answer');
+  assert.ok(!pipe8Ans.answer.includes('تفکیک اقلام و موجودی بر اساس جزیره'), 'Must NOT dump unrelated island summary');
+
+  // Non-existent Pipe 16" -> honest zero-match + closest Pipe suggestions
+  const pipe16Ans = answerLocalWarehouseQuestion(db, 'موجودی Pipe 16"', 'fa');
+  assert.ok(pipe16Ans.answer.includes('یافت نشد'), 'Should honestly state Pipe 16" was not found');
+  assert.ok(pipe16Ans.answer.includes('PL-PIPE-88') || pipe16Ans.answer.includes('PL-PIPE-44'), 'Should offer closest Pipe suggestions');
+});
+

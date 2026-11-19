@@ -383,6 +383,24 @@ export const TransitView: React.FC<TransitViewProps> = ({
     setPrintOpen(true);
   };
 
+  useEffect(() => {
+    const onShortcutAction = (e: Event) => {
+      const action = (e as CustomEvent<{ action?: string }>).detail?.action;
+      if (action === 'print' || action === 'exportExcel') {
+        e.preventDefault();
+        void handleOpenPrint();
+      } else if (action === 'clearFilters') {
+        e.preventDefault();
+        setColFilters({});
+        setSortBy('');
+        setPage(1);
+        notify('info', isFa ? 'فیلترهای جدول پاک شد.' : 'Table filters cleared.');
+      }
+    };
+    window.addEventListener('samaan:shortcut-action', onShortcutAction);
+    return () => window.removeEventListener('samaan:shortcut-action', onShortcutAction);
+  });
+
   const handleBulkEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedIds.length === 0) return;

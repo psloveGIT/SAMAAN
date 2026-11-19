@@ -19,7 +19,9 @@ import {
   FolderTree,
   Globe,
   HardDriveDownload,
+  History,
   KeyRound,
+  Keyboard,
   ListChecks,
   LogOut,
   Menu,
@@ -30,6 +32,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
+  Redo2,
   Scale,
   Search,
   Shield,
@@ -39,6 +42,7 @@ import {
   Tag,
   Trash2,
   Truck,
+  Undo2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
@@ -83,6 +87,7 @@ interface LayoutProps {
   onTabChange: (tab: NavTabKey) => void;
   onOpenNewPacking: () => void;
   onOpenAiAssistant?: () => void;
+  onOpenShortcuts?: () => void;
   children: React.ReactNode;
 }
 
@@ -91,6 +96,7 @@ export const Layout: React.FC<LayoutProps> = ({
   onTabChange,
   onOpenNewPacking,
   onOpenAiAssistant,
+  onOpenShortcuts,
   children,
 }) => {
   const {
@@ -104,6 +110,11 @@ export const Layout: React.FC<LayoutProps> = ({
     setTheme,
     setEyeComfort,
     setSpellCheck,
+    shortcuts,
+    historyStatus,
+    historyBusy,
+    performUndo,
+    performRedo,
     logout,
     formatDate,
   } = useApp();
@@ -111,7 +122,20 @@ export const Layout: React.FC<LayoutProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [changePwOpen, setChangePwOpen] = React.useState(false);
   const [projectModalOpen, setProjectModalOpen] = React.useState(false);
+  const [historyMenuOpen, setHistoryMenuOpen] = React.useState(false);
   const [navQuery, setNavQuery] = React.useState('');
+  const historyMenuRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!historyMenuOpen) return;
+    const onOutside = (e: MouseEvent) => {
+      if (historyMenuRef.current && !historyMenuRef.current.contains(e.target as Node)) {
+        setHistoryMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onOutside);
+    return () => document.removeEventListener('mousedown', onOutside);
+  }, [historyMenuOpen]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState<boolean>(() => {
     try {
@@ -573,6 +597,25 @@ export const Layout: React.FC<LayoutProps> = ({
                 {t.controls.spellCheck} ({prefs.spellCheck !== false ? (isFa ? 'فعال' : 'ON') : (isFa ? 'خاموش' : 'OFF')})
               </span>
             </button>
+
+            {onOpenShortcuts && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  onOpenShortcuts();
+                }}
+                title={`${isFa ? 'تنظیمات کلیدهای میانبر' : 'Keyboard Shortcuts'} (${shortcuts.shortcutsSettings || 'Ctrl+/'})`}
+                className={`h-7 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center justify-center gap-1 whitespace-nowrap transition-colors ${
+                  sidebarCollapsed ? 'lg:hidden col-span-2' : 'col-span-2'
+                }`}
+              >
+                <Keyboard className="w-3.5 h-3.5 shrink-0 text-[var(--accent-primary)]" />
+                <span className="truncate">
+                  {isFa ? 'کلیدهای میانبر (اکسل)' : 'Shortcuts (Excel)'}
+                </span>
+              </button>
+            )}
           </div>
 
           {user && (
@@ -618,8 +661,8 @@ export const Layout: React.FC<LayoutProps> = ({
       {/* Main Content Area */}
       <div className="flex-1 min-w-0 flex flex-col overflow-x-hidden">
         {/* Strict 3-zone Top Bar */}
-        <header className="sticky top-0 z-30 h-14 px-4 lg:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-4 print:hidden">
-          <div className="flex items-center gap-3 min-w-0">
+        <header className="sticky top-0 z-30 h-14 px-4 lg:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-3 print:hidden">
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
@@ -628,6 +671,160 @@ export const Layout: React.FC<LayoutProps> = ({
             >
               <Menu className="w-5 h-5" />
             </button>
+
+            {/* Excel-style Quick Access Undo / Redo Toolbar */}
+            {canEdit && (
+              <div ref={historyMenuRef} className="relative flex items-center shrink-0">
+                <div
+                  dir="ltr"
+                  className="flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5 shadow-xs"
+                >
+                  <button
+                    type="button"
+                    data-testid="topbar-undo-btn"
+                    disabled={!historyStatus.canUndo || historyBusy}
+                    onClick={() => {
+                      void performUndo();
+                    }}
+                    aria-label={isFa ? 'بازگردانی (Undo)' : 'Undo'}
+                    title={
+                      historyStatus.canUndo
+                        ? isFa
+                          ? `بازگردانی: ${historyStatus.nextUndoLabelFa} (${shortcuts.undo || 'Ctrl+Z'})`
+                          : `Undo: ${historyStatus.nextUndoLabelEn} (${shortcuts.undo || 'Ctrl+Z'})`
+                        : isFa
+                          ? `بازگردانی (${shortcuts.undo || 'Ctrl+Z'}) — موردی برای بازگردانی نیست`
+                          : `Undo (${shortcuts.undo || 'Ctrl+Z'}) — Nothing to undo`
+                    }
+                    className="h-7 w-7 rounded-md flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] disabled:opacity-35 disabled:pointer-events-none transition-colors"
+                  >
+                    <Undo2 className="w-4 h-4" />
+                  </button>
+
+                  <div className="w-px h-4 bg-[var(--border-subtle)] mx-0.5" aria-hidden="true" />
+
+                  <button
+                    type="button"
+                    data-testid="topbar-redo-btn"
+                    disabled={!historyStatus.canRedo || historyBusy}
+                    onClick={() => {
+                      void performRedo();
+                    }}
+                    aria-label={isFa ? 'انجام مجدد (Redo)' : 'Redo'}
+                    title={
+                      historyStatus.canRedo
+                        ? isFa
+                          ? `انجام مجدد: ${historyStatus.nextRedoLabelFa} (${shortcuts.redo || 'Ctrl+Y'})`
+                          : `Redo: ${historyStatus.nextRedoLabelEn} (${shortcuts.redo || 'Ctrl+Y'})`
+                        : isFa
+                          ? `انجام مجدد (${shortcuts.redo || 'Ctrl+Y'}) — موردی برای انجام مجدد نیست`
+                          : `Redo (${shortcuts.redo || 'Ctrl+Y'}) — Nothing to redo`
+                    }
+                    className="h-7 w-7 rounded-md flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] disabled:opacity-35 disabled:pointer-events-none transition-colors"
+                  >
+                    <Redo2 className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="topbar-history-dropdown-btn"
+                    onClick={() => setHistoryMenuOpen((v) => !v)}
+                    aria-label={isFa ? 'تاریخچه عملیات' : 'Action History'}
+                    title={isFa ? 'مشاهده تاریخچه بازگردانی و انجام مجدد' : 'View Undo / Redo History'}
+                    className={`h-7 px-1 rounded-md flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] transition-colors ${
+                      historyMenuOpen ? 'bg-[var(--bg-subtle)] text-[var(--text-primary)]' : ''
+                    }`}
+                  >
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                </div>
+
+                {historyMenuOpen && (
+                  <div className="absolute top-full mt-1.5 start-0 z-50 w-72 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-xl p-2.5 space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)]">
+                      <span className="font-bold text-[var(--text-primary)] flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                        {isFa ? 'تاریخچه عملیات (اکسل)' : 'Action History'}
+                      </span>
+                      <span dir="ltr" className="text-[10px] font-mono text-[var(--text-muted)]">
+                        {shortcuts.undo || 'Ctrl+Z'} / {shortcuts.redo || 'Ctrl+Y'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-semibold text-[var(--text-muted)]">
+                        {isFa
+                          ? `قابل بازگردانی (${historyStatus.undoCount})`
+                          : `Undo Stack (${historyStatus.undoCount})`}
+                      </div>
+                      {historyStatus.undoStack.length === 0 ? (
+                        <div className="text-[11px] text-[var(--text-muted)] py-1">
+                          {isFa ? 'عملیاتی ثبت نشده است.' : 'No recorded actions yet.'}
+                        </div>
+                      ) : (
+                        <div className="max-h-36 overflow-y-auto space-y-1">
+                          {historyStatus.undoStack.map((item, idx) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              disabled={idx !== 0 || historyBusy}
+                              onClick={() => {
+                                setHistoryMenuOpen(false);
+                                void performUndo();
+                              }}
+                              className={`w-full px-2 py-1.5 rounded-lg text-start flex items-center justify-between gap-2 ${
+                                idx === 0
+                                  ? 'bg-[var(--accent-soft)]/70 text-[var(--text-primary)] hover:bg-[var(--accent-soft)] font-medium'
+                                  : 'text-[var(--text-muted)] opacity-75 cursor-default'
+                              }`}
+                            >
+                              <span className="truncate">{isFa ? item.labelFa : item.labelEn}</span>
+                              {idx === 0 && (
+                                <Undo2 className="w-3.5 h-3.5 shrink-0 text-[var(--accent-primary)]" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {historyStatus.redoStack.length > 0 && (
+                      <div className="space-y-1 pt-1.5 border-t border-[var(--border-subtle)]">
+                        <div className="text-[10px] font-semibold text-[var(--text-muted)]">
+                          {isFa
+                            ? `قابل انجام مجدد (${historyStatus.redoCount})`
+                            : `Redo Stack (${historyStatus.redoCount})`}
+                        </div>
+                        <div className="max-h-28 overflow-y-auto space-y-1">
+                          {historyStatus.redoStack.map((item, idx) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              disabled={idx !== 0 || historyBusy}
+                              onClick={() => {
+                                setHistoryMenuOpen(false);
+                                void performRedo();
+                              }}
+                              className={`w-full px-2 py-1.5 rounded-lg text-start flex items-center justify-between gap-2 ${
+                                idx === 0
+                                  ? 'bg-[var(--bg-subtle)] text-[var(--text-primary)] hover:bg-[var(--accent-soft)] font-medium'
+                                  : 'text-[var(--text-muted)] opacity-75 cursor-default'
+                              }`}
+                            >
+                              <span className="truncate">{isFa ? item.labelFa : item.labelEn}</span>
+                              {idx === 0 && (
+                                <Redo2 className="w-3.5 h-3.5 shrink-0 text-[var(--accent-primary)]" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <h2 className="text-sm lg:text-base font-bold text-[var(--text-primary)] truncate">
               {activeTitle}
             </h2>
@@ -647,10 +844,23 @@ export const Layout: React.FC<LayoutProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {onOpenShortcuts && (
+              <button
+                type="button"
+                data-testid="topbar-shortcuts-btn"
+                onClick={onOpenShortcuts}
+                title={`${isFa ? 'کلیدهای میانبر و شخصی‌سازی' : 'Keyboard Shortcuts & Settings'} (${shortcuts.shortcutsSettings || 'Ctrl+/'})`}
+                className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+              >
+                <Keyboard className="w-4 h-4 text-[var(--accent-primary)]" />
+                <span className="hidden xl:inline">{isFa ? 'میانبرها' : 'Shortcuts'}</span>
+              </button>
+            )}
             {onOpenAiAssistant && (
               <button
                 type="button"
                 onClick={onOpenAiAssistant}
+                title={`${isFa ? 'دستیار هوشمند' : 'AI Assistant'} (${shortcuts.aiAssistant || 'Ctrl+K'})`}
                 className="h-9 px-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] hover:bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -662,6 +872,7 @@ export const Layout: React.FC<LayoutProps> = ({
               <button
                 type="button"
                 onClick={onOpenNewPacking}
+                title={`${t.controls.newPacking} (${shortcuts.newPacking || 'Alt+N'})`}
                 className="h-9 px-3 sm:px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
               >
                 <Plus className="w-4 h-4" />

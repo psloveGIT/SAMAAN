@@ -246,6 +246,7 @@ export interface UserPreferences {
   theme: ThemeMode;
   eyeComfort: boolean;
   spellCheck?: boolean;
+  shortcuts?: Record<string, string>;
 }
 
 export interface UserAccount {
@@ -807,6 +808,7 @@ export interface AuditLogEntry {
     | 'category'
     | 'import'
     | 'backup'
+    | 'history'
     | 'user';
   targetId: string;
   summary: string;

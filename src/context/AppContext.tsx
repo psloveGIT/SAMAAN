@@ -5,6 +5,13 @@ import { resolveEmployerProfile } from '../shared/employers.ts';
 import type { ResolvedEmployerProfile } from '../shared/employers.ts';
 import { formatIsoDate, formatTimestampByCalendar } from '../shared/jalali.ts';
 import { getTranslations } from '../shared/i18n.ts';
+import {
+  DEFAULT_SHORTCUT_MAP,
+  mergeUserShortcuts,
+  normalizeCombo,
+  type ShortcutActionId,
+} from '../shared/shortcuts.ts';
+import type { HistoryStatus } from '../shared/undoHistory.ts';
 import type {
   CalendarMode,
   DatabaseSnapshot,
@@ -20,12 +27,26 @@ import type {
 
 const PREFS_STORAGE_KEY = 'samaan_user_preferences_v1';
 
+const EMPTY_HISTORY_STATUS: HistoryStatus = {
+  canUndo: false,
+  canRedo: false,
+  undoCount: 0,
+  redoCount: 0,
+  nextUndoLabelFa: null,
+  nextUndoLabelEn: null,
+  nextRedoLabelFa: null,
+  nextRedoLabelEn: null,
+  undoStack: [],
+  redoStack: [],
+};
+
 const INITIAL_PREFS: UserPreferences = {
   language: 'fa',
   calendar: 'jalali',
   theme: 'dark',
   eyeComfort: false,
   spellCheck: true,
+  shortcuts: {},
 };
 
 function readStoredPrefs(): UserPreferences {
@@ -39,6 +60,7 @@ function readStoredPrefs(): UserPreferences {
       theme: parsed.theme === 'light' ? 'light' : 'dark',
       eyeComfort: Boolean(parsed.eyeComfort),
       spellCheck: parsed.spellCheck !== false,
+      shortcuts: parsed.shortcuts && typeof parsed.shortcuts === 'object' ? parsed.shortcuts : {},
     };
   } catch {
     return INITIAL_PREFS;
@@ -91,6 +113,15 @@ interface AppContextValue {
   setTheme: (theme: ThemeMode) => void;
   setEyeComfort: (enabled: boolean) => void;
   setSpellCheck: (enabled: boolean) => void;
+  shortcuts: Record<ShortcutActionId, string>;
+  setShortcut: (actionId: ShortcutActionId, combo: string, swapWithId?: ShortcutActionId) => void;
+  resetShortcut: (actionId: ShortcutActionId) => void;
+  resetAllShortcuts: () => void;
+  historyStatus: HistoryStatus;
+  historyBusy: boolean;
+  refreshHistoryStatus: () => Promise<void>;
+  performUndo: () => Promise<boolean>;
+  performRedo: () => Promise<boolean>;
   refreshAuth: () => Promise<void>;
   setAuthenticatedUser: (u: UserAccount | null) => void;
   logout: () => Promise<void>;
@@ -113,6 +144,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [employers, setEmployers] = useState<EmployerProfile[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string>(() => getActiveProjectId());
+  const [historyStatus, setHistoryStatus] = useState<HistoryStatus>(EMPTY_HISTORY_STATUS);
+  const [historyBusy, setHistoryBusy] = useState(false);
 
   const applyDocumentPrefs = useCallback((p: UserPreferences) => {
     const root = document.documentElement;
@@ -345,6 +378,156 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setEyeComfort = useCallback((eyeComfort: boolean) => updatePrefs({ eyeComfort }), [updatePrefs]);
   const setSpellCheck = useCallback((spellCheck: boolean) => updatePrefs({ spellCheck }), [updatePrefs]);
 
+  const shortcuts = useMemo(() => mergeUserShortcuts(prefs.shortcuts), [prefs.shortcuts]);
+
+  const setShortcut = useCallback(
+    (actionId: ShortcutActionId, combo: string, swapWithId?: ShortcutActionId) => {
+      const normalized = combo === '' ? '' : normalizeCombo(combo);
+      setPrefs((prev) => {
+        const currentEffective = mergeUserShortcuts(prev.shortcuts);
+        const nextCustom: Record<string, string> = { ...(prev.shortcuts || {}) };
+        if (swapWithId && swapWithId !== actionId) {
+          const prevComboForAction = currentEffective[actionId] || '';
+          if (prevComboForAction === DEFAULT_SHORTCUT_MAP[swapWithId]) {
+            delete nextCustom[swapWithId];
+          } else {
+            nextCustom[swapWithId] = prevComboForAction;
+          }
+        }
+        if (normalized === DEFAULT_SHORTCUT_MAP[actionId]) {
+          delete nextCustom[actionId];
+        } else {
+          nextCustom[actionId] = normalized;
+        }
+        const next: UserPreferences = { ...prev, shortcuts: nextCustom };
+        if (user) {
+          apiRequest<{ user: UserAccount }>('/api/auth/preferences', {
+            method: 'PATCH',
+            body: JSON.stringify(next),
+          }).catch(() => {});
+        }
+        return next;
+      });
+    },
+    [user],
+  );
+
+  const resetShortcut = useCallback(
+    (actionId: ShortcutActionId) => {
+      setPrefs((prev) => {
+        const nextCustom: Record<string, string> = { ...(prev.shortcuts || {}) };
+        delete nextCustom[actionId];
+        const next: UserPreferences = { ...prev, shortcuts: nextCustom };
+        if (user) {
+          apiRequest<{ user: UserAccount }>('/api/auth/preferences', {
+            method: 'PATCH',
+            body: JSON.stringify(next),
+          }).catch(() => {});
+        }
+        return next;
+      });
+    },
+    [user],
+  );
+
+  const resetAllShortcuts = useCallback(() => {
+    updatePrefs({ shortcuts: {} });
+  }, [updatePrefs]);
+
+  const refreshHistoryStatus = useCallback(async () => {
+    if (!user) {
+      setHistoryStatus(EMPTY_HISTORY_STATUS);
+      return;
+    }
+    try {
+      const status = await apiRequest<HistoryStatus>('/api/history/status');
+      setHistoryStatus(status);
+    } catch {
+      // ignore transient errors
+    }
+  }, [user]);
+
+  useEffect(() => {
+    refreshHistoryStatus();
+  }, [refreshHistoryStatus, activeProjectId]);
+
+  useEffect(() => {
+    if (!user) return;
+    const onMutation = () => {
+      void refreshHistoryStatus();
+    };
+    window.addEventListener('samaan:mutation-done', onMutation);
+    return () => window.removeEventListener('samaan:mutation-done', onMutation);
+  }, [user, refreshHistoryStatus]);
+
+  const performUndo = useCallback(async (): Promise<boolean> => {
+    if (!user || user.role === 'viewer' || historyBusy) return false;
+    if (!historyStatus.canUndo) {
+      notify(
+        'info',
+        prefs.language === 'fa' ? 'عملیاتی برای بازگردانی وجود ندارد.' : 'Nothing to undo.',
+      );
+      return false;
+    }
+    setHistoryBusy(true);
+    try {
+      const res = await apiRequest<{
+        ok: boolean;
+        undone: { labelFa: string; labelEn: string };
+        status: HistoryStatus;
+      }>('/api/history/undo', { method: 'POST' });
+      setHistoryStatus(res.status);
+      window.dispatchEvent(new CustomEvent('samaan:history-applied', { detail: { direction: 'undo' } }));
+      notify(
+        'success',
+        prefs.language === 'fa'
+          ? `بازگردانی انجام شد: ${res.undone.labelFa}`
+          : `Undone: ${res.undone.labelEn}`,
+      );
+      return true;
+    } catch (err) {
+      notify('warning', err instanceof Error ? err.message : 'Undo failed');
+      await refreshHistoryStatus();
+      return false;
+    } finally {
+      setHistoryBusy(false);
+    }
+  }, [user, historyBusy, historyStatus.canUndo, prefs.language, notify, refreshHistoryStatus]);
+
+  const performRedo = useCallback(async (): Promise<boolean> => {
+    if (!user || user.role === 'viewer' || historyBusy) return false;
+    if (!historyStatus.canRedo) {
+      notify(
+        'info',
+        prefs.language === 'fa' ? 'عملیاتی برای انجام مجدد وجود ندارد.' : 'Nothing to redo.',
+      );
+      return false;
+    }
+    setHistoryBusy(true);
+    try {
+      const res = await apiRequest<{
+        ok: boolean;
+        redone: { labelFa: string; labelEn: string };
+        status: HistoryStatus;
+      }>('/api/history/redo', { method: 'POST' });
+      setHistoryStatus(res.status);
+      window.dispatchEvent(new CustomEvent('samaan:history-applied', { detail: { direction: 'redo' } }));
+      notify(
+        'success',
+        prefs.language === 'fa'
+          ? `انجام مجدد اعمال شد: ${res.redone.labelFa}`
+          : `Redone: ${res.redone.labelEn}`,
+      );
+      return true;
+    } catch (err) {
+      notify('warning', err instanceof Error ? err.message : 'Redo failed');
+      await refreshHistoryStatus();
+      return false;
+    } finally {
+      setHistoryBusy(false);
+    }
+  }, [user, historyBusy, historyStatus.canRedo, prefs.language, notify, refreshHistoryStatus]);
+
   const setAuthenticatedUser = useCallback((u: UserAccount | null) => {
     setUser(u);
     setNeedsSetup(false);
@@ -423,6 +606,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTheme,
       setEyeComfort,
       setSpellCheck,
+      shortcuts,
+      setShortcut,
+      resetShortcut,
+      resetAllShortcuts,
+      historyStatus,
+      historyBusy,
+      refreshHistoryStatus,
+      performUndo,
+      performRedo,
       refreshAuth,
       setAuthenticatedUser,
       logout,
@@ -458,6 +650,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTheme,
       setEyeComfort,
       setSpellCheck,
+      shortcuts,
+      setShortcut,
+      resetShortcut,
+      resetAllShortcuts,
+      historyStatus,
+      historyBusy,
+      refreshHistoryStatus,
+      performUndo,
+      performRedo,
       refreshAuth,
       setAuthenticatedUser,
       logout,
