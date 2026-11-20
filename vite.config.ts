@@ -11,7 +11,7 @@ export default defineConfig(() => {
       react(),
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         includeAssets: [
           'favicon.svg',
           'apple-touch-icon.png',
@@ -52,12 +52,12 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          skipWaiting: true,
           clientsClaim: true,
           cleanupOutdatedCaches: true,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+          globIgnores: ['**/app-version.json'],
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
-          navigateFallbackDenylist: [/^\/api\//],
+          navigateFallbackDenylist: [/^\/api\//, /app-version\.json$/],
         },
         devOptions: {
           enabled: false,

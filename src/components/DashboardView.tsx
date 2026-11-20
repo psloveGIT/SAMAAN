@@ -128,12 +128,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   if (isEmpty) {
     return (
-      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-10 text-center max-w-2xl mx-auto my-8 space-y-4">
-        <div className="w-12 h-12 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center mx-auto">
+      <div className="samaan-animate-in rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-10 text-center max-w-2xl mx-auto my-8 space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center mx-auto">
           <PackageCheck className="w-6 h-6" />
         </div>
-        <h3 className="text-lg font-bold">{t.brandFull}</h3>
-        <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+        <h3 className="text-lg font-bold tracking-tight">{t.brandFull}</h3>
+        <p className="text-sm text-[var(--text-secondary)] leading-relaxed max-w-lg mx-auto">
           {t.controls.emptyStartHint}
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -142,7 +142,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenNewPacking}
-                className="h-10 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
+                className="h-10 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2 shadow-[0_1px_2px_rgba(13,122,114,0.28)] transition-all"
               >
                 <Plus className="w-4 h-4" />
                 <span>{t.controls.newPacking}</span>
@@ -150,7 +150,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigate('backup')}
-                className="h-10 px-5 rounded-lg border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-semibold flex items-center gap-2"
+                className="h-10 px-5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-xs font-semibold flex items-center gap-2 transition-colors"
               >
                 <FileSpreadsheet className="w-4 h-4" />
                 <span>{t.controls.goToImport}</span>
@@ -242,41 +242,92 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     },
   ];
 
-  return (
-    <div className="space-y-6">
-      {/* KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        {kpis.map((k) => (
-          <div
-            key={k.label}
-            className="min-w-0 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-col justify-between overflow-hidden"
-          >
-            <div className="text-xs font-medium text-[var(--text-secondary)] leading-snug">{k.label}</div>
+  const primaryKpis = kpis.slice(0, 4);
+  const secondaryKpis = kpis.slice(4, 8);
+
+  const renderUnifiedStrip = (
+    items: typeof kpis,
+    keyPrefix: string,
+  ) => (
+    <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+        {items.map((k, idx) => {
+          const dotColor =
+            k.tone === 'danger'
+              ? 'bg-[var(--status-danger)]'
+              : k.tone === 'warning'
+                ? 'bg-[var(--status-warning)]'
+                : k.tone === 'accent'
+                  ? 'bg-[var(--accent-primary)]'
+                  : 'bg-[var(--border-strong)]';
+          const cellBorder = [
+            idx < 3 ? 'border-b sm:border-b-0' : '',
+            idx < 2 ? 'sm:border-b lg:border-b-0' : '',
+            idx % 2 === 0 ? 'sm:border-e' : '',
+            idx < 3 ? 'lg:border-e' : 'lg:border-e-0',
+          ]
+            .filter(Boolean)
+            .join(' ');
+          return (
             <div
-              className={`mt-2 font-bold tabular-nums break-words ${
-                k.compactValue || k.value.length > 10 ? 'text-lg sm:text-xl leading-tight' : 'text-2xl'
-              } ${
-                k.tone === 'danger'
-                  ? 'text-[var(--status-danger)]'
-                  : k.tone === 'warning'
-                    ? 'text-[var(--status-warning)]'
-                    : k.tone === 'accent'
-                      ? 'text-[var(--accent-primary)]'
-                      : 'text-[var(--text-primary)]'
-              }`}
+              key={`${keyPrefix}-${k.label}`}
+              className={`min-w-0 px-5 py-4.5 flex flex-col justify-between border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]/35 transition-colors ${cellBorder}`}
             >
-              {k.value}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} aria-hidden="true" />
+                <span className="text-xs font-medium text-[var(--text-secondary)] leading-snug truncate">
+                  {k.label}
+                </span>
+              </div>
+              <div
+                className={`mt-2.5 font-bold tracking-tight tabular-nums break-words ${
+                  k.compactValue || k.value.length > 10 ? 'text-xl sm:text-[22px] leading-tight' : 'text-2xl sm:text-[26px] leading-none'
+                } ${
+                  k.tone === 'danger'
+                    ? 'text-[var(--status-danger)]'
+                    : k.tone === 'warning'
+                      ? 'text-[var(--status-warning)]'
+                      : k.tone === 'accent'
+                        ? 'text-[var(--accent-primary)]'
+                        : 'text-[var(--text-primary)]'
+                }`}
+              >
+                {k.value}
+              </div>
+              {k.sub ? (
+                <div className="mt-1.5 text-[11px] text-[var(--text-muted)] tabular-nums break-words">
+                  {k.sub}
+                </div>
+              ) : (
+                <div className="mt-1.5 text-[11px] text-transparent select-none" aria-hidden="true">
+                  ·
+                </div>
+              )}
             </div>
-            {k.sub && (
-              <div className="mt-1 text-[11px] text-[var(--text-muted)] tabular-nums break-words">{k.sub}</div>
-            )}
-          </div>
-        ))}
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const getTransitStatusDot = (status: string) => {
+    const s = status.toLowerCase();
+    if (s.includes('رسیده') || s.includes('arriv')) return 'bg-[var(--status-success)]';
+    if (s.includes('ارسال') || s.includes('ship') || s.includes('transit')) return 'bg-[var(--status-warning)]';
+    return 'bg-[var(--accent-primary)]';
+  };
+
+  return (
+    <div className="space-y-5 samaan-animate-in">
+      {/* Unified Single-Elevation KPI Strips */}
+      <div className="space-y-3.5">
+        {renderUnifiedStrip(primaryKpis, 'primary')}
+        {renderUnifiedStrip(secondaryKpis, 'secondary')}
       </div>
 
       {/* Chemical Expiration Warning Alert */}
       {expiringChemicals.length > 0 && (
-        <div className="rounded-xl border border-[var(--status-danger)] bg-[var(--status-danger-bg)] p-4 space-y-3">
+        <div className="rounded-2xl border border-[var(--status-danger)]/35 bg-[var(--status-danger-bg)] p-4.5 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
               <FlaskConical className="w-4 h-4 shrink-0" />
@@ -325,12 +376,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       )}
 
       {/* Main Analytics Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Monthly Trend in Active Calendar */}
-        <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5">
+        <div className="lg:col-span-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <div>
-              <h3 className="text-sm font-bold">
+              <h3 className="text-sm font-bold tracking-tight">
                 {isFa ? 'روند ورود ماهانه اقلام' : 'Monthly Arrival Activity'}
               </h3>
               <p className="text-xs text-[var(--text-muted)] mt-0.5">
@@ -352,7 +403,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   aria-label={isFa ? 'انتخاب سال روند ماهانه' : 'Select Year'}
                   value={activeYear}
                   onChange={(e) => setSelectedYear(e.target.value)}
-                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-semibold tabular-nums"
+                  className="h-8 px-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-semibold tabular-nums"
                 >
                   {availableYears.map((yr) => (
                     <option key={yr} value={yr}>
@@ -369,17 +420,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {t.controls.noData}
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {activeMonthlyTrend.map((m) => {
                 const total = m.generalRows + m.detailedRows;
                 const pct = total > 0 ? Math.max(4, Math.round((total / maxTrendVal) * 100)) : 0;
                 return (
                   <div key={m.monthKey} className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-[var(--text-primary)]">
+                      <span className={total > 0 ? 'font-semibold text-[var(--text-primary)]' : 'font-normal text-[var(--text-muted)]'}>
                         {formatMonthLabel(m.monthKey, prefs.calendar, prefs.language)}
                       </span>
-                      <span className="text-[var(--text-muted)] tabular-nums">
+                      <span className={`text-[11px] tabular-nums ${total > 0 ? 'font-semibold text-[var(--accent-primary)]' : 'text-[var(--text-muted)]/70'}`}>
                         {total === 0 ? (
                           isFa ? '۰' : '0'
                         ) : (
@@ -391,9 +442,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         )}
                       </span>
                     </div>
-                    <div className="h-2.5 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
+                    <div className="h-2 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-[var(--accent-primary)] transition-all"
+                        className="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-300"
                         style={{ width: `${pct}%` }}
                       />
                     </div>
@@ -405,37 +456,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Transit Pipeline */}
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5">
-          <div>
-            <h3 className="text-sm font-bold mb-3">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 flex flex-col">
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <h3 className="text-sm font-bold tracking-tight">
               {isFa ? 'وضعیت محموله‌های در راه' : 'In-Transit Pipeline'}
             </h3>
-            {data.transitByStatus.length === 0 ? (
-              <p className="text-xs text-[var(--text-muted)]">{t.controls.noData}</p>
-            ) : (
-              <div className="space-y-2">
-                {data.transitByStatus.map((row) => (
-                  <div
-                    key={row.status}
-                    className="flex items-center justify-between py-1.5 border-b border-[var(--border-subtle)] last:border-0 text-xs"
-                  >
-                    <span className="font-medium text-[var(--text-secondary)]">{row.status}</span>
-                    <span className="font-bold tabular-nums">{fmt(row.count)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => onNavigate('transit')}
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-0.5"
+            >
+              <span>{isFa ? 'جزئیات' : 'Details'}</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
           </div>
+          {data.transitByStatus.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center py-8 text-xs text-[var(--text-muted)]">
+              {t.controls.noData}
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--border-subtle)]">
+              {data.transitByStatus.map((row) => (
+                <div
+                  key={row.status}
+                  className="flex items-center justify-between py-3 first:pt-1 last:pb-1 text-xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${getTransitStatusDot(row.status)}`} />
+                    <span className="font-medium text-[var(--text-secondary)] truncate">{row.status}</span>
+                  </div>
+                  <span className="font-bold text-sm text-[var(--text-primary)] tabular-nums">
+                    {fmt(row.count)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Active Monitoring Panels (Shortages, Expiring Chemicals, Replaced, Discrepancy/Damaged) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* اقلام دارای کسری فعال */}
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
-              <AlertTriangle className="w-4 h-4" />
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+              <span className="w-2 h-2 rounded-full bg-[var(--status-danger)]" />
+              <AlertTriangle className="w-4 h-4 text-[var(--status-danger)]" />
               <span>
                 {isFa
                   ? `اقلام دارای کسری فعال (${fmt(data.counts.shortageItemsCount)})`
@@ -488,10 +555,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* مواد شیمیایی با تاریخ انقضای زیر یک ماه */}
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
-              <FlaskConical className="w-4 h-4" />
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+              <span className="w-2 h-2 rounded-full bg-[var(--status-danger)]" />
+              <FlaskConical className="w-4 h-4 text-[var(--status-danger)]" />
               <span>
                 {isFa
                   ? `مواد شیمیایی با تاریخ انقضای زیر یک ماه (${fmt(expiringChemicals.length)})`
@@ -547,10 +615,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* اقلام جایگزین شده فعال */}
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
-              <ClipboardList className="w-4 h-4" />
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+              <span className="w-2 h-2 rounded-full bg-[var(--status-warning)]" />
+              <ClipboardList className="w-4 h-4 text-[var(--status-warning)]" />
               <span>
                 {isFa
                   ? `اقلام جایگزین شده فعال (${fmt(openRepCount)})`
@@ -604,10 +673,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* اقلام دارای مغایرت یا آسیب‌دیدگی فعال */}
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
-              <ClipboardList className="w-4 h-4" />
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+              <span className="w-2 h-2 rounded-full bg-[var(--status-warning)]" />
+              <ClipboardList className="w-4 h-4 text-[var(--status-warning)]" />
               <span>
                 {isFa
                   ? `اقلام دارای مغایرت یا آسیب‌دیدگی فعال (${fmt(openMerCount)})`
@@ -668,9 +738,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Island Breakdown Table */}
       {data.byIsland.length > 0 && (
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-x-clip">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <h3 className="text-sm font-bold">
+            <h3 className="text-sm font-bold tracking-tight">
               {isFa ? 'تفکیک اقلام و موجودی بر اساس جزیره' : 'Breakdown by Island'}
             </h3>
           </div>
@@ -742,10 +812,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Damaged Items Summary if any */}
       {data.topDamaged.length > 0 && (
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
           <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-warning)]">
-              <AlertTriangle className="w-4 h-4" />
+            <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+              <span className="w-2 h-2 rounded-full bg-[var(--status-warning)]" />
+              <AlertTriangle className="w-4 h-4 text-[var(--status-warning)]" />
               <span>{isFa ? 'اقلام آسیب‌دیده ثبت‌شده' : 'Damaged Items'}</span>
             </div>
             <button

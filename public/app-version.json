@@ -1,0 +1,81 @@
+{
+  "version": "2.5.1",
+  "buildId": "2026.05.20-2",
+  "releasedAt": "2026-05-20",
+  "latestRelease": {
+    "version": "2.5.1",
+    "buildId": "2026.05.20-2",
+    "releasedAt": "2026-05-20",
+    "titleFa": "بازطراحی کامل ظاهر مدرن، خلوت و کاربرپسند برنامه",
+    "titleEn": "Modern Scandinavian-Industrial Visual Redesign",
+    "changesFa": [
+      "بازطراحی کامل پالت رنگی روشن و تیره با کنتراست خوانا، سطوح مسطح مدرن و تفکیک بصری دقیق",
+      "نوار شاخص‌های کلیدی (KPI) یکپارچه در داشبورد با خطوط جداکننده ظریف و سلسله‌مراتب تایپوگرافی شفاف",
+      "ساده‌سازی و خلوت‌سازی منوی کناری با داک فشرده تنظیمات سریع، آواتار کاربری و مسیر راهنمای صفحه در نوار بالا",
+      "جایگزینی برچسب‌های شلوغ جداول با نشانگرهای نقطه‌ای مینیمال و ارتقای نمایش تصاویر اقلام تجهیزات"
+    ],
+    "changesEn": [
+      "Redesigned Light & Dark palettes with crisp hairline borders, balanced contrast, and refined deep-teal accent",
+      "Unified single-elevation KPI metric strips in Dashboard with hairline dividers and crisp tabular figures",
+      "Decluttered sidebar with a compact quick-controls icon dock, user avatar row, and top-bar breadcrumbs",
+      "Replaced dense table status pills with calm minimal semantic dot indicators and polished photo thumbnails"
+    ]
+  },
+  "changelog": [
+    {
+      "version": "2.5.1",
+      "buildId": "2026.05.20-2",
+      "releasedAt": "2026-05-20",
+      "titleFa": "بازطراحی کامل ظاهر مدرن، خلوت و کاربرپسند برنامه",
+      "titleEn": "Modern Scandinavian-Industrial Visual Redesign",
+      "changesFa": [
+        "بازطراحی کامل پالت رنگی روشن و تیره با کنتراست خوانا، سطوح مسطح مدرن و تفکیک بصری دقیق",
+        "نوار شاخص‌های کلیدی (KPI) یکپارچه در داشبورد با خطوط جداکننده ظریف و سلسله‌مراتب تایپوگرافی شفاف",
+        "ساده‌سازی و خلوت‌سازی منوی کناری با داک فشرده تنظیمات سریع، آواتار کاربری و مسیر راهنمای صفحه در نوار بالا",
+        "جایگزینی برچسب‌های شلوغ جداول با نشانگرهای نقطه‌ای مینیمال و ارتقای نمایش تصاویر اقلام تجهیزات"
+      ],
+      "changesEn": [
+        "Redesigned Light & Dark palettes with crisp hairline borders, balanced contrast, and refined deep-teal accent",
+        "Unified single-elevation KPI metric strips in Dashboard with hairline dividers and crisp tabular figures",
+        "Decluttered sidebar with a compact quick-controls icon dock, user avatar row, and top-bar breadcrumbs",
+        "Replaced dense table status pills with calm minimal semantic dot indicators and polished photo thumbnails"
+      ]
+    },
+    {
+      "version": "2.5.0",
+      "buildId": "2026.05.20-1",
+      "releasedAt": "2026-05-20",
+      "titleFa": "تصویر اقلام تجهیزات و سامانه هوشمند اطلاع‌رسانی بروزرسانی",
+      "titleEn": "Equipment Item Photos & Smart Non-Intrusive Update Center",
+      "changesFa": [
+        "افزودن قابلیت اختصاص تصویر برای هر قلم در بخش ثبت جزئیات تجهیزات با پشتیبانی از کشیدن و رها کردن (Drag & Drop) و پیش‌نمایش تمام‌صفحه با کلیک روی هر ردیف",
+        "افزودن سیستم اطلاع‌رسانی هوشمند بروزرسانی برنامه با نمایش فهرست تغییرات و انتخاب «بروزرسانی همین الان» یا «بعداً» بدون ایجاد مزاحمت هنگام کار",
+        "تشخیص خودکار تغییرات چه در حین باز بودن برنامه و چه پس از بستن و باز کردن مجدد نرم‌افزار"
+      ],
+      "changesEn": [
+        "Added equipment photo attachment for Detailed items with Drag & Drop upload and click-to-preview full-screen lightbox",
+        "Added non-intrusive app update notification with release notes and Update Now / Later choices",
+        "Automatic update detection both while the app is open and upon closing and reopening"
+      ]
+    },
+    {
+      "version": "2.4.0",
+      "buildId": "2026.05.12-1",
+      "releasedAt": "2026-05-12",
+      "titleFa": "بازگردانی سراسری (Undo/Redo)، صفحه‌بندی یکپارچه و بهینه‌سازی چاپ",
+      "titleEn": "Universal Undo/Redo, Unified Pagination & Print Header Repetition",
+      "changesFa": [
+        "پشتیبانی سراسری از دکمه‌های بازگردانی و انجام مجدد (Ctrl+Z / Ctrl+Y) در تمام بخش‌های نرم‌افزار",
+        "افزودن کنترل انتخاب تعداد ردیف در صفحه و دکمه «انتخاب صفحه» به تمام جداول برنامه",
+        "تکرار خودکار تیتر ستون‌ها در بالای تمامی صفحات خروجی چاپگر",
+        "بهبود نمایش دسته‌بندی تخصصی اقلام به زبان فارسی/انگلیسی خالص و بهینه‌سازی قوانین بازیابی سطل بازیافت"
+      ],
+      "changesEn": [
+        "Universal Undo/Redo (Ctrl+Z / Ctrl+Y) support across every section of the application",
+        "Added rows-per-page selector and Select Page control across all data tables",
+        "Automatic repeating table headers across all printed pages",
+        "Strict language-matched specialized category labels and unified duplicate validation on Recycle Bin restore"
+      ]
+    }
+  ]
+}

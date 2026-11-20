@@ -870,9 +870,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 samaan-animate-in">
       {/* Hidden-Field Filters & Actions Toolbar */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-4.5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold text-[var(--text-secondary)]">
@@ -1073,9 +1073,9 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       {/* Select-All Table Bar & Bulk Operations Bar */}
       {(data?.total || 0) > 0 && (
         <div
-          className={`rounded-xl border px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs ${
+          className={`rounded-2xl border px-4.5 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-[var(--shadow-card)] ${
             selectedCount > 0
-              ? 'border-[var(--accent-primary)]/40 bg-[var(--accent-soft)]'
+              ? 'border-[var(--accent-primary)]/35 bg-[var(--accent-soft)]'
               : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
           }`}
         >
@@ -1153,7 +1153,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       )}
 
       {/* Table */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-x-clip">
         <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">

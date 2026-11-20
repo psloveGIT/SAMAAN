@@ -373,6 +373,8 @@ export interface DetailedEntry {
   chemicalType?: string; // نوع ماده شیمیایی
   productionDate?: string; // تاریخ تولید ماده شیمیایی (ISO YYYY-MM-DD)
   expirationDate?: string; // تاریخ انقضاء ماده شیمیایی (ISO YYYY-MM-DD)
+  itemImage?: string; // تصویر اصلی تجهیز (Data URL فشرده‌شده)
+  itemImageThumb?: string; // تصویر بندانگشتی جهت نمایش سریع در جدول
   shortageBackfills: ShortageBackfillRecord[]; // Later deliveries filling کسری
   createdAt: string;
   updatedAt: string;
@@ -390,6 +392,7 @@ export interface DetailedComputed extends DetailedEntry {
   hasShortage: boolean;
   hasDamaged: boolean;
   opiPending: boolean;
+  hasImage: boolean;
 }
 
 export interface TransitEntry {

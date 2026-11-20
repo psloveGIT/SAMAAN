@@ -137,6 +137,7 @@ export function computeDetailedEntry(entry: DetailedEntry): DetailedComputed {
     hasShortage: shortage > 0,
     hasDamaged: damagedQty > 0,
     opiPending: !opiRecorded,
+    hasImage: Boolean(entry.itemImage || entry.itemImageThumb),
   };
 }
 

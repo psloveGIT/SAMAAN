@@ -43,7 +43,7 @@ const EMPTY_HISTORY_STATUS: HistoryStatus = {
 const INITIAL_PREFS: UserPreferences = {
   language: 'fa',
   calendar: 'jalali',
-  theme: 'dark',
+  theme: 'light',
   eyeComfort: false,
   spellCheck: true,
   shortcuts: {},
@@ -57,7 +57,7 @@ function readStoredPrefs(): UserPreferences {
     return {
       language: parsed.language === 'en' ? 'en' : 'fa',
       calendar: parsed.calendar === 'gregorian' ? 'gregorian' : 'jalali',
-      theme: parsed.theme === 'light' ? 'light' : 'dark',
+      theme: parsed.theme === 'dark' ? 'dark' : 'light',
       eyeComfort: Boolean(parsed.eyeComfort),
       spellCheck: parsed.spellCheck !== false,
       shortcuts: parsed.shortcuts && typeof parsed.shortcuts === 'object' ? parsed.shortcuts : {},

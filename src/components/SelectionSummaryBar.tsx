@@ -97,7 +97,7 @@ const SelectionSummaryBarInner: React.FC<SelectionSummaryBarProps> = ({
   const packingsByIsland = scope === 'general' ? summary.packingsByIsland || [] : [];
 
   return (
-    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 space-y-2.5">
+    <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] px-4.5 py-3 space-y-2.5">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-[var(--accent-primary)]">
@@ -141,7 +141,7 @@ const SelectionSummaryBarInner: React.FC<SelectionSummaryBarProps> = ({
             <button
               type="button"
               onClick={onClearSelection}
-              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] flex items-center gap-1 whitespace-nowrap"
+              className="h-8 px-3 rounded-xl border border-[var(--border-subtle)] text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] flex items-center gap-1 whitespace-nowrap transition-colors"
             >
               <X className="w-3.5 h-3.5" />
               <span>{t.controls.clearSelection}</span>
@@ -151,7 +151,7 @@ const SelectionSummaryBarInner: React.FC<SelectionSummaryBarProps> = ({
             <button
               type="button"
               onClick={onPrintSelected}
-              className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors"
+              className="h-8 px-3.5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shadow-[0_1px_2px_rgba(13,122,114,0.22)] transition-all"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>{t.controls.printReport}</span>

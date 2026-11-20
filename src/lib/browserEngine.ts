@@ -40,6 +40,7 @@ import {
   parsePackingNosParam,
 } from '../shared/customFilters.ts';
 import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
+import { getLocalVersionPayload } from '../shared/appVersion.ts';
 import {
   captureAutoUndoState,
   commitAutoUndoDiff,
@@ -155,7 +156,7 @@ const DEFAULT_PROJECT_ID = 'default';
 const DEFAULT_PREFERENCES: UserPreferences = {
   language: 'fa',
   calendar: 'jalali',
-  theme: 'dark',
+  theme: 'light',
   eyeComfort: false,
 };
 
@@ -800,6 +801,11 @@ async function handleStaticApiRequestInner<T>(
     }
     return currentUserObj;
   };
+
+  // ---------------- APP VERSION ----------------
+  if (pathname === '/api/app/version' && method === 'GET') {
+    return getLocalVersionPayload() as T;
+  }
 
   // ---------------- PROJECTS ----------------
   if (pathname === '/api/projects' && method === 'GET') {
@@ -2105,13 +2111,76 @@ async function handleStaticApiRequestInner<T>(
     }
 
     const start = (page - 1) * pageSize;
+    const rawSlice = fetchAll ? computedAll : computedAll.slice(start, start + pageSize);
+    const items = rawSlice.map(({ itemImage: _fullImg, ...rest }) => rest);
     return {
-      items: fetchAll ? computedAll : computedAll.slice(start, start + pageSize),
+      items,
       total,
       page: fetchAll ? 1 : page,
       pageSize: fetchAll ? Math.max(1, total) : pageSize,
       totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
+    } as T;
+  }
+
+  if (pathname.startsWith('/api/detailed/') && pathname.endsWith('/image') && method === 'GET') {
+    requireAuth(['admin', 'operator', 'viewer']);
+    const id = pathname.slice('/api/detailed/'.length, -'/image'.length);
+    const item = db.detailed.find((d) => d.id === id);
+    if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
+    return {
+      id: item.id,
+      hasImage: Boolean(item.itemImage || item.itemImageThumb),
+      itemImage: item.itemImage || '',
+      itemImageThumb: item.itemImageThumb || '',
+    } as T;
+  }
+
+  if (pathname.startsWith('/api/detailed/') && pathname.endsWith('/image') && method === 'PUT') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.slice('/api/detailed/'.length, -'/image'.length);
+    const item = db.detailed.find((d) => d.id === id);
+    if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
+    const rawImg = typeof body.itemImage === 'string' && body.itemImage.startsWith('data:image/') ? body.itemImage : '';
+    const rawThumb =
+      rawImg && typeof body.itemImageThumb === 'string' && body.itemImageThumb.startsWith('data:image/')
+        ? body.itemImageThumb
+        : rawImg;
+    const beforeDetailed = { ...item };
+    if (rawImg) {
+      item.itemImage = rawImg;
+      item.itemImageThumb = rawThumb;
+    } else {
+      delete item.itemImage;
+      delete item.itemImageThumb;
+    }
+    item.updatedAt = new Date().toISOString();
+    history.push({
+      labelFa: rawImg
+        ? `تغییر تصویر آیتم جزئیات ${item.shipmentNo} (#${item.itemNo || item.rowNo})`
+        : `حذف تصویر آیتم جزئیات ${item.shipmentNo} (#${item.itemNo || item.rowNo})`,
+      labelEn: rawImg
+        ? `Update Photo for Detailed Item ${item.shipmentNo} (#${item.itemNo || item.rowNo})`
+        : `Remove Photo for Detailed Item ${item.shipmentNo} (#${item.itemNo || item.rowNo})`,
+      user: u.fullName || u.username,
+      changes: [{ scope: 'detailed', op: 'update', id: item.id, before: beforeDetailed, after: { ...item } }],
+    });
+    addAudit(
+      db,
+      sanitizeUser(u),
+      rawImg ? 'UPDATE_DETAILED_IMAGE' : 'REMOVE_DETAILED_IMAGE',
+      'detailed',
+      `${item.shipmentNo} (#${item.rowNo})`,
+      rawImg ? `ثبت/ویرایش تصویر آیتم ${item.rowNo}` : `حذف تصویر آیتم ${item.rowNo}`,
+    );
+    await saveActiveDb();
+    const { itemImage: _omitted, ...computedLite } = computeDetailedEntry(item);
+    return {
+      ok: true,
+      hasImage: Boolean(rawImg),
+      item: computedLite,
+      itemImage: rawImg,
+      itemImageThumb: rawThumb,
     } as T;
   }
 
@@ -2214,6 +2283,15 @@ async function handleStaticApiRequestInner<T>(
       chemicalType: resolvedChemType,
       productionDate: normKey(rawDet.productionDate),
       expirationDate: normKey(rawDet.expirationDate),
+      ...(typeof rawDet.itemImage === 'string' && rawDet.itemImage.startsWith('data:image/')
+        ? {
+            itemImage: rawDet.itemImage,
+            itemImageThumb:
+              typeof rawDet.itemImageThumb === 'string' && rawDet.itemImageThumb.startsWith('data:image/')
+                ? rawDet.itemImageThumb
+                : rawDet.itemImage,
+          }
+        : {}),
       shortageBackfills: [],
       createdAt: now,
       updatedAt: now,
@@ -2343,14 +2421,27 @@ async function handleStaticApiRequestInner<T>(
     }
 
     const beforeDetailed = { ...item };
+    const { itemImage: patchImage, itemImageThumb: patchThumb, ...restPatch } = patch;
     Object.assign(item, {
-      ...patch,
+      ...restPatch,
       shipmentNo: pk,
       packageNo: nextPkg,
       itemNo: nextItemNo,
       rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
+    if (patchImage !== undefined) {
+      if (typeof patchImage === 'string' && patchImage.startsWith('data:image/')) {
+        item.itemImage = patchImage;
+        item.itemImageThumb =
+          typeof patchThumb === 'string' && patchThumb.startsWith('data:image/')
+            ? patchThumb
+            : patchImage;
+      } else {
+        delete item.itemImage;
+        delete item.itemImageThumb;
+      }
+    }
     renumberScope(db, 'detailed');
     rebuildCategories(db);
     history.push({

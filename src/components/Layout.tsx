@@ -7,6 +7,8 @@ import {
   Calculator,
   Calendar,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   ClipboardList,
   ClipboardSignature,
@@ -33,6 +35,7 @@ import {
   PanelRightOpen,
   Plus,
   Redo2,
+  RefreshCw,
   Scale,
   Search,
   Shield,
@@ -46,6 +49,7 @@ import {
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
+import { APP_VERSION } from '../shared/appVersion.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { ProjectManagerModal } from './ProjectManagerModal.tsx';
@@ -124,7 +128,23 @@ export const Layout: React.FC<LayoutProps> = ({
   const [projectModalOpen, setProjectModalOpen] = React.useState(false);
   const [historyMenuOpen, setHistoryMenuOpen] = React.useState(false);
   const [navQuery, setNavQuery] = React.useState('');
+  const [pendingUpdateInfo, setPendingUpdateInfo] = React.useState<{
+    hasPendingUpdate: boolean;
+    targetVersion: string;
+  }>({ hasPendingUpdate: false, targetVersion: APP_VERSION });
   const historyMenuRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    const onUpdateStatus = (e: Event) => {
+      const detail = (e as CustomEvent<{ hasPendingUpdate?: boolean; targetVersion?: string }>).detail;
+      setPendingUpdateInfo({
+        hasPendingUpdate: Boolean(detail?.hasPendingUpdate),
+        targetVersion: detail?.targetVersion || APP_VERSION,
+      });
+    };
+    window.addEventListener('samaan:update-status', onUpdateStatus);
+    return () => window.removeEventListener('samaan:update-status', onUpdateStatus);
+  }, []);
 
   React.useEffect(() => {
     if (!historyMenuOpen) return;
@@ -278,9 +298,11 @@ export const Layout: React.FC<LayoutProps> = ({
 
   const normalizedQuery = navQuery.trim().toLowerCase();
   const allNavItems = navGroups.flatMap((g) => g.items);
+  const activeGroup = navGroups.find((g) => g.items.some((item) => item.key === activeTab));
   const activeTitle = allNavItems.find((n) => n.key === activeTab)?.label || t.nav.dashboard;
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
   const todayFormatted = formatDate(getTodayIso());
+  const userInitial = (user?.fullName || user?.username || 'U').trim().charAt(0).toUpperCase();
 
   const projectSummaryLabel = `${activeProject?.name || (isFa ? 'پروژه پیش‌فرض' : 'Default Project')} · ${
     activeEmployer.isConfigured
@@ -303,7 +325,7 @@ export const Layout: React.FC<LayoutProps> = ({
       {/* Sidebar Navigation */}
       <aside
         className={`fixed lg:sticky top-0 z-50 h-[100dvh] shrink-0 border-e border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-col justify-between transition-all duration-200 print:hidden ${
-          sidebarCollapsed ? 'w-64 lg:w-[68px]' : 'w-64'
+          sidebarCollapsed ? 'w-64 lg:w-[70px]' : 'w-[264px]'
         } ${
           mobileMenuOpen
             ? 'translate-x-0'
@@ -312,10 +334,10 @@ export const Layout: React.FC<LayoutProps> = ({
               : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        <div className={`${sidebarCollapsed ? 'lg:p-2.5 p-3.5' : 'p-3.5'} flex-1 min-h-0 flex flex-col gap-3`}>
+        <div className={`${sidebarCollapsed ? 'lg:p-2.5 p-4' : 'p-4'} flex-1 min-h-0 flex flex-col gap-3.5`}>
           {/* Brand Header & Collapse Controls */}
           <div
-            className={`flex items-center pb-2.5 border-b border-[var(--border-subtle)] shrink-0 ${
+            className={`flex items-center pb-3 border-b border-[var(--border-subtle)] shrink-0 ${
               sidebarCollapsed ? 'lg:justify-center justify-between' : 'justify-between gap-2'
             }`}
           >
@@ -360,20 +382,22 @@ export const Layout: React.FC<LayoutProps> = ({
             type="button"
             onClick={() => setProjectModalOpen(true)}
             title={projectSummaryLabel}
-            className={`w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] flex items-center transition-colors shrink-0 ${
-              sidebarCollapsed ? 'lg:justify-center lg:h-10 lg:px-0 px-3 py-2 justify-between gap-2 text-start' : 'px-3 py-2 justify-between gap-2 text-start'
+            className={`w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/75 hover:bg-[var(--bg-subtle)]/80 hover:border-[var(--border-strong)] flex items-center transition-all shrink-0 ${
+              sidebarCollapsed ? 'lg:justify-center lg:h-10 lg:px-0 px-3 py-2.5 justify-between gap-2 text-start' : 'px-3 py-2.5 justify-between gap-2 text-start'
             }`}
           >
-            <div className={`flex items-center gap-2 min-w-0 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
-              <Building2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+            <div className={`flex items-center gap-2.5 min-w-0 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
+              <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+                <Building2 className="w-4 h-4" />
+              </div>
               <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                <div className="text-[10px] text-[var(--text-muted)]">
+                <div className="text-[10px] font-medium text-[var(--text-muted)]">
                   {isFa ? 'پروژه فعال' : 'Active Project'}
                 </div>
                 <div className="text-xs font-bold text-[var(--text-primary)] truncate">
                   {activeProject?.name || (isFa ? 'پروژه پیش‌فرض' : 'Default Project')}
                 </div>
-                <div className="text-[10px] text-[var(--accent-primary)] truncate">
+                <div className="text-[10.5px] text-[var(--accent-primary)] font-medium truncate">
                   {activeEmployer.isConfigured
                     ? isFa
                       ? `کارفرما: ${activeEmployer.shortName || activeEmployer.nameFa}`
@@ -389,22 +413,22 @@ export const Layout: React.FC<LayoutProps> = ({
 
           {/* Instant Menu Search Filter (visible in expanded / mobile drawer) */}
           <div className={`relative shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-            <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute top-1/2 -translate-y-1/2 start-2.5 pointer-events-none" />
+            <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
             <input
               type="text"
               value={navQuery}
               onChange={(e) => setNavQuery(e.target.value)}
               placeholder={isFa ? 'دسترسی سریع به فرم یا بخش...' : 'Quick filter menu...'}
-              className="w-full h-8 ps-8 pe-7 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)]"
+              className="w-full h-9 ps-8.5 pe-7 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
             />
             {navQuery && (
               <button
                 type="button"
                 onClick={() => setNavQuery('')}
                 title={isFa ? 'پاک کردن' : 'Clear'}
-                className="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] absolute top-1/2 -translate-y-1/2 end-2"
+                className="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] absolute top-1/2 -translate-y-1/2 end-2.5"
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
@@ -480,16 +504,22 @@ export const Layout: React.FC<LayoutProps> = ({
                               onTabChange(item.key);
                               setMobileMenuOpen(false);
                             }}
-                            className={`w-full h-8 rounded-lg flex items-center text-xs transition-colors whitespace-nowrap ${
+                            className={`relative w-full h-9 rounded-xl flex items-center text-[12.5px] transition-all whitespace-nowrap ${
                               sidebarCollapsed
-                                ? 'lg:justify-center lg:px-0 px-2.5 gap-2.5'
-                                : 'px-2.5 gap-2.5'
+                                ? 'lg:justify-center lg:px-0 px-3 gap-2.5'
+                                : 'px-3 gap-2.5'
                             } ${
                               isActive
                                 ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] font-medium'
+                                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]/80 hover:text-[var(--text-primary)] font-medium'
                             }`}
                           >
+                            {isActive && !sidebarCollapsed && (
+                              <span
+                                aria-hidden="true"
+                                className="absolute start-0 top-2 bottom-2 w-[3px] rounded-full bg-[var(--accent-primary)]"
+                              />
+                            )}
                             {item.icon}
                             <span className={`truncate ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
                               {item.label}
@@ -519,82 +549,125 @@ export const Layout: React.FC<LayoutProps> = ({
           </nav>
         </div>
 
-        {/* User Preferences & Account Controls */}
-        <div className={`${sidebarCollapsed ? 'lg:p-2.5 p-3' : 'p-3'} border-t border-[var(--border-subtle)] space-y-2.5 shrink-0`}>
-          {/* Independent Language, Calendar, Theme, Eye Comfort Switches */}
-          <div className={`grid gap-1.5 ${sidebarCollapsed ? 'lg:grid-cols-1 grid-cols-2' : 'grid-cols-2'}`}>
+        {/* Compact Scandinavian Utility Dock & User Profile */}
+        <div className={`${sidebarCollapsed ? 'lg:p-2.5 p-3.5' : 'p-3.5'} border-t border-[var(--border-subtle)] space-y-2.5 shrink-0 bg-[var(--bg-surface)]`}>
+          {/* Sleek Compact 5-Icon Quick Controls Dock */}
+          <div
+            className={`grid gap-1 p-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/80 ${
+              sidebarCollapsed ? 'lg:grid-cols-1 grid-cols-5' : 'grid-cols-5'
+            }`}
+          >
             <button
               type="button"
               onClick={() => setLanguage(prefs.language === 'fa' ? 'en' : 'fa')}
-              title={t.controls.language}
-              className="h-7 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] font-medium flex items-center justify-center gap-1 hover:bg-[var(--bg-subtle)] whitespace-nowrap"
+              title={`${t.controls.language}: ${prefs.language === 'fa' ? 'تغییر به English' : 'Switch to فارسی'}`}
+              className="h-8 rounded-lg text-[11px] font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)] flex items-center justify-center gap-1 transition-colors"
             >
               <Globe className="w-3.5 h-3.5 shrink-0" />
-              <span className={sidebarCollapsed ? 'lg:hidden' : ''}>
-                {prefs.language === 'fa' ? 'English' : 'فارسی'}
+              <span className={`text-[10px] font-bold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                {prefs.language === 'fa' ? 'EN' : 'فا'}
               </span>
             </button>
 
             <button
               type="button"
               onClick={() => setCalendar(prefs.calendar === 'jalali' ? 'gregorian' : 'jalali')}
-              title={t.controls.calendar}
-              className={`h-7 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] font-medium flex items-center justify-center gap-1 hover:bg-[var(--bg-subtle)] whitespace-nowrap ${
+              title={`${t.controls.calendar}: ${prefs.calendar === 'jalali' ? t.controls.jalali : t.controls.gregorian}`}
+              className={`h-8 rounded-lg text-[11px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)] flex items-center justify-center transition-colors ${
                 sidebarCollapsed ? 'lg:hidden' : ''
               }`}
             >
               <Calendar className="w-3.5 h-3.5 shrink-0" />
-              <span>{prefs.calendar === 'jalali' ? t.controls.jalali : t.controls.gregorian}</span>
             </button>
 
             <button
               type="button"
+              data-testid="sidebar-theme-toggle-btn"
               onClick={() => setTheme(prefs.theme === 'light' ? 'dark' : 'light')}
               title={prefs.theme === 'light' ? t.controls.darkMode : t.controls.lightMode}
-              className="h-7 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] font-medium flex items-center justify-center gap-1 hover:bg-[var(--bg-subtle)] whitespace-nowrap"
+              aria-label={prefs.theme === 'light' ? t.controls.darkMode : t.controls.lightMode}
+              className="h-8 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)] flex items-center justify-center transition-colors"
             >
               {prefs.theme === 'light' ? (
                 <Moon className="w-3.5 h-3.5 shrink-0" />
               ) : (
-                <Sun className="w-3.5 h-3.5 shrink-0" />
+                <Sun className="w-3.5 h-3.5 shrink-0 text-amber-400" />
               )}
-              <span className={sidebarCollapsed ? 'lg:hidden' : ''}>
-                {prefs.theme === 'light' ? t.controls.darkMode : t.controls.lightMode}
-              </span>
             </button>
 
             <button
               type="button"
               onClick={() => setEyeComfort(!prefs.eyeComfort)}
               title={t.controls.eyeComfortTooltip}
-              className={`h-7 px-2 rounded-lg border text-[11px] font-medium flex items-center justify-center gap-1 whitespace-nowrap transition-colors ${
+              aria-pressed={prefs.eyeComfort}
+              className={`h-8 rounded-lg flex items-center justify-center transition-colors ${
                 sidebarCollapsed ? 'lg:hidden' : ''
               } ${
                 prefs.eyeComfort
-                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)]'
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
               }`}
             >
               <Eye className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{t.controls.eyeComfort}</span>
             </button>
 
             <button
               type="button"
               onClick={() => setSpellCheck(prefs.spellCheck === false)}
-              title={t.controls.spellCheckTooltip}
+              title={`${t.controls.spellCheckTooltip} (${prefs.spellCheck !== false ? (isFa ? 'فعال' : 'ON') : (isFa ? 'خاموش' : 'OFF')})`}
               aria-pressed={prefs.spellCheck !== false}
-              className={`h-7 px-2 rounded-lg border text-[11px] font-medium flex items-center justify-center gap-1 whitespace-nowrap transition-colors ${
-                sidebarCollapsed ? 'lg:hidden col-span-2' : 'col-span-2'
+              className={`h-8 rounded-lg flex items-center justify-center transition-colors ${
+                sidebarCollapsed ? 'lg:hidden' : ''
               } ${
                 prefs.spellCheck !== false
-                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]'
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)]'
               }`}
             >
               <SpellCheck2 className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">
-                {t.controls.spellCheck} ({prefs.spellCheck !== false ? (isFa ? 'فعال' : 'ON') : (isFa ? 'خاموش' : 'OFF')})
+            </button>
+          </div>
+
+          {/* Quiet Version / Update Status & Shortcuts Inline Row */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              data-testid="sidebar-update-status-btn"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                window.dispatchEvent(new Event('samaan:open-changelog'));
+              }}
+              title={
+                pendingUpdateInfo.hasPendingUpdate
+                  ? isFa
+                    ? `بروزرسانی آماده است (${pendingUpdateInfo.targetVersion}) — برای مشاهده تغییرات کلیک کنید`
+                    : `Update available (v${pendingUpdateInfo.targetVersion}) — click to view changes`
+                  : isFa
+                    ? `نسخه برنامه ${APP_VERSION} — بررسی بروزرسانی و تاریخچه تغییرات`
+                    : `Version ${APP_VERSION} — Check updates & changelog`
+              }
+              className={`flex-1 h-8 px-2.5 rounded-xl border text-[11px] font-medium flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors ${
+                sidebarCollapsed ? 'lg:px-0' : ''
+              } ${
+                pendingUpdateInfo.hasPendingUpdate
+                  ? 'border-[var(--accent-primary)]/45 bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                  : 'border-[var(--border-subtle)] bg-transparent text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <span className="relative flex items-center justify-center shrink-0">
+                <RefreshCw className="w-3.5 h-3.5" />
+                {pendingUpdateInfo.hasPendingUpdate && (
+                  <span className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-[var(--accent-primary)]" />
+                )}
+              </span>
+              <span className={`truncate tabular-nums ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                {pendingUpdateInfo.hasPendingUpdate
+                  ? isFa
+                    ? `بروزرسانی آماده (${pendingUpdateInfo.targetVersion})`
+                    : `Update Ready (v${pendingUpdateInfo.targetVersion})`
+                  : isFa
+                    ? `نسخه ${APP_VERSION}`
+                    : `v${APP_VERSION}`}
               </span>
             </button>
 
@@ -605,34 +678,35 @@ export const Layout: React.FC<LayoutProps> = ({
                   setMobileMenuOpen(false);
                   onOpenShortcuts();
                 }}
-                title={`${isFa ? 'تنظیمات کلیدهای میانبر' : 'Keyboard Shortcuts'} (${shortcuts.shortcutsSettings || 'Ctrl+/'})`}
-                className={`h-7 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center justify-center gap-1 whitespace-nowrap transition-colors ${
-                  sidebarCollapsed ? 'lg:hidden col-span-2' : 'col-span-2'
+                title={`${isFa ? 'تنظیمات کلیدهای میانبر (اکسل)' : 'Keyboard Shortcuts (Excel)'} (${shortcuts.shortcutsSettings || 'Ctrl+/'})`}
+                className={`h-8 w-8 rounded-xl border border-[var(--border-subtle)] bg-transparent hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] flex items-center justify-center shrink-0 transition-colors ${
+                  sidebarCollapsed ? 'lg:hidden' : ''
                 }`}
               >
-                <Keyboard className="w-3.5 h-3.5 shrink-0 text-[var(--accent-primary)]" />
-                <span className="truncate">
-                  {isFa ? 'کلیدهای میانبر (اکسل)' : 'Shortcuts (Excel)'}
-                </span>
+                <Keyboard className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
 
           {user && (
             <div
-              className={`pt-2 border-t border-[var(--border-subtle)] flex items-center gap-2 ${
+              className={`pt-2.5 border-t border-[var(--border-subtle)] flex items-center gap-2.5 ${
                 sidebarCollapsed ? 'lg:flex-col lg:justify-center justify-between' : 'justify-between'
               }`}
             >
-              <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                <div className="text-xs font-semibold truncate">{user.fullName}</div>
-                <div className="text-[11px] text-[var(--text-muted)] truncate">
-                  {user.username} ·{' '}
-                  {user.role === 'admin'
-                    ? t.auth.roleAdmin
-                    : user.role === 'operator'
-                      ? t.auth.roleOperator
-                      : t.auth.roleViewer}
+              <div className={`flex items-center gap-2.5 min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                <div className="w-8 h-8 rounded-full bg-[var(--accent-soft)] text-[var(--accent-primary)] font-bold text-xs flex items-center justify-center shrink-0 border border-[var(--accent-primary)]/20">
+                  {userInitial}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-[var(--text-primary)] truncate">{user.fullName}</div>
+                  <div className="text-[10.5px] text-[var(--text-muted)] truncate">
+                    {user.role === 'admin'
+                      ? t.auth.roleAdmin
+                      : user.role === 'operator'
+                        ? t.auth.roleOperator
+                        : t.auth.roleViewer}
+                  </div>
                 </div>
               </div>
               <div className={`flex items-center gap-0.5 shrink-0 ${sidebarCollapsed ? 'lg:flex-col' : ''}`}>
@@ -640,7 +714,7 @@ export const Layout: React.FC<LayoutProps> = ({
                   type="button"
                   onClick={() => setChangePwOpen(true)}
                   title={t.auth.changePassword}
-                  className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]"
+                  className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)] transition-colors"
                 >
                   <KeyRound className="w-4 h-4" />
                 </button>
@@ -648,7 +722,7 @@ export const Layout: React.FC<LayoutProps> = ({
                   type="button"
                   onClick={logout}
                   title={t.controls.logout}
-                  className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--status-danger)]"
+                  className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)] transition-colors"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -660,13 +734,13 @@ export const Layout: React.FC<LayoutProps> = ({
 
       {/* Main Content Area */}
       <div className="flex-1 min-w-0 flex flex-col overflow-x-hidden">
-        {/* Strict 3-zone Top Bar */}
-        <header className="sticky top-0 z-30 h-14 px-4 lg:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-3 print:hidden">
-          <div className="flex items-center gap-2.5 min-w-0">
+        {/* Crisp Architectural Top Bar */}
+        <header className="sticky top-0 z-30 h-14 px-4 lg:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/92 backdrop-blur-md flex items-center justify-between gap-3 print:hidden">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden p-2 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]"
+              className="lg:hidden p-2 rounded-xl text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]"
               aria-label="Open menu"
             >
               <Menu className="w-5 h-5" />
@@ -677,7 +751,7 @@ export const Layout: React.FC<LayoutProps> = ({
               <div ref={historyMenuRef} className="relative flex items-center shrink-0">
                 <div
                   dir="ltr"
-                  className="flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5 shadow-xs"
+                  className="flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 p-0.5"
                 >
                   <button
                     type="button"
@@ -825,22 +899,35 @@ export const Layout: React.FC<LayoutProps> = ({
               </div>
             )}
 
-            <h2 className="text-sm lg:text-base font-bold text-[var(--text-primary)] truncate">
-              {activeTitle}
-            </h2>
+            {/* Clean Breadcrumb Title */}
+            <div className="flex items-center gap-1.5 min-w-0">
+              {activeGroup && (
+                <span className="hidden xl:inline-flex items-center gap-1 text-xs font-medium text-[var(--text-muted)] shrink-0">
+                  <span>{activeGroup.groupLabel}</span>
+                  {isFa ? (
+                    <ChevronLeft className="w-3.5 h-3.5 opacity-60" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5 opacity-60" />
+                  )}
+                </span>
+              )}
+              <h2 className="text-sm lg:text-[15px] font-bold tracking-tight text-[var(--text-primary)] truncate">
+                {activeTitle}
+              </h2>
+            </div>
           </div>
 
           <div className="hidden md:flex items-center gap-2 text-xs text-[var(--text-muted)] tabular-nums whitespace-nowrap shrink-0">
             <button
               type="button"
               onClick={() => setProjectModalOpen(true)}
-              className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] font-semibold flex items-center gap-1.5"
+              className="h-8 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] font-semibold flex items-center gap-1.5 transition-colors"
             >
               <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
               <span>{activeProject?.name || t.brandFull}</span>
             </button>
-            <span aria-hidden="true">·</span>
-            <span>{todayFormatted}</span>
+            <span aria-hidden="true" className="opacity-40">·</span>
+            <span className="font-medium">{todayFormatted}</span>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -850,7 +937,7 @@ export const Layout: React.FC<LayoutProps> = ({
                 data-testid="topbar-shortcuts-btn"
                 onClick={onOpenShortcuts}
                 title={`${isFa ? 'کلیدهای میانبر و شخصی‌سازی' : 'Keyboard Shortcuts & Settings'} (${shortcuts.shortcutsSettings || 'Ctrl+/'})`}
-                className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+                className="h-9 px-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
               >
                 <Keyboard className="w-4 h-4 text-[var(--accent-primary)]" />
                 <span className="hidden xl:inline">{isFa ? 'میانبرها' : 'Shortcuts'}</span>
@@ -861,7 +948,7 @@ export const Layout: React.FC<LayoutProps> = ({
                 type="button"
                 onClick={onOpenAiAssistant}
                 title={`${isFa ? 'دستیار هوشمند' : 'AI Assistant'} (${shortcuts.aiAssistant || 'Ctrl+K'})`}
-                className="h-9 px-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] hover:bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+                className="h-9 px-3 rounded-xl border border-[var(--accent-primary)]/30 bg-[var(--accent-soft)] hover:bg-[var(--accent-primary)]/18 text-[var(--accent-primary)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{isFa ? 'دستیار هوشمند' : 'AI Assistant'}</span>
@@ -873,7 +960,7 @@ export const Layout: React.FC<LayoutProps> = ({
                 type="button"
                 onClick={onOpenNewPacking}
                 title={`${t.controls.newPacking} (${shortcuts.newPacking || 'Alt+N'})`}
-                className="h-9 px-3 sm:px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+                className="h-9 px-3.5 sm:px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-[0_1px_2px_rgba(13,122,114,0.28)] transition-all"
               >
                 <Plus className="w-4 h-4" />
                 <span>{t.controls.newPacking}</span>

@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { registerSW } from 'virtual:pwa-register';
 import { AiAssistantDrawer } from './components/AiAssistantDrawer.tsx';
+import { AppUpdateManager } from './components/AppUpdateManager.tsx';
 import { AuthGate } from './components/AuthGate.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
 import { Layout } from './components/Layout.tsx';
@@ -130,27 +130,6 @@ const SamaanWorkspace: React.FC = () => {
       setActiveTab('dashboard');
     }
   }, [user, activeTab]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
-    const hadController = Boolean(navigator.serviceWorker.controller);
-    let reloaded = false;
-    const onControllerChange = () => {
-      if (!hadController || reloaded) return;
-      reloaded = true;
-      window.location.reload();
-    };
-    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
-    registerSW({
-      immediate: true,
-      onRegisteredSW(_swUrl, reg) {
-        reg?.update().catch(() => {});
-      },
-    });
-    return () => {
-      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
-    };
-  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -589,6 +568,7 @@ const SamaanWorkspace: React.FC = () => {
         </div>
       )}
       <SpellCheckAssistant />
+      <AppUpdateManager />
       <OfflineIndicator />
     </>
   );

@@ -53,6 +53,7 @@ import {
 } from './src/shared/normalizers.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
 import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
+import { getLocalVersionPayload } from './src/shared/appVersion.ts';
 import {
   captureAutoUndoState,
   commitAutoUndoDiff,
@@ -254,6 +255,14 @@ async function startServer() {
       }
       next();
     });
+  });
+
+  // ---------------- APP VERSION & RELEASE NOTES ----------------
+  app.get('/api/app/version', (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.json(getLocalVersionPayload());
   });
 
   // ---------------- PROJECTS (MULTI-DATABASE SWITCHER) ----------------
@@ -1784,7 +1793,8 @@ async function startServer() {
     }
 
     const start = (page - 1) * pageSize;
-    const items = fetchAll ? computedAll : computedAll.slice(start, start + pageSize);
+    const rawSlice = fetchAll ? computedAll : computedAll.slice(start, start + pageSize);
+    const items = rawSlice.map(({ itemImage: _fullImg, ...rest }) => rest);
 
     res.json({
       items,
@@ -1793,6 +1803,73 @@ async function startServer() {
       pageSize: fetchAll ? Math.max(1, total) : pageSize,
       totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
+    });
+  });
+
+  app.get('/api/detailed/:id/image', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
+    const item = store.db.detailed.find((d) => d.id === req.params.id);
+    if (!item) {
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
+      return;
+    }
+    res.json({
+      id: item.id,
+      hasImage: Boolean(item.itemImage || item.itemImageThumb),
+      itemImage: item.itemImage || '',
+      itemImageThumb: item.itemImageThumb || '',
+    });
+  });
+
+  app.put('/api/detailed/:id/image', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const item = store.db.detailed.find((d) => d.id === req.params.id);
+    if (!item) {
+      res.status(404).json({ error: errMsg(req, 'رکورد یافت نشد', 'Record not found') });
+      return;
+    }
+    const { itemImage, itemImageThumb } = req.body as { itemImage?: string; itemImageThumb?: string };
+    const cleanImg = typeof itemImage === 'string' && itemImage.startsWith('data:image/') ? itemImage : '';
+    const cleanThumb =
+      cleanImg && typeof itemImageThumb === 'string' && itemImageThumb.startsWith('data:image/')
+        ? itemImageThumb
+        : cleanImg;
+
+    const beforeDetailed = { ...item };
+    if (cleanImg) {
+      item.itemImage = cleanImg;
+      item.itemImageThumb = cleanThumb;
+    } else {
+      delete item.itemImage;
+      delete item.itemImageThumb;
+    }
+    item.updatedAt = new Date().toISOString();
+
+    store.history.push({
+      labelFa: cleanImg
+        ? `تغییر تصویر آیتم جزئیات ${item.shipmentNo} (#${item.itemNo || item.rowNo})`
+        : `حذف تصویر آیتم جزئیات ${item.shipmentNo} (#${item.itemNo || item.rowNo})`,
+      labelEn: cleanImg
+        ? `Update Photo for Detailed Item ${item.shipmentNo} (#${item.itemNo || item.rowNo})`
+        : `Remove Photo for Detailed Item ${item.shipmentNo} (#${item.itemNo || item.rowNo})`,
+      user: req.currentUser!.fullName || req.currentUser!.username,
+      changes: [{ scope: 'detailed', op: 'update', id: item.id, before: beforeDetailed, after: { ...item } }],
+    });
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: cleanImg ? 'UPDATE_DETAILED_IMAGE' : 'REMOVE_DETAILED_IMAGE',
+      scope: 'detailed',
+      targetId: `${item.shipmentNo} (#${item.rowNo})`,
+      summary: cleanImg
+        ? `ثبت یا ویرایش تصویر آیتم جزئیات ردیف ${item.rowNo} (${item.shipmentNo})`
+        : `حذف تصویر آیتم جزئیات ردیف ${item.rowNo} (${item.shipmentNo})`,
+    });
+    store.saveImmediate();
+    const { itemImage: _omitted, ...computedLite } = computeDetailedEntry(item);
+    res.json({
+      ok: true,
+      hasImage: Boolean(cleanImg),
+      item: computedLite,
+      itemImage: cleanImg,
+      itemImageThumb: cleanThumb,
     });
   });
 
@@ -1899,6 +1976,15 @@ async function startServer() {
       chemicalType: resolvedChemType,
       productionDate: normKey(raw.productionDate),
       expirationDate: normKey(raw.expirationDate),
+      ...(typeof raw.itemImage === 'string' && raw.itemImage.startsWith('data:image/')
+        ? {
+            itemImage: raw.itemImage,
+            itemImageThumb:
+              typeof raw.itemImageThumb === 'string' && raw.itemImageThumb.startsWith('data:image/')
+                ? raw.itemImageThumb
+                : raw.itemImage,
+          }
+        : {}),
       shortageBackfills: [],
       createdAt: now,
       updatedAt: now,
@@ -2017,14 +2103,27 @@ async function startServer() {
     }
 
     const beforeDetailed = { ...item };
+    const { itemImage: patchImage, itemImageThumb: patchThumb, ...restPatch } = patch;
     Object.assign(item, {
-      ...patch,
+      ...restPatch,
       shipmentNo: pk,
       packageNo: nextPkg,
       itemNo: nextItemNo,
       rowNo: item.rowNo,
       updatedAt: new Date().toISOString(),
     });
+    if (patchImage !== undefined) {
+      if (typeof patchImage === 'string' && patchImage.startsWith('data:image/')) {
+        item.itemImage = patchImage;
+        item.itemImageThumb =
+          typeof patchThumb === 'string' && patchThumb.startsWith('data:image/')
+            ? patchThumb
+            : patchImage;
+      } else {
+        delete item.itemImage;
+        delete item.itemImageThumb;
+      }
+    }
     store.renumberScope('detailed');
     store.rebuildIndexes();
     store.history.push({

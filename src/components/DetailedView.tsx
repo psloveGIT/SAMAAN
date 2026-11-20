@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Camera,
   ChevronLeft,
   ChevronRight,
   Cog,
@@ -8,6 +9,7 @@ import {
   Eye,
   EyeOff,
   FlaskConical,
+  Image as ImageIcon,
   Link2,
   PackagePlus,
   Plus,
@@ -36,6 +38,8 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { ExcelColumnFilter } from './ExcelColumnFilter.tsx';
+import { ItemImageDropzone } from './ItemImageDropzone.tsx';
+import { ItemImageLightbox } from './ItemImageLightbox.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
@@ -159,6 +163,8 @@ function emptyDetailedDraft(): Partial<DetailedEntry> {
     chemicalType: '',
     productionDate: '',
     expirationDate: '',
+    itemImage: '',
+    itemImageThumb: '',
   };
 }
 
@@ -214,6 +220,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [selectingAll, setSelectingAll] = useState(false);
   const [printRowsOverride, setPrintRowsOverride] = useState<DetailedComputed[] | null>(null);
   const [inspected, setInspected] = useState<DetailedComputed | null>(null);
+  const [photoTarget, setPhotoTarget] = useState<DetailedComputed | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
 
   // Add/Edit Modal
@@ -222,6 +229,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [aiClassifying, setAiClassifying] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<DetailedEntry>>(emptyDetailedDraft());
+  const [loadingEditImage, setLoadingEditImage] = useState(false);
+  const [imageTouched, setImageTouched] = useState(false);
   const [closedWarningVisible, setClosedWarningVisible] = useState(false);
   const [ackClosed, setAckClosed] = useState(false);
   const [rowError, setRowError] = useState('');
@@ -356,6 +365,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const openCreateModal = useCallback(
     async (overrideShipment?: string, overridePackage?: string) => {
       setEditingId(null);
+      setLoadingEditImage(false);
+      setImageTouched(false);
       setClosedWarningVisible(false);
       setAckClosed(false);
       setRowError('');
@@ -648,11 +659,32 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const openEditModal = async (row: DetailedComputed) => {
     setEditingId(row.id);
     setDraft({ ...row });
+    setImageTouched(false);
+    setLoadingEditImage(Boolean(row.hasImage));
     setRowError('');
     setAckClosed(false);
     setItemNoTaken(false);
     setItemNoManual(true);
     setGenDescManual(Boolean(row.generalDescription));
+    setFormModalOpen(true);
+
+    if (row.hasImage) {
+      apiRequest<{ itemImage: string; itemImageThumb: string }>(`/api/detailed/${row.id}/image`)
+        .then((imgRes) => {
+          setDraft((prev) =>
+            prev.id === row.id
+              ? {
+                  ...prev,
+                  itemImage: imgRes.itemImage || prev.itemImage || '',
+                  itemImageThumb: imgRes.itemImageThumb || prev.itemImageThumb || '',
+                }
+              : prev,
+          );
+        })
+        .catch(() => {})
+        .finally(() => setLoadingEditImage(false));
+    }
+
     try {
       const [check, lookup] = await Promise.all([
         apiRequest<PackingDetailedCheckResponse>(
@@ -670,7 +702,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       setClosedWarningVisible(false);
       setLinkedGeneral(null);
     }
-    setFormModalOpen(true);
   };
 
   const handlePackingQtyChange = (valStr: string) => {
@@ -733,7 +764,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     setSaving(true);
     try {
       if (editingId) {
-        const payload = {
+        const payload: Partial<DetailedEntry> & { acknowledgeClosed: boolean } = {
           ...draft,
           generalDescription: finalGenDesc,
           itemCategory: itemCategoryVal,
@@ -743,6 +774,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           acknowledgeClosed: ackClosed,
         };
         delete payload.rowNo;
+        if (!imageTouched) {
+          delete payload.itemImage;
+          delete payload.itemImageThumb;
+        }
         await apiRequest(`/api/detailed/${editingId}`, {
           method: 'PATCH',
           body: JSON.stringify(payload),
@@ -775,6 +810,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           chemicalType: chemTypeVal,
           productionDate: prodDateVal,
           expirationDate: expDateVal,
+          ...(draft.itemImage
+            ? {
+                itemImage: draft.itemImage,
+                itemImageThumb: draft.itemImageThumb || draft.itemImage,
+              }
+            : {}),
           notes: draft.notes,
           acknowledgeClosed: ackClosed,
         };
@@ -1265,9 +1306,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 samaan-animate-in">
       {/* Toolbar */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3">
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-4.5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -1352,7 +1393,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               <button
                 type="button"
                 onClick={() => openCreateModal()}
-                className="h-9 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap"
+                className="h-9 px-3.5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shadow-[0_1px_2px_rgba(13,122,114,0.24)] transition-all"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>{isFa ? 'ثبت آیتم جزئیات' : 'Add Detailed Item'}</span>
@@ -1549,9 +1590,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       {/* Select-All Table Bar & Bulk Operations Bar */}
       {(data?.total || 0) > 0 && (
         <div
-          className={`rounded-xl border px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs ${
+          className={`rounded-2xl border px-4.5 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-[var(--shadow-card)] ${
             selectedCount > 0
-              ? 'border-[var(--accent-primary)]/40 bg-[var(--accent-soft)]'
+              ? 'border-[var(--accent-primary)]/35 bg-[var(--accent-soft)]'
               : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
           }`}
         >
@@ -1629,7 +1670,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       )}
 
       {/* Detailed Table */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-x-clip">
         <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
@@ -1645,6 +1686,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     onChange={toggleAllOnPage}
                     aria-label={t.controls.selectAllPage}
                   />
+                </th>
+                <th className="py-2.5 px-2 text-center font-semibold whitespace-nowrap w-12">
+                  {isFa ? 'تصویر' : 'Photo'}
                 </th>
                 {visibleColumns.map((col) => (
                   <th
@@ -1692,13 +1736,13 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 3} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={visibleColumns.length + 4} className="py-12 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 3} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={visibleColumns.length + 4} className="py-12 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
@@ -1723,6 +1767,43 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       />
                     </td>
 
+                    <td className="py-1.5 px-2 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        data-testid={`detailed-photo-trigger-${row.id}`}
+                        onClick={() => setPhotoTarget(row)}
+                        title={
+                          row.hasImage
+                            ? isFa
+                              ? 'مشاهده تصویر کامل تجهیز'
+                              : 'View full equipment photo'
+                            : canEdit
+                              ? isFa
+                                ? 'افزودن تصویر تجهیز (کلیک یا Drag & Drop)'
+                                : 'Add equipment photo (Click or Drag & Drop)'
+                              : isFa
+                                ? 'تصویری ثبت نشده است'
+                                : 'No photo attached'
+                        }
+                        className={`w-9 h-9 mx-auto rounded-lg overflow-hidden flex items-center justify-center transition-all ${
+                          row.hasImage && row.itemImageThumb
+                            ? 'border border-[var(--border-strong)] bg-[var(--bg-canvas)] hover:ring-2 hover:ring-[var(--accent-primary)] shadow-xs'
+                            : 'border border-dashed border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 text-[var(--text-muted)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-soft)]/40'
+                        }`}
+                      >
+                        {row.hasImage && row.itemImageThumb ? (
+                          <img
+                            src={row.itemImageThumb}
+                            alt={row.description || 'Item photo'}
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <Camera className="w-4 h-4" />
+                        )}
+                      </button>
+                    </td>
+
                     {visibleColumns.map((col) => {
                       const raw = col.get(row);
                       const display =
@@ -1736,7 +1817,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       return (
                         <td
                           key={col.key}
-                          className={`py-1.5 px-2 whitespace-pre-line align-top max-w-[210px] leading-snug tabular-nums bidi-plaintext ${
+                          className={`py-2 px-2.5 whitespace-pre-line align-middle leading-snug tabular-nums bidi-plaintext ${
+                            col.key === 'description' ? 'min-w-[185px] max-w-[265px]' : 'max-w-[210px]'
+                          } ${
                             col.isNum ? 'text-end' : 'text-start'
                           } ${
                             col.key === 'shortage' && row.hasShortage
@@ -1760,55 +1843,68 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       );
                     })}
 
-                    <td className="py-1.5 px-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex flex-wrap items-center gap-1">
+                    <td className="py-2 px-2.5 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                         {row.hasShortage && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[10px] font-bold">
-                            <AlertTriangle className="w-3 h-3" />
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--status-danger)]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-danger)] shrink-0" />
                             <span>{t.shortage.hasShortageBadge}</span>
                           </span>
                         )}
                         {row.hasDamaged && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[10px] font-bold">
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--status-warning)]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
                             <span>{t.shortage.hasDamagedBadge}</span>
                           </span>
                         )}
                         {merOpen && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[10px] font-bold">
-                            MER {isFa ? 'باز' : 'Open'}
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--status-warning)]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
+                            <span>MER {isFa ? 'باز' : 'Open'}</span>
                           </span>
                         )}
                         {repOpen && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[10px] font-bold">
-                            REP {isFa ? 'باز' : 'Open'}
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--status-warning)]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
+                            <span>REP {isFa ? 'باز' : 'Open'}</span>
                           </span>
                         )}
                         {!row.itemCategory && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] text-[10px] font-medium">
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-secondary)]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-success)] shrink-0" />
                             <span>{t.itemCategories.standard}</span>
                           </span>
                         )}
                         {row.itemCategory === 'special_tools' && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[10px] font-semibold">
-                            <Wrench className="w-3 h-3" />
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--accent-primary)]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] shrink-0" />
+                            <Wrench className="w-3 h-3 shrink-0 opacity-80" />
                             <span>{t.itemCategories.special_tools}</span>
                           </span>
                         )}
                         {row.itemCategory === 'spare_parts' && (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[10px] font-semibold">
-                            <Cog className="w-3 h-3" />
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)] shrink-0" />
+                            <Cog className="w-3 h-3 shrink-0 opacity-75" />
                             <span>{t.itemCategories.spare_parts}</span>
                           </span>
                         )}
                         {row.itemCategory === 'chemicals' && (
                           <span
-                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                            className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${
                               chemDays !== null && chemDays <= 30
-                                ? 'bg-[var(--status-danger)] text-white'
-                                : 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                                ? 'text-[var(--status-danger)]'
+                                : 'text-[var(--accent-primary)]'
                             }`}
                           >
-                            <FlaskConical className="w-3 h-3" />
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                chemDays !== null && chemDays <= 30
+                                  ? 'bg-[var(--status-danger)]'
+                                  : 'bg-[var(--accent-primary)]'
+                              }`}
+                            />
+                            <FlaskConical className="w-3 h-3 shrink-0 opacity-80" />
                             <span>
                               {t.itemCategories.chemicals}
                               {chemDays !== null && chemDays <= 30
@@ -1923,6 +2019,62 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               </div>
               <button type="button" onClick={() => setInspected(null)} className="p-1.5 rounded-lg">
                 <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Equipment Photo Preview Card inside Inspector */}
+            <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setPhotoTarget(inspected)}
+                  className="w-14 h-14 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden flex items-center justify-center shrink-0 hover:ring-2 hover:ring-[var(--accent-primary)] transition-all"
+                >
+                  {inspected.hasImage && inspected.itemImageThumb ? (
+                    <img
+                      src={inspected.itemImageThumb}
+                      alt={inspected.description || 'Equipment photo'}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <ImageIcon className="w-5 h-5 text-[var(--text-muted)]" />
+                  )}
+                </button>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-[var(--text-primary)]">
+                    {isFa ? 'تصویر تجهیز' : 'Equipment Photo'}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-muted)]">
+                    {inspected.hasImage
+                      ? isFa
+                        ? 'برای نمایش بزرگ‌تر، دانلود یا تغییر تصویر کلیک کنید.'
+                        : 'Click to view full size, download, or replace.'
+                      : isFa
+                        ? 'تصویری برای این قلم ثبت نشده است.'
+                        : 'No photo attached to this item yet.'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhotoTarget(inspected)}
+                className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-xs font-semibold flex items-center gap-1.5 shrink-0"
+              >
+                <Camera className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <span>
+                  {inspected.hasImage
+                    ? isFa
+                      ? 'مشاهده تصویر'
+                      : 'View Photo'
+                    : canEdit
+                      ? isFa
+                        ? 'افزودن تصویر'
+                        : 'Add Photo'
+                      : isFa
+                        ? 'مشاهده'
+                        : 'Open'}
+                </span>
               </button>
             </div>
 
@@ -2685,6 +2837,25 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 )}
               </div>
 
+              {/* Equipment Photo Drag & Drop Attachment */}
+              <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+                <ItemImageDropzone
+                  imageDataUrl={draft.itemImage || ''}
+                  thumbDataUrl={draft.itemImageThumb || ''}
+                  loadingExisting={loadingEditImage}
+                  isFa={isFa}
+                  onChange={({ itemImage, itemImageThumb }) => {
+                    setImageTouched(true);
+                    setDraft((prev) => ({
+                      ...prev,
+                      itemImage,
+                      itemImageThumb,
+                    }));
+                  }}
+                  onError={(msg) => notify('error', msg)}
+                />
+              </div>
+
               {editingId ? (
                 <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] text-[var(--text-secondary)] space-y-1">
                   <div className="font-semibold text-[var(--text-primary)]">
@@ -2930,6 +3101,39 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         target="detailed"
         onClose={() => setSmartOpen(false)}
         onApplyDetailed={handleApplySmartDetailed}
+      />
+
+      <ItemImageLightbox
+        item={photoTarget}
+        isFa={isFa}
+        canEdit={canEdit}
+        onClose={() => setPhotoTarget(null)}
+        onNotify={notify}
+        onImageUpdated={(itemId, res) => {
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  items: prev.items.map((it) =>
+                    it.id === itemId
+                      ? { ...it, hasImage: res.hasImage, itemImageThumb: res.itemImageThumb }
+                      : it,
+                  ),
+                }
+              : prev,
+          );
+          setInspected((prev) =>
+            prev && prev.id === itemId
+              ? { ...prev, hasImage: res.hasImage, itemImageThumb: res.itemImageThumb }
+              : prev,
+          );
+          setPhotoTarget((prev) =>
+            prev && prev.id === itemId
+              ? { ...prev, hasImage: res.hasImage, itemImageThumb: res.itemImageThumb }
+              : prev,
+          );
+          onDataChanged();
+        }}
       />
     </div>
   );

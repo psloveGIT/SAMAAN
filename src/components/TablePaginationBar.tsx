@@ -71,11 +71,11 @@ export const TablePaginationBar: React.FC<TablePaginationBarProps> = ({
   return (
     <div
       className={`${
-        compact ? 'px-3 py-2' : 'px-4 py-2.5'
-      } border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2.5 text-xs text-[var(--text-secondary)] print:hidden`}
+        compact ? 'px-4 py-2.5' : 'px-4.5 py-3'
+      } border-t border-[var(--border-subtle)] bg-[var(--bg-canvas)]/45 flex flex-wrap items-center justify-between gap-2.5 text-xs text-[var(--text-secondary)] print:hidden`}
     >
       <div className="flex flex-wrap items-center gap-2.5">
-        <span className="tabular-nums">
+        <span className="tabular-nums font-medium">
           {total === 0
             ? isFa
               ? '۰ ردیف'
@@ -94,7 +94,7 @@ export const TablePaginationBar: React.FC<TablePaginationBarProps> = ({
             const val = Number(e.target.value) || 50;
             onPageSizeChange(val);
           }}
-          className="h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums"
+          className="h-8 px-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium tabular-nums"
         >
           {options.map((sz) => (
             <option key={sz} value={sz}>
@@ -110,11 +110,11 @@ export const TablePaginationBar: React.FC<TablePaginationBarProps> = ({
               disabled={safePage <= 1}
               onClick={() => onPageChange(Math.max(1, safePage - 1))}
               aria-label={isFa ? 'صفحه قبل' : 'Previous page'}
-              className="h-8 px-2 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 inline-flex items-center justify-center"
+              className="h-8 px-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 inline-flex items-center justify-center transition-colors"
             >
               {isFa ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
             </button>
-            <span className="px-2 tabular-nums font-medium">
+            <span className="px-2 tabular-nums font-semibold text-[var(--text-primary)]">
               {isFa
                 ? `${formatDisplayNumber(safePage, 'fa')} / ${formatDisplayNumber(safeTotalPages, 'fa')}`
                 : `${safePage} / ${safeTotalPages}`}
@@ -124,7 +124,7 @@ export const TablePaginationBar: React.FC<TablePaginationBarProps> = ({
               disabled={safePage >= safeTotalPages}
               onClick={() => onPageChange(Math.min(safeTotalPages, safePage + 1))}
               aria-label={isFa ? 'صفحه بعد' : 'Next page'}
-              className="h-8 px-2 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 inline-flex items-center justify-center"
+              className="h-8 px-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 inline-flex items-center justify-center transition-colors"
             >
               {isFa ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
             </button>

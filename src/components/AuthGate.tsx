@@ -123,31 +123,31 @@ export const AuthGate: React.FC = () => {
       <div className="max-w-5xl w-full mx-auto flex flex-wrap items-center justify-between gap-4">
         <SamaanLogo size="md" showWordmark />
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setLanguage(isFa ? 'en' : 'fa')}
-            className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium flex items-center gap-1.5 hover:bg-[var(--bg-subtle)] whitespace-nowrap"
+            className="h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] text-xs font-medium flex items-center gap-1.5 hover:bg-[var(--bg-subtle)] whitespace-nowrap transition-colors"
           >
-            <Globe className="w-3.5 h-3.5" />
+            <Globe className="w-3.5 h-3.5 text-[var(--text-muted)]" />
             <span>{isFa ? 'English' : 'فارسی'}</span>
           </button>
 
           <button
             type="button"
             onClick={() => setCalendar(prefs.calendar === 'jalali' ? 'gregorian' : 'jalali')}
-            className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium flex items-center gap-1.5 hover:bg-[var(--bg-subtle)] whitespace-nowrap"
+            className="h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] text-xs font-medium flex items-center gap-1.5 hover:bg-[var(--bg-subtle)] whitespace-nowrap transition-colors"
           >
-            <Calendar className="w-3.5 h-3.5" />
+            <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)]" />
             <span>{prefs.calendar === 'jalali' ? t.controls.jalali : t.controls.gregorian}</span>
           </button>
 
           <button
             type="button"
             onClick={() => setTheme(prefs.theme === 'light' ? 'dark' : 'light')}
-            className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium flex items-center gap-1.5 hover:bg-[var(--bg-subtle)] whitespace-nowrap"
+            className="h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] text-xs font-medium flex items-center gap-1.5 hover:bg-[var(--bg-subtle)] whitespace-nowrap transition-colors"
           >
-            {prefs.theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+            {prefs.theme === 'light' ? <Moon className="w-3.5 h-3.5 text-[var(--text-muted)]" /> : <Sun className="w-3.5 h-3.5 text-amber-400" />}
             <span>{prefs.theme === 'light' ? t.controls.darkMode : t.controls.lightMode}</span>
           </button>
 
@@ -155,10 +155,10 @@ export const AuthGate: React.FC = () => {
             type="button"
             onClick={() => setEyeComfort(!prefs.eyeComfort)}
             title={t.controls.eyeComfortTooltip}
-            className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+            className={`h-9 px-3 rounded-xl border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors ${
               prefs.eyeComfort
-                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)]'
+                ? 'border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] hover:bg-[var(--bg-subtle)]'
             }`}
           >
             <Eye className="w-3.5 h-3.5" />
@@ -168,9 +168,9 @@ export const AuthGate: React.FC = () => {
       </div>
 
       {/* Login / Setup Card */}
-      <div className="max-w-md w-full mx-auto my-8 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-7">
+      <div className="samaan-animate-in max-w-[460px] w-full mx-auto my-8 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-float)] p-7 sm:p-8">
         {/* Initial Project & Employer Selector Box */}
-        <div className="mb-5 p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-subtle)]/50 space-y-2.5">
+        <div className="mb-6 p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/75 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <label className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-primary)]">
               <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
@@ -364,7 +364,7 @@ export const AuthGate: React.FC = () => {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full h-10 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] font-medium text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+            className="w-full h-11 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] font-semibold text-sm flex items-center justify-center gap-2 shadow-[0_2px_6px_rgba(13,122,114,0.25)] transition-all disabled:opacity-60"
           >
             <Lock className="w-4 h-4" />
             <span>{needsSetup ? t.auth.createAdmin : t.auth.signIn}</span>
