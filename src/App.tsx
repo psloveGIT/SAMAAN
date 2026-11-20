@@ -526,7 +526,7 @@ const SamaanWorkspace: React.FC = () => {
           {activeTab === 'employers' && <EmployersStudioView />}
 
           {activeTab === 'search' && (
-            <GlobalSearchView onJumpToDetailed={jumpToDetailed} />
+            <GlobalSearchView refreshSignal={refreshSignal} onJumpToDetailed={jumpToDetailed} />
           )}
 
           {activeTab === 'categories' && (
@@ -540,7 +540,7 @@ const SamaanWorkspace: React.FC = () => {
             <TrashView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
           )}
 
-          {activeTab === 'usersAudit' && <UsersAuditView />}
+          {activeTab === 'usersAudit' && <UsersAuditView refreshSignal={refreshSignal} />}
 
           {activeTab === 'backup' && <BackupView onRestored={bumpRefresh} />}
 

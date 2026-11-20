@@ -15,6 +15,7 @@ import {
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface BalanceViewProps {
   refreshSignal: number;
@@ -548,7 +549,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
     try {
       const params = new URLSearchParams({
         page: '1',
-        pageSize: '200',
+        pageSize: '1000',
         ...(q ? { q } : {}),
         ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
       });
@@ -597,6 +598,21 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
       ),
     [items, isFa],
   );
+
+  const balancePagination = useClientPagination(filtered, 50);
+
+  const allPageSelected =
+    balancePagination.pageItems.length > 0 &&
+    balancePagination.pageItems.every((i) => selectedIds.includes(i.id));
+
+  const togglePageSelection = () => {
+    const pageIds = balancePagination.pageItems.map((i) => i.id);
+    if (allPageSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+    }
+  };
 
   const toggleAll = () => {
     const allSelected = filtered.length > 0 && filtered.every((i) => selectedIds.includes(i.id));
@@ -901,6 +917,37 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
             <span>{isFa ? 'صدور فرم رسمی BMR' : 'Official BMR Form'}</span>
           </button>
 
+          {canEdit && filtered.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={togglePageSelection}
+                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+              >
+                {allPageSelected
+                  ? isFa
+                    ? 'لغو انتخاب صفحه'
+                    : 'Deselect Page'
+                  : isFa
+                    ? 'انتخاب صفحه'
+                    : 'Select Page'}
+              </button>
+              <button
+                type="button"
+                onClick={toggleAll}
+                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+              >
+                {filtered.every((i) => selectedIds.includes(i.id))
+                  ? isFa
+                    ? 'لغو انتخاب کل جدول'
+                    : 'Deselect All'
+                  : isFa
+                    ? 'انتخاب کل ردیف‌های جدول'
+                    : 'Select All Rows'}
+              </button>
+            </>
+          )}
+
           <button
             type="button"
             onClick={() => setPrintOpen(true)}
@@ -949,7 +996,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
                   </td>
                 </tr>
               ) : (
-                filtered.map((item) => {
+                balancePagination.pageItems.map((item) => {
                   const localizedStatus = localizeBalanceStatus(item.balanceStatus, isFa);
                   return (
                     <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
@@ -994,6 +1041,15 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={balancePagination.page}
+          totalPages={balancePagination.totalPages}
+          total={balancePagination.total}
+          pageSize={balancePagination.pageSize}
+          onPageChange={balancePagination.setPage}
+          onPageSizeChange={balancePagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Printable Official MD1EX-FQP02/09-03 BMR Landscape Modal */}

@@ -11,6 +11,7 @@ import { PeriodicInspectionPanel } from './PeriodicInspectionPanel.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface StocktakeViewProps {
   refreshSignal: number;
@@ -61,7 +62,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
     try {
       const params = new URLSearchParams({
         page: '1',
-        pageSize: '200',
+        pageSize: '1000',
         ...(q ? { q } : {}),
         ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
       });
@@ -102,6 +103,21 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
     if (statusFilter === '__EMPTY__') return items.filter((i) => !i.stocktakeStatus);
     return items.filter((i) => localizeStocktakeStatus(i.stocktakeStatus, isFa) === statusFilter);
   }, [items, statusFilter, isFa]);
+
+  const stocktakePagination = useClientPagination(filtered, 50);
+
+  const allPageSelected =
+    stocktakePagination.pageItems.length > 0 &&
+    stocktakePagination.pageItems.every((i) => selectedIds.includes(i.id));
+
+  const togglePageSelection = () => {
+    const pageIds = stocktakePagination.pageItems.map((i) => i.id);
+    if (allPageSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+    }
+  };
 
   const toggleAll = () => {
     const allSelected = filtered.length > 0 && filtered.every((i) => selectedIds.includes(i.id));
@@ -330,6 +346,37 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
             ))}
           </select>
 
+          {canEdit && filtered.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={togglePageSelection}
+                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+              >
+                {allPageSelected
+                  ? isFa
+                    ? 'لغو انتخاب صفحه'
+                    : 'Deselect Page'
+                  : isFa
+                    ? 'انتخاب صفحه'
+                    : 'Select Page'}
+              </button>
+              <button
+                type="button"
+                onClick={toggleAll}
+                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+              >
+                {filtered.every((i) => selectedIds.includes(i.id))
+                  ? isFa
+                    ? 'لغو انتخاب کل جدول'
+                    : 'Deselect All'
+                  : isFa
+                    ? 'انتخاب کل ردیف‌های جدول'
+                    : 'Select All Rows'}
+              </button>
+            </>
+          )}
+
           <button
             type="button"
             onClick={() => setPrintOpen(true)}
@@ -377,7 +424,7 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
                   </td>
                 </tr>
               ) : (
-                filtered.map((item) => {
+                stocktakePagination.pageItems.map((item) => {
                   const localizedStatus = localizeStocktakeStatus(item.stocktakeStatus, isFa);
                   return (
                     <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
@@ -413,6 +460,15 @@ export const StocktakeView: React.FC<StocktakeViewProps> = ({ refreshSignal, onD
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={stocktakePagination.page}
+          totalPages={stocktakePagination.totalPages}
+          total={stocktakePagination.total}
+          pageSize={stocktakePagination.pageSize}
+          onPageChange={stocktakePagination.setPage}
+          onPageSizeChange={stocktakePagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       <PrintReportModal

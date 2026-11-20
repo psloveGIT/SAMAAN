@@ -21,6 +21,7 @@ import type {
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface MaterialEstimationViewProps {
   categories: CategoryStore;
@@ -221,6 +222,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
       return haystack.includes(cleanQ);
     });
   }, [enriched, q, statusFilter, priorityFilter, islandFilter]);
+  const estPagination = useClientPagination(filtered, 50);
 
   const uniqueDetailedTemplates = useMemo(() => {
     const seen = new Set<string>();
@@ -592,7 +594,7 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
                   </td>
                 </tr>
               ) : (
-                filtered.map((r) => {
+                estPagination.pageItems.map((r) => {
                   const statusColor =
                     r.supplyStatus === 'fulfilled'
                       ? 'text-[var(--status-success)]'
@@ -694,6 +696,15 @@ export const MaterialEstimationView: React.FC<MaterialEstimationViewProps> = ({
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={estPagination.page}
+          totalPages={estPagination.totalPages}
+          total={estPagination.total}
+          pageSize={estPagination.pageSize}
+          onPageChange={estPagination.setPage}
+          onPageSizeChange={estPagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Add / Edit Estimation Modal */}

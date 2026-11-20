@@ -35,6 +35,7 @@ import type {
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 const buildMomItemsForPacking = (
   packingListNo: string,
@@ -912,6 +913,10 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const [subTab, setSubTab] = useState<'minutes' | 'osdr'>('minutes');
   const [data, setData] = useState<OpiMinutesApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const minutesList = useMemo(() => data?.minutes || [], [data]);
+  const minutesPagination = useClientPagination(minutesList, 50);
+  const osdrList = useMemo(() => data?.osdrReports || [], [data]);
+  const osdrPagination = useClientPagination(osdrList, 50);
 
   // OPI Minutes Form
   const [minutesNo, setMinutesNo] = useState('');
@@ -2084,14 +2089,14 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                         {t.controls.loading}
                       </td>
                     </tr>
-                  ) : (data?.minutes || []).length === 0 ? (
+                  ) : minutesList.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-[var(--text-muted)]">
                         {t.controls.noData}
                       </td>
                     </tr>
                   ) : (
-                    (data?.minutes || []).map((rec) => (
+                    minutesPagination.pageItems.map((rec) => (
                       <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/50">
                         <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rec.minutesNo}</td>
                         <td className="py-2.5 px-4 tabular-nums" dir="ltr">{formatDate(rec.date)}</td>
@@ -2163,6 +2168,15 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 </tbody>
               </table>
             </StickyTableWrapper>
+            <TablePaginationBar
+              page={minutesPagination.page}
+              totalPages={minutesPagination.totalPages}
+              total={minutesPagination.total}
+              pageSize={minutesPagination.pageSize}
+              onPageChange={minutesPagination.setPage}
+              onPageSizeChange={minutesPagination.setPageSize}
+              lang={prefs.language}
+            />
           </div>
         </div>
       )}
@@ -2436,14 +2450,14 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                         {t.controls.loading}
                       </td>
                     </tr>
-                  ) : (data?.osdrReports || []).length === 0 ? (
+                  ) : osdrList.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-[var(--text-muted)]">
                         {t.controls.noData}
                       </td>
                     </tr>
                   ) : (
-                    (data?.osdrReports || []).map((rep) => (
+                    osdrPagination.pageItems.map((rep) => (
                       <tr key={rep.id} className="hover:bg-[var(--bg-subtle)]/50">
                         <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rep.reportNo}</td>
                         <td className="py-2.5 px-4 tabular-nums" dir="ltr">{formatDate(rep.date)}</td>
@@ -2490,6 +2504,15 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 </tbody>
               </table>
             </StickyTableWrapper>
+            <TablePaginationBar
+              page={osdrPagination.page}
+              totalPages={osdrPagination.totalPages}
+              total={osdrPagination.total}
+              pageSize={osdrPagination.pageSize}
+              onPageChange={osdrPagination.setPage}
+              onPageSizeChange={osdrPagination.setPageSize}
+              lang={prefs.language}
+            />
           </div>
         </div>
       )}

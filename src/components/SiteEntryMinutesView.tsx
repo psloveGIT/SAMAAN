@@ -30,6 +30,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface SiteEntryApiResponse {
   minutes: SiteEntryMinutesRecord[];
@@ -832,6 +833,8 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
 
   const [data, setData] = useState<SiteEntryApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const minutesList = useMemo(() => data?.minutes || [], [data]);
+  const minutesPagination = useClientPagination(minutesList, 50);
 
   const [minutesNo, setMinutesNo] = useState('');
   const [releaseNoteNo, setReleaseNoteNo] = useState('');
@@ -1960,14 +1963,14 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                     {t.controls.loading}
                   </td>
                 </tr>
-              ) : (data?.minutes || []).length === 0 ? (
+              ) : minutesList.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
               ) : (
-                (data?.minutes || []).map((rec) => (
+                minutesPagination.pageItems.map((rec) => (
                   <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/50">
                     <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rec.minutesNo}</td>
                     <td className="py-2.5 px-4 tabular-nums" dir="ltr">{rec.releaseNoteNo || '-'}</td>
@@ -2028,6 +2031,15 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={minutesPagination.page}
+          totalPages={minutesPagination.totalPages}
+          total={minutesPagination.total}
+          pageSize={minutesPagination.pageSize}
+          onPageChange={minutesPagination.setPage}
+          onPageSizeChange={minutesPagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Printable Official MD1EX-FQP02/15-01 Preview Modal */}

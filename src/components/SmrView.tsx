@@ -23,6 +23,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface MivApiResponse {
   documents: MivDocumentRecord[];
@@ -490,6 +491,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
     () => (data?.documents || []).filter((d) => d.docType.startsWith('smr_')),
     [data],
   );
+  const smrPagination = useClientPagination(smrDocuments, 50);
 
   const knownPackings = useMemo(() => {
     const set = new Set<string>();
@@ -1270,7 +1272,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                   </td>
                 </tr>
               ) : (
-                smrDocuments.map((doc) => (
+                smrPagination.pageItems.map((doc) => (
                   <tr key={doc.id} className="hover:bg-[var(--bg-subtle)]/50">
                     <td className="py-2.5 px-4 font-medium">{docTypeLabel(doc.docType)}</td>
                     <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">
@@ -1320,6 +1322,15 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={smrPagination.page}
+          totalPages={smrPagination.totalPages}
+          total={smrPagination.total}
+          pageSize={smrPagination.pageSize}
+          onPageChange={smrPagination.setPage}
+          onPageSizeChange={smrPagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Printable Official MD1EX-FQP02/08-03 SMR Landscape Modal */}

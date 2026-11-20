@@ -24,6 +24,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar } from './TablePaginationBar.tsx';
 
 interface TransitListResponse {
   items: TransitEntry[];
@@ -62,6 +63,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
   const [sortBy, setSortBy] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc' | ''>('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [showExtraCols, setShowExtraCols] = useState(false);
 
   const [data, setData] = useState<TransitListResponse | null>(null);
@@ -139,7 +141,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
     try {
       const params = buildFilterParams();
       params.set('page', String(page));
-      params.set('pageSize', '50');
+      params.set('pageSize', String(pageSize));
       const res = await apiRequest<TransitListResponse>(`/api/transit?${params.toString()}`);
       if (seq === loadSeqRef.current) {
         setData(res);
@@ -149,7 +151,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
     } finally {
       if (seq === loadSeqRef.current) setLoading(false);
     }
-  }, [page, buildFilterParams, notify]);
+  }, [page, pageSize, buildFilterParams, notify]);
 
   useEffect(() => {
     loadData();
@@ -698,7 +700,35 @@ export const TransitView: React.FC<TransitViewProps> = ({
               : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
           }`}
         >
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {(() => {
+              const allOnPageSelected =
+                allFilteredIds !== null
+                  ? items.length > 0 && items.every((r) => selectedIdSet.has(r.id))
+                  : items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]));
+              return (
+                <button
+                  type="button"
+                  onClick={toggleAllOnPage}
+                  disabled={items.length === 0}
+                  className={`h-8 px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-40 ${
+                    allOnPageSelected
+                      ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)]'
+                  }`}
+                >
+                  <span>
+                    {allOnPageSelected
+                      ? isFa
+                        ? 'لغو انتخاب صفحه'
+                        : 'Unselect Page'
+                      : isFa
+                        ? 'انتخاب صفحه'
+                        : 'Select Page'}
+                  </span>
+                </button>
+              );
+            })()}
             <label className="inline-flex items-center gap-2 font-semibold cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -840,7 +870,7 @@ export const TransitView: React.FC<TransitViewProps> = ({
                       return (
                         <td
                           key={col.key}
-                          className={`py-2 px-3 whitespace-pre-line align-top max-w-[260px] leading-relaxed tabular-nums bidi-plaintext ${
+                          className={`py-1.5 px-2 whitespace-pre-line align-top max-w-[205px] leading-snug tabular-nums bidi-plaintext ${
                             col.isNum ? 'text-end' : 'text-start'
                           } ${
                             col.key === 'overallStatus' && row.overallStatus === 'رسیده'
@@ -913,33 +943,19 @@ export const TransitView: React.FC<TransitViewProps> = ({
           </table>
         </StickyTableWrapper>
 
-        {data && data.totalPages > 1 && (
-          <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">
-            <span className="tabular-nums">
-              {isFa
-                ? `صفحه ${formatDisplayNumber(data.page, 'fa')} از ${formatDisplayNumber(data.totalPages, 'fa')} (${formatDisplayNumber(data.total, 'fa')} رکورد)`
-                : `Page ${data.page} of ${data.totalPages} (${data.total} records)`}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="p-1.5 rounded-lg border border-[var(--border-subtle)] disabled:opacity-40"
-              >
-                {isFa ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-              </button>
-              <button
-                type="button"
-                disabled={page >= data.totalPages}
-                onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
-                className="p-1.5 rounded-lg border border-[var(--border-subtle)] disabled:opacity-40"
-              >
-                {isFa ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-        )}
+        <TablePaginationBar
+          page={data?.page || page}
+          totalPages={data?.totalPages || 1}
+          total={data?.total || 0}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(sz) => {
+            setPageSize(sz);
+            clearSelection();
+            setPage(1);
+          }}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Full-row Inspector Drawer */}

@@ -53,7 +53,17 @@ import {
 } from './src/shared/normalizers.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
 import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
-import type { HistoryChange } from './src/shared/undoHistory.ts';
+import {
+  captureAutoUndoState,
+  commitAutoUndoDiff,
+  resolveAutoUndoSpec,
+  type HistoryChange,
+} from './src/shared/undoHistory.ts';
+import {
+  buildActiveDupKeySets,
+  buildTrashEntryDupKey,
+  isTrashRestoreDuplicate,
+} from './src/shared/trashRestore.ts';
 import {
   matchesCustomFilters,
   matchesMultiPacking,
@@ -199,7 +209,7 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
 
   // Resolve active project store from X-Samaan-Project header and attach authenticated user
-  app.use((req: AuthedRequest, _res, next) => {
+  app.use((req: AuthedRequest, res, next) => {
     const rawProject = String(req.headers['x-samaan-project'] || '').trim();
     const reqStore = projectManager.getStore(rawProject || 'default');
     projectAsyncStorage.run(reqStore, () => {
@@ -218,6 +228,29 @@ async function startServer() {
               : undefined);
           if (found) req.currentUser = found;
         }
+      }
+      const autoUndoSpec = resolveAutoUndoSpec(req.method, req.path);
+      if (autoUndoSpec && req.currentUser && ['admin', 'operator'].includes(req.currentUser.role)) {
+        const snapshot = captureAutoUndoState(reqStore.db, reqStore.history, autoUndoSpec);
+        const origJson = res.json.bind(res);
+        let committed = false;
+        const finalizeUndo = () => {
+          if (committed) return;
+          committed = true;
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            commitAutoUndoDiff(
+              reqStore.db,
+              reqStore.history,
+              snapshot,
+              req.currentUser?.fullName || req.currentUser?.username || 'system',
+            );
+          }
+        };
+        res.json = ((body: unknown) => {
+          finalizeUndo();
+          return origJson(body);
+        }) as typeof res.json;
+        res.on('finish', finalizeUndo);
       }
       next();
     });
@@ -1664,7 +1697,7 @@ async function startServer() {
       if (supplier && d.supplier !== supplier) continue;
       if (origin && d.origin !== origin) continue;
       if (storageLocation && d.storageLocation !== storageLocation) continue;
-      if (itemCategory && (d.itemCategory || '') !== itemCategory) continue;
+      if (itemCategory && (itemCategory === 'standard' ? Boolean(d.itemCategory) : (d.itemCategory || '') !== itemCategory)) continue;
       if (shipmentFilterNorm && normDupPart(d.shipmentNo) !== shipmentFilterNorm) continue;
       if (preparedPkgFilter && !matchesPreparedPackage(preparePackageInfo(d.packageNo), preparedPkgFilter)) continue;
       if (!matchesMultiPacking(d.shipmentNo, packingNos)) continue;
@@ -2592,15 +2625,7 @@ async function startServer() {
 
     const idSet = new Set(ids);
     const now = new Date().toISOString();
-    const existingDetailedKeys = new Set<string>();
-    for (let i = 0; i < store.db.detailed.length; i += 1) {
-      const d = store.db.detailed[i];
-      if (d.itemNo) {
-        existingDetailedKeys.add(
-          `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`,
-        );
-      }
-    }
+    const activeDupKeys = buildActiveDupKeySets(store.db);
 
     const restoredGeneral: GeneralEntry[] = [];
     const restoredDetailed: DetailedEntry[] = [];
@@ -2617,8 +2642,15 @@ async function startServer() {
         remainingAfterPrimary.push(entry);
         continue;
       }
+      const dupKey = buildTrashEntryDupKey(entry.scope, entry.data);
       if (entry.scope === 'general') {
         const g = entry.data as GeneralEntry;
+        if (dupKey && activeDupKeys.general.has(dupKey)) {
+          skippedConflicts += 1;
+          remainingAfterPrimary.push(entry);
+          continue;
+        }
+        if (dupKey) activeDupKeys.general.add(dupKey);
         restoredGeneral.push({ ...g, updatedAt: now });
         restoredCount += 1;
         if (restoreDetailed) {
@@ -2627,19 +2659,22 @@ async function startServer() {
         }
       } else if (entry.scope === 'detailed') {
         const d = entry.data as DetailedEntry;
-        const itemKey = d.itemNo
-          ? `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`
-          : '';
-        if (itemKey && existingDetailedKeys.has(itemKey)) {
+        if (dupKey && activeDupKeys.detailed.has(dupKey)) {
           skippedConflicts += 1;
           remainingAfterPrimary.push(entry);
           continue;
         }
-        if (itemKey) existingDetailedKeys.add(itemKey);
+        if (dupKey) activeDupKeys.detailed.add(dupKey);
         restoredDetailed.push({ ...d, updatedAt: now });
         restoredCount += 1;
       } else {
         const t = entry.data as TransitEntry;
+        if (dupKey && activeDupKeys.transit.has(dupKey)) {
+          skippedConflicts += 1;
+          remainingAfterPrimary.push(entry);
+          continue;
+        }
+        if (dupKey) activeDupKeys.transit.add(dupKey);
         restoredTransit.push({ ...t, updatedAt: now });
         restoredCount += 1;
       }
@@ -2662,11 +2697,9 @@ async function startServer() {
           const pkg = normKey(d.packageNo);
           const matches = wholePackings.has(pk) || exactPairs.has(`${pk}\u0000${pkg}`);
           if (matches) {
-            const itemKey = d.itemNo
-              ? `${pk}\u0000${pkg}\u0000${normalizeDigits(normKey(d.itemNo))}`
-              : '';
-            if (!itemKey || !existingDetailedKeys.has(itemKey)) {
-              if (itemKey) existingDetailedKeys.add(itemKey);
+            const detKey = buildDetailedDupKey(d);
+            if (!detKey || !activeDupKeys.detailed.has(detKey)) {
+              if (detKey) activeDupKeys.detailed.add(detKey);
               restoredDetailed.push({ ...d, updatedAt: now });
               restoredDetailedCount += 1;
               continue;
@@ -2757,6 +2790,40 @@ async function startServer() {
     let restoredDetailedCount = 0;
 
     const restoreSingleChanges: HistoryChange[] = [];
+    if (isTrashRestoreDuplicate(entry, store.db)) {
+      if (entry.scope === 'general') {
+        const g = entry.data as GeneralEntry;
+        res.status(409).json({
+          error: errMsg(
+            req,
+            `این ردیف تجهیزات کلی (پکینگ ${g.packingListNo || '-'} / نگله ${g.packageNo || '-'}) بر اساس قوانین تکراری، قبلاً در جدول ثبت کلی وجود دارد.`,
+            `This general row (Packing ${g.packingListNo || '-'} / Package ${g.packageNo || '-'}) already exists in the General register according to duplicate rules.`,
+          ),
+        });
+        return;
+      }
+      if (entry.scope === 'detailed') {
+        const d = entry.data as DetailedEntry;
+        res.status(409).json({
+          error: errMsg(
+            req,
+            `این ردیف جزئیات (محموله ${d.shipmentNo || '-'} / نگله ${d.packageNo || '-'} / آیتم ${d.itemNo || '-'}) بر اساس قوانین تکراری، قبلاً در جدول جزئیات وجود دارد.`,
+            `This detailed row (Shipment ${d.shipmentNo || '-'} / Package ${d.packageNo || '-'} / Item ${d.itemNo || '-'}) already exists in the Detailed register according to duplicate rules.`,
+          ),
+        });
+        return;
+      }
+      const t = entry.data as TransitEntry;
+      res.status(409).json({
+        error: errMsg(
+          req,
+          `این محموله در راه (پکینگ ${t.packingListNo || '-'} / نگله ${t.packageNo || '-'}) بر اساس قوانین تکراری، قبلاً در جدول محموله‌های در راه وجود دارد.`,
+          `This in-transit row (Packing ${t.packingListNo || '-'} / Package ${t.packageNo || '-'}) already exists in the In-Transit register according to duplicate rules.`,
+        ),
+      });
+      return;
+    }
+
     if (entry.scope === 'general') {
       const g = entry.data as GeneralEntry;
       const restoredG = { ...g, updatedAt: new Date().toISOString() };
@@ -2769,11 +2836,10 @@ async function startServer() {
       if (restoreDetailed) {
         const pk = normKey(g.packingListNo);
         const pkg = normKey(g.packageNo);
-        const existingKeys = new Set<string>();
+        const existingDetKeys = new Set<string>();
         for (const d of store.db.detailed) {
-          if (d.itemNo) {
-            existingKeys.add(`${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`);
-          }
+          const dk = buildDetailedDupKey(d);
+          if (dk) existingDetKeys.add(dk);
         }
         const restoredLinked: DetailedEntry[] = [];
         const remainingTrash: TrashRecord[] = [];
@@ -2782,9 +2848,9 @@ async function startServer() {
           if (tr.scope === 'detailed') {
             const d = tr.data as DetailedEntry;
             const matches = normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
-            const itemKey = d.itemNo ? `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}` : '';
-            if (matches && (!itemKey || !existingKeys.has(itemKey))) {
-              if (itemKey) existingKeys.add(itemKey);
+            const detKey = buildDetailedDupKey(d);
+            if (matches && (!detKey || !existingDetKeys.has(detKey))) {
+              if (detKey) existingDetKeys.add(detKey);
               const restoredD = { ...d, updatedAt: new Date().toISOString() };
               restoredLinked.push(restoredD);
               restoreSingleChanges.push({ scope: 'trash', op: 'delete', id: tr.id, before: tr, index: ti });
@@ -2803,16 +2869,6 @@ async function startServer() {
       }
     } else if (entry.scope === 'detailed') {
       const d = entry.data as DetailedEntry;
-      if (d.itemNo && store.isDetailedItemNoTaken(d.shipmentNo, d.packageNo, d.itemNo)) {
-        res.status(409).json({
-          error: errMsg(
-            req,
-            `شماره آیتم ${d.itemNo} در محموله ${d.shipmentNo} / نگله ${d.packageNo || '-'} قبلاً وجود دارد.`,
-            `Item No. ${d.itemNo} already exists under Shipment ${d.shipmentNo} / Package ${d.packageNo || '-'}.`,
-          ),
-        });
-        return;
-      }
       const restoredD = { ...d, updatedAt: new Date().toISOString() };
       store.db.trash.splice(idx, 1);
       restoreSingleChanges.push({ scope: 'trash', op: 'delete', id: entry.id, before: entry, index: idx });

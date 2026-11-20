@@ -106,6 +106,10 @@ export function PrintReportModal<T>({
           }
           #samaan-print-root {
             display: block !important;
+            position: static !important;
+            overflow: visible !important;
+            height: auto !important;
+            max-height: none !important;
             background: #ffffff !important;
             color: #111827 !important;
             font-family: 'Vazirmatn', system-ui, sans-serif;
@@ -117,16 +121,24 @@ export function PrintReportModal<T>({
           }
           #samaan-print-root table {
             width: 100% !important;
-            border-collapse: collapse;
+            border-collapse: collapse !important;
             table-layout: auto !important;
+            page-break-inside: auto !important;
+            break-inside: auto !important;
           }
           #samaan-print-root thead {
-            display: table-header-group;
+            display: table-header-group !important;
+          }
+          #samaan-print-root tfoot {
+            display: table-footer-group !important;
+          }
+          #samaan-print-root tbody {
+            display: table-row-group !important;
           }
           #samaan-print-root tr {
             height: auto !important;
-            break-inside: avoid;
-            page-break-inside: avoid;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
           }
           #samaan-print-root th,
           #samaan-print-root td {
@@ -143,8 +155,8 @@ export function PrintReportModal<T>({
             background: #f1f5f9 !important;
             font-weight: 700;
             white-space: nowrap;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           #samaan-print-root td.samaan-print-num {
             width: 1%;
@@ -152,8 +164,8 @@ export function PrintReportModal<T>({
           }
           #samaan-print-root tr:nth-child(even) td {
             background: #f8fafc !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
         }
       `}</style>

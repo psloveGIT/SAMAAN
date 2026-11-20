@@ -28,6 +28,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface SubstitutionsApiResponse {
   records: SubstitutionRecord[];
@@ -483,6 +484,8 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   const [data, setData] = useState<SubstitutionsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const recordsList = useMemo(() => data?.records || [], [data]);
+  const recordsPagination = useClientPagination(recordsList, 50);
 
   const [docNo, setDocNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
@@ -1400,14 +1403,14 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                     {t.controls.loading}
                   </td>
                 </tr>
-              ) : (data?.records || []).length === 0 ? (
+              ) : recordsList.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
               ) : (
-                (data?.records || []).map((rec) => (
+                recordsPagination.pageItems.map((rec) => (
                   <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/50">
                     <td className="py-2.5 px-3 font-semibold tabular-nums" dir="ltr">
                       {rec.docNo}
@@ -1496,6 +1499,15 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={recordsPagination.page}
+          totalPages={recordsPagination.totalPages}
+          total={recordsPagination.total}
+          pageSize={recordsPagination.pageSize}
+          onPageChange={recordsPagination.setPage}
+          onPageSizeChange={recordsPagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Printable Official MD1EX-FQP02/10-03 Replacement Form Modal */}

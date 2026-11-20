@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -19,6 +19,7 @@ import type {
 } from '../shared/types.ts';
 import type { NavTabKey } from './Layout.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface OpenMerRepItem extends DetailedComputed {
   countingUnit: string;
@@ -91,6 +92,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [data, setData] = useState<AnalyticsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState<string>('');
+  const byIslandList = useMemo(() => data?.byIsland || [], [data]);
+  const islandPagination = useClientPagination(byIslandList, 25);
 
   useEffect(() => {
     setLoading(true);
@@ -694,7 +697,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
-                {data.byIsland.map((isl) => {
+                {islandPagination.pageItems.map((isl) => {
                   const rowShortageCount = isl.shortageRowCount ?? 0;
                   return (
                     <tr key={isl.name} className="hover:bg-[var(--bg-subtle)]/50">
@@ -724,6 +727,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </tbody>
             </table>
           </StickyTableWrapper>
+          <TablePaginationBar
+            page={islandPagination.page}
+            totalPages={islandPagination.totalPages}
+            total={islandPagination.total}
+            pageSize={islandPagination.pageSize}
+            onPageChange={islandPagination.setPage}
+            onPageSizeChange={islandPagination.setPageSize}
+            lang={prefs.language}
+            compact
+          />
         </div>
       )}
 

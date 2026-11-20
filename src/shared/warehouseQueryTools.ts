@@ -1201,8 +1201,8 @@ export function aggregateWarehouseByField(
   const detailedComputed = getDetailedComputedList(db);
   const categoryLabels: Record<string, string> =
     lang === 'en'
-      ? { special_tools: 'Special Tools', chemicals: 'Chemicals', spare_parts: 'Spare Parts', '': 'General Equipment' }
-      : { special_tools: 'ابزار مخصوص', chemicals: 'مواد شیمیایی', spare_parts: 'لوازم یدکی', '': 'تجهیزات عمومی' };
+      ? { special_tools: 'Special Tools', chemicals: 'Chemicals', spare_parts: 'Spare Parts', '': 'Standard Equipment' }
+      : { special_tools: 'ابزارهای مخصوص', chemicals: 'مواد شیمیایی', spare_parts: 'لوازم یدکی', '': 'تجهیز عادی / استاندارد' };
 
   const groups = new Map<
     string,

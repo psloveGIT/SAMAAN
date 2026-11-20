@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Printer, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
@@ -14,6 +14,7 @@ import type { DetailedComputed, GeneralEntry, TransitEntry } from '../shared/typ
 import { MultiPackingAndFieldFilter } from './MultiPackingAndFieldFilter.tsx';
 import { type PrintColumnDef, PrintReportModal } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface SearchResponse {
   general: GeneralEntry[];
@@ -22,6 +23,7 @@ interface SearchResponse {
 }
 
 interface GlobalSearchViewProps {
+  refreshSignal?: number;
   onJumpToDetailed: (shipmentNo: string, packageNo: string) => void;
 }
 
@@ -33,7 +35,10 @@ type InspectedRecord =
   | { kind: 'transit'; row: TransitEntry }
   | null;
 
-export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDetailed }) => {
+export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({
+  refreshSignal = 0,
+  onJumpToDetailed,
+}) => {
   const { prefs, t, formatDate, notify } = useApp();
   const isFa = prefs.language === 'fa';
   const [query, setQuery] = useState('');
@@ -44,6 +49,13 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
   const [inspected, setInspected] = useState<InspectedRecord>(null);
   const [printScope, setPrintScope] = useState<PrintScope>(null);
 
+  const generalList = useMemo(() => results?.general || [], [results]);
+  const detailedList = useMemo(() => results?.detailed || [], [results]);
+  const transitList = useMemo(() => results?.transit || [], [results]);
+  const generalPagination = useClientPagination(generalList, 50);
+  const detailedPagination = useClientPagination(detailedList, 50);
+  const transitPagination = useClientPagination(transitList, 50);
+
   const combinedFields = useMemo<FilterFieldOption[]>(() => {
     const map = new Map<string, FilterFieldOption>();
     for (const f of [...GENERAL_FILTER_FIELDS, ...DETAILED_FILTER_FIELDS, ...TRANSIT_FILTER_FIELDS]) {
@@ -52,28 +64,38 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
     return Array.from(map.values());
   }, []);
 
-  const executeSearch = async (
-    qVal = query,
-    packingsVal = selectedPackings,
-    filtersVal = customFilters,
-  ) => {
-    if (!qVal.trim() && packingsVal.length === 0 && filtersVal.length === 0) return;
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        q: qVal.trim(),
-        limit: '200',
-        ...(packingsVal.length > 0 ? { packingNos: JSON.stringify(packingsVal) } : {}),
-        ...(filtersVal.length > 0 ? { customFilters: JSON.stringify(filtersVal) } : {}),
-      });
-      const res = await apiRequest<SearchResponse>(`/api/search?${params.toString()}`);
-      setResults(res);
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    } finally {
-      setLoading(false);
+  const executeSearch = useCallback(
+    async (
+      qVal = query,
+      packingsVal = selectedPackings,
+      filtersVal = customFilters,
+    ) => {
+      if (!qVal.trim() && packingsVal.length === 0 && filtersVal.length === 0) return;
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          q: qVal.trim(),
+          limit: '500',
+          ...(packingsVal.length > 0 ? { packingNos: JSON.stringify(packingsVal) } : {}),
+          ...(filtersVal.length > 0 ? { customFilters: JSON.stringify(filtersVal) } : {}),
+        });
+        const res = await apiRequest<SearchResponse>(`/api/search?${params.toString()}`);
+        setResults(res);
+      } catch (err) {
+        if (err instanceof ApiError) notify('error', err.message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [query, selectedPackings, customFilters, notify],
+  );
+
+  useEffect(() => {
+    if (refreshSignal > 0 && results) {
+      void executeSearch();
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
 
   const runSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -221,7 +243,7 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                 </button>
               </div>
               <div className="divide-y divide-[var(--border-subtle)]">
-                {results.general.map((g) => (
+                {generalPagination.pageItems.map((g) => (
                   <div
                     key={g.id}
                     onClick={() => setInspected({ kind: 'general', row: g })}
@@ -251,6 +273,16 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                   </div>
                 ))}
               </div>
+              <TablePaginationBar
+                page={generalPagination.page}
+                totalPages={generalPagination.totalPages}
+                total={generalPagination.total}
+                pageSize={generalPagination.pageSize}
+                onPageChange={generalPagination.setPage}
+                onPageSizeChange={generalPagination.setPageSize}
+                lang={prefs.language}
+                compact
+              />
             </div>
           )}
 
@@ -271,7 +303,7 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                 </button>
               </div>
               <div className="divide-y divide-[var(--border-subtle)]">
-                {results.detailed.map((d) => (
+                {detailedPagination.pageItems.map((d) => (
                   <div
                     key={d.id}
                     onClick={() => setInspected({ kind: 'detailed', row: d })}
@@ -316,6 +348,16 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                   </div>
                 ))}
               </div>
+              <TablePaginationBar
+                page={detailedPagination.page}
+                totalPages={detailedPagination.totalPages}
+                total={detailedPagination.total}
+                pageSize={detailedPagination.pageSize}
+                onPageChange={detailedPagination.setPage}
+                onPageSizeChange={detailedPagination.setPageSize}
+                lang={prefs.language}
+                compact
+              />
             </div>
           )}
 
@@ -336,7 +378,7 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                 </button>
               </div>
               <div className="divide-y divide-[var(--border-subtle)]">
-                {results.transit.map((tr) => (
+                {transitPagination.pageItems.map((tr) => (
                   <div
                     key={tr.id}
                     onClick={() => setInspected({ kind: 'transit', row: tr })}
@@ -356,6 +398,16 @@ export const GlobalSearchView: React.FC<GlobalSearchViewProps> = ({ onJumpToDeta
                   </div>
                 ))}
               </div>
+              <TablePaginationBar
+                page={transitPagination.page}
+                totalPages={transitPagination.totalPages}
+                total={transitPagination.total}
+                pageSize={transitPagination.pageSize}
+                onPageChange={transitPagination.setPage}
+                onPageSizeChange={transitPagination.setPageSize}
+                lang={prefs.language}
+                compact
+              />
             </div>
           )}
 

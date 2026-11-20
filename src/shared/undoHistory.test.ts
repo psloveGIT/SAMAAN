@@ -206,4 +206,83 @@ describe('WarehouseHistoryManager delta Undo/Redo', () => {
     assert.equal(db.general.length, 1);
     assert.equal(db.general[0].id, 'g1');
   });
+
+  it('auto-tracks operational sections (MIV + detailed cascade, Trash permanent delete, PackingMeta) and undoes/redoes cleanly', async () => {
+    const {
+      resolveAutoUndoSpec,
+      captureAutoUndoState,
+      commitAutoUndoDiff,
+    } = await import('./undoHistory.ts');
+
+    const db = makeSlice();
+    db.mivDocuments = [];
+    db.detailed.push(makeDetailed('d1', 'Valve 6 inch', 10));
+    const history = new WarehouseHistoryManager(20);
+
+    // 1. MIV creation that also mutates detailed.mivContractorQty
+    const mivSpec = resolveAutoUndoSpec('POST', '/api/miv');
+    assert.ok(mivSpec);
+    const snap1 = captureAutoUndoState(db, history, mivSpec);
+    db.mivDocuments.push({
+      id: 'miv-1',
+      mivNo: 'MIV-100',
+      items: [{ detailedId: 'd1', issuedQty: 4 }],
+    } as never);
+    db.detailed[0].mivContractorQty = 4;
+    const cmd1 = commitAutoUndoDiff(db, history, snap1, 'admin');
+    assert.ok(cmd1);
+    assert.equal(cmd1.changes.length, 2);
+
+    // Undo MIV -> removes MIV doc AND restores detailed.mivContractorQty to undefined/null
+    history.undo(db);
+    assert.equal(db.mivDocuments.length, 0);
+    assert.equal(db.detailed[0].mivContractorQty, undefined);
+
+    // Redo MIV -> re-applies both
+    history.redo(db);
+    assert.equal(db.mivDocuments.length, 1);
+    assert.equal(db.detailed[0].mivContractorQty, 4);
+
+    // 2. Permanent delete from Trash
+    db.trash.push({
+      id: 'tr-perm-1',
+      scope: 'detailed',
+      deletedAt: '2026-01-01T00:00:00.000Z',
+      deletedBy: 'admin',
+      targetLabel: 'PK-100',
+      data: makeDetailed('d99', 'Gasket', 2),
+    });
+    const delSpec = resolveAutoUndoSpec('DELETE', '/api/trash/tr-perm-1');
+    assert.ok(delSpec);
+    const snap2 = captureAutoUndoState(db, history, delSpec);
+    db.trash.splice(0, 1);
+    const cmd2 = commitAutoUndoDiff(db, history, snap2, 'admin');
+    assert.ok(cmd2);
+    assert.equal(db.trash.length, 0);
+
+    history.undo(db);
+    assert.equal(db.trash.length, 1);
+    assert.equal(db.trash[0].id, 'tr-perm-1');
+
+    // 3. Packing close
+    const closeSpec = resolveAutoUndoSpec('POST', '/api/packing/PK-100/close');
+    assert.ok(closeSpec);
+    const snap3 = captureAutoUndoState(db, history, closeSpec);
+    db.packingMeta['PK-100'] = {
+      packingNo: 'PK-100',
+      isClosed: true,
+      closedAt: '2026-01-01T00:00:00.000Z',
+      closedBy: 'admin',
+    };
+    const cmd3 = commitAutoUndoDiff(db, history, snap3, 'admin');
+    assert.ok(cmd3);
+    assert.equal(db.packingMeta['PK-100']?.isClosed, true);
+
+    history.undo(db);
+    assert.equal(db.packingMeta['PK-100'], undefined);
+    history.redo(db);
+    const reopenedMeta = db.packingMeta['PK-100' as string];
+    assert.equal(reopenedMeta?.isClosed, true);
+  });
 });
+

@@ -41,6 +41,7 @@ import { PrintReportModal } from './PrintReportModal.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 import { type DetailedAiExtractionResult, SmartIntakeModal } from './SmartIntakeModal.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar } from './TablePaginationBar.tsx';
 
 interface DetailedListResponse {
   items: DetailedComputed[];
@@ -203,6 +204,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [sortBy, setSortBy] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc' | ''>('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [showExtraCols, setShowExtraCols] = useState(false);
 
   const [data, setData] = useState<DetailedListResponse | null>(null);
@@ -335,7 +337,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     try {
       const params = buildFilterParams();
       params.set('page', String(page));
-      params.set('pageSize', '50');
+      params.set('pageSize', String(pageSize));
       const res = await apiRequest<DetailedListResponse>(`/api/detailed?${params.toString()}`);
       if (seq === loadSeqRef.current) {
         setData(res);
@@ -345,7 +347,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     } finally {
       if (seq === loadSeqRef.current) setLoading(false);
     }
-  }, [page, buildFilterParams, notify]);
+  }, [page, pageSize, buildFilterParams, notify]);
 
   useEffect(() => {
     loadData();
@@ -628,7 +630,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         header: t.headers.itemCategory,
         hideInTable: true,
         get: (r: DetailedComputed) =>
-          r.itemCategory ? t.itemCategories[r.itemCategory] : '',
+          r.itemCategory ? t.itemCategories[r.itemCategory] : t.itemCategories.standard,
       },
       { key: 'chemicalType', header: t.headers.chemicalType, hideInTable: true, get: (r: DetailedComputed) => r.chemicalType || '' },
       { key: 'productionDate', header: t.headers.productionDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.productionDate || '' },
@@ -1514,6 +1516,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
           >
             <option value="">{t.headers.itemCategory}: {t.controls.all}</option>
+            <option value="standard">{t.itemCategories.standard}</option>
             <option value="special_tools">{t.itemCategories.special_tools}</option>
             <option value="chemicals">{t.itemCategories.chemicals}</option>
             <option value="spare_parts">{t.itemCategories.spare_parts}</option>
@@ -1552,7 +1555,35 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
           }`}
         >
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {(() => {
+              const allOnPageSelected =
+                allFilteredIds !== null
+                  ? items.length > 0 && items.every((r) => selectedIdSet.has(r.id))
+                  : items.length > 0 && items.every((r) => Boolean(selectedMap[r.id]));
+              return (
+                <button
+                  type="button"
+                  onClick={toggleAllOnPage}
+                  disabled={items.length === 0}
+                  className={`h-8 px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-40 ${
+                    allOnPageSelected
+                      ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)]'
+                  }`}
+                >
+                  <span>
+                    {allOnPageSelected
+                      ? isFa
+                        ? 'لغو انتخاب صفحه'
+                        : 'Unselect Page'
+                      : isFa
+                        ? 'انتخاب صفحه'
+                        : 'Select Page'}
+                  </span>
+                </button>
+              );
+            })()}
             <label className="inline-flex items-center gap-2 font-semibold cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -1705,7 +1736,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       return (
                         <td
                           key={col.key}
-                          className={`py-2 px-3 whitespace-pre-line align-top max-w-[280px] leading-relaxed tabular-nums bidi-plaintext ${
+                          className={`py-1.5 px-2 whitespace-pre-line align-top max-w-[210px] leading-snug tabular-nums bidi-plaintext ${
                             col.isNum ? 'text-end' : 'text-start'
                           } ${
                             col.key === 'shortage' && row.hasShortage
@@ -1729,7 +1760,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                       );
                     })}
 
-                    <td className="py-2 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <td className="py-1.5 px-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap items-center gap-1">
                         {row.hasShortage && (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-[10px] font-bold">
@@ -1750,6 +1781,11 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         {repOpen && (
                           <span className="px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[10px] font-bold">
                             REP {isFa ? 'باز' : 'Open'}
+                          </span>
+                        )}
+                        {!row.itemCategory && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] text-[10px] font-medium">
+                            <span>{t.itemCategories.standard}</span>
                           </span>
                         )}
                         {row.itemCategory === 'special_tools' && (
@@ -1778,7 +1814,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                               {chemDays !== null && chemDays <= 30
                                 ? chemDays < 0
                                   ? ` (${isFa ? 'منقضی' : 'Exp'})`
-                                  : ` (${chemDays}d)`
+                                  : ` (${formatDisplayNumber(chemDays, prefs.language)} ${isFa ? 'روز' : 'd'})`
                                 : ''}
                             </span>
                           </span>
@@ -1842,33 +1878,19 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           </table>
         </StickyTableWrapper>
 
-        {data && data.totalPages > 1 && (
-          <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">
-            <span className="tabular-nums">
-              {isFa
-                ? `صفحه ${formatDisplayNumber(data.page, 'fa')} از ${formatDisplayNumber(data.totalPages, 'fa')} (${formatDisplayNumber(data.total, 'fa')} رکورد)`
-                : `Page ${data.page} of ${data.totalPages} (${data.total} records)`}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="p-1.5 rounded-lg border border-[var(--border-subtle)] disabled:opacity-40"
-              >
-                {isFa ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-              </button>
-              <button
-                type="button"
-                disabled={page >= data.totalPages}
-                onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
-                className="p-1.5 rounded-lg border border-[var(--border-subtle)] disabled:opacity-40"
-              >
-                {isFa ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-        )}
+        <TablePaginationBar
+          page={data?.page || page}
+          totalPages={data?.totalPages || 1}
+          total={data?.total || 0}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(sz) => {
+            setPageSize(sz);
+            clearSelection();
+            setPage(1);
+          }}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Item Inspector Drawer — Strictly hides empty fields */}

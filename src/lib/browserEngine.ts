@@ -40,7 +40,18 @@ import {
   parsePackingNosParam,
 } from '../shared/customFilters.ts';
 import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
-import { WarehouseHistoryManager, type HistoryChange } from '../shared/undoHistory.ts';
+import {
+  captureAutoUndoState,
+  commitAutoUndoDiff,
+  resolveAutoUndoSpec,
+  WarehouseHistoryManager,
+  type HistoryChange,
+} from '../shared/undoHistory.ts';
+import {
+  buildActiveDupKeySets,
+  buildTrashEntryDupKey,
+  isTrashRestoreDuplicate,
+} from '../shared/trashRestore.ts';
 import {
   buildDetailedDupKey,
   buildGeneralDupKey,
@@ -721,20 +732,59 @@ function getProjectHistory(projectId: string): WarehouseHistoryManager {
 export async function handleStaticApiRequest<T>(url: string, options: RequestInit = {}): Promise<T> {
   const parsedUrl = new URL(url, 'http://localhost');
   const pathname = parsedUrl.pathname;
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = (options.headers as Record<string, string>) || {};
+  const projectHeader = String(headers['X-Samaan-Project'] || headers['x-samaan-project'] || '').trim();
+  const activeProjectId = await resolveProjectId(projectHeader);
+  const db = await getDb(activeProjectId);
+  const history = getProjectHistory(activeProjectId);
+  const currentUserObj = db.currentUserId
+    ? db.users.find((u) => u.id === db.currentUserId && u.active) || null
+    : null;
+
+  const autoUndoSpec = resolveAutoUndoSpec(method, pathname);
+  const snapshot =
+    autoUndoSpec && currentUserObj && ['admin', 'operator'].includes(currentUserObj.role)
+      ? captureAutoUndoState(db, history, autoUndoSpec)
+      : null;
+
+  const result = await handleStaticApiRequestInner<T>(
+    url,
+    options,
+    parsedUrl,
+    activeProjectId,
+    db,
+    history,
+    currentUserObj,
+  );
+
+  if (snapshot) {
+    commitAutoUndoDiff(
+      db,
+      history,
+      snapshot,
+      currentUserObj?.fullName || currentUserObj?.username || 'system',
+    );
+  }
+  return result;
+}
+
+async function handleStaticApiRequestInner<T>(
+  _url: string,
+  options: RequestInit,
+  parsedUrl: URL,
+  activeProjectId: string,
+  db: StaticDatabase,
+  history: WarehouseHistoryManager,
+  currentUserObj: StaticUser | null,
+): Promise<T> {
+  const pathname = parsedUrl.pathname;
   const query = parsedUrl.searchParams;
   const method = (options.method || 'GET').toUpperCase();
   const body = options.body ? (JSON.parse(String(options.body)) as Record<string, unknown>) : {};
   const headers = (options.headers as Record<string, string>) || {};
   const langHeader = String(headers['X-Samaan-Lang'] || headers['x-samaan-lang'] || '').toLowerCase();
-  const projectHeader = String(headers['X-Samaan-Project'] || headers['x-samaan-project'] || '').trim();
-  const activeProjectId = await resolveProjectId(projectHeader);
-  const db = await getDb(activeProjectId);
-  const history = getProjectHistory(activeProjectId);
   const saveActiveDb = (targetDb: StaticDatabase = db) => saveDb(targetDb, activeProjectId);
-
-  const currentUserObj = db.currentUserId
-    ? db.users.find((u) => u.id === db.currentUserId && u.active) || null
-    : null;
 
   const isEn = langHeader
     ? langHeader === 'en'
@@ -2000,7 +2050,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (supplier && d.supplier !== supplier) continue;
       if (origin && d.origin !== origin) continue;
       if (storageLocation && d.storageLocation !== storageLocation) continue;
-      if (itemCategory && (d.itemCategory || '') !== itemCategory) continue;
+      if (itemCategory && (itemCategory === 'standard' ? Boolean(d.itemCategory) : (d.itemCategory || '') !== itemCategory)) continue;
       if (shipmentFilterNorm && normDupPart(d.shipmentNo) !== shipmentFilterNorm) continue;
       if (preparedPkgFilter && !matchesPreparedPackage(preparePackageInfo(d.packageNo), preparedPkgFilter)) continue;
       if (!matchesMultiPacking(d.shipmentNo, packingNos)) continue;
@@ -2719,15 +2769,7 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
 
     const idSet = new Set(ids);
     const now = new Date().toISOString();
-    const existingDetailedKeys = new Set<string>();
-    for (let i = 0; i < db.detailed.length; i += 1) {
-      const d = db.detailed[i];
-      if (d.itemNo) {
-        existingDetailedKeys.add(
-          `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`,
-        );
-      }
-    }
+    const activeDupKeys = buildActiveDupKeySets(db);
 
     const restoredGeneral: GeneralEntry[] = [];
     const restoredDetailed: DetailedEntry[] = [];
@@ -2744,8 +2786,15 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         remainingAfterPrimary.push(entry);
         continue;
       }
+      const dupKey = buildTrashEntryDupKey(entry.scope, entry.data);
       if (entry.scope === 'general') {
         const g = entry.data as GeneralEntry;
+        if (dupKey && activeDupKeys.general.has(dupKey)) {
+          skippedConflicts += 1;
+          remainingAfterPrimary.push(entry);
+          continue;
+        }
+        if (dupKey) activeDupKeys.general.add(dupKey);
         restoredGeneral.push({ ...g, updatedAt: now });
         restoredCount += 1;
         if (restoreDetailed) {
@@ -2754,19 +2803,22 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
         }
       } else if (entry.scope === 'detailed') {
         const d = entry.data as DetailedEntry;
-        const itemKey = d.itemNo
-          ? `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`
-          : '';
-        if (itemKey && existingDetailedKeys.has(itemKey)) {
+        if (dupKey && activeDupKeys.detailed.has(dupKey)) {
           skippedConflicts += 1;
           remainingAfterPrimary.push(entry);
           continue;
         }
-        if (itemKey) existingDetailedKeys.add(itemKey);
+        if (dupKey) activeDupKeys.detailed.add(dupKey);
         restoredDetailed.push({ ...d, updatedAt: now });
         restoredCount += 1;
       } else {
         const t = entry.data as TransitEntry;
+        if (dupKey && activeDupKeys.transit.has(dupKey)) {
+          skippedConflicts += 1;
+          remainingAfterPrimary.push(entry);
+          continue;
+        }
+        if (dupKey) activeDupKeys.transit.add(dupKey);
         restoredTransit.push({ ...t, updatedAt: now });
         restoredCount += 1;
       }
@@ -2789,11 +2841,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           const pkg = normKey(d.packageNo);
           const matches = wholePackings.has(pk) || exactPairs.has(`${pk}\u0000${pkg}`);
           if (matches) {
-            const itemKey = d.itemNo
-              ? `${pk}\u0000${pkg}\u0000${normalizeDigits(normKey(d.itemNo))}`
-              : '';
-            if (!itemKey || !existingDetailedKeys.has(itemKey)) {
-              if (itemKey) existingDetailedKeys.add(itemKey);
+            const detKey = buildDetailedDupKey(d);
+            if (!detKey || !activeDupKeys.detailed.has(detKey)) {
+              if (detKey) activeDupKeys.detailed.add(detKey);
               restoredDetailed.push({ ...d, updatedAt: now });
               restoredDetailedCount += 1;
               continue;
@@ -2857,6 +2907,37 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
     const entry = db.trash[idx];
     let restoredDetailedCount = 0;
 
+    if (isTrashRestoreDuplicate(entry, db)) {
+      if (entry.scope === 'general') {
+        const g = entry.data as GeneralEntry;
+        throw new StaticEngineError(
+          errMsg(
+            `این ردیف تجهیزات کلی (پکینگ ${g.packingListNo || '-'} / نگله ${g.packageNo || '-'}) بر اساس قوانین تکراری، قبلاً در جدول ثبت کلی وجود دارد.`,
+            `This general row (Packing ${g.packingListNo || '-'} / Package ${g.packageNo || '-'}) already exists in the General register according to duplicate rules.`,
+          ),
+          409,
+        );
+      }
+      if (entry.scope === 'detailed') {
+        const d = entry.data as DetailedEntry;
+        throw new StaticEngineError(
+          errMsg(
+            `این ردیف جزئیات (محموله ${d.shipmentNo || '-'} / نگله ${d.packageNo || '-'} / آیتم ${d.itemNo || '-'}) بر اساس قوانین تکراری، قبلاً در جدول جزئیات وجود دارد.`,
+            `This detailed row (Shipment ${d.shipmentNo || '-'} / Package ${d.packageNo || '-'} / Item ${d.itemNo || '-'}) already exists in the Detailed register according to duplicate rules.`,
+          ),
+          409,
+        );
+      }
+      const t = entry.data as TransitEntry;
+      throw new StaticEngineError(
+        errMsg(
+          `این محموله در راه (پکینگ ${t.packingListNo || '-'} / نگله ${t.packageNo || '-'}) بر اساس قوانین تکراری، قبلاً در جدول محموله‌های در راه وجود دارد.`,
+          `This in-transit row (Packing ${t.packingListNo || '-'} / Package ${t.packageNo || '-'}) already exists in the In-Transit register according to duplicate rules.`,
+        ),
+        409,
+      );
+    }
+
     if (entry.scope === 'general') {
       const g = entry.data as GeneralEntry;
       db.trash.splice(idx, 1);
@@ -2866,11 +2947,10 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       if (restoreDetailed) {
         const pk = normKey(g.packingListNo);
         const pkg = normKey(g.packageNo);
-        const existingKeys = new Set<string>();
+        const existingDetKeys = new Set<string>();
         for (const d of db.detailed) {
-          if (d.itemNo) {
-            existingKeys.add(`${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}`);
-          }
+          const dk = buildDetailedDupKey(d);
+          if (dk) existingDetKeys.add(dk);
         }
         const restoredLinked: DetailedEntry[] = [];
         const remainingTrash: TrashRecord[] = [];
@@ -2878,9 +2958,9 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
           if (tr.scope === 'detailed') {
             const d = tr.data as DetailedEntry;
             const matches = normKey(d.shipmentNo) === pk && (!pkg || normKey(d.packageNo) === pkg);
-            const itemKey = d.itemNo ? `${normKey(d.shipmentNo)}\u0000${normKey(d.packageNo)}\u0000${normalizeDigits(normKey(d.itemNo))}` : '';
-            if (matches && (!itemKey || !existingKeys.has(itemKey))) {
-              if (itemKey) existingKeys.add(itemKey);
+            const detKey = buildDetailedDupKey(d);
+            if (matches && (!detKey || !existingDetKeys.has(detKey))) {
+              if (detKey) existingDetKeys.add(detKey);
               restoredLinked.push({ ...d, updatedAt: new Date().toISOString() });
               restoredDetailedCount += 1;
               continue;
@@ -2896,15 +2976,6 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       }
     } else if (entry.scope === 'detailed') {
       const d = entry.data as DetailedEntry;
-      if (d.itemNo && isDetailedItemNoTaken(db, d.shipmentNo, d.packageNo, d.itemNo)) {
-        throw new StaticEngineError(
-          errMsg(
-            `شماره آیتم ${d.itemNo} در محموله ${d.shipmentNo} / نگله ${d.packageNo || '-'} قبلاً وجود دارد.`,
-            `Item No. ${d.itemNo} already exists under Shipment ${d.shipmentNo} / Package ${d.packageNo || '-'}.`,
-          ),
-          409,
-        );
-      }
       db.trash.splice(idx, 1);
       db.detailed.unshift({ ...d, updatedAt: new Date().toISOString() });
       renumberScope(db, 'detailed');

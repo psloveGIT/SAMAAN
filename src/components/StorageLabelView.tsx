@@ -10,6 +10,7 @@ import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import { OfficialExtraMetaStrip } from './OfficialSheetHeader.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 const LABEL_META_STORAGE_KEY = 'samaan_storage_label_meta_v1';
 
@@ -528,7 +529,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
     try {
       const params = new URLSearchParams({
         page: '1',
-        pageSize: '200',
+        pageSize: '1000',
         ...(q ? { q } : {}),
         ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
       });
@@ -560,6 +561,21 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
     if (!locationFilter) return items;
     return items.filter((i) => i.storageLocation === locationFilter);
   }, [items, locationFilter]);
+
+  const labelPagination = useClientPagination(filtered, 50);
+
+  const allPageSelected =
+    labelPagination.pageItems.length > 0 &&
+    labelPagination.pageItems.every((i) => selectedIds.includes(i.id));
+
+  const togglePageSelection = () => {
+    const pageIds = labelPagination.pageItems.map((i) => i.id);
+    if (allPageSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+    }
+  };
 
   const toggleAll = () => {
     const allSelected = filtered.length > 0 && filtered.every((i) => selectedIds.includes(i.id));
@@ -859,6 +875,37 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
               </option>
             ))}
           </select>
+
+          {filtered.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={togglePageSelection}
+                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+              >
+                {allPageSelected
+                  ? isFa
+                    ? 'لغو انتخاب صفحه'
+                    : 'Deselect Page'
+                  : isFa
+                    ? 'انتخاب صفحه'
+                    : 'Select Page'}
+              </button>
+              <button
+                type="button"
+                onClick={toggleAll}
+                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+              >
+                {filtered.every((i) => selectedIds.includes(i.id))
+                  ? isFa
+                    ? 'لغو انتخاب کل جدول'
+                    : 'Deselect All'
+                  : isFa
+                    ? 'انتخاب کل ردیف‌های جدول'
+                    : 'Select All Rows'}
+              </button>
+            </>
+          )}
         </div>
 
         <StickyTableWrapper maxHeightClass="max-h-80">
@@ -895,7 +942,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
                   </td>
                 </tr>
               ) : (
-                filtered.map((item) => (
+                labelPagination.pageItems.map((item) => (
                   <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
                     <td className="py-2 px-3 text-center">
                       <input
@@ -931,6 +978,15 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={labelPagination.page}
+          totalPages={labelPagination.totalPages}
+          total={labelPagination.total}
+          pageSize={labelPagination.pageSize}
+          onPageChange={labelPagination.setPage}
+          onPageSizeChange={labelPagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Live Official Label Preview */}

@@ -23,6 +23,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface MivApiResponse {
   documents: MivDocumentRecord[];
@@ -594,6 +595,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     () => (data?.documents || []).filter((d) => d.docType.startsWith('miv_')),
     [data],
   );
+  const mivPagination = useClientPagination(mivDocuments, 50);
 
   const knownPackings = useMemo(() => {
     const set = new Set<string>();
@@ -1377,7 +1379,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                   </td>
                 </tr>
               ) : (
-                mivDocuments.map((doc) => (
+                mivPagination.pageItems.map((doc) => (
                   <tr key={doc.id} className="hover:bg-[var(--bg-subtle)]/50">
                     <td className="py-2.5 px-4 font-medium">{docTypeLabel(doc.docType)}</td>
                     <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">
@@ -1429,6 +1431,15 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={mivPagination.page}
+          totalPages={mivPagination.totalPages}
+          total={mivPagination.total}
+          pageSize={mivPagination.pageSize}
+          onPageChange={mivPagination.setPage}
+          onPageSizeChange={mivPagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Printable Official MD1EX-FQP02/05-03 MIV Landscape Modal */}

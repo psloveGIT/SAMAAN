@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ChevronLeft,
-  ChevronRight,
   Edit3,
   Eye,
   EyeOff,
@@ -22,6 +20,7 @@ import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar } from './TablePaginationBar.tsx';
 
 interface AuditResponse {
   items: AuditLogEntry[];
@@ -40,7 +39,11 @@ function generateRandomPassword(length = 8): string {
   return out;
 }
 
-export const UsersAuditView: React.FC = () => {
+interface UsersAuditViewProps {
+  refreshSignal?: number;
+}
+
+export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 0 }) => {
   const { prefs, t, user, formatTimestamp, notify } = useApp();
   const isFa = prefs.language === 'fa';
   const isAdmin = user?.role === 'admin';
@@ -55,6 +58,7 @@ export const UsersAuditView: React.FC = () => {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [auditData, setAuditData] = useState<AuditResponse | null>(null);
 
   // Users state (admin only)
@@ -93,7 +97,7 @@ export const UsersAuditView: React.FC = () => {
     try {
       const params = new URLSearchParams({
         page: String(page),
-        pageSize: '40',
+        pageSize: String(pageSize),
         ...(auditQuery ? { q: auditQuery } : {}),
         ...(auditScope ? { scope: auditScope } : {}),
         ...(fromDate ? { fromDate } : {}),
@@ -104,7 +108,7 @@ export const UsersAuditView: React.FC = () => {
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     }
-  }, [page, auditQuery, auditScope, fromDate, toDate, notify]);
+  }, [page, pageSize, auditQuery, auditScope, fromDate, toDate, notify]);
 
   const loadUsers = useCallback(async () => {
     if (!isAdmin) return;
@@ -118,11 +122,11 @@ export const UsersAuditView: React.FC = () => {
 
   useEffect(() => {
     loadAudit();
-  }, [loadAudit]);
+  }, [loadAudit, refreshSignal]);
 
   useEffect(() => {
     loadUsers();
-  }, [loadUsers]);
+  }, [loadUsers, refreshSignal]);
 
   const filteredUsers = useMemo(() => {
     const q = userSearch.trim().toLowerCase();
@@ -692,33 +696,18 @@ export const UsersAuditView: React.FC = () => {
           </table>
         </StickyTableWrapper>
 
-        {auditData && auditData.totalPages > 1 && (
-          <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">
-            <span className="tabular-nums">
-              {isFa
-                ? `صفحه ${auditData.page.toLocaleString('fa-IR')} از ${auditData.totalPages.toLocaleString('fa-IR')}`
-                : `Page ${auditData.page} of ${auditData.totalPages}`}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="p-1.5 rounded-lg border border-[var(--border-subtle)] disabled:opacity-40"
-              >
-                {isFa ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-              </button>
-              <button
-                type="button"
-                disabled={page >= auditData.totalPages}
-                onClick={() => setPage((p) => Math.min(auditData.totalPages, p + 1))}
-                className="p-1.5 rounded-lg border border-[var(--border-subtle)] disabled:opacity-40"
-              >
-                {isFa ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-        )}
+        <TablePaginationBar
+          page={auditData?.page || page}
+          totalPages={auditData?.totalPages || 1}
+          total={auditData?.total || 0}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(next) => {
+            setPageSize(next);
+            setPage(1);
+          }}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Self-service Change Password Modal */}

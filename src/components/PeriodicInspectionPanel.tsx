@@ -18,6 +18,7 @@ import {
   OfficialFormSignatures,
 } from './OfficialSheetHeader.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface ChecklistQuestionDef {
   key: string;
@@ -648,6 +649,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   const [records, setRecords] = useState<PeriodicInspectionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const recordsPagination = useClientPagination(records, 50);
 
   // Form states
   const [inspectionDate, setInspectionDate] = useState(getTodayIso());
@@ -1210,7 +1212,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                   </td>
                 </tr>
               ) : (
-                records.map((rec) => {
+                recordsPagination.pageItems.map((rec) => {
                   const okCount = (rec.answers || []).filter((a) => a.status === '+').length;
                   const ngCount = (rec.answers || []).filter((a) => a.status === '-').length;
                   return (
@@ -1270,6 +1272,15 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={recordsPagination.page}
+          totalPages={recordsPagination.totalPages}
+          total={recordsPagination.total}
+          pageSize={recordsPagination.pageSize}
+          onPageChange={recordsPagination.setPage}
+          onPageSizeChange={recordsPagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* 5-Page Official A4 Landscape Print Preview Modal */}

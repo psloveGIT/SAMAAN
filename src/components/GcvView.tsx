@@ -22,6 +22,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface GcvApiResponse {
   documents: GcvDocumentRecord[];
@@ -594,6 +595,9 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
     for (const d of data?.detailedItems || []) map.set(d.id, d);
     return map;
   }, [data]);
+
+  const documentsList = useMemo(() => data?.documents || [], [data]);
+  const docsPagination = useClientPagination(documentsList, 50);
 
   const autoFillFromPacking = useCallback(
     (pk: string, pkgNo = '', detItem?: DetailedComputed) => {
@@ -1373,14 +1377,14 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                     {t.controls.loading}
                   </td>
                 </tr>
-              ) : (data?.documents || []).length === 0 ? (
+              ) : documentsList.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
               ) : (
-                (data?.documents || []).map((doc) => (
+                docsPagination.pageItems.map((doc) => (
                   <tr key={doc.id} className="hover:bg-[var(--bg-subtle)]/50">
                     <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">
                       {doc.receiptNo}
@@ -1433,6 +1437,15 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
             </tbody>
           </table>
         </StickyTableWrapper>
+        <TablePaginationBar
+          page={docsPagination.page}
+          totalPages={docsPagination.totalPages}
+          total={docsPagination.total}
+          pageSize={docsPagination.pageSize}
+          onPageChange={docsPagination.setPage}
+          onPageSizeChange={docsPagination.setPageSize}
+          lang={prefs.language}
+        />
       </div>
 
       {/* Printable Official MD1EX-FQP02/11-03 Landscape Modal */}

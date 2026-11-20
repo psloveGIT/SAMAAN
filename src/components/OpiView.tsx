@@ -31,6 +31,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 const joinUnique = (values: (string | undefined | null)[]): string => {
   const seen = new Set<string>();
@@ -895,6 +896,9 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     [data, resultInvitationId],
   );
 
+  const invitationsList = useMemo(() => data?.invitations || [], [data]);
+  const invitationsPagination = useClientPagination(invitationsList, 50);
+
   const itemsForResults = useMemo(() => {
     const all = data?.detailedItems || [];
     return all.filter((d) => {
@@ -907,6 +911,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       return true;
     });
   }, [data, selectedInvitation, resultPackingFilter]);
+  const resultsPagination = useClientPagination(itemsForResults, 50);
 
   useEffect(() => {
     if (selectedInvitation) {
@@ -1567,14 +1572,14 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                         {t.controls.loading}
                       </td>
                     </tr>
-                  ) : (data?.invitations || []).length === 0 ? (
+                  ) : invitationsList.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
                         {t.controls.noData}
                       </td>
                     </tr>
                   ) : (
-                    (data?.invitations || []).map((inv) => (
+                    invitationsPagination.pageItems.map((inv) => (
                       <tr key={inv.id} className="hover:bg-[var(--bg-subtle)]/50">
                         <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">
                           {inv.invitationNo}
@@ -1655,6 +1660,15 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 </tbody>
               </table>
             </StickyTableWrapper>
+            <TablePaginationBar
+              page={invitationsPagination.page}
+              totalPages={invitationsPagination.totalPages}
+              total={invitationsPagination.total}
+              pageSize={invitationsPagination.pageSize}
+              onPageChange={invitationsPagination.setPage}
+              onPageSizeChange={invitationsPagination.setPageSize}
+              lang={prefs.language}
+            />
           </div>
         </div>
       )}
@@ -1726,7 +1740,59 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               <span className="text-xs font-semibold text-[var(--text-secondary)]">
                 {isFa ? 'اقلام مشمول بازرسی گشایش' : 'Items for Opening Inspection'}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {resultsPagination.pageItems.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allPageSelected = resultsPagination.pageItems.every(
+                          (item) => getDraft(item).selected,
+                        );
+                        setRowDrafts((prev) => {
+                          const next = { ...prev };
+                          for (const item of resultsPagination.pageItems) {
+                            const current = next[item.id] || getDraft(item);
+                            next[item.id] = { ...current, selected: !allPageSelected };
+                          }
+                          return next;
+                        });
+                      }}
+                      className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+                    >
+                      {resultsPagination.pageItems.every((item) => getDraft(item).selected)
+                        ? isFa
+                          ? 'لغو انتخاب صفحه'
+                          : 'Deselect Page'
+                        : isFa
+                          ? 'انتخاب صفحه'
+                          : 'Select Page'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allSelected = itemsForResults.every((item) => getDraft(item).selected);
+                        setRowDrafts((prev) => {
+                          const next = { ...prev };
+                          for (const item of itemsForResults) {
+                            const current = next[item.id] || getDraft(item);
+                            next[item.id] = { ...current, selected: !allSelected };
+                          }
+                          return next;
+                        });
+                      }}
+                      className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+                    >
+                      {itemsForResults.every((item) => getDraft(item).selected)
+                        ? isFa
+                          ? 'لغو انتخاب کل جدول'
+                          : 'Deselect All'
+                        : isFa
+                          ? 'انتخاب کل ردیف‌های جدول'
+                          : 'Select All Rows'}
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => setPrintItemsTableOpen(true)}
@@ -1783,7 +1849,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                       </td>
                     </tr>
                   ) : (
-                    itemsForResults.map((item) => {
+                    resultsPagination.pageItems.map((item) => {
                       const d = getDraft(item);
                       return (
                         <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
@@ -1878,6 +1944,15 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 </tbody>
               </table>
             </StickyTableWrapper>
+            <TablePaginationBar
+              page={resultsPagination.page}
+              totalPages={resultsPagination.totalPages}
+              total={resultsPagination.total}
+              pageSize={resultsPagination.pageSize}
+              onPageChange={resultsPagination.setPage}
+              onPageSizeChange={resultsPagination.setPageSize}
+              lang={prefs.language}
+            />
 
             {canEdit && itemsForResults.length > 0 && (
               <div className="p-4 border-t border-[var(--border-subtle)] flex justify-end">

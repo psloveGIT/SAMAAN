@@ -247,9 +247,9 @@ export const TRANSLATIONS = {
     },
     itemCategories: {
       standard: 'تجهیز عادی / استاندارد',
-      special_tools: 'ابزارهای مخصوص (Special Tools)',
-      chemicals: 'مواد شیمیایی (Chemicals)',
-      spare_parts: 'لوازم یدکی (Spare Parts)',
+      special_tools: 'ابزارهای مخصوص',
+      chemicals: 'مواد شیمیایی',
+      spare_parts: 'لوازم یدکی',
     },
     categories: {
       island: 'جزیره',
