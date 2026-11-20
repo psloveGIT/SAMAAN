@@ -522,14 +522,27 @@ export function resolveAutoUndoSpec(
     };
   }
 
-  // Import commit
+  // Import commit (core + operational forms)
   if (pathname === '/api/import/commit' && m === 'POST') {
     return {
-      labelFa: 'ورود گروهی اطلاعات از فایل اکسل',
-      labelEn: 'Import Records from Excel/CSV',
-      deepScopes: [],
+      labelFa: 'ورود اطلاعات و فرم‌ها از فایل',
+      labelEn: 'Import Records & Forms from File',
+      deepScopes: [...ALL_OPERATIONAL_SCOPES],
       shallowScopes: ['general', 'detailed', 'transit'],
       trackCategories: true,
+      trackPackingMeta: true,
+    };
+  }
+
+  // Multi-sheet / multi-section auto-workbook import
+  if (pathname === '/api/import/auto-workbook' && m === 'POST') {
+    return {
+      labelFa: 'ورود خودکار چندبخشی از فایل',
+      labelEn: 'Auto Multi-Section Workbook Import',
+      deepScopes: [...ALL_OPERATIONAL_SCOPES],
+      shallowScopes: ['general', 'detailed', 'transit'],
+      trackCategories: true,
+      trackPackingMeta: true,
     };
   }
 

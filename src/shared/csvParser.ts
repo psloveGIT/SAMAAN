@@ -412,40 +412,69 @@ function resolveIdx(
 }
 
 function getAutoGeneralMapping(combinedCols: string[]): Record<string, number> {
-  return {
-    rowNo: findCol(combinedCols, ['ردیف', 'row no', 'row'], 0),
-    arrivalDate: findCol(combinedCols, ['تاریخ ورود', 'arrival date'], 1),
-    releaseNo: findCol(combinedCols, ['شماره رلیز', 'release note', 'release no'], 2),
-    releaseDate: findCol(combinedCols, ['تاریخ release', 'تاریخ رلیز', 'release date', 'تاریخ'], {
-      fallbackIndex: 3,
+  const defs: Array<{
+    key: string;
+    candidates: string[];
+    fallback: number;
+    excludeSubstrings?: string[];
+  }> = [
+    { key: 'rowNo', candidates: ['ردیف', 'row no', 'row'], fallback: 0 },
+    { key: 'arrivalDate', candidates: ['تاریخ ورود', 'arrival date'], fallback: 1 },
+    { key: 'releaseNo', candidates: ['شماره رلیز', 'release note', 'release no'], fallback: 2 },
+    {
+      key: 'releaseDate',
+      candidates: ['تاریخ release', 'تاریخ رلیز', 'release date', 'تاریخ'],
+      fallback: 3,
       excludeSubstrings: ['ورود', 'دعوتنامه', 'opi'],
-    }),
-    supplier: findCol(combinedCols, ['تامین کننده', 'تأمین کننده', 'supplier'], 4),
-    dispatchLocation: findCol(combinedCols, ['محل ارسال', 'dispatch location'], 5),
-    employerEntryMinutesNo: findCol(combinedCols, ['صورتجلسه کارفرما', 'کارفرما', 'employer'], 6),
-    mapnaEntryMinutesNo: findCol(combinedCols, ['صورتجلسه مپنا', 'مپنا', 'mapna'], 7),
-    packingListNo: findCol(combinedCols, ['شماره پکینگ لیست', 'پکینگ لیست', 'packing list'], 8),
-    packageNo: findCol(combinedCols, ['شماره نگله', 'package no'], 9),
-    packageType: findCol(combinedCols, ['نوع بسته بندی', 'نوع بسته‌بندی', 'package type'], -1),
-    itemCount: findCol(combinedCols, ['تعداد اقلام نگله', 'تعداد اقلام', 'item count'], -1),
-    itemDescription: findCol(combinedCols, ['شرح کالا', 'item description', 'شرح'], 10),
-    island: findCol(combinedCols, ['جزیره', 'island'], 11),
-    system: findCol(combinedCols, ['سیستم', 'system'], { fallbackIndex: 12, excludeSubstrings: ['ساب', 'sub'] }),
-    subSystem: findCol(combinedCols, ['ساب سیستم', 'sub-system', 'subsystem'], 13),
-    unit: findCol(combinedCols, ['واحد', 'unit'], { fallbackIndex: 14, excludeSubstrings: ['شمارش', 'counting'] }),
-    grossWeight: findCol(combinedCols, ['ناخالص', 'gross weight'], 15),
-    netWeight: findCol(combinedCols, ['خالص', 'net weight'], { fallbackIndex: 16, excludeSubstrings: ['ناخالص', 'gross'] }),
-    lengthCm: findCol(combinedCols, ['طول', 'length'], 17),
-    widthCm: findCol(combinedCols, ['عرض', 'width'], 18),
-    heightCm: findCol(combinedCols, ['ارتفاع', 'height'], 19),
-    billOfLadingNo: findCol(combinedCols, ['شماره بارنامه', 'بارنامه', 'waybill'], 20),
-    vehicleNo: findCol(combinedCols, ['شماره خودرو', 'پلاک', 'vehicle'], 21),
-    weighbridgeWeight: findCol(combinedCols, ['وزن باسکول', 'weighbridge'], 22),
-    freightCost: findCol(combinedCols, ['مبلغ کرایه حمل', 'کرایه حمل', 'freight'], 23),
-    opiInvitationNo: findCol(combinedCols, ['شماره دعوتنامه opi', 'opi invitation no'], 24),
-    opiInvitationDate: findCol(combinedCols, ['تاریخ دعوتنامه opi', 'opi invitation date'], 25),
-    driverName: findCol(combinedCols, ['نام راننده', 'راننده', 'driver'], 26),
-  };
+    },
+    { key: 'supplier', candidates: ['تامین کننده', 'تأمین کننده', 'supplier'], fallback: 4 },
+    { key: 'dispatchLocation', candidates: ['محل ارسال', 'dispatch location'], fallback: 5 },
+    { key: 'employerEntryMinutesNo', candidates: ['صورتجلسه کارفرما', 'کارفرما', 'employer'], fallback: 6 },
+    { key: 'mapnaEntryMinutesNo', candidates: ['صورتجلسه مپنا', 'مپنا', 'mapna'], fallback: 7 },
+    { key: 'packingListNo', candidates: ['شماره پکینگ لیست', 'پکینگ لیست', 'packing list'], fallback: 8 },
+    { key: 'packageNo', candidates: ['شماره نگله', 'package no'], fallback: 9 },
+    { key: 'packageType', candidates: ['نوع بسته بندی', 'نوع بسته‌بندی', 'package type'], fallback: -1 },
+    { key: 'itemCount', candidates: ['تعداد اقلام نگله', 'تعداد اقلام', 'item count'], fallback: -1 },
+    { key: 'itemDescription', candidates: ['شرح کالا', 'item description', 'شرح'], fallback: 10 },
+    { key: 'island', candidates: ['جزیره', 'island'], fallback: 11 },
+    { key: 'system', candidates: ['سیستم', 'system'], fallback: 12, excludeSubstrings: ['ساب', 'sub'] },
+    { key: 'subSystem', candidates: ['ساب سیستم', 'sub-system', 'subsystem'], fallback: 13 },
+    { key: 'unit', candidates: ['واحد', 'unit'], fallback: 14, excludeSubstrings: ['شمارش', 'counting'] },
+    { key: 'grossWeight', candidates: ['ناخالص', 'gross weight'], fallback: 15 },
+    { key: 'netWeight', candidates: ['خالص', 'net weight'], fallback: 16, excludeSubstrings: ['ناخالص', 'gross'] },
+    { key: 'lengthCm', candidates: ['طول', 'length'], fallback: 17 },
+    { key: 'widthCm', candidates: ['عرض', 'width'], fallback: 18 },
+    { key: 'heightCm', candidates: ['ارتفاع', 'height'], fallback: 19 },
+    { key: 'billOfLadingNo', candidates: ['شماره بارنامه', 'بارنامه', 'waybill'], fallback: 20 },
+    { key: 'vehicleNo', candidates: ['شماره خودرو', 'پلاک', 'vehicle'], fallback: 21 },
+    { key: 'weighbridgeWeight', candidates: ['وزن باسکول', 'weighbridge'], fallback: 22 },
+    { key: 'freightCost', candidates: ['مبلغ کرایه حمل', 'کرایه حمل', 'freight'], fallback: 23 },
+    { key: 'opiInvitationNo', candidates: ['شماره دعوتنامه opi', 'opi invitation no'], fallback: 24 },
+    { key: 'opiInvitationDate', candidates: ['تاریخ دعوتنامه opi', 'opi invitation date'], fallback: 25 },
+    { key: 'driverName', candidates: ['نام راننده', 'راننده', 'driver'], fallback: 26 },
+  ];
+
+  const mapped: Record<string, number> = {};
+  const claimed = new Set<number>();
+  for (const d of defs) {
+    const idx = findCol(combinedCols, d.candidates, {
+      fallbackIndex: -1,
+      excludeSubstrings: d.excludeSubstrings,
+    });
+    mapped[d.key] = idx;
+    if (idx >= 0) claimed.add(idx);
+  }
+
+  // Only fall back to legacy fixed column positions on full-width (>=20 col) spreadsheets and never steal a matched header
+  const allowPositionalFallback = combinedCols.length >= 20;
+  if (allowPositionalFallback) {
+    for (const d of defs) {
+      if (mapped[d.key] === -1 && d.fallback >= 0 && d.fallback < combinedCols.length && !claimed.has(d.fallback)) {
+        mapped[d.key] = d.fallback;
+      }
+    }
+  }
+  return mapped;
 }
 
 function getAutoDetailedMapping(combinedCols: string[]): Record<string, number> {

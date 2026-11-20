@@ -55,6 +55,17 @@ import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/sha
 import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
 import { getLocalVersionPayload } from './src/shared/appVersion.ts';
 import {
+  commitAutoWorkbook,
+  commitOperationalFormImport,
+  detectExtendedScope,
+  EXTENDED_SCOPE_META,
+  isOperationalScope,
+  previewAutoWorkbook,
+  previewOperationalFormImport,
+  type AutoWorkbookSheetInput,
+  type ExtendedImportScope,
+} from './src/shared/operationalFormImport.ts';
+import {
   captureAutoUndoState,
   commitAutoUndoDiff,
   resolveAutoUndoSpec,
@@ -5668,10 +5679,22 @@ async function startServer() {
   const transitDupKey = (r: Partial<TransitEntry>) => buildTransitDupKey(r);
 
   app.post('/api/import/preview', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { csvText, matrix: rawMatrix, scope, assumedCalendar, columnMapping } = req.body as {
+    const {
+      csvText,
+      matrix: rawMatrix,
+      structuredRecords,
+      sheetName,
+      sectionHint,
+      scope,
+      assumedCalendar,
+      columnMapping,
+    } = req.body as {
       csvText?: string;
       matrix?: string[][];
-      scope?: ImportScope;
+      structuredRecords?: Record<string, unknown>[];
+      sheetName?: string;
+      sectionHint?: string;
+      scope?: ExtendedImportScope;
       assumedCalendar?: CalendarMode;
       columnMapping?: Record<string, number>;
     };
@@ -5680,12 +5703,49 @@ async function startServer() {
       : csvText
         ? parseCsvMatrix(csvText)
         : [];
-    if (matrix.length === 0) {
+    const hasStructured = Array.isArray(structuredRecords) && structuredRecords.length > 0;
+    if (matrix.length === 0 && !hasStructured) {
       res.status(400).json({ error: errMsg(req, 'محتوای فایل ورودی خالی است', 'Input file content is empty') });
       return;
     }
-    const detectedScope = scope || detectCsvScope(matrix) || 'general';
     const cal = assumedCalendar || 'jalali';
+    const detectedExtended: ExtendedImportScope =
+      scope ||
+      detectExtendedScope(matrix, sheetName, sectionHint, structuredRecords) ||
+      (matrix.length > 0 ? detectCsvScope(matrix) : null) ||
+      'general';
+
+    if (isOperationalScope(detectedExtended)) {
+      const actorName = req.currentUser!.fullName || req.currentUser!.username;
+      const opPrev = previewOperationalFormImport({
+        db: store.db,
+        scope: detectedExtended,
+        matrix,
+        structuredRecords,
+        sheetName,
+        assumedCalendar: cal,
+        actorName,
+      });
+      res.json({
+        scope: detectedExtended,
+        isOperational: true,
+        totalRows: opPrev.totalRows,
+        skippedEmpty: opPrev.skippedEmpty,
+        parseRejectedRows: [],
+        duplicateRowNos: 0,
+        duplicateDbCount: opPrev.duplicateDbCount,
+        duplicateInFileCount: 0,
+        duplicateRecordsCount: opPrev.duplicateDbCount,
+        duplicateSamples: opPrev.duplicateSamples,
+        estimatedLinks: opPrev.estimatedLinks,
+        warnings: opPrev.warnings,
+        sample: opPrev.sample,
+        parsedRows: opPrev.parsedRecords,
+      });
+      return;
+    }
+
+    const detectedScope = detectedExtended as ImportScope;
     const columnInspection = inspectMatrixColumns(matrix, detectedScope);
     const activeMapping = columnMapping || columnInspection.mapping;
 
@@ -5788,6 +5848,9 @@ async function startServer() {
     const {
       csvText,
       matrix: rawMatrix,
+      structuredRecords,
+      sheetName,
+      sectionHint,
       scope,
       assumedCalendar,
       duplicateRecordPolicy,
@@ -5798,7 +5861,10 @@ async function startServer() {
     } = req.body as {
       csvText?: string;
       matrix?: string[][];
-      scope?: ImportScope;
+      structuredRecords?: Record<string, unknown>[];
+      sheetName?: string;
+      sectionHint?: string;
+      scope?: ExtendedImportScope;
       assumedCalendar?: CalendarMode;
       duplicateRecordPolicy?: 'replace' | 'skip';
       forceAddDuplicates?: boolean;
@@ -5812,13 +5878,60 @@ async function startServer() {
         ? parseCsvMatrix(csvText)
         : [];
     const hasEdited = Array.isArray(editedRows) && editedRows.length > 0;
-    if (matrix.length === 0 && !hasEdited) {
+    const hasStructured = Array.isArray(structuredRecords) && structuredRecords.length > 0;
+    if (matrix.length === 0 && !hasEdited && !hasStructured) {
       res.status(400).json({ error: errMsg(req, 'محتوای فایل ورودی خالی است', 'Input file content is empty') });
       return;
     }
-    const targetScope = scope || (matrix.length > 0 ? detectCsvScope(matrix) : null) || 'general';
     const cal = assumedCalendar || 'jalali';
     const dupPolicy: 'replace' | 'skip' = duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const resolvedExtended: ExtendedImportScope =
+      scope ||
+      detectExtendedScope(matrix, sheetName, sectionHint, structuredRecords) ||
+      (matrix.length > 0 ? detectCsvScope(matrix) : null) ||
+      'general';
+
+    if (isOperationalScope(resolvedExtended)) {
+      const actorName = req.currentUser!.fullName || req.currentUser!.username;
+      const opResult = commitOperationalFormImport({
+        db: store.db,
+        scope: resolvedExtended,
+        matrix,
+        structuredRecords: hasEdited ? editedRows : structuredRecords,
+        sheetName,
+        assumedCalendar: cal,
+        duplicateRecordPolicy: dupPolicy,
+        actorName,
+      });
+      store.rebuildIndexes();
+      const meta = EXTENDED_SCOPE_META[resolvedExtended];
+      store.addAudit({
+        user: sanitizeUser(req.currentUser!),
+        action: 'IMPORT_OPERATIONAL_FORM',
+        scope: 'import',
+        targetId: resolvedExtended,
+        summary: `ورود خودکار «${meta.labelFa}»: ${opResult.imported} جدید، ${opResult.replaced} جایگزین، ${opResult.skipped} رد شد (ارتباط با کلی: ${opResult.linkedGeneral}، جزئیات: ${opResult.linkedDetailed}، در راه: ${opResult.linkedTransit})`,
+      });
+      store.saveImmediate();
+      res.json({
+        scope: resolvedExtended,
+        isOperational: true,
+        imported: opResult.imported,
+        replaced: opResult.replaced,
+        skipped: opResult.skipped,
+        parseRejectedCount: 0,
+        blankRowsSkipped: 0,
+        transitAutoArrived: opResult.linkedTransit,
+        linkedGeneral: opResult.linkedGeneral,
+        linkedDetailed: opResult.linkedDetailed,
+        linkedTransit: opResult.linkedTransit,
+        warnings: opResult.warnings,
+        rejectedRecords: [],
+      });
+      return;
+    }
+
+    const targetScope = resolvedExtended as ImportScope;
     const forceAdd = Boolean(forceAddDuplicates);
     const collectParseRejects = includeParserRejections !== false && matrix.length > 0;
 
@@ -6187,6 +6300,51 @@ async function startServer() {
       transitAutoArrived,
       rejectedRecords,
     });
+  });
+
+  app.post('/api/import/auto-workbook', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const { sheets, assumedCalendar, duplicateRecordPolicy, dryRun } = req.body as {
+      sheets?: AutoWorkbookSheetInput[];
+      assumedCalendar?: CalendarMode;
+      duplicateRecordPolicy?: 'replace' | 'skip';
+      dryRun?: boolean;
+    };
+    if (!Array.isArray(sheets) || sheets.length === 0) {
+      res.status(400).json({ error: errMsg(req, 'شیتی برای تحلیل و ورود ارسال نشده است', 'No sheets provided for auto-import') });
+      return;
+    }
+    const cal = assumedCalendar || 'jalali';
+    const dupPolicy: 'replace' | 'skip' = duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const actorName = req.currentUser!.fullName || req.currentUser!.username;
+
+    if (dryRun) {
+      const preview = previewAutoWorkbook({
+        db: store.db,
+        sheets,
+        assumedCalendar: cal,
+        actorName,
+      });
+      res.json(preview);
+      return;
+    }
+
+    const summary = commitAutoWorkbook({
+      db: store.db,
+      sheets,
+      assumedCalendar: cal,
+      duplicateRecordPolicy: dupPolicy,
+      actorName,
+    });
+    store.rebuildIndexes();
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'IMPORT_AUTO_WORKBOOK',
+      scope: 'import',
+      targetId: `${summary.sections.length}_sections`,
+      summary: `ورود خودکار چندبخشی (${summary.sections.length} بخش): ${summary.totals.imported} جدید، ${summary.totals.replaced} جایگزین، ${summary.totals.skipped} رد شد (ارتباط کلی: ${summary.totals.linkedGeneral}، جزئیات: ${summary.totals.linkedDetailed}، در راه: ${summary.totals.linkedTransit})`,
+    });
+    store.saveImmediate();
+    res.json(summary);
   });
 
   // ---------------- AI SMART INTAKE (FILE / DOCUMENT SCAN / VOICE COMMANDS) ----------------

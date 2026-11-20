@@ -42,6 +42,17 @@ import {
 import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
 import { getLocalVersionPayload } from '../shared/appVersion.ts';
 import {
+  commitAutoWorkbook,
+  commitOperationalFormImport,
+  detectExtendedScope,
+  EXTENDED_SCOPE_META,
+  isOperationalScope,
+  previewAutoWorkbook,
+  previewOperationalFormImport,
+  type AutoWorkbookSheetInput,
+  type ExtendedImportScope,
+} from '../shared/operationalFormImport.ts';
+import {
   captureAutoUndoState,
   commitAutoUndoDiff,
   resolveAutoUndoSpec,
@@ -5353,9 +5364,48 @@ async function handleStaticApiRequestInner<T>(
     const u = requireAuth(['admin', 'operator']);
     const csvText = String(body.csvText || '');
     const rawMatrix = body.matrix as string[][] | undefined;
-    const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : parseCsvMatrix(csvText);
-    const detectedScope = (body.scope as ImportScope | undefined) || detectCsvScope(matrix) || 'general';
+    const structuredRecords = Array.isArray(body.structuredRecords)
+      ? (body.structuredRecords as Record<string, unknown>[])
+      : undefined;
+    const sheetName = typeof body.sheetName === 'string' ? body.sheetName : undefined;
+    const sectionHint = typeof body.sectionHint === 'string' ? body.sectionHint : undefined;
+    const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : csvText ? parseCsvMatrix(csvText) : [];
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
+    const detectedExtended: ExtendedImportScope =
+      (body.scope as ExtendedImportScope | undefined) ||
+      detectExtendedScope(matrix, sheetName, sectionHint, structuredRecords) ||
+      (matrix.length > 0 ? detectCsvScope(matrix) : null) ||
+      'general';
+
+    if (isOperationalScope(detectedExtended)) {
+      const opPrev = previewOperationalFormImport({
+        db,
+        scope: detectedExtended,
+        matrix,
+        structuredRecords,
+        sheetName,
+        assumedCalendar: cal,
+        actorName: u.fullName || u.username,
+      });
+      return {
+        scope: detectedExtended,
+        isOperational: true,
+        totalRows: opPrev.totalRows,
+        skippedEmpty: opPrev.skippedEmpty,
+        parseRejectedRows: [],
+        duplicateRowNos: 0,
+        duplicateDbCount: opPrev.duplicateDbCount,
+        duplicateInFileCount: 0,
+        duplicateRecordsCount: opPrev.duplicateDbCount,
+        duplicateSamples: opPrev.duplicateSamples,
+        estimatedLinks: opPrev.estimatedLinks,
+        warnings: opPrev.warnings,
+        sample: opPrev.sample,
+        parsedRows: opPrev.parsedRecords,
+      } as T;
+    }
+
+    const detectedScope = detectedExtended as ImportScope;
     const columnMapping = body.columnMapping as Record<string, number> | undefined;
     const columnInspection = inspectMatrixColumns(matrix, detectedScope);
     const activeMapping = columnMapping || columnInspection.mapping;
@@ -5456,13 +5506,63 @@ async function handleStaticApiRequestInner<T>(
     const u = requireAuth(['admin', 'operator']);
     const csvText = String(body.csvText || '');
     const rawMatrix = body.matrix as string[][] | undefined;
+    const structuredRecords = Array.isArray(body.structuredRecords)
+      ? (body.structuredRecords as Record<string, unknown>[])
+      : undefined;
+    const sheetName = typeof body.sheetName === 'string' ? body.sheetName : undefined;
+    const sectionHint = typeof body.sectionHint === 'string' ? body.sectionHint : undefined;
     const editedRows = Array.isArray(body.editedRows) ? (body.editedRows as Record<string, unknown>[]) : undefined;
     const columnMapping = body.columnMapping as Record<string, number> | undefined;
-    const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : parseCsvMatrix(csvText);
+    const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : csvText ? parseCsvMatrix(csvText) : [];
     const hasEdited = Boolean(editedRows && editedRows.length > 0);
-    const targetScope = (body.scope as ImportScope | undefined) || (matrix.length > 0 ? detectCsvScope(matrix) : null) || 'general';
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
     const dupPolicy: 'replace' | 'skip' = body.duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const resolvedExtended: ExtendedImportScope =
+      (body.scope as ExtendedImportScope | undefined) ||
+      detectExtendedScope(matrix, sheetName, sectionHint, structuredRecords) ||
+      (matrix.length > 0 ? detectCsvScope(matrix) : null) ||
+      'general';
+
+    if (isOperationalScope(resolvedExtended)) {
+      const opResult = commitOperationalFormImport({
+        db,
+        scope: resolvedExtended,
+        matrix,
+        structuredRecords: hasEdited ? editedRows : structuredRecords,
+        sheetName,
+        assumedCalendar: cal,
+        duplicateRecordPolicy: dupPolicy,
+        actorName: u.fullName || u.username,
+      });
+      rebuildCategories(db);
+      const meta = EXTENDED_SCOPE_META[resolvedExtended];
+      addAudit(
+        db,
+        sanitizeUser(u),
+        'IMPORT_OPERATIONAL_FORM',
+        'import',
+        resolvedExtended,
+        `ورود خودکار «${meta.labelFa}»: ${opResult.imported} جدید، ${opResult.replaced} جایگزین، ${opResult.skipped} رد شد`,
+      );
+      await saveActiveDb();
+      return {
+        scope: resolvedExtended,
+        isOperational: true,
+        imported: opResult.imported,
+        replaced: opResult.replaced,
+        skipped: opResult.skipped,
+        parseRejectedCount: 0,
+        blankRowsSkipped: 0,
+        transitAutoArrived: opResult.linkedTransit,
+        linkedGeneral: opResult.linkedGeneral,
+        linkedDetailed: opResult.linkedDetailed,
+        linkedTransit: opResult.linkedTransit,
+        warnings: opResult.warnings,
+        rejectedRecords: [],
+      } as T;
+    }
+
+    const targetScope = resolvedExtended as ImportScope;
     const forceAdd = Boolean(body.forceAddDuplicates);
     const collectParseRejects = body.includeParserRejections !== false && matrix.length > 0;
 
@@ -5813,6 +5913,45 @@ async function handleStaticApiRequestInner<T>(
       transitAutoArrived,
       rejectedRecords,
     } as T;
+  }
+
+  if (pathname === '/api/import/auto-workbook' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const sheets = (body.sheets as AutoWorkbookSheetInput[]) || [];
+    if (!Array.isArray(sheets) || sheets.length === 0) {
+      throw new StaticEngineError(errMsg('شیتی برای تحلیل و ورود ارسال نشده است', 'No sheets provided for auto-import'), 400);
+    }
+    const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
+    const dupPolicy: 'replace' | 'skip' = body.duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const actorName = u.fullName || u.username;
+
+    if (body.dryRun) {
+      return previewAutoWorkbook({
+        db,
+        sheets,
+        assumedCalendar: cal,
+        actorName,
+      }) as T;
+    }
+
+    const summary = commitAutoWorkbook({
+      db,
+      sheets,
+      assumedCalendar: cal,
+      duplicateRecordPolicy: dupPolicy,
+      actorName,
+    });
+    rebuildCategories(db);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'IMPORT_AUTO_WORKBOOK',
+      'import',
+      `${summary.sections.length}_sections`,
+      `ورود خودکار چندبخشی (${summary.sections.length} بخش): ${summary.totals.imported} جدید، ${summary.totals.replaced} جایگزین، ${summary.totals.skipped} رد شد`,
+    );
+    await saveActiveDb();
+    return summary as T;
   }
 
   if (pathname === '/api/ai/extract-equipment' && method === 'POST') {

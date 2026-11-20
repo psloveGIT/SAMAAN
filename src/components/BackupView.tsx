@@ -7,10 +7,14 @@ import {
   Download,
   FileSpreadsheet,
   HardDrive,
+  Layers,
+  Link2,
+  Loader2,
   PlusCircle,
   RefreshCw,
   RotateCcw,
   Save,
+  Sparkles,
   Trash2,
   Upload,
   XCircle,
@@ -21,13 +25,25 @@ import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import {
   deleteIndexedDbSnapshot,
   downloadJsonBackup,
+  getIndexedDbSnapshotPayload,
   listIndexedDbSnapshots,
   saveSnapshotToIndexedDb,
 } from '../lib/indexedDbBackup.ts';
-import type { LocalBackupSnapshotRecord } from '../lib/indexedDbBackup.ts';
+import type { LocalBackupSnapshotMeta } from '../lib/indexedDbBackup.ts';
 import type { ImportColumnDef } from '../shared/csvParser.ts';
-import { parseSpreadsheetFile } from '../shared/spreadsheetImport.ts';
+import {
+  ALL_EXTENDED_SCOPES,
+  EXTENDED_SCOPE_META,
+  isOperationalScope,
+  type AutoWorkbookCommitSummary,
+  type AutoWorkbookPreviewSection,
+  type ExtendedImportScope,
+  type OperationalLinkCounts,
+} from '../shared/operationalFormImport.ts';
+import { formatIsoDate } from '../shared/jalali.ts';
+import { parseSpreadsheetFile, type StructuredSheetPayload } from '../shared/spreadsheetImport.ts';
 import type {
+  CalendarMode,
   DatabaseSnapshot,
   ImportRejectedRecord,
   ImportRejectionReasonCode,
@@ -46,7 +62,8 @@ interface ColumnInspectionPayload {
 }
 
 interface PreviewResponse {
-  scope: 'general' | 'detailed' | 'transit';
+  scope: ExtendedImportScope;
+  isOperational?: boolean;
   totalRows: number;
   skippedEmpty: number;
   parseRejectedRows?: ImportRejectedRecord[];
@@ -55,19 +72,26 @@ interface PreviewResponse {
   duplicateInFileCount?: number;
   duplicateRecordsCount: number;
   duplicateSamples: string[];
+  estimatedLinks?: OperationalLinkCounts;
+  warnings?: string[];
   sample: Record<string, unknown>[];
   parsedRows?: Record<string, unknown>[];
   columnInspection?: ColumnInspectionPayload;
 }
 
 interface CommitResponse {
-  scope: 'general' | 'detailed' | 'transit';
+  scope: ExtendedImportScope;
+  isOperational?: boolean;
   imported: number;
   replaced: number;
   skipped: number;
   parseRejectedCount?: number;
   blankRowsSkipped?: number;
   transitAutoArrived: number;
+  linkedGeneral?: number;
+  linkedDetailed?: number;
+  linkedTransit?: number;
+  warnings?: string[];
   rejectedRecords?: ImportRejectedRecord[];
 }
 
@@ -75,18 +99,111 @@ interface ImportLogSessionEntry {
   id: string;
   timestamp: string;
   sourceLabel: string;
-  scope: 'general' | 'detailed' | 'transit';
+  scope: ExtendedImportScope;
   imported: number;
   replaced: number;
   skipped: number;
   blankRowsSkipped: number;
   transitAutoArrived: number;
+  linkedGeneral?: number;
+  linkedDetailed?: number;
+  linkedTransit?: number;
   rejectedReasons: Array<{
     sourceRowIndex?: number;
     reasonCode: ImportRejectionReasonCode;
     reasonText: string;
     summary: string;
   }>;
+}
+
+function getScopeDisplayLabel(scope: ExtendedImportScope, isFa: boolean): string {
+  const meta = EXTENDED_SCOPE_META[scope];
+  if (!meta) return scope;
+  return isFa ? meta.labelFa : meta.labelEn;
+}
+
+function summarizeOperationalRow(
+  scope: ExtendedImportScope,
+  row: Record<string, unknown>,
+  isFa: boolean,
+  calendar: CalendarMode,
+): { primary: string; secondary: string; badge?: string } {
+  const s = (k: string) => (row[k] === null || row[k] === undefined ? '' : String(row[k]));
+  const d = (k: string) => {
+    const raw = s(k);
+    return raw ? formatIsoDate(raw, calendar) : '';
+  };
+  const itemsLen = Array.isArray(row.items) ? row.items.length : Array.isArray(row.answers) ? row.answers.length : Array.isArray(row.rows) ? row.rows.length : 0;
+  switch (scope) {
+    case 'siteEntryMinutes':
+      return {
+        primary: s('minutesNo') || '-',
+        secondary: `${Array.isArray(row.packingListNos) ? (row.packingListNos as string[]).join('، ') : ''} · ${s('supplier') || d('date')}`,
+        badge: itemsLen > 0 ? (isFa ? `${itemsLen} قلم` : `${itemsLen} items`) : undefined,
+      };
+    case 'opiInvitations':
+      return {
+        primary: s('invitationNo') || '-',
+        secondary: `${Array.isArray(row.packingNos) ? (row.packingNos as string[]).join('، ') : ''} · ${d('date')}`,
+        badge: s('location') || undefined,
+      };
+    case 'opiMinutes':
+      return {
+        primary: s('minutesNo') || '-',
+        secondary: `${s('packingListNo')} · ${d('date')}${s('merNo') ? ` · MER: ${s('merNo')}` : ''}`,
+        badge: s('resultStatus') === 'has_discrepancy' ? (isFa ? 'دارای مغایرت' : 'Discrepancy') : (isFa ? 'تطابق کامل' : 'Compliant'),
+      };
+    case 'osdrReports':
+      return {
+        primary: s('reportNo') || '-',
+        secondary: `${s('packingListNo')} · ${s('supplier') || d('date')}`,
+        badge: isFa ? `${itemsLen} قلم مغایرت` : `${itemsLen} items`,
+      };
+    case 'gcvDocuments':
+      return {
+        primary: s('receiptNo') || '-',
+        secondary: `${s('receiver')} · ${d('date')}`,
+        badge: isFa ? `${itemsLen} قلم` : `${itemsLen} items`,
+      };
+    case 'mivDocuments':
+      return {
+        primary: s('docNo') || '-',
+        secondary: `${s('party') || s('receiver') || '-'} · ${d('date')}`,
+        badge: `${s('docType')} (${itemsLen})`,
+      };
+    case 'substitutions':
+      return {
+        primary: s('docNo') || '-',
+        secondary: `${s('shipmentNo')} · ${s('substituteDescription') || s('originalDescription')}`,
+        badge: s('status') || undefined,
+      };
+    case 'materialEstimates':
+      return {
+        primary: s('mtoCode') || s('itemCode') || '-',
+        secondary: `${s('description')} (${s('size') || '-'})`,
+        badge: `${s('estimatedQty')} ${s('countingUnit')}`,
+      };
+    case 'periodicInspections':
+      return {
+        primary: d('inspectionDate') || '-',
+        secondary: `${s('projectName') || '-'} · ${s('supervisorName') || '-'}`,
+        badge: isFa ? `${itemsLen} بند چک‌لیست` : `${itemsLen} checks`,
+      };
+    case 'stocktake':
+      return {
+        primary: `${s('shipmentNo') || s('itemCode') || '-'}${s('itemNo') ? ` / #${s('itemNo')}` : ''}`,
+        secondary: `${s('stocktakeStatus')} · ${d('stocktakeDate')}`,
+        badge: s('storageLocation') || undefined,
+      };
+    case 'customFormSubmissions':
+      return {
+        primary: `${s('formTitle')} · ${s('docNo')}`,
+        secondary: `${s('packingListNo') ? `پکینگ: ${s('packingListNo')} · ` : ''}${d('date')}`,
+        badge: itemsLen > 0 ? (isFa ? `${itemsLen} ردیف` : `${itemsLen} rows`) : undefined,
+      };
+    default:
+      return { primary: '-', secondary: '' };
+  }
 }
 
 function formatBytes(bytes: number): string {
@@ -204,16 +321,19 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const isAdmin = user?.role === 'admin';
   const canImport = user?.role === 'admin' || user?.role === 'operator';
 
-  // Offline Backup & Restore state
-  const [snapshots, setSnapshots] = useState<LocalBackupSnapshotRecord[]>([]);
+  // Offline Backup & Restore state (lightweight metadata only — instant render!)
+  const [snapshots, setSnapshots] = useState<LocalBackupSnapshotMeta[]>([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(true);
+  const [loadingSnapId, setLoadingSnapId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Unified Spreadsheet / CSV / JSON Import state
+  // Unified Spreadsheet / CSV / JSON Import state (Core + All 10 Operational/Custom Forms)
   const [fileName, setFileName] = useState('');
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState('');
   const [sheetsMap, setSheetsMap] = useState<Record<string, string[][]>>({});
-  const [importScope, setImportScope] = useState<'auto' | 'general' | 'detailed' | 'transit'>('auto');
+  const [structuredSheetsMap, setStructuredSheetsMap] = useState<Record<string, StructuredSheetPayload>>({});
+  const [importScope, setImportScope] = useState<'auto' | ExtendedImportScope>('auto');
   const [assumedCalendar, setAssumedCalendar] = useState<'jalali' | 'gregorian'>('jalali');
   const [duplicatePolicy, setDuplicatePolicy] = useState<'replace' | 'skip'>('skip');
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
@@ -225,6 +345,12 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const [importing, setImporting] = useState(false);
   const [importedSheets, setImportedSheets] = useState<string[]>([]);
   const [postSheetPrompt, setPostSheetPrompt] = useState<string | null>(null);
+
+  // Multi-Sheet / Multi-Section Auto-Workbook Detection State
+  const [autoWorkbookPreview, setAutoWorkbookPreview] = useState<AutoWorkbookPreviewSection[]>([]);
+  const [sheetScopeOverrides, setSheetScopeOverrides] = useState<Record<string, ExtendedImportScope | 'skip'>>({});
+  const [autoWorkbookResult, setAutoWorkbookResult] = useState<AutoWorkbookCommitSummary | null>(null);
+  const [autoImporting, setAutoImporting] = useState(false);
 
   // Import Log & Rejected Records Recovery State (persisted per active project in sessionStorage)
   const logsStorageKey = `samaan_import_logs_${activeProjectId}`;
@@ -272,38 +398,47 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(pendingStorageKey, JSON.stringify(pendingRejected));
+      // Cap persisted rejected items to avoid synchronous JSON bloat on mount
+      sessionStorage.setItem(pendingStorageKey, JSON.stringify(pendingRejected.slice(0, 150)));
     } catch {
       // ignore storage quota
     }
   }, [pendingRejected, pendingStorageKey]);
 
   const loadSnapshots = useCallback(async () => {
+    setSnapshotsLoading(true);
     try {
       const list = await listIndexedDbSnapshots(activeProjectId);
       setSnapshots(list);
     } catch {
       // IndexedDB unavailable
+    } finally {
+      setSnapshotsLoading(false);
     }
   }, [activeProjectId]);
 
   useEffect(() => {
-    loadSnapshots();
+    void loadSnapshots();
   }, [loadSnapshots]);
 
   const runPreview = useCallback(
     async (
       matrix: string[][],
-      scopeVal: 'auto' | 'general' | 'detailed' | 'transit',
+      scopeVal: 'auto' | ExtendedImportScope,
       calVal: 'jalali' | 'gregorian',
       explicitMapping?: Record<string, number>,
+      sheetNameParam?: string,
+      structuredParam?: StructuredSheetPayload,
     ) => {
-      if (!matrix || matrix.length === 0) return;
+      const hasStruct = Boolean(structuredParam?.records && structuredParam.records.length > 0);
+      if ((!matrix || matrix.length === 0) && !hasStruct) return;
       try {
         const res = await apiRequest<PreviewResponse>('/api/import/preview', {
           method: 'POST',
           body: JSON.stringify({
             matrix,
+            ...(hasStruct ? { structuredRecords: structuredParam!.records, sectionHint: structuredParam!.sectionHint } : {}),
+            ...(sheetNameParam ? { sheetName: sheetNameParam } : {}),
             scope: scopeVal === 'auto' ? undefined : scopeVal,
             assumedCalendar: calVal,
             ...(explicitMapping ? { columnMapping: explicitMapping } : {}),
@@ -312,7 +447,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
         setPreview(res);
         setColumnMapping(res.columnInspection?.mapping || explicitMapping || null);
         setEditedRows(res.parsedRows || res.sample || []);
-        setRowsConfirmed(false);
+        setRowsConfirmed(Boolean(res.isOperational));
       } catch (err) {
         if (err instanceof ApiError) notify('error', err.message);
       }
@@ -320,11 +455,54 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     [notify],
   );
 
+  const runAutoWorkbookPreview = useCallback(
+    async (
+      names: string[],
+      sMap: Record<string, string[][]>,
+      structMap: Record<string, StructuredSheetPayload>,
+      calVal: 'jalali' | 'gregorian',
+    ) => {
+      if (names.length === 0) {
+        setAutoWorkbookPreview([]);
+        return;
+      }
+      try {
+        const payloadSheets = names.map((nm) => ({
+          name: nm,
+          matrix: sMap[nm] || [],
+          ...(structMap[nm]?.records?.length
+            ? { structuredRecords: structMap[nm].records, sectionHint: structMap[nm].sectionHint }
+            : {}),
+        }));
+        const res = await apiRequest<{ detectedSheets: AutoWorkbookPreviewSection[] }>('/api/import/auto-workbook', {
+          method: 'POST',
+          body: JSON.stringify({
+            sheets: payloadSheets,
+            assumedCalendar: calVal,
+            dryRun: true,
+          }),
+        });
+        setAutoWorkbookPreview(res.detectedSheets || []);
+        const initOverrides: Record<string, ExtendedImportScope | 'skip'> = {};
+        for (const ds of res.detectedSheets || []) {
+          initOverrides[ds.sheetName] = ds.scope || 'skip';
+        }
+        setSheetScopeOverrides(initOverrides);
+      } catch {
+        setAutoWorkbookPreview([]);
+      }
+    },
+    [],
+  );
+
   const handleSelectDataFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     setImportResult(null);
+    setAutoWorkbookResult(null);
+    setAutoWorkbookPreview([]);
+    setSheetScopeOverrides({});
     setPreview(null);
     setColumnMapping(null);
     setEditedRows([]);
@@ -333,12 +511,20 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setPostSheetPrompt(null);
     try {
       const parsed = await parseSpreadsheetFile(file);
+      const nextStructMap = parsed.structuredSheets || {};
       setFileName(parsed.fileName);
       setSheetNames(parsed.sheetNames);
       setSheetsMap(parsed.sheets);
+      setStructuredSheetsMap(nextStructMap);
       setSelectedSheet(parsed.defaultSheet);
       const matrix = parsed.sheets[parsed.defaultSheet] || [];
-      await runPreview(matrix, importScope, assumedCalendar);
+      const structPayload = nextStructMap[parsed.defaultSheet];
+      await Promise.all([
+        runPreview(matrix, importScope, assumedCalendar, undefined, parsed.defaultSheet, structPayload),
+        parsed.sheetNames.length > 1
+          ? runAutoWorkbookPreview(parsed.sheetNames, parsed.sheets, nextStructMap, assumedCalendar)
+          : Promise.resolve(),
+      ]);
     } catch (err) {
       notify(
         'error',
@@ -357,24 +543,29 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setPostSheetPrompt(null);
     setColumnMapping(null);
     const matrix = sheetsMap[nextSheet] || [];
-    await runPreview(matrix, importScope, assumedCalendar);
+    const structPayload = structuredSheetsMap[nextSheet];
+    await runPreview(matrix, importScope, assumedCalendar, undefined, nextSheet, structPayload);
   };
 
   const handleScopeOrCalendarChange = async (
-    nextScope: 'auto' | 'general' | 'detailed' | 'transit',
+    nextScope: 'auto' | ExtendedImportScope,
     nextCal: 'jalali' | 'gregorian',
   ) => {
     setImportScope(nextScope);
     setAssumedCalendar(nextCal);
     setColumnMapping(null);
     const matrix = sheetsMap[selectedSheet] || [];
-    if (matrix.length > 0) {
-      await runPreview(matrix, nextScope, nextCal);
+    const structPayload = structuredSheetsMap[selectedSheet];
+    if (matrix.length > 0 || structPayload?.records?.length) {
+      await runPreview(matrix, nextScope, nextCal, undefined, selectedSheet, structPayload);
+    }
+    if (sheetNames.length > 1) {
+      await runAutoWorkbookPreview(sheetNames, sheetsMap, structuredSheetsMap, nextCal);
     }
   };
 
   const handleMappingChange = async (fieldKey: string, colIdx: number) => {
-    if (!preview) return;
+    if (!preview || preview.isOperational) return;
     const nextMap: Record<string, number> = {
       ...(columnMapping || preview.columnInspection?.mapping || {}),
       [fieldKey]: colIdx,
@@ -382,7 +573,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setColumnMapping(nextMap);
     const matrix = sheetsMap[selectedSheet] || [];
     if (matrix.length > 0) {
-      await runPreview(matrix, preview.scope, assumedCalendar, nextMap);
+      await runPreview(matrix, preview.scope, assumedCalendar, nextMap, selectedSheet, structuredSheetsMap[selectedSheet]);
     }
   };
 
@@ -419,6 +610,9 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       skipped: res.skipped,
       blankRowsSkipped: res.blankRowsSkipped || 0,
       transitAutoArrived: res.transitAutoArrived,
+      linkedGeneral: res.linkedGeneral,
+      linkedDetailed: res.linkedDetailed,
+      linkedTransit: res.linkedTransit,
       rejectedReasons: rejected.map((r) => ({
         sourceRowIndex: r.sourceRowIndex,
         reasonCode: r.reasonCode,
@@ -435,33 +629,37 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           ),
       })),
     };
-    setImportLogs((prev) => [entry, ...prev].slice(0, 15));
+    setImportLogs((prev) => [entry, ...prev].slice(0, 20));
   };
 
   const handleCommitImport = async () => {
     const matrix = sheetsMap[selectedSheet] || [];
-    if (matrix.length === 0 && editedRows.length === 0) return;
+    const structPayload = structuredSheetsMap[selectedSheet];
+    const hasStruct = Boolean(structPayload?.records?.length);
+    if (matrix.length === 0 && editedRows.length === 0 && !hasStruct) return;
     const currentFile = fileName || (isFa ? 'فایل ورودی' : 'Uploaded File');
     setImporting(true);
     try {
       const targetScope = preview?.scope || (importScope === 'auto' ? undefined : importScope);
+      const isOp = targetScope ? isOperationalScope(targetScope) : Boolean(preview?.isOperational);
       const res = await apiRequest<CommitResponse>('/api/import/commit', {
         method: 'POST',
         body: JSON.stringify({
           matrix,
+          ...(hasStruct ? { structuredRecords: structPayload!.records, sectionHint: structPayload!.sectionHint } : {}),
+          ...(selectedSheet ? { sheetName: selectedSheet } : {}),
           scope: targetScope,
           assumedCalendar,
           duplicateRecordPolicy: duplicatePolicy,
-          includeParserRejections: true,
-          ...(columnMapping ? { columnMapping } : {}),
+          includeParserRejections: !isOp,
+          ...(!isOp && columnMapping ? { columnMapping } : {}),
           ...(editedRows.length > 0 ? { editedRows } : {}),
         }),
       });
       setImportResult(res);
       setPendingRejected(res.rejectedRecords || []);
-      recordLogSession(res, currentFile, isFa);
+      recordLogSession(res, `${currentFile}${sheetNames.length > 1 ? ` (${selectedSheet})` : ''}`, isFa);
 
-      // Clear active preview so newly committed rows are NOT re-flagged, but keep multi-sheet workbook open
       setPreview(null);
       setEditedRows([]);
       setColumnMapping(null);
@@ -475,13 +673,18 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
         setSheetNames([]);
         setSelectedSheet('');
         setSheetsMap({});
+        setStructuredSheetsMap({});
         setPostSheetPrompt(null);
       }
+      const linkSummaryFa =
+        (res.linkedGeneral || 0) + (res.linkedDetailed || 0) + (res.linkedTransit || 0) > 0
+          ? ` · ارتباط‌دهی: کلی ${res.linkedGeneral || 0}، جزئیات ${res.linkedDetailed || 0}، در راه ${res.linkedTransit || 0}`
+          : '';
       notify(
         res.skipped > 0 ? 'info' : 'success',
         isFa
-          ? `عملیات تکمیل شد: ${res.imported} جدید، ${res.replaced} جایگزین، ${res.skipped} رد شده.`
-          : `Import completed: ${res.imported} imported, ${res.replaced} replaced, ${res.skipped} skipped.`,
+          ? `عملیات تکمیل شد (${getScopeDisplayLabel(res.scope, true)}): ${res.imported} جدید، ${res.replaced} جایگزین، ${res.skipped} رد شده${linkSummaryFa}.`
+          : `Import completed (${getScopeDisplayLabel(res.scope, false)}): ${res.imported} imported, ${res.replaced} replaced, ${res.skipped} skipped.`,
       );
       triggerAutoSnapshot(`Import (${res.scope})`);
       onRestored();
@@ -489,6 +692,77 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleCommitAutoWorkbook = async () => {
+    const activeSheets = sheetNames
+      .map((nm) => {
+        const chosen = sheetScopeOverrides[nm];
+        if (chosen === 'skip') return null;
+        const structPayload = structuredSheetsMap[nm];
+        return {
+          name: nm,
+          matrix: sheetsMap[nm] || [],
+          ...(structPayload?.records?.length
+            ? { structuredRecords: structPayload.records, sectionHint: structPayload.sectionHint }
+            : {}),
+          ...(chosen ? { forcedScope: chosen } : {}),
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => Boolean(x));
+
+    if (activeSheets.length === 0) {
+      notify('error', isFa ? 'حداقل یک شیت معتبر برای ورود انتخاب کنید.' : 'Select at least one valid sheet to import.');
+      return;
+    }
+
+    const currentFile = fileName || (isFa ? 'فایل چندبخشی' : 'Multi-Sheet Workbook');
+    setAutoImporting(true);
+    try {
+      const res = await apiRequest<AutoWorkbookCommitSummary>('/api/import/auto-workbook', {
+        method: 'POST',
+        body: JSON.stringify({
+          sheets: activeSheets,
+          assumedCalendar,
+          duplicateRecordPolicy: duplicatePolicy,
+          dryRun: false,
+        }),
+      });
+      setAutoWorkbookResult(res);
+      for (const sec of res.sections) {
+        recordLogSession(
+          {
+            scope: sec.scope,
+            isOperational: sec.isOperational,
+            imported: sec.imported,
+            replaced: sec.replaced,
+            skipped: sec.skipped,
+            transitAutoArrived: sec.linkedTransit,
+            linkedGeneral: sec.linkedGeneral,
+            linkedDetailed: sec.linkedDetailed,
+            linkedTransit: sec.linkedTransit,
+          },
+          `${currentFile} [${sec.sheetName}]`,
+          isFa,
+        );
+      }
+      setImportedSheets(res.sections.map((s) => s.sheetName));
+      setPreview(null);
+      setEditedRows([]);
+      setPostSheetPrompt(null);
+      notify(
+        'success',
+        isFa
+          ? `ورود خودکار ${res.sections.length} بخش تکمیل شد: ${res.totals.imported} جدید، ${res.totals.replaced} جایگزین (ارتباط با کلی: ${res.totals.linkedGeneral}، جزئیات: ${res.totals.linkedDetailed}، در راه: ${res.totals.linkedTransit}).`
+          : `Auto-imported ${res.sections.length} sections: ${res.totals.imported} imported, ${res.totals.replaced} replaced.`,
+      );
+      triggerAutoSnapshot(`Auto-Workbook (${res.sections.length} sections)`);
+      onRestored();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setAutoImporting(false);
     }
   };
 
@@ -636,6 +910,10 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setSheetNames([]);
     setSelectedSheet('');
     setSheetsMap({});
+    setStructuredSheetsMap({});
+    setAutoWorkbookPreview([]);
+    setSheetScopeOverrides({});
+    setAutoWorkbookResult(null);
     setPreview(null);
     setColumnMapping(null);
     setEditedRows([]);
@@ -656,7 +934,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
         activeProjectId,
       );
       notify('success', isFa ? 'نسخه پشتیبان ذخیره شد.' : 'Snapshot saved.');
-      loadSnapshots();
+      void loadSnapshots();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
@@ -678,6 +956,22 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     }
   };
 
+  const handleDownloadSnapshotById = async (snapId: string) => {
+    setLoadingSnapId(snapId);
+    try {
+      const payload = await getIndexedDbSnapshotPayload(snapId);
+      if (!payload) {
+        notify('error', isFa ? 'محتوای این نسخه پشتیبان یافت نشد.' : 'Snapshot payload not found.');
+        return;
+      }
+      downloadJsonBackup(payload, 'samaan-snapshot');
+    } catch {
+      notify('error', isFa ? 'خطا در خواندن نسخه پشتیبان.' : 'Failed to load snapshot payload.');
+    } finally {
+      setLoadingSnapId(null);
+    }
+  };
+
   const handleRestoreSnapshot = async (snapshot: DatabaseSnapshot) => {
     if (!isAdmin) return;
     setBusy(true);
@@ -692,6 +986,21 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleRestoreSnapshotById = async (snapId: string) => {
+    if (!isAdmin) return;
+    setLoadingSnapId(snapId);
+    try {
+      const payload = await getIndexedDbSnapshotPayload(snapId);
+      if (!payload) {
+        notify('error', isFa ? 'محتوای این نسخه پشتیبان یافت نشد.' : 'Snapshot payload not found.');
+        return;
+      }
+      await handleRestoreSnapshot(payload);
+    } finally {
+      setLoadingSnapId(null);
     }
   };
 
@@ -710,12 +1019,13 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     }
   };
 
-  const inspection = preview?.columnInspection;
-  const activeFieldDefs = inspection
-    ? editableFieldsForScope(preview.scope)
-        .map((k) => inspection.targetFields.find((tf) => tf.key === k))
-        .filter((tf): tf is ImportColumnDef => Boolean(tf))
-    : [];
+  const inspection = preview && !preview.isOperational ? preview.columnInspection : undefined;
+  const activeFieldDefs =
+    inspection && preview && !preview.isOperational
+      ? editableFieldsForScope(preview.scope as 'general' | 'detailed' | 'transit')
+          .map((k) => inspection.targetFields.find((tf) => tf.key === k))
+          .filter((tf): tf is ImportColumnDef => Boolean(tf))
+      : [];
 
   const hasReplaceablePending = pendingRejected.some((r) => r.canForceReplace);
 
@@ -723,7 +1033,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     <div className="max-w-6xl space-y-6">
       {/* Section 1: Data Import from Excel / CSV / JSON with column mapping, pre-commit review, & duplicate handling */}
       {canImport && (
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 className="text-base font-bold flex items-center gap-2">
@@ -736,8 +1046,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
               </h3>
               <p className="text-xs text-[var(--text-secondary)] mt-1">
                 {isFa
-                  ? 'انتخاب فایل ورودی، بررسی و تطبیق دقیق ستون‌ها، ویرایش پیش از ثبت و مشاهده لاگ کامل رکوردهای رد شده با امکان بازثبت.'
-                  : 'Upload Excel, CSV, TSV, or JSON files, confirm column mappings, edit rows before commit, and manage rejected rows in the import log.'}
+                  ? 'تشخیص خودکار جداول در راه، کلی و جزئیات همراه با تمامی فرم‌های عملیاتی و اختصاصی کارفرما (صورتجلسه ورود، دعوتنامه و صورتجلسه OPI، گزارش MER، رسید GCV، حواله MIV/SMR، جایگزینی، برآورد MTO، انبارگردانی و بازدید ادواری) با ارتباط‌دهی هوشمند.'
+                  : 'Auto-detects Core tables (Transit, General, Detailed) and all 10 operational & custom employer forms from Excel, CSV, or JSON with automatic cross-linking.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -745,12 +1055,12 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                 <button
                   type="button"
                   onClick={clearImportSelection}
-                  className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
+                  className="h-9 px-3 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
                 >
                   {isFa ? 'پاک کردن فایل' : 'Clear File'}
                 </button>
               )}
-              <label className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+              <label className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-sm">
                 <Upload className="w-3.5 h-3.5" />
                 <span>{isFa ? 'انتخاب فایل اکسل / CSV / JSON' : 'Choose Excel / CSV / JSON'}</span>
                 <input
@@ -766,22 +1076,33 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'بخش مقصد' : 'Target Dataset'}
+                {isFa ? 'بخش مقصد' : 'Target Section'}
               </label>
               <select
                 value={importScope}
                 onChange={(e) =>
                   handleScopeOrCalendarChange(
-                    e.target.value as 'auto' | 'general' | 'detailed' | 'transit',
+                    e.target.value as 'auto' | ExtendedImportScope,
                     assumedCalendar,
                   )
                 }
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
               >
-                <option value="auto">{isFa ? 'تشخیص خودکار از ستون‌ها' : 'Auto-Detect Columns'}</option>
-                <option value="general">{isFa ? 'ثبت کلی تجهیزات (جنرال)' : 'General Equipment'}</option>
-                <option value="detailed">{isFa ? 'ثبت جزئیات تجهیزات (دیتیل)' : 'Detailed Equipment'}</option>
-                <option value="transit">{isFa ? 'تجهیزات در راه (Transit)' : 'In-Transit Equipment'}</option>
+                <option value="auto">
+                  {isFa ? 'تشخیص خودکار (همه جداول و فرم‌ها)' : 'Auto-Detect (All Tables & Forms)'}
+                </option>
+                <optgroup label={isFa ? 'جداول پایه انبار' : 'Core Warehouse Tables'}>
+                  <option value="transit">{getScopeDisplayLabel('transit', isFa)}</option>
+                  <option value="general">{getScopeDisplayLabel('general', isFa)}</option>
+                  <option value="detailed">{getScopeDisplayLabel('detailed', isFa)}</option>
+                </optgroup>
+                <optgroup label={isFa ? 'فرم‌های عملیاتی و اختصاصی کارفرما' : 'Operational & Custom Employer Forms'}>
+                  {ALL_EXTENDED_SCOPES.filter((sc) => isOperationalScope(sc)).map((sc) => (
+                    <option key={sc} value={sc}>
+                      {getScopeDisplayLabel(sc, isFa)}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
             </div>
 
@@ -797,7 +1118,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     e.target.value as 'jalali' | 'gregorian',
                   )
                 }
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
               >
                 <option value="jalali">{isFa ? 'شمسی (جلالی)' : 'Jalali (Shamsi)'}</option>
                 <option value="gregorian">{isFa ? 'میلادی' : 'Gregorian'}</option>
@@ -807,12 +1128,12 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
             {sheetNames.length > 1 && (
               <div>
                 <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'انتخاب شیت اکسل' : 'Excel Sheet'}
+                  {isFa ? 'انتخاب شیت / بخش جهت پیش‌نمایش' : 'Inspect Sheet / Section'}
                 </label>
                 <select
                   value={selectedSheet}
                   onChange={(e) => handleSheetChange(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                  className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
                 >
                   {sheetNames.map((s) => (
                     <option key={s} value={s}>
@@ -824,13 +1145,161 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
             )}
           </div>
 
+          {/* Multi-Sheet / Multi-Section Auto-Import & Cross-Linking Panel */}
+          {fileName && sheetNames.length > 1 && autoWorkbookPreview.length > 0 && (
+            <div className="p-4 rounded-xl border border-[var(--accent-primary)]/35 bg-[var(--accent-soft)]/55 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-bold text-[var(--text-primary)] flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                    <span>
+                      {isFa
+                        ? `تشخیص خودکار چندبخشی: ${autoWorkbookPreview.length.toLocaleString('fa-IR')} شیت/بخش در فایل «${fileName}» شناسایی شد`
+                        : `Multi-Section Auto-Detection: ${autoWorkbookPreview.length} sheets/sections found in "${fileName}"`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[var(--text-secondary)]">
+                    {isFa
+                      ? 'تمامی بخش‌ها به ترتیب اولویت (در راه ← کلی ← جزئیات ← فرم‌های عملیاتی و اختصاصی) ثبت شده و به‌صورت خودکار به هم متصل می‌شوند.'
+                      : 'All sections are imported in dependency order (Transit → General → Detailed → Operational & Custom Forms) with automatic cross-linking.'}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={duplicatePolicy}
+                    onChange={(e) => setDuplicatePolicy(e.target.value as 'replace' | 'skip')}
+                    className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-medium"
+                    aria-label={isFa ? 'سیاست تکراری‌ها' : 'Duplicate Policy'}
+                  >
+                    <option value="skip">{isFa ? 'رد کردن تکراری‌ها' : 'Skip Duplicates'}</option>
+                    <option value="replace">{isFa ? 'جایگزینی تکراری‌ها' : 'Replace Duplicates'}</option>
+                  </select>
+                  <button
+                    type="button"
+                    disabled={autoImporting}
+                    onClick={handleCommitAutoWorkbook}
+                    className="h-8 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+                  >
+                    {autoImporting ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Layers className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {autoImporting
+                        ? isFa ? 'در حال ثبت و ارتباط‌دهی...' : 'Importing & Linking...'
+                        : isFa ? 'ورود خودکار همه بخش‌ها و ارتباط‌دهی هوشمند' : 'Auto-Import All Sections & Link'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {autoWorkbookPreview.map((sec) => {
+                  const chosen = sheetScopeOverrides[sec.sheetName] ?? sec.scope ?? 'skip';
+                  const isDone = importedSheets.includes(sec.sheetName);
+                  const totalEstLinks = sec.estimatedLinks.general + sec.estimatedLinks.detailed + sec.estimatedLinks.transit;
+                  return (
+                    <div
+                      key={sec.sheetName}
+                      className={`p-2.5 rounded-xl border text-[11px] flex flex-wrap items-center justify-between gap-2 ${
+                        isDone
+                          ? 'border-[var(--status-success)] bg-[var(--status-success-bg)]/40'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+                      }`}
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="font-bold text-[var(--text-primary)] flex items-center gap-1.5 truncate">
+                          {isDone && <CheckCircle2 className="w-3.5 h-3.5 text-[var(--status-success)] shrink-0" />}
+                          <span className="truncate">{sec.sheetName}</span>
+                          <span className="text-[10px] font-normal text-[var(--text-muted)] tabular-nums">
+                            ({isFa ? `${sec.rowCount.toLocaleString('fa-IR')} ردیف` : `${sec.rowCount} rows`})
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-muted)] tabular-nums">
+                          {sec.duplicateDbCount > 0 && (
+                            <span className="text-[var(--status-warning)] font-medium">
+                              {isFa ? `${sec.duplicateDbCount} تکراری` : `${sec.duplicateDbCount} dup`}
+                            </span>
+                          )}
+                          {totalEstLinks > 0 && (
+                            <span className="inline-flex items-center gap-0.5 text-[var(--accent-primary)] font-medium">
+                              <Link2 className="w-3 h-3" />
+                              {isFa
+                                ? `ارتباط: کلی ${sec.estimatedLinks.general} · جزئیات ${sec.estimatedLinks.detailed} · در راه ${sec.estimatedLinks.transit}`
+                                : `Links: G ${sec.estimatedLinks.general} · D ${sec.estimatedLinks.detailed} · T ${sec.estimatedLinks.transit}`}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <select
+                        value={chosen}
+                        onChange={(e) =>
+                          setSheetScopeOverrides((prev) => ({
+                            ...prev,
+                            [sec.sheetName]: e.target.value as ExtendedImportScope | 'skip',
+                          }))
+                        }
+                        className="h-7 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] max-w-[200px]"
+                      >
+                        <option value="skip">{isFa ? '-- نادیده گرفتن شیت --' : '-- Skip Sheet --'}</option>
+                        {ALL_EXTENDED_SCOPES.map((sc) => (
+                          <option key={sc} value={sc}>
+                            {getScopeDisplayLabel(sc, isFa)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Multi-Section Auto-Workbook Commit Result Summary */}
+          {autoWorkbookResult && (
+            <div className="p-4 rounded-xl border border-[var(--status-success)] bg-[var(--status-success-bg)]/45 space-y-2.5 text-xs">
+              <div className="font-bold text-[var(--status-success)] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>
+                  {isFa
+                    ? `ثبت خودکار ${autoWorkbookResult.sections.length.toLocaleString('fa-IR')} بخش با موفقیت انجام شد: ${autoWorkbookResult.totals.imported.toLocaleString('fa-IR')} جدید · ${autoWorkbookResult.totals.replaced.toLocaleString('fa-IR')} جایگزین · ${autoWorkbookResult.totals.skipped.toLocaleString('fa-IR')} رد شده`
+                    : `Auto-imported ${autoWorkbookResult.sections.length} sections: ${autoWorkbookResult.totals.imported} imported · ${autoWorkbookResult.totals.replaced} replaced · ${autoWorkbookResult.totals.skipped} skipped`}
+                </span>
+              </div>
+              <div className="text-[11px] text-[var(--text-primary)] flex flex-wrap items-center gap-3 tabular-nums">
+                <span className="inline-flex items-center gap-1 font-semibold text-[var(--accent-primary)]">
+                  <Link2 className="w-3.5 h-3.5" />
+                  {isFa
+                    ? `مجموع ارتباط‌های هوشمند: جدول کلی (${autoWorkbookResult.totals.linkedGeneral}) · جدول جزئیات (${autoWorkbookResult.totals.linkedDetailed}) · کالاهای در راه (${autoWorkbookResult.totals.linkedTransit})`
+                    : `Cross-Links Applied: General (${autoWorkbookResult.totals.linkedGeneral}) · Detailed (${autoWorkbookResult.totals.linkedDetailed}) · Transit (${autoWorkbookResult.totals.linkedTransit})`}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-[11px]">
+                {autoWorkbookResult.sections.map((sec) => (
+                  <div
+                    key={`${sec.sheetName}-${sec.scope}`}
+                    className="px-2.5 py-1.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between gap-2 tabular-nums"
+                  >
+                    <span className="font-semibold truncate">{getScopeDisplayLabel(sec.scope, isFa)}</span>
+                    <span className="text-[var(--text-secondary)] shrink-0">
+                      +{sec.imported}
+                      {sec.replaced > 0 ? ` / ↻${sec.replaced}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Multi-Sheet Continuation Prompt */}
           {postSheetPrompt && sheetNames.length > 1 && (
             <div className="p-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] space-y-3 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="font-bold text-[var(--text-primary)]">
                   {isFa
-                    ? `اطلاعات شیت «${postSheetPrompt}» با موفقیت ثبت شد. آیا می‌خواهید از سایر شیت‌های این فایل اکسل نیز اطلاعات وارد کنید؟`
+                    ? `اطلاعات شیت «${postSheetPrompt}» با موفقیت ثبت شد. آیا می‌خواهید از سایر شیت‌های این فایل نیز اطلاعات وارد کنید؟`
                     : `Sheet "${postSheetPrompt}" was imported. Would you like to import data from the remaining sheets of this workbook?`}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -847,17 +1316,10 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setFileName('');
-                      setSheetNames([]);
-                      setSelectedSheet('');
-                      setSheetsMap({});
-                      setImportedSheets([]);
-                      setPostSheetPrompt(null);
-                    }}
+                    onClick={clearImportSelection}
                     className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] font-medium"
                   >
-                    {isFa ? 'خیر، بستن فایل اکسل' : 'No, Close Workbook'}
+                    {isFa ? 'خیر، بستن فایل' : 'No, Close File'}
                   </button>
                 </div>
               </div>
@@ -887,21 +1349,25 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           {fileName && preview && (
             <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="font-semibold">
-                  {isFa ? `پیش‌نمایش فایل: ${fileName}` : `Preview: ${fileName}`} ·{' '}
-                  <span className="text-[var(--accent-primary)]">
-                    {preview.scope === 'general'
-                      ? isFa ? 'بخش کلی (جنرال)' : 'General'
-                      : preview.scope === 'detailed'
-                        ? isFa ? 'بخش جزئیات' : 'Detailed'
-                        : isFa ? 'در راه' : 'In-Transit'}
+                <div className="font-semibold flex flex-wrap items-center gap-1.5">
+                  <span>{isFa ? `پیش‌نمایش فایل: ${fileName}` : `Preview: ${fileName}`} ·</span>
+                  <span className="text-[var(--accent-primary)] font-bold">
+                    {getScopeDisplayLabel(preview.scope, isFa)}
                   </span>
+                  {preview.isOperational && preview.estimatedLinks && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold tabular-nums">
+                      <Link2 className="w-3 h-3" />
+                      {isFa
+                        ? `ارتباط خودکار: کلی ${preview.estimatedLinks.general} · جزئیات ${preview.estimatedLinks.detailed} · در راه ${preview.estimatedLinks.transit}`
+                        : `Auto-Links: G ${preview.estimatedLinks.general} · D ${preview.estimatedLinks.detailed} · T ${preview.estimatedLinks.transit}`}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-[var(--text-secondary)] tabular-nums">
                     {isFa
-                      ? `${editedRows.length.toLocaleString('fa-IR')} ردیف آماده ثبت`
-                      : `${editedRows.length} row(s) ready`}
+                      ? `${editedRows.length.toLocaleString('fa-IR')} ردیف/سند آماده ثبت`
+                      : `${editedRows.length} record(s) ready`}
                   </span>
                   {inspection && (
                     <button
@@ -1112,6 +1578,44 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                 </div>
               )}
 
+              {/* Operational Form Parsed Documents Preview */}
+              {preview.isOperational && editedRows.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-bold text-[var(--text-primary)]">
+                      {isFa
+                        ? `پیش‌نمایش اسناد استخراج‌شده برای بخش «${getScopeDisplayLabel(preview.scope, true)}»`
+                        : `Extracted Documents for "${getScopeDisplayLabel(preview.scope, false)}"`}
+                    </span>
+                    <span className="text-[11px] text-[var(--text-muted)]">
+                      {isFa
+                        ? `نمایش ${Math.min(editedRows.length, 20).toLocaleString('fa-IR')} از ${editedRows.length.toLocaleString('fa-IR')} سند`
+                        : `Showing ${Math.min(editedRows.length, 20)} of ${editedRows.length} documents`}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-[var(--border-subtle)] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-72 overflow-y-auto">
+                    {editedRows.slice(0, 20).map((row, idx) => {
+                      const sum = summarizeOperationalRow(preview.scope, row, isFa, prefs.calendar);
+                      return (
+                        <div key={idx} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <div className="min-w-0">
+                            <div className="font-bold text-[var(--text-primary)] truncate">
+                              {idx + 1}. {sum.primary}
+                            </div>
+                            <div className="text-[11px] text-[var(--text-secondary)] truncate">{sum.secondary}</div>
+                          </div>
+                          {sum.badge && (
+                            <span className="px-2 py-0.5 rounded-md bg-[var(--bg-subtle)] text-[11px] font-medium text-[var(--text-primary)] shrink-0">
+                              {sum.badge}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Explicit Confirmation Checkbox & Commit Button */}
               <div className="pt-2 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
                 <label className="inline-flex items-center gap-2 text-xs font-medium cursor-pointer">
@@ -1122,9 +1626,13 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     className="rounded border-[var(--border-strong)]"
                   />
                   <span>
-                    {isFa
-                      ? 'تایید می‌کنم ستون‌ها و مقادیر پیش‌نمایش بررسی شده و در ستون‌های صحیح قرار دارند.'
-                      : 'I confirm that column mappings and values above have been reviewed and are accurate.'}
+                    {preview.isOperational
+                      ? isFa
+                        ? 'تایید می‌کنم اسناد شناسایی‌شده در بخش مربوطه ثبت شده و با جداول در راه، کلی و جزئیات ارتباط داده شوند.'
+                        : 'I confirm importing these forms into their section with automatic cross-linking to Transit, General, and Detailed tables.'
+                      : isFa
+                        ? 'تایید می‌کنم ستون‌ها و مقادیر پیش‌نمایش بررسی شده و در ستون‌های صحیح قرار دارند.'
+                        : 'I confirm that column mappings and values above have been reviewed and are accurate.'}
                   </span>
                 </label>
 
@@ -1132,7 +1640,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                   type="button"
                   disabled={importing || (editedRows.length === 0 && (preview.parseRejectedRows?.length || 0) === 0) || !rowsConfirmed}
                   onClick={handleCommitImport}
-                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
+                  className="h-9 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
                 >
                   {importing
                     ? isFa ? 'در حال ثبت...' : 'Importing...'
@@ -1143,13 +1651,23 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           )}
 
           {importResult && (
-            <div className="p-3.5 rounded-xl border border-[var(--status-success)] bg-[var(--status-success-bg)]/50 text-xs flex flex-wrap items-center gap-3">
-              <CheckCircle2 className="w-4 h-4 text-[var(--status-success)] shrink-0" />
-              <span className="font-semibold tabular-nums">
-                {isFa
-                  ? `نتیجه بارگذاری ثبت شد: ${importResult.imported.toLocaleString('fa-IR')} ردیف جدید · ${importResult.replaced.toLocaleString('fa-IR')} جایگزین‌شده · ${importResult.skipped.toLocaleString('fa-IR')} رد شده`
-                  : `Import completed: ${importResult.imported} imported · ${importResult.replaced} replaced · ${importResult.skipped} skipped`}
-              </span>
+            <div className="p-3.5 rounded-xl border border-[var(--status-success)] bg-[var(--status-success-bg)]/50 text-xs flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-[var(--status-success)] shrink-0" />
+                <span className="font-semibold tabular-nums">
+                  {isFa
+                    ? `نتیجه ثبت (${getScopeDisplayLabel(importResult.scope, true)}): ${importResult.imported.toLocaleString('fa-IR')} جدید · ${importResult.replaced.toLocaleString('fa-IR')} جایگزین‌شده · ${importResult.skipped.toLocaleString('fa-IR')} رد شده`
+                    : `Import completed (${getScopeDisplayLabel(importResult.scope, false)}): ${importResult.imported} imported · ${importResult.replaced} replaced · ${importResult.skipped} skipped`}
+                </span>
+              </div>
+              {((importResult.linkedGeneral || 0) + (importResult.linkedDetailed || 0) + (importResult.linkedTransit || 0) > 0) && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--accent-primary)] tabular-nums">
+                  <Link2 className="w-3.5 h-3.5" />
+                  {isFa
+                    ? `ارتباط خودکار: کلی ${importResult.linkedGeneral || 0} · جزئیات ${importResult.linkedDetailed || 0} · در راه ${importResult.linkedTransit || 0}`
+                    : `Cross-Linked: G ${importResult.linkedGeneral || 0} · D ${importResult.linkedDetailed || 0} · T ${importResult.linkedTransit || 0}`}
+                </span>
+              )}
             </div>
           )}
 
@@ -1341,11 +1859,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                       <div className="font-semibold text-[var(--text-primary)]">
                         {log.sourceLabel} ·{' '}
                         <span className="text-[var(--accent-primary)]">
-                          {log.scope === 'general'
-                            ? isFa ? 'جنرال' : 'General'
-                            : log.scope === 'detailed'
-                              ? isFa ? 'دیتیل' : 'Detailed'
-                              : isFa ? 'در راه' : 'In-Transit'}
+                          {getScopeDisplayLabel(log.scope, isFa)}
                         </span>
                       </div>
                       <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
@@ -1397,7 +1911,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       )}
 
       {/* Section 2: Offline Backups & Full JSON Restore */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4">
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h3 className="text-base font-bold">
@@ -1421,7 +1935,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
               type="button"
               disabled={busy}
               onClick={handleManualSnapshot}
-              className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+              className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 shadow-sm"
             >
               <Save className="w-3.5 h-3.5" />
               <span>{isFa ? 'ثبت اسنپ‌شات فوری' : 'Save Snapshot Now'}</span>
@@ -1430,13 +1944,13 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
               type="button"
               disabled={busy}
               onClick={handleDownloadLiveJson}
-              className="h-9 px-4 rounded-lg border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+              className="h-9 px-4 rounded-xl border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
             >
               <Download className="w-3.5 h-3.5" />
               <span>{isFa ? 'دانلود فایل پشتیبان (JSON)' : 'Export JSON Backup'}</span>
             </button>
             {isAdmin && (
-              <label className="h-9 px-4 rounded-lg border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+              <label className="h-9 px-4 rounded-xl border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5 cursor-pointer">
                 <Upload className="w-3.5 h-3.5" />
                 <span>{isFa ? 'بازیابی از فایل پشتیبان (JSON)' : 'Restore from JSON File'}</span>
                 <input type="file" accept=".json,application/json" onChange={handleUploadRestore} className="hidden" />
@@ -1446,71 +1960,87 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
         </div>
       </div>
 
-      {/* Saved Snapshots List */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center gap-2 text-sm font-bold">
-          <HardDrive className="w-4 h-4 text-[var(--accent-primary)]" />
-          <span>{isFa ? 'نسخه‌های ذخیره شده در حافظه مرورگر' : 'Saved Offline Snapshots'}</span>
+      {/* Saved Snapshots List (Instant metadata-only load; full payload fetched lazily on Restore/Download) */}
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2 text-sm font-bold">
+          <div className="flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-[var(--accent-primary)]" />
+            <span>{isFa ? 'نسخه‌های ذخیره شده در حافظه مرورگر' : 'Saved Offline Snapshots'}</span>
+          </div>
+          {snapshotsLoading && (
+            <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
+          )}
         </div>
 
-        {snapshots.length === 0 ? (
+        {snapshotsLoading && snapshots.length === 0 ? (
+          <div className="p-8 text-center text-xs text-[var(--text-muted)] flex items-center justify-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
+            <span>{isFa ? 'در حال بارگذاری فهرست نسخه‌ها...' : 'Loading snapshots list...'}</span>
+          </div>
+        ) : snapshots.length === 0 ? (
           <div className="p-8 text-center text-xs text-[var(--text-muted)]">
             {isFa ? 'هنوز اسنپ‌شاتی ذخیره نشده است.' : 'No offline snapshots stored yet.'}
           </div>
         ) : (
           <div className="divide-y divide-[var(--border-subtle)]">
-            {snapshots.map((snap) => (
-              <div
-                key={snap.id}
-                className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-4 text-xs"
-              >
-                <div className="space-y-1">
-                  <div className="font-semibold flex items-center gap-2">
-                    <span>{snap.label}</span>
-                    <span className="text-[11px] text-[var(--text-muted)]">
-                      ({snap.trigger === 'auto' ? (isFa ? 'خودکار' : 'Auto') : (isFa ? 'دستی' : 'Manual')})
-                    </span>
+            {snapshots.map((snap) => {
+              const isSnapLoading = loadingSnapId === snap.id;
+              return (
+                <div
+                  key={snap.id}
+                  className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-4 text-xs"
+                >
+                  <div className="space-y-1">
+                    <div className="font-semibold flex items-center gap-2">
+                      <span>{snap.label}</span>
+                      <span className="text-[11px] text-[var(--text-muted)]">
+                        ({snap.trigger === 'auto' ? (isFa ? 'خودکار' : 'Auto') : (isFa ? 'دستی' : 'Manual')})
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                      {formatTimestamp(snap.createdAt)} · {formatBytes(snap.byteSize)} ·{' '}
+                      {isFa
+                        ? `جنرال: ${snap.counts.general.toLocaleString('fa-IR')} · دیتیل: ${snap.counts.detailed.toLocaleString('fa-IR')} · در راه: ${snap.counts.transit.toLocaleString('fa-IR')}`
+                        : `General: ${snap.counts.general} · Detailed: ${snap.counts.detailed} · Transit: ${snap.counts.transit}`}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-[var(--text-muted)] tabular-nums">
-                    {formatTimestamp(snap.createdAt)} · {formatBytes(snap.byteSize)} ·{' '}
-                    {isFa
-                      ? `جنرال: ${snap.counts.general} · دیتیل: ${snap.counts.detailed} · در راه: ${snap.counts.transit}`
-                      : `General: ${snap.counts.general} · Detailed: ${snap.counts.detailed} · Transit: ${snap.counts.transit}`}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => downloadJsonBackup(snap.snapshot, 'samaan-snapshot')}
-                    className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>JSON</span>
-                  </button>
-                  {isAdmin && (
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      disabled={busy}
-                      onClick={() => handleRestoreSnapshot(snap.snapshot)}
-                      className="h-8 px-3 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] text-xs font-semibold flex items-center gap-1"
+                      disabled={isSnapLoading || busy}
+                      onClick={() => handleDownloadSnapshotById(snap.id)}
+                      className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1 disabled:opacity-50"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      <span>{isFa ? 'بازیابی' : 'Restore'}</span>
+                      {isSnapLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                      <span>JSON</span>
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await deleteIndexedDbSnapshot(snap.id);
-                      loadSnapshots();
-                    }}
-                    className="p-1.5 rounded-lg text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        disabled={busy || isSnapLoading}
+                        onClick={() => handleRestoreSnapshotById(snap.id)}
+                        className="h-8 px-3 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1 disabled:opacity-50 transition-colors"
+                      >
+                        {isSnapLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                        <span>{isFa ? 'بازیابی' : 'Restore'}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={isSnapLoading}
+                      onClick={async () => {
+                        await deleteIndexedDbSnapshot(snap.id);
+                        void loadSnapshots();
+                      }}
+                      className="p-1.5 rounded-lg text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                      aria-label={isFa ? `حذف اسنپ‌شات ${snap.label}` : `Delete snapshot ${snap.label}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
