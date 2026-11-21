@@ -4,6 +4,7 @@ import type { ResolvedEmployerProfile } from './employers.ts';
 import { DEFAULT_UPLOADED_FORM_PRINT_SETTINGS } from './employers.ts';
 import { formatIsoDate, getTodayIso } from './jalali.ts';
 import type {
+  BuiltInFormKey,
   CalendarMode,
   DetailedComputed,
   EmployerUploadedForm,
@@ -13,6 +14,7 @@ import type {
   TransitEntry,
   UploadedFormDataSource,
   UploadedFormFileType,
+  UploadedFormFormulaDetection,
   UploadedFormPrintSettings,
   UploadedFormTableColumnBinding,
 } from './types.ts';
@@ -24,15 +26,37 @@ export interface SamaanFieldOption {
   aliases: string[];
 }
 
+export interface UploadedDataSourceOption {
+  value: UploadedFormDataSource;
+  labelFa: string;
+  labelEn: string;
+}
+
+export const UPLOADED_FORM_DATA_SOURCE_OPTIONS: UploadedDataSourceOption[] = [
+  { value: 'general', labelFa: 'ثبت کلی تجهیزات و پکینگ لیست', labelEn: 'General / Packing List' },
+  { value: 'detailed', labelFa: 'ثبت جزئیات تجهیزات (اقلام و موجودی)', labelEn: 'Detailed Equipment Items' },
+  { value: 'transit', labelFa: 'تجهیزات در راه', labelEn: 'In-Transit Equipment' },
+  { value: 'siteEntry', labelFa: 'صورتجلسه ورود کالا به کارگاه', labelEn: 'Site Entry Minutes' },
+  { value: 'opi', labelFa: 'دعوتنامه گشایش و بازرسی (OPI)', labelEn: 'OPI Invitation' },
+  { value: 'opiMinutes', labelFa: 'صورتجلسه گشایش و بازرسی / گزارش مغایرت (MER)', labelEn: 'OPI Minutes / MER' },
+  { value: 'gcv', labelFa: 'رسید مصرف مستقیم کالا (GCV)', labelEn: 'Direct Consumption Receipt (GCV)' },
+  { value: 'miv', labelFa: 'حواله انبار (MIV)', labelEn: 'Material Issue Voucher (MIV)' },
+  { value: 'smr', labelFa: 'فرم ارجاع / برگشت متریال (SMR)', labelEn: 'Store Material Return (SMR)' },
+  { value: 'substitution', labelFa: 'فرم جایگزینی تجهیزات (REP)', labelEn: 'Equipment Substitution (REP)' },
+  { value: 'balance', labelFa: 'بالانس متریال و انبارگردانی', labelEn: 'Material Balance & Stocktake' },
+  { value: 'manual', labelFa: 'ورود دستی مقادیر در زمان پرینت', labelEn: 'Manual Entry Only' },
+];
+
 export const SAMAAN_BINDABLE_FIELDS: SamaanFieldOption[] = [
   { key: 'projectName', labelFa: 'نام پروژه', labelEn: 'Project Name', aliases: ['نام پروژه', 'پروژه', 'project', 'projectname', 'نام طرح'] },
   { key: 'contractNo', labelFa: 'شماره قرارداد', labelEn: 'Contract No.', aliases: ['شماره قرارداد', 'قرارداد', 'contract', 'contractno'] },
   { key: 'employerName', labelFa: 'نام کارفرما / شرکت', labelEn: 'Employer Name', aliases: ['کارفرما', 'نام کارفرما', 'شرکت', 'employer', 'company'] },
   { key: 'todayDate', labelFa: 'تاریخ روز', labelEn: 'Current Date', aliases: ['تاریخ روز', 'امروز', 'today', 'currentdate'] },
   { key: 'docNo', labelFa: 'شماره سند / فرم', labelEn: 'Document No.', aliases: ['شماره سند', 'شماره فرم', 'docno', 'formno'] },
-  { key: 'minutesNo', labelFa: 'شماره صورتجلسه', labelEn: 'Minutes No.', aliases: ['شماره صورتجلسه', 'صورتجلسه', 'minutesno', 'arrivalnoticeno'] },
-  { key: 'releaseNoteNo', labelFa: 'شماره Release Note', labelEn: 'Release Note No.', aliases: ['releasenote', 'release', 'رلیزنت', 'شماره ترخیص'] },
-  { key: 'packingListNo', labelFa: 'شماره پکینگ لیست', labelEn: 'Packing List No.', aliases: ['شماره پکینگ', 'پکینگ لیست', 'شماره پکینگ لیست', 'شماره محموله', 'packing', 'packingno', 'packinglistno', 'shipmentno'] },
+  { key: 'minutesNo', labelFa: 'شماره صورتجلسه ورود', labelEn: 'Site Entry Minutes No.', aliases: ['شماره صورتجلسه', 'شماره صورتجلسه ورود', 'صورتجلسه ورود', 'صورتجلسه', 'minutesno', 'arrivalnoticeno', 'mapnaentryminutesno'] },
+  { key: 'employerEntryMinutesNo', labelFa: 'شماره صورتجلسه ورود کارفرما', labelEn: 'Employer Entry Minutes No.', aliases: ['صورتجلسه ورود کارفرما', 'شماره صورتجلسه کارفرما', 'employerentryminutesno'] },
+  { key: 'releaseNoteNo', labelFa: 'شماره Release Note', labelEn: 'Release Note No.', aliases: ['releasenote', 'release', 'رلیزنت', 'شماره ترخیص', 'releasenoteno'] },
+  { key: 'packingListNo', labelFa: 'شماره پکینگ لیست / محموله', labelEn: 'Packing List No.', aliases: ['شماره پکینگ', 'پکینگ لیست', 'شماره پکینگ لیست', 'شماره محموله', 'packing', 'packingno', 'packinglistno', 'shipmentno'] },
   { key: 'packageNo', labelFa: 'شماره نگله / بسته', labelEn: 'Package No.', aliases: ['شماره نگله', 'شماره بسته', 'نگله', 'packageno', 'pkgno'] },
   { key: 'arrivalDate', labelFa: 'تاریخ ورود', labelEn: 'Arrival Date', aliases: ['تاریخ ورود', 'تاریخ', 'arrivaldate', 'date'] },
   { key: 'supplier', labelFa: 'تأمین‌کننده / پیمانکار', labelEn: 'Supplier', aliases: ['تامین کننده', 'تأمین‌کننده', 'فروشنده', 'پیمانکار', 'supplier', 'vendor'] },
@@ -46,20 +70,52 @@ export const SAMAAN_BINDABLE_FIELDS: SamaanFieldOption[] = [
   { key: 'driverName', labelFa: 'نام راننده', labelEn: 'Driver Name', aliases: ['نام راننده', 'راننده', 'driver', 'drivername'] },
   { key: 'grossWeight', labelFa: 'وزن ناخالص (kg)', labelEn: 'Gross Weight', aliases: ['وزن ناخالص', 'ناخالص', 'grossweight'] },
   { key: 'netWeight', labelFa: 'وزن خالص (kg)', labelEn: 'Net Weight', aliases: ['وزن خالص', 'خالص', 'netweight'] },
+  { key: 'weighbridgeWeight', labelFa: 'وزن باسکول (kg)', labelEn: 'Weighbridge Weight', aliases: ['وزن باسکول', 'باسکول', 'weighbridgeweight'] },
+  { key: 'freightCost', labelFa: 'مبلغ کرایه حمل', labelEn: 'Freight Cost', aliases: ['کرایه حمل', 'مبلغ کرایه', 'freightcost'] },
   { key: 'dimensions', labelFa: 'ابعاد (طول×عرض×ارتفاع)', labelEn: 'Dimensions', aliases: ['ابعاد', 'طول و عرض', 'dimensions'] },
   { key: 'rowNo', labelFa: 'ردیف', labelEn: 'Row #', aliases: ['ردیف', 'شماره ردیف', 'row', 'rowno', 'no'] },
   { key: 'itemNo', labelFa: 'شماره آیتم / قلم', labelEn: 'Item No.', aliases: ['شماره آیتم', 'شماره قلم', 'آیتم', 'itemno'] },
   { key: 'itemCode', labelFa: 'کد کالا / فنی', labelEn: 'Item Code', aliases: ['کد کالا', 'کد فنی', 'تگ', 'itemcode', 'tag', 'code'] },
   { key: 'generalDescription', labelFa: 'شرح کلی', labelEn: 'General Desc', aliases: ['شرح کلی', 'generaldescription'] },
   { key: 'description', labelFa: 'شرح کالا / تجهیز', labelEn: 'Description', aliases: ['شرح کالا', 'شرح', 'شرح تجهیز', 'description', 'desc'] },
+  { key: 'size', labelFa: 'اندازه / سایز', labelEn: 'Size', aliases: ['اندازه', 'سایز', 'size'] },
   { key: 'countingUnit', labelFa: 'واحد شمارش', labelEn: 'UOM', aliases: ['واحد شمارش', 'واحد اندازه گیری', 'uom', 'countingunit'] },
-  { key: 'packingQty', labelFa: 'تعداد پکینگ / بسته', labelEn: 'Packing Qty', aliases: ['تعداد پکینگ', 'مقدار پکینگ', 'تعداد', 'مقدار', 'qty', 'packingqty'] },
+  { key: 'packingQty', labelFa: 'مقدار پکینگ / تعداد بسته', labelEn: 'Packing Qty', aliases: ['تعداد پکینگ', 'مقدار پکینگ', 'تعداد', 'مقدار', 'qty', 'packingqty'] },
   { key: 'actualQty', labelFa: 'مقدار واقعی (تحویلی)', labelEn: 'Actual Qty', aliases: ['مقدار واقعی', 'تعداد واقعی', 'actualqty'] },
   { key: 'shortage', labelFa: 'کسری', labelEn: 'Shortage', aliases: ['کسری', 'shortage'] },
+  { key: 'surplus', labelFa: 'اضافی', labelEn: 'Surplus', aliases: ['اضافی', 'مازاد', 'surplus'] },
   { key: 'damagedQty', labelFa: 'آسیب‌دیده', labelEn: 'Damaged Qty', aliases: ['آسیب دیده', 'آسیب‌دیده', 'خسارت', 'damaged', 'damagedqty'] },
+  { key: 'mapnaInventory', labelFa: 'موجودی کارفرما', labelEn: 'Employer Stock', aliases: ['موجودی کارفرما', 'موجودی انبار کارفرما', 'موجودی مپنا', 'موجودی انبار اصلی', 'mapnainventory', 'employerstock'] },
+  { key: 'contractorInventory', labelFa: 'موجودی پیمانکار', labelEn: 'Contractor Stock', aliases: ['موجودی پیمانکار', 'موجودی انبار پیمانکار', 'contractorinventory', 'contractorstock'] },
   { key: 'storageLocation', labelFa: 'محل نگهداری', labelEn: 'Storage Location', aliases: ['محل نگهداری', 'لوکیشن', 'انبار', 'location', 'storagelocation'] },
-  { key: 'merNo', labelFa: 'شماره MER', labelEn: 'MER No.', aliases: ['شماره mer', 'mer', 'merno'] },
-  { key: 'merStatus', labelFa: 'وضعیت MER', labelEn: 'MER Status', aliases: ['وضعیت mer', 'merstatus'] },
+  { key: 'opiNo', labelFa: 'شماره دعوتنامه (OPI)', labelEn: 'OPI Invitation No.', aliases: ['شماره دعوتنامه', 'شماره opi', 'دعوتنامه', 'opino', 'opiinvitationno'] },
+  { key: 'opiDate', labelFa: 'تاریخ دعوتنامه (OPI)', labelEn: 'OPI Invitation Date', aliases: ['تاریخ دعوتنامه', 'تاریخ opi', 'opidate', 'opiinvitationdate'] },
+  { key: 'merNo', labelFa: 'شماره کسری/مغایرت (MER)', labelEn: 'MER / OSDR No.', aliases: ['شماره mer', 'شماره کسری', 'شماره مغایرت', 'mer', 'merno', 'osdr'] },
+  { key: 'merStatus', labelFa: 'وضعیت کسری/مغایرت (MER)', labelEn: 'MER Status', aliases: ['وضعیت mer', 'وضعیت کسری', 'وضعیت مغایرت', 'merstatus'] },
+  { key: 'gcvReceiptNo', labelFa: 'شماره رسید مصرف (GCV)', labelEn: 'GCV Receipt No.', aliases: ['شماره رسید مصرف', 'شماره رسید', 'شماره gcv', 'gcv', 'gcvreceiptno'] },
+  { key: 'gcvDeliveredQty', labelFa: 'تعداد رسید مصرف (GCV)', labelEn: 'GCV Delivered Qty', aliases: ['تعداد رسید مصرف', 'مقدار رسید مصرف', 'مقدار تحویل شده', 'gcvdeliveredqty', 'gcvqty'] },
+  { key: 'receiver', labelFa: 'تحویل گیرنده', labelEn: 'Receiver', aliases: ['تحویل گیرنده', 'گیرنده', 'receiver', 'mivreceiver'] },
+  { key: 'mivContractorNo', labelFa: 'شماره حواله (MIV)', labelEn: 'MIV Voucher No.', aliases: ['شماره حواله', 'حواله انبار', 'شماره miv', 'miv', 'mivno', 'mivcontractorno'] },
+  { key: 'mivContractorDate', labelFa: 'تاریخ حواله (MIV)', labelEn: 'MIV Date', aliases: ['تاریخ حواله', 'تاریخ miv', 'mivdate', 'mivcontractordate'] },
+  { key: 'mivContractorQty', labelFa: 'مقدار حواله (MIV)', labelEn: 'MIV Issued Qty', aliases: ['مقدار حواله', 'تعداد حواله', 'تعداد تحویل شده با حواله', 'mivqty', 'mivcontractorqty'] },
+  { key: 'smrContractorNo', labelFa: 'شماره برگشتی به انبار پیمانکار (SMR)', labelEn: 'SMR Contractor No.', aliases: ['شماره برگشتی به انبار پیمانکار', 'شماره برگشتی پیمانکار', 'شماره smr پیمانکار', 'smrcontractorno', 'smrno'] },
+  { key: 'smrContractorDate', labelFa: 'تاریخ برگشتی پیمانکار (SMR)', labelEn: 'SMR Contractor Date', aliases: ['تاریخ برگشتی پیمانکار', 'تاریخ smr پیمانکار', 'smrcontractordate'] },
+  { key: 'smrContractorQty', labelFa: 'مقدار برگشتی پیمانکار (SMR)', labelEn: 'SMR Contractor Qty', aliases: ['مقدار برگشتی پیمانکار', 'تعداد برگشتی پیمانکار', 'smrcontractorqty', 'smrqty'] },
+  { key: 'smrMapnaNo', labelFa: 'شماره برگشتی به انبار کارفرما (SMR)', labelEn: 'SMR Employer No.', aliases: ['شماره برگشتی به انبار کارفرما', 'شماره برگشتی کارفرما', 'شماره برگشتی مپنا', 'smrmapnano'] },
+  { key: 'smrMapnaDate', labelFa: 'تاریخ برگشتی کارفرما (SMR)', labelEn: 'SMR Employer Date', aliases: ['تاریخ برگشتی کارفرما', 'تاریخ برگشتی مپنا', 'smrmapnadate'] },
+  { key: 'smrMapnaQty', labelFa: 'مقدار برگشتی کارفرما (SMR)', labelEn: 'SMR Employer Qty', aliases: ['مقدار برگشتی کارفرما', 'تعداد برگشتی کارفرما', 'smrmapnaqty'] },
+  { key: 'smrDeliverer', labelFa: 'تحویل آورنده (برگشت متریال)', labelEn: 'Deliverer (SMR)', aliases: ['تحویل آورنده', 'برگرداننده', 'deliverer', 'smrdeliverer'] },
+  { key: 'repNo', labelFa: 'شماره جایگزینی (REP)', labelEn: 'Substitution No. (REP)', aliases: ['شماره جایگزینی', 'شماره rep', 'repno', 'substitutionno'] },
+  { key: 'repStatus', labelFa: 'وضعیت جایگزینی (REP)', labelEn: 'Substitution Status', aliases: ['وضعیت جایگزینی', 'وضعیت rep', 'repstatus'] },
+  { key: 'repReprocured', labelFa: 'تأمین مجدد جایگزین شده', labelEn: 'Reprocured Substitution', aliases: ['تامین مجدد جایگزین شده', 'تأمین مجدد جایگزین شده', 'تامین مجدد', 'repreprocured'] },
+  { key: 'repDescription', labelFa: 'توضیحات جایگزینی (REP)', labelEn: 'Substitution Notes', aliases: ['توضیحات جایگزینی', 'توضیحات rep', 'repdescription'] },
+  { key: 'mtoRef', labelFa: 'مرجع MTO', labelEn: 'MTO Reference', aliases: ['mto', 'mtoref', 'مرجع mto', 'برآورد تجهیزات'] },
+  { key: 'materialBalanceNo', labelFa: 'شماره بالانس متریال', labelEn: 'Material Balance No.', aliases: ['شماره بالانس', 'شماره بالانس متریال', 'materialbalanceno', 'bmr'] },
+  { key: 'balanceStatus', labelFa: 'وضعیت بالانس', labelEn: 'Balance Status', aliases: ['وضعیت بالانس', 'balancestatus'] },
+  { key: 'stocktakeStatus', labelFa: 'وضعیت انبارگردانی', labelEn: 'Stocktake Status', aliases: ['وضعیت انبارگردانی', 'انبارگردانی', 'stocktakestatus'] },
+  { key: 'stocktakeDate', labelFa: 'تاریخ انبارگردانی', labelEn: 'Stocktake Date', aliases: ['تاریخ انبارگردانی', 'stocktakedate'] },
+  { key: 'chemicalType', labelFa: 'نوع ماده شیمیایی', labelEn: 'Chemical Type', aliases: ['نوع ماده شیمیایی', 'ماده شیمیایی', 'chemicaltype'] },
+  { key: 'expirationDate', labelFa: 'تاریخ انقضاء', labelEn: 'Expiration Date', aliases: ['تاریخ انقضا', 'تاریخ انقضاء', 'expirationdate', 'expiry'] },
   { key: 'overallStatus', labelFa: 'وضعیت کلی', labelEn: 'Overall Status', aliases: ['وضعیت کلی', 'وضعیت', 'overallstatus', 'status'] },
   { key: 'remarks', labelFa: 'توضیحات / ملاحظات', labelEn: 'Remarks', aliases: ['ملاحظات', 'توضیحات', 'شرح تکمیلی', 'remarks', 'notes'] },
 ];
@@ -77,6 +133,7 @@ export interface ParsedExcelModel {
   colWidthsPx: number[];
   templateRowHeightsPx: (number | undefined)[];
   detectedTokens: string[];
+  detectedFormulas: UploadedFormFormulaDetection[];
 }
 
 export type WordBlock =
@@ -207,14 +264,73 @@ export function replaceTokensInText(
   });
 }
 
+// In-memory LRU cache to prevent expensive XLSX.read() on every keystroke/re-render
+const EXCEL_MODEL_CACHE_MAX = 14;
+const excelModelCache = new Map<string, ParsedExcelModel>();
+
+function makeExcelCacheKey(base64: string, sheetName?: string, maxRows = 120, maxCols = 28): string {
+  const len = base64.length;
+  const head = base64.slice(0, 64);
+  const mid = len > 200 ? base64.slice(Math.floor(len / 2), Math.floor(len / 2) + 32) : '';
+  const tail = len > 64 ? base64.slice(-32) : '';
+  return `${len}:${head}:${mid}:${tail}|${sheetName || ''}|${maxRows}x${maxCols}`;
+}
+
+export function clearExcelModelCache(): void {
+  excelModelCache.clear();
+}
+
+function inferFormulaSuggestedFieldKey(formula: string, adjacentLabel: string): string | undefined {
+  const byLabel = matchTokenToFieldKey(adjacentLabel);
+  if (byLabel) return byLabel;
+
+  const upper = formula.toUpperCase();
+  if (/VLOOKUP|XLOOKUP|INDEX\s*\(|MATCH\s*\(/.test(upper)) {
+    return matchTokenToFieldKey(adjacentLabel) || 'description';
+  }
+  if (/^SUM\s*\(/i.test(upper)) {
+    const lbl = normalizeMatchText(adjacentLabel);
+    if (lbl.includes('وزنناخالص') || lbl.includes('gross')) return 'grossWeight';
+    if (lbl.includes('وزنخالص') || lbl.includes('net')) return 'netWeight';
+    if (lbl.includes('حواله') || lbl.includes('miv')) return 'mivContractorQty';
+    if (lbl.includes('رسید') || lbl.includes('gcv')) return 'gcvDeliveredQty';
+    if (lbl.includes('برگشتی') || lbl.includes('smr')) return 'smrContractorQty';
+    if (lbl.includes('کسری') || lbl.includes('short')) return 'shortage';
+    if (lbl.includes('آسیب') || lbl.includes('damag')) return 'damagedQty';
+    return 'packingQty';
+  }
+  if (/-/.test(upper) && !/TODAY|DATE/.test(upper)) {
+    const lbl = normalizeMatchText(adjacentLabel);
+    if (lbl.includes('موجودیپیمانکار')) return 'contractorInventory';
+    if (lbl.includes('موجودیکارفرما') || lbl.includes('موجودی')) return 'mapnaInventory';
+    return 'shortage';
+  }
+  if (/TODAY\s*\(|NOW\s*\(/i.test(upper)) {
+    return 'todayDate';
+  }
+  if (/ROW\s*\(/i.test(upper)) {
+    return 'rowNo';
+  }
+  return undefined;
+}
+
 export function parseExcelSheetModel(
   base64: string,
   requestedSheetName?: string,
   maxRows = 120,
   maxCols = 28,
 ): ParsedExcelModel {
+  const cacheKey = makeExcelCacheKey(base64, requestedSheetName, maxRows, maxCols);
+  const cached = excelModelCache.get(cacheKey);
+  if (cached) {
+    // Refresh LRU order
+    excelModelCache.delete(cacheKey);
+    excelModelCache.set(cacheKey, cached);
+    return cached;
+  }
+
   const bytes = base64ToUint8Array(base64);
-  const wb = XLSX.read(bytes, { type: 'array', cellStyles: true });
+  const wb = XLSX.read(bytes, { type: 'array', cellStyles: true, cellFormula: true });
   const sheetNames = wb.SheetNames || [];
   const activeSheetName =
     requestedSheetName && sheetNames.includes(requestedSheetName)
@@ -222,7 +338,7 @@ export function parseExcelSheetModel(
       : sheetNames[0] || '';
 
   if (!activeSheetName) {
-    return {
+    const emptyModel: ParsedExcelModel = {
       sheetNames: [],
       activeSheetName: '',
       rows: [],
@@ -230,7 +346,9 @@ export function parseExcelSheetModel(
       colWidthsPx: [],
       templateRowHeightsPx: [],
       detectedTokens: [],
+      detectedFormulas: [],
     };
+    return emptyModel;
   }
 
   const ws = wb.Sheets[activeSheetName];
@@ -244,6 +362,7 @@ export function parseExcelSheetModel(
 
   const rawRows: string[][] = [];
   const tokenSet = new Set<string>();
+  const rawFormulaCells: Array<{ r: number; c: number; cellRef: string; formula: string }> = [];
 
   for (let r = 0; r <= rowUpper; r += 1) {
     const rowArr: string[] = [];
@@ -251,6 +370,14 @@ export function parseExcelSheetModel(
       const addr = XLSX.utils.encode_cell({ r, c });
       const cell = ws[addr];
       const str = cell ? (cell.w !== undefined ? String(cell.w) : cell.v !== undefined ? String(cell.v) : '') : '';
+      const formulaStr = cell && typeof cell.f === 'string' ? cell.f.trim() : '';
+      if (formulaStr) {
+        lastNonEmptyRow = Math.max(lastNonEmptyRow, r);
+        lastNonEmptyCol = Math.max(lastNonEmptyCol, c);
+        if (rawFormulaCells.length < 60) {
+          rawFormulaCells.push({ r, c, cellRef: addr, formula: formulaStr });
+        }
+      }
       if (str.trim() !== '') {
         lastNonEmptyRow = Math.max(lastNonEmptyRow, r);
         lastNonEmptyCol = Math.max(lastNonEmptyCol, c);
@@ -274,6 +401,35 @@ export function parseExcelSheetModel(
   const finalColsCount = Math.max(1, lastNonEmptyCol + 1);
   const trimmedRows = rawRows.slice(0, finalRowsCount).map((row) => row.slice(0, finalColsCount));
 
+  // Resolve adjacent labels & suggested SAMAAN field keys for detected Excel formulas
+  const detectedFormulas: UploadedFormFormulaDetection[] = rawFormulaCells.map(({ r, c, cellRef, formula }) => {
+    const above = r > 0 ? (trimmedRows[r - 1]?.[c] || '').trim() : '';
+    const left = c > 0 ? (trimmedRows[r]?.[c - 1] || '').trim() : '';
+    const right = c + 1 < finalColsCount ? (trimmedRows[r]?.[c + 1] || '').trim() : '';
+    // Also check nearest non-empty header above in the same column
+    let headerAbove = above;
+    if (!headerAbove) {
+      for (let rr = r - 1; rr >= Math.max(0, r - 6); rr -= 1) {
+        const candidate = (trimmedRows[rr]?.[c] || '').trim();
+        if (candidate && !/^[\d.,/\-\s]+$/.test(candidate)) {
+          headerAbove = candidate;
+          break;
+        }
+      }
+    }
+    const label = [headerAbove, left, right].find((txt) => txt && !/^[\d.,/\-\s]+$/.test(txt)) || '';
+    const suggestedFieldKey = inferFormulaSuggestedFieldKey(formula, label);
+    return {
+      cellRef,
+      rowIndex: r,
+      colIndex: c,
+      formula: formula.startsWith('=') ? formula : `=${formula}`,
+      label: label || undefined,
+      suggestedFieldKey,
+      boundFieldKey: suggestedFieldKey,
+    };
+  });
+
   const colsMeta = Array.isArray(ws['!cols']) ? ws['!cols'] : [];
   const colWidthsPx: number[] = [];
   for (let c = 0; c < finalColsCount; c += 1) {
@@ -284,11 +440,9 @@ export function parseExcelSheetModel(
     } else if (meta && typeof meta.wch === 'number' && meta.wch > 0) {
       widthPx = Math.round(meta.wch * 7.6 + 10);
     } else {
-      // Infer clean width from cell text length
       let maxLen = 8;
       for (let r = 0; r < finalRowsCount; r += 1) {
         const len = (trimmedRows[r]?.[c] || '').length;
-        // Skip very long merged header banners when computing base column widths
         const isMergedWide = merges.some(
           (m) => r >= m.s.r && r <= m.e.r && c >= m.s.c && c <= m.e.c && m.e.c > m.s.c,
         );
@@ -312,7 +466,7 @@ export function parseExcelSheetModel(
     }
   }
 
-  return {
+  const result: ParsedExcelModel = {
     sheetNames,
     activeSheetName,
     rows: trimmedRows,
@@ -320,7 +474,15 @@ export function parseExcelSheetModel(
     colWidthsPx,
     templateRowHeightsPx,
     detectedTokens: Array.from(tokenSet),
+    detectedFormulas,
   };
+
+  if (excelModelCache.size >= EXCEL_MODEL_CACHE_MAX) {
+    const oldestKey = excelModelCache.keys().next().value;
+    if (oldestKey) excelModelCache.delete(oldestKey);
+  }
+  excelModelCache.set(cacheKey, result);
+  return result;
 }
 
 /**
@@ -522,6 +684,181 @@ export function inferTableColumnBindingsFromExcel(model: ParsedExcelModel): {
   return { tableStartRowIndex: undefined, tableColumnBindings: [] };
 }
 
+export interface TargetSectionDetectionResult {
+  section: BuiltInFormKey | 'custom_standalone';
+  confidence: 'high' | 'medium' | 'low';
+  reasonFa: string;
+  reasonEn: string;
+  suggestedDataSources: UploadedFormDataSource[];
+}
+
+export function detectTargetOperationalSection(
+  fileName: string,
+  textSamples: string[],
+  detectedTokens: string[] = [],
+  tableColumnBindings: UploadedFormTableColumnBinding[] = [],
+): TargetSectionDetectionResult {
+  const combinedRaw = [
+    fileName,
+    ...textSamples.slice(0, 60),
+    ...detectedTokens,
+    ...tableColumnBindings.map((b) => `${b.headerLabel} ${b.fieldKey}`),
+  ]
+    .join(' ')
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .toLowerCase();
+
+  const rules: Array<{
+    section: BuiltInFormKey;
+    patterns: RegExp[];
+    dataSources: UploadedFormDataSource[];
+    reasonFa: string;
+    reasonEn: string;
+  }> = [
+    {
+      section: 'siteEntry',
+      patterns: [/صورتجلسه\s*ورود|ورود\s*کالا|arrival\s*notice|site\s*entry|fqp02\/15-01|gate\s*pass/i],
+      dataSources: ['siteEntry', 'general'],
+      reasonFa: 'مطابقت عنوان/ساختار فایل با «صورتجلسه ورود کالا به کارگاه»',
+      reasonEn: 'Matched keywords/layout for Site Entry Minutes',
+    },
+    {
+      section: 'opi',
+      patterns: [/دعوتنامه\s*گشایش|دعوتنامه\s*بازرسی|opi\s*invitation|invitation\s*for\s*open|بازرسی\s*بسته/i],
+      dataSources: ['opi', 'general'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «دعوتنامه گشایش و بازرسی (OPI)»',
+      reasonEn: 'Matched keywords for OPI Invitation',
+    },
+    {
+      section: 'mer',
+      patterns: [/گزارش\s*مغایرت|کسری\s*و\s*آسیب|\bmer\b|\bosdr\b|discrepancy\s*report|shortage\s*and\s*damage/i],
+      dataSources: ['opiMinutes', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «گزارش مغایرت، کسری و آسیب‌دیدگی (MER/OSDR)»',
+      reasonEn: 'Matched keywords for MER / OSDR Discrepancy Report',
+    },
+    {
+      section: 'opiMinutes',
+      patterns: [/صورتجلسه\s*گشایش|صورتجلسه\s*بازرسی|opi\s*minutes|\bmom\b|open\s*package\s*inspection/i],
+      dataSources: ['opiMinutes', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «صورتجلسه گشایش و بازرسی (OPI)»',
+      reasonEn: 'Matched keywords for OPI Inspection Minutes',
+    },
+    {
+      section: 'gcv',
+      patterns: [/رسید\s*مصرف\s*مستقیم|رسید\s*مصرف|\bgcv\b|goods\s*consumption|direct\s*consumption/i],
+      dataSources: ['gcv', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «رسید مصرف مستقیم کالا (GCV)»',
+      reasonEn: 'Matched keywords for Direct Consumption Receipt (GCV)',
+    },
+    {
+      section: 'smr',
+      patterns: [/فرم\s*ارجاع|برگشت\s*متریال|برگشتی\s*به\s*انبار|\bsmr\b|material\s*return|store\s*return/i],
+      dataSources: ['smr', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «فرم ارجاع / برگشت متریال (SMR)»',
+      reasonEn: 'Matched keywords for Material Return Form (SMR)',
+    },
+    {
+      section: 'miv',
+      patterns: [/حواله\s*انبار|حواله\s*خروج|\bmiv\b|material\s*issue\s*voucher/i],
+      dataSources: ['miv', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «حواله انبار (MIV)»',
+      reasonEn: 'Matched keywords for Material Issue Voucher (MIV)',
+    },
+    {
+      section: 'substitution',
+      patterns: [/جایگزینی\s*تجهیز|فرم\s*جایگزینی|\brep\b|substitution|replacement\s*request/i],
+      dataSources: ['substitution', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «فرم جایگزینی تجهیزات (REP)»',
+      reasonEn: 'Matched keywords for Equipment Substitution (REP)',
+    },
+    {
+      section: 'balance',
+      patterns: [/بالانس\s*متریال|\bbmr\b|material\s*balance|تراز\s*متریال/i],
+      dataSources: ['balance', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «فرم بالانس متریال»',
+      reasonEn: 'Matched keywords for Material Balance',
+    },
+    {
+      section: 'stocktake',
+      patterns: [/انبارگردانی|بازدید\s*ادواری|stocktake|periodic\s*inspection|inventory\s*count/i],
+      dataSources: ['balance', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «فرم انبارگردانی و بازدید ادواری»',
+      reasonEn: 'Matched keywords for Stocktake & Periodic Inspection',
+    },
+    {
+      section: 'storageLabel',
+      patterns: [/لیبل\s*نگهداری|برچسب\s*تجهیز|کارت\s*شناسایی\s*بسته|storage\s*label|package\s*tag/i],
+      dataSources: ['general', 'detailed'],
+      reasonFa: 'مطابقت عنوان/ستون‌ها با «لیبل و کارت شناسایی انبار»',
+      reasonEn: 'Matched keywords for Storage Label',
+    },
+  ];
+
+  for (const rule of rules) {
+    let hitCount = 0;
+    for (const pat of rule.patterns) {
+      if (pat.test(combinedRaw)) hitCount += 1;
+    }
+    if (hitCount > 0) {
+      return {
+        section: rule.section,
+        confidence: fileName.toLowerCase().match(rule.patterns[0]) ? 'high' : 'medium',
+        reasonFa: rule.reasonFa,
+        reasonEn: rule.reasonEn,
+        suggestedDataSources: rule.dataSources,
+      };
+    }
+  }
+
+  // Fallback heuristic based on table columns
+  const boundKeys = new Set(tableColumnBindings.map((b) => b.fieldKey));
+  if (boundKeys.has('mivContractorNo') || boundKeys.has('mivContractorQty')) {
+    return {
+      section: 'miv',
+      confidence: 'medium',
+      reasonFa: 'تشخیص بر اساس ستون‌های حواله انبار (MIV) در جدول فایل',
+      reasonEn: 'Detected from MIV columns in worksheet',
+      suggestedDataSources: ['miv', 'detailed'],
+    };
+  }
+  if (boundKeys.has('gcvReceiptNo') || boundKeys.has('gcvDeliveredQty')) {
+    return {
+      section: 'gcv',
+      confidence: 'medium',
+      reasonFa: 'تشخیص بر اساس ستون‌های رسید مصرف (GCV) در جدول فایل',
+      reasonEn: 'Detected from GCV columns in worksheet',
+      suggestedDataSources: ['gcv', 'detailed'],
+    };
+  }
+  if (boundKeys.has('smrContractorNo') || boundKeys.has('smrMapnaNo')) {
+    return {
+      section: 'smr',
+      confidence: 'medium',
+      reasonFa: 'تشخیص بر اساس ستون‌های برگشت متریال (SMR) در جدول فایل',
+      reasonEn: 'Detected from SMR columns in worksheet',
+      suggestedDataSources: ['smr', 'detailed'],
+    };
+  }
+  if (boundKeys.has('shortage') || boundKeys.has('damagedQty') || boundKeys.has('merNo')) {
+    return {
+      section: 'mer',
+      confidence: 'medium',
+      reasonFa: 'تشخیص بر اساس ستون‌های کسری، آسیب‌دیدگی و MER',
+      reasonEn: 'Detected from shortage/damaged/MER columns',
+      suggestedDataSources: ['opiMinutes', 'detailed'],
+    };
+  }
+
+  return {
+    section: 'custom_standalone',
+    confidence: 'low',
+    reasonFa: 'فرم اختصاصی مستقل (لطفاً بخش عملیاتی مرتبط را انتخاب و تأیید کنید)',
+    reasonEn: 'Standalone custom form (please select & confirm matching operational section)',
+    suggestedDataSources: ['general', 'detailed'],
+  };
+}
+
 export async function parseUploadedFormFile(
   file: File,
   defaultSource: UploadedFormDataSource = 'general',
@@ -542,17 +879,25 @@ export async function parseUploadedFormFile(
   const tokenBindings: Record<string, string> = {};
   let tableStartRowIndex: number | undefined;
   let tableColumnBindings: UploadedFormTableColumnBinding[] | undefined;
+  let detectedFormulas: UploadedFormFormulaDetection[] | undefined;
+  const textSamples: string[] = [];
 
   if (fileType === 'excel') {
     const model = parseExcelSheetModel(base64);
     sheetName = model.activeSheetName || undefined;
     detectedTokens = model.detectedTokens;
+    detectedFormulas = model.detectedFormulas;
     const inferred = inferTableColumnBindingsFromExcel(model);
     tableStartRowIndex = inferred.tableStartRowIndex;
     tableColumnBindings = inferred.tableColumnBindings;
+    for (let r = 0; r < Math.min(model.rows.length, 25); r += 1) {
+      const joined = (model.rows[r] || []).filter(Boolean).join(' ').trim();
+      if (joined) textSamples.push(joined);
+    }
   } else if (fileType === 'word' && file.name.toLowerCase().endsWith('.docx')) {
     const model = await parseWordDocModel(base64);
     detectedTokens = model.detectedTokens;
+    if (model.rawText) textSamples.push(model.rawText.slice(0, 1200));
   }
 
   for (const tok of detectedTokens) {
@@ -562,7 +907,18 @@ export async function parseUploadedFormFile(
     }
   }
 
+  const detectedSection = detectTargetOperationalSection(
+    file.name,
+    textSamples,
+    detectedTokens,
+    tableColumnBindings || [],
+  );
+
   const formCodeMatch = titleBase.match(/([A-Z]{2,6}[-_/][A-Z0-9\-_/]{2,})/i);
+  const effectiveSources: UploadedFormDataSource[] =
+    detectedSection.suggestedDataSources.length > 0
+      ? detectedSection.suggestedDataSources
+      : [defaultSource];
 
   return {
     id: `uform-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -576,7 +932,14 @@ export async function parseUploadedFormFile(
     sheetName,
     detectedTokens,
     tokenBindings: Object.keys(tokenBindings).length > 0 ? tokenBindings : undefined,
-    dataSource: defaultSource,
+    dataSource: effectiveSources[0] || defaultSource,
+    dataSources: effectiveSources,
+    targetAppSection: detectedSection.section,
+    targetSectionConfidence: detectedSection.confidence,
+    targetSectionReasonFa: detectedSection.reasonFa,
+    targetSectionReasonEn: detectedSection.reasonEn,
+    targetSectionConfirmed: false,
+    detectedFormulas: detectedFormulas && detectedFormulas.length > 0 ? detectedFormulas : undefined,
     printSettings: { ...DEFAULT_UPLOADED_FORM_PRINT_SETTINGS },
     tableStartRowIndex,
     tableColumnBindings: tableColumnBindings && tableColumnBindings.length > 0 ? tableColumnBindings : undefined,
@@ -590,6 +953,7 @@ export interface UploadedFormContextInput {
   employer: ResolvedEmployerProfile;
   calendar: CalendarMode;
   dataSource: UploadedFormDataSource;
+  dataSources?: UploadedFormDataSource[];
   siteEntry?: SiteEntryMinutesRecord | null;
   packingListNo?: string;
   generalRows: GeneralEntry[];
@@ -603,11 +967,19 @@ export function buildUploadedFormContextData(input: UploadedFormContextInput): {
   headerTokens: Record<string, string>;
   lineRows: Array<Record<string, string>>;
 } {
-  const { project, employer, calendar, dataSource, siteEntry, packingListNo, generalRows, detailedRows, transitRows, docNo, manualOverrides } = input;
+  const { project, employer, calendar, dataSource, dataSources, siteEntry, packingListNo, generalRows, detailedRows, transitRows, docNo, manualOverrides } = input;
   const fmt = (iso?: string) => (iso ? formatIsoDate(iso, calendar) : '');
+  const activeSources: UploadedFormDataSource[] =
+    dataSources && dataSources.length > 0 ? dataSources : [dataSource];
+  const primarySource = activeSources[0] || dataSource;
+  const usesSiteEntry = activeSources.includes('siteEntry');
+  const usesTransit = activeSources.includes('transit');
+  const usesDetailedOps = activeSources.some((s) =>
+    ['detailed', 'opi', 'opiMinutes', 'gcv', 'miv', 'smr', 'substitution', 'balance'].includes(s),
+  );
 
   const targetPk = (
-    dataSource === 'siteEntry' && siteEntry
+    usesSiteEntry && siteEntry
       ? siteEntry.packingListNos?.[0] || packingListNo || ''
       : packingListNo || ''
   ).trim();
@@ -631,11 +1003,12 @@ export function buildUploadedFormContextData(input: UploadedFormContextInput): {
     contractNo: project?.code || employer.contractRef || '',
     employerName: employer.companyFullName || employer.nameFa || '',
     todayDate: fmt(getTodayIso()),
-    docNo: docNo || siteEntry?.minutesNo || '',
+    docNo: docNo || siteEntry?.minutesNo || firstDet?.mivContractorNo || firstDet?.gcvReceiptNo || '',
     minutesNo: siteEntry?.minutesNo || firstGen?.mapnaEntryMinutesNo || firstGen?.employerEntryMinutesNo || '',
+    employerEntryMinutesNo: firstGen?.employerEntryMinutesNo || '',
     releaseNoteNo: siteEntry?.releaseNoteNo || firstGen?.releaseNo || firstTr?.releaseNetNo || '',
     packingListNo:
-      dataSource === 'siteEntry' && siteEntry?.packingListNos?.length
+      usesSiteEntry && siteEntry?.packingListNos?.length
         ? siteEntry.packingListNos.join(' / ')
         : targetPk,
     packageNo:
@@ -656,14 +1029,42 @@ export function buildUploadedFormContextData(input: UploadedFormContextInput): {
     waybillNo: siteEntry?.waybillNo || firstGen?.billOfLadingNo || firstTr?.billOfLadingNo || '',
     vehicleNo: siteEntry?.vehicleNo || firstGen?.vehicleNo || '',
     driverName: siteEntry?.driverName || firstGen?.driverName || '',
-    grossWeight:
-      firstGen?.grossWeight != null ? String(firstGen.grossWeight) : '',
-    netWeight:
-      firstGen?.netWeight != null ? String(firstGen.netWeight) : '',
+    grossWeight: firstGen?.grossWeight != null ? String(firstGen.grossWeight) : '',
+    netWeight: firstGen?.netWeight != null ? String(firstGen.netWeight) : '',
+    weighbridgeWeight: firstGen?.weighbridgeWeight != null ? String(firstGen.weighbridgeWeight) : '',
+    freightCost: firstGen?.freightCost != null ? String(firstGen.freightCost) : '',
     dimensions:
       firstGen && (firstGen.lengthCm != null || firstGen.widthCm != null || firstGen.heightCm != null)
         ? `${firstGen.lengthCm ?? '-'}×${firstGen.widthCm ?? '-'}×${firstGen.heightCm ?? '-'}`
         : '',
+    opiNo: firstDet?.opiNo || firstGen?.opiInvitationNo || '',
+    opiDate: fmt(firstDet?.opiDate || firstGen?.opiInvitationDate),
+    merNo: firstDet?.merNo || '',
+    merStatus: firstDet?.merStatus || '',
+    gcvReceiptNo: firstDet?.gcvReceiptNo || '',
+    gcvDeliveredQty: firstDet?.gcvDeliveredQty != null ? String(firstDet.gcvDeliveredQty) : '',
+    receiver: firstDet?.mivReceiver || firstDet?.receiver || '',
+    mivContractorNo: firstDet?.mivContractorNo || '',
+    mivContractorDate: fmt(firstDet?.mivContractorDate),
+    mivContractorQty: firstDet?.mivContractorQty != null ? String(firstDet.mivContractorQty) : '',
+    smrContractorNo: firstDet?.smrContractorNo || '',
+    smrContractorDate: fmt(firstDet?.smrContractorDate),
+    smrContractorQty: firstDet?.smrContractorQty != null ? String(firstDet.smrContractorQty) : '',
+    smrMapnaNo: firstDet?.smrMapnaNo || '',
+    smrMapnaDate: fmt(firstDet?.smrMapnaDate),
+    smrMapnaQty: firstDet?.smrMapnaQty != null ? String(firstDet.smrMapnaQty) : '',
+    smrDeliverer: firstDet?.smrDeliverer || '',
+    repNo: firstDet?.repNo || '',
+    repStatus: firstDet?.repStatus || '',
+    repReprocured: firstDet?.repReprocured || '',
+    repDescription: firstDet?.repDescription || '',
+    mtoRef: firstDet?.mtoRef || '',
+    materialBalanceNo: firstDet?.materialBalanceNo || '',
+    balanceStatus: firstDet?.balanceStatus || '',
+    stocktakeStatus: firstDet?.stocktakeStatus || '',
+    stocktakeDate: fmt(firstDet?.stocktakeDate),
+    chemicalType: firstDet?.chemicalType || '',
+    expirationDate: fmt(firstDet?.expirationDate),
     overallStatus: firstTr?.overallStatus || '',
     remarks: siteEntry?.notes || firstDet?.notes || '',
   };
@@ -678,7 +1079,7 @@ export function buildUploadedFormContextData(input: UploadedFormContextInput): {
 
   let lineRows: Array<Record<string, string>> = [];
 
-  if (dataSource === 'siteEntry' && siteEntry?.items && siteEntry.items.length > 0) {
+  if (primarySource === 'siteEntry' && siteEntry?.items && siteEntry.items.length > 0) {
     lineRows = siteEntry.items.map((it, idx) => ({
       ...headerTokens,
       rowNo: String(idx + 1),
@@ -692,7 +1093,7 @@ export function buildUploadedFormContextData(input: UploadedFormContextInput): {
       grossWeight: it.grossWeight || '',
       remarks: it.remarks || '',
     }));
-  } else if (dataSource === 'transit' && matchingTransit.length > 0) {
+  } else if (primarySource === 'transit' && matchingTransit.length > 0) {
     lineRows = matchingTransit.map((t, idx) => ({
       ...headerTokens,
       rowNo: String(idx + 1),
@@ -710,26 +1111,66 @@ export function buildUploadedFormContextData(input: UploadedFormContextInput): {
       waybillNo: t.billOfLadingNo || '',
       remarks: t.mapnaShippingNotice || '',
     }));
-  } else if (matchingDet.length > 0 && (dataSource === 'detailed' || dataSource === 'general' || dataSource === 'siteEntry')) {
-    lineRows = matchingDet.map((d, idx) => ({
-      ...headerTokens,
-      rowNo: String(idx + 1),
-      packingListNo: d.shipmentNo || targetPk,
-      packageNo: d.packageNo || '',
-      itemNo: d.itemNo || '',
-      itemCode: d.itemCode || '',
-      generalDescription: d.generalDescription || '',
-      description: d.description || d.generalDescription || '',
-      countingUnit: d.countingUnit || '',
-      packingQty: d.packingQty != null ? String(d.packingQty) : '',
-      actualQty: d.effectiveActualQty != null ? String(d.effectiveActualQty) : '',
-      shortage: d.shortage ? String(d.shortage) : '0',
-      damagedQty: d.damagedQty ? String(d.damagedQty) : '0',
-      storageLocation: d.storageLocation || '',
-      merNo: d.merNo || '',
-      merStatus: d.merStatus || '',
-      remarks: d.notes || '',
-    }));
+  } else if (matchingDet.length > 0 && (usesDetailedOps || primarySource === 'general' || usesSiteEntry)) {
+    // Enrich detailed rows with General package dimensions/weights if both general & detailed are bound
+    const genByPkg = new Map<string, GeneralEntry>();
+    for (const g of matchingGen) {
+      if (g.packageNo) genByPkg.set(g.packageNo.trim().toLowerCase(), g);
+    }
+    lineRows = matchingDet.map((d, idx) => {
+      const gMatch = genByPkg.get((d.packageNo || '').trim().toLowerCase()) || firstGen;
+      return {
+        ...headerTokens,
+        rowNo: String(idx + 1),
+        packingListNo: d.shipmentNo || targetPk,
+        packageNo: d.packageNo || '',
+        itemNo: d.itemNo || '',
+        itemCode: d.itemCode || '',
+        generalDescription: d.generalDescription || '',
+        description: d.description || d.generalDescription || '',
+        size: d.size || '',
+        countingUnit: d.countingUnit || '',
+        packingQty: d.packingQty != null ? String(d.packingQty) : '',
+        actualQty: d.effectiveActualQty != null ? String(d.effectiveActualQty) : '',
+        shortage: d.shortage ? String(d.shortage) : '0',
+        surplus: d.surplus ? String(d.surplus) : '0',
+        damagedQty: d.damagedQty ? String(d.damagedQty) : '0',
+        mapnaInventory: String(d.mapnaInventory ?? 0),
+        contractorInventory: String(d.contractorInventory ?? 0),
+        storageLocation: d.storageLocation || '',
+        opiNo: d.opiNo || gMatch?.opiInvitationNo || '',
+        opiDate: fmt(d.opiDate || gMatch?.opiInvitationDate),
+        merNo: d.merNo || '',
+        merStatus: d.merStatus || '',
+        gcvReceiptNo: d.gcvReceiptNo || '',
+        gcvDeliveredQty: d.gcvDeliveredQty != null ? String(d.gcvDeliveredQty) : '',
+        receiver: d.mivReceiver || d.receiver || '',
+        mivContractorNo: d.mivContractorNo || '',
+        mivContractorDate: fmt(d.mivContractorDate),
+        mivContractorQty: d.mivContractorQty != null ? String(d.mivContractorQty) : '',
+        smrContractorNo: d.smrContractorNo || '',
+        smrContractorDate: fmt(d.smrContractorDate),
+        smrContractorQty: d.smrContractorQty != null ? String(d.smrContractorQty) : '',
+        smrMapnaNo: d.smrMapnaNo || '',
+        smrMapnaDate: fmt(d.smrMapnaDate),
+        smrMapnaQty: d.smrMapnaQty != null ? String(d.smrMapnaQty) : '',
+        smrDeliverer: d.smrDeliverer || '',
+        repNo: d.repNo || '',
+        repStatus: d.repStatus || '',
+        repReprocured: d.repReprocured || '',
+        repDescription: d.repDescription || '',
+        mtoRef: d.mtoRef || '',
+        materialBalanceNo: d.materialBalanceNo || '',
+        balanceStatus: d.balanceStatus || '',
+        stocktakeStatus: d.stocktakeStatus || '',
+        stocktakeDate: fmt(d.stocktakeDate),
+        chemicalType: d.chemicalType || '',
+        expirationDate: fmt(d.expirationDate),
+        netWeight: gMatch?.netWeight != null ? String(gMatch.netWeight) : headerTokens.netWeight,
+        grossWeight: gMatch?.grossWeight != null ? String(gMatch.grossWeight) : headerTokens.grossWeight,
+        remarks: d.notes || '',
+      };
+    });
   } else if (matchingGen.length > 0) {
     lineRows = matchingGen.map((g, idx) => ({
       ...headerTokens,
@@ -747,7 +1188,19 @@ export function buildUploadedFormContextData(input: UploadedFormContextInput): {
       supplier: g.supplier || '',
       origin: g.dispatchLocation || '',
       arrivalDate: fmt(g.arrivalDate),
+      opiNo: g.opiInvitationNo || '',
+      opiDate: fmt(g.opiInvitationDate),
       remarks: g.mapnaEntryMinutesNo || '',
+    }));
+  } else if (usesTransit && matchingTransit.length > 0) {
+    lineRows = matchingTransit.map((t, idx) => ({
+      ...headerTokens,
+      rowNo: String(idx + 1),
+      packingListNo: t.packingListNo || '',
+      packageNo: t.packageNo || '',
+      description: t.itemDescription || '',
+      supplier: t.supplier || '',
+      overallStatus: t.overallStatus || '',
     }));
   }
 
@@ -759,6 +1212,7 @@ export interface RenderedExcelResult {
   displayRows: string[][];
   rowHeightsPx: number[];
   injectedRowIndices: Set<number>;
+  effectiveMerges: ParsedExcelMerge[];
 }
 
 export function buildRenderedExcelGrid(
@@ -774,8 +1228,28 @@ export function buildRenderedExcelGrid(
     row.map((cell) => replaceTokensInText(cell, headerTokens, form.tokenBindings)),
   );
 
+  // Apply bound formula cells from form.detectedFormulas when user bound them to a SAMAAN field
+  if (form.detectedFormulas && form.detectedFormulas.length > 0) {
+    for (const fItem of form.detectedFormulas) {
+      const targetKey = fItem.boundFieldKey;
+      if (!targetKey) continue;
+      const val = headerTokens[targetKey];
+      if (
+        val !== undefined &&
+        val !== '' &&
+        fItem.rowIndex >= 0 &&
+        fItem.rowIndex < replacedBaseRows.length &&
+        fItem.colIndex >= 0 &&
+        fItem.colIndex < colCount
+      ) {
+        replacedBaseRows[fItem.rowIndex][fItem.colIndex] = val;
+      }
+    }
+  }
+
   const injectedRowIndices = new Set<number>();
   let finalRows: string[][] = [];
+  let effectiveMerges: ParsedExcelMerge[] = model.merges;
 
   const bindings = form.tableColumnBindings || [];
   const startRow = form.tableStartRowIndex;
@@ -788,8 +1262,16 @@ export function buildRenderedExcelGrid(
   ) {
     const before = replacedBaseRows.slice(0, startRow);
     const templateRow = replacedBaseRows[startRow] || Array(colCount).fill('');
-    const afterStart = templateRow.some((c) => c.includes('{{')) ? startRow + 1 : startRow;
-    const after = replacedBaseRows.slice(afterStart);
+    const consumesTemplateRow = templateRow.some((c) => c.includes('{{'));
+    const afterStart = consumesTemplateRow ? startRow + 1 : startRow;
+
+    // Preserve index mapping for non-empty footer rows after injection so merges stay aligned
+    const afterRaw = replacedBaseRows.slice(afterStart);
+    const afterKept: string[][] = [];
+    const oldRowToNewRow = new Map<number, number>();
+    for (let i = 0; i < before.length; i += 1) {
+      oldRowToNewRow.set(i, i);
+    }
 
     const populatedRows = lineRows.map((line) => {
       const mergedMap = { ...headerTokens, ...line };
@@ -807,23 +1289,50 @@ export function buildRenderedExcelGrid(
       return rowArr;
     });
 
-    finalRows = [
-      ...before,
-      ...populatedRows,
-      ...after.filter((r) => r.some((c) => c.trim() !== '')),
-    ];
+    const footerStartNewIdx = before.length + populatedRows.length;
+    for (let i = 0; i < afterRaw.length; i += 1) {
+      if (afterRaw[i].some((c) => c.trim() !== '')) {
+        oldRowToNewRow.set(afterStart + i, footerStartNewIdx + afterKept.length);
+        afterKept.push(afterRaw[i]);
+      }
+    }
+
+    finalRows = [...before, ...populatedRows, ...afterKept];
     for (let i = 0; i < populatedRows.length; i += 1) {
       injectedRowIndices.add(before.length + i);
+    }
+
+    // Re-map template merges so header & footer merges never break after row injection
+    effectiveMerges = [];
+    for (const m of model.merges) {
+      const newStartR = oldRowToNewRow.get(m.s.r);
+      const newEndR = oldRowToNewRow.get(m.e.r);
+      if (newStartR !== undefined && newEndR !== undefined && newEndR >= newStartR) {
+        // Ensure no injected row falls inside this merge
+        let overlapsInjected = false;
+        for (let rr = newStartR; rr <= newEndR; rr += 1) {
+          if (injectedRowIndices.has(rr)) {
+            overlapsInjected = true;
+            break;
+          }
+        }
+        if (!overlapsInjected) {
+          effectiveMerges.push({
+            s: { r: newStartR, c: m.s.c },
+            e: { r: newEndR, c: m.e.c },
+          });
+        }
+      }
     }
   } else {
     finalRows = replacedBaseRows;
   }
 
-  // Compute span map for merges on base template rows
+  // Compute span map for merges on final rows
   const rowHeightsPx = finalRows.map((row, rIdx) => {
     const colSpans = row.map((_, cIdx) => {
       if (injectedRowIndices.has(rIdx)) return 1;
-      const m = model.merges.find((mg) => mg.s.r === rIdx && mg.s.c === cIdx);
+      const m = effectiveMerges.find((mg) => mg.s.r === rIdx && mg.s.c === cIdx);
       return m ? m.e.c - m.s.c + 1 : 1;
     });
 
@@ -844,6 +1353,7 @@ export function buildRenderedExcelGrid(
     displayRows: finalRows,
     rowHeightsPx,
     injectedRowIndices,
+    effectiveMerges,
   };
 }
 

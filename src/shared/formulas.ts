@@ -62,8 +62,16 @@ function daysBetweenIso(fromIso: string, toIso: string): number | null {
   return Math.ceil((toMs - fromMs) / (1000 * 60 * 60 * 24));
 }
 
+export function daysUntilDateIso(
+  targetIso: string | undefined | null,
+  todayIso: string = getTodayIso(),
+): number | null {
+  if (!targetIso) return null;
+  return daysBetweenIso(todayIso, targetIso);
+}
+
 export function getExpiringChemicals(
-  entries: DetailedEntry[],
+  entries: Array<DetailedEntry | DetailedComputed>,
   thresholdDays = 30,
   todayIso: string = getTodayIso(),
 ): ExpiringChemicalNotice[] {
@@ -72,6 +80,15 @@ export function getExpiringChemicals(
     const expIso = (d.expirationDate || '').trim();
     const isChemical = d.itemCategory === 'chemicals' || Boolean((d.chemicalType || '').trim()) || Boolean(expIso);
     if (!isChemical || !expIso) continue;
+
+    // Only alert on chemicals that actually have available stock in Employer or Contractor warehouse
+    const computed: DetailedComputed =
+      typeof (d as DetailedComputed).mapnaInventory === 'number' &&
+      typeof (d as DetailedComputed).contractorInventory === 'number'
+        ? (d as DetailedComputed)
+        : computeDetailedEntry(d);
+    if (computed.mapnaInventory <= 0 && computed.contractorInventory <= 0) continue;
+
     const days = daysBetweenIso(todayIso, expIso);
     if (days !== null && days <= thresholdDays) {
       alerts.push({
@@ -79,11 +96,14 @@ export function getExpiringChemicals(
         shipmentNo: d.shipmentNo || '',
         packageNo: d.packageNo || '',
         itemNo: d.itemNo || '',
-        description: d.description || d.generalDescription || '',
-        chemicalType: d.chemicalType || '',
+        description: (d.description || d.generalDescription || d.chemicalType || '').trim(),
+        chemicalType: (d.chemicalType || '').trim(),
         productionDate: d.productionDate || '',
         expirationDate: expIso,
         daysRemaining: days,
+        isExpired: days < 0,
+        mapnaInventory: computed.mapnaInventory,
+        contractorInventory: computed.contractorInventory,
       });
     }
   }

@@ -44,6 +44,10 @@ import {
   type ExtendedImportScope,
   type OperationalLinkCounts,
 } from '../shared/operationalFormImport.ts';
+import {
+  computeImportContentFingerprint,
+  type ImportDeltaSummary,
+} from '../shared/importDelta.ts';
 import { formatIsoDate } from '../shared/jalali.ts';
 import { parseSpreadsheetFile, type StructuredSheetPayload } from '../shared/spreadsheetImport.ts';
 import type {
@@ -52,6 +56,12 @@ import type {
   ImportRejectedRecord,
   ImportRejectionReasonCode,
 } from '../shared/types.ts';
+
+interface StoredUploadHistoryEntry {
+  fingerprint: string;
+  fileName: string;
+  uploadedAt: string;
+}
 
 interface BackupViewProps {
   onRestored: () => void;
@@ -81,6 +91,7 @@ interface PreviewResponse {
   sample: Record<string, unknown>[];
   parsedRows?: Record<string, unknown>[];
   columnInspection?: ColumnInspectionPayload;
+  deltaSummary?: ImportDeltaSummary;
 }
 
 interface CommitResponse {
@@ -89,6 +100,7 @@ interface CommitResponse {
   imported: number;
   replaced: number;
   skipped: number;
+  unchangedSkipped?: number;
   parseRejectedCount?: number;
   blankRowsSkipped?: number;
   transitAutoArrived: number;
@@ -107,6 +119,7 @@ interface ImportLogSessionEntry {
   imported: number;
   replaced: number;
   skipped: number;
+  unchangedSkipped?: number;
   blankRowsSkipped: number;
   transitAutoArrived: number;
   linkedGeneral?: number;
@@ -339,8 +352,11 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const [sheetsMap, setSheetsMap] = useState<Record<string, string[][]>>({});
   const [structuredSheetsMap, setStructuredSheetsMap] = useState<Record<string, StructuredSheetPayload>>({});
   const [assumedCalendar, setAssumedCalendar] = useState<'jalali' | 'gregorian'>('jalali');
-  const [duplicatePolicy, setDuplicatePolicy] = useState<'replace' | 'skip'>('skip');
+  const [duplicatePolicy, setDuplicatePolicy] = useState<'delta' | 'replace' | 'skip'>('delta');
   const [analyzingSheets, setAnalyzingSheets] = useState(false);
+  const [currentFileFingerprint, setCurrentFileFingerprint] = useState<string>('');
+  const [previousUploadMatch, setPreviousUploadMatch] = useState<{ fileName: string; uploadedAt: string } | null>(null);
+  const uploadHistoryStorageKey = `samaan_import_history_v1_${activeProjectId}`;
 
   // Step 2: Detected multi-section candidates per selected sheet & user-confirmed target scopes
   const [autoWorkbookPreview, setAutoWorkbookPreview] = useState<AutoWorkbookPreviewSection[]>([]);
@@ -486,9 +502,21 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setTaskMappings({});
     setTaskEditedRows({});
     setRowsConfirmed(false);
+    setCurrentFileFingerprint('');
+    setPreviousUploadMatch(null);
     try {
       const parsed = await parseSpreadsheetFile(file);
       const nextStructMap = parsed.structuredSheets || {};
+      const fingerprint = computeImportContentFingerprint(parsed.fileName, parsed.sheets);
+      setCurrentFileFingerprint(fingerprint);
+      try {
+        const rawHist = localStorage.getItem(uploadHistoryStorageKey);
+        const hist: StoredUploadHistoryEntry[] = rawHist ? JSON.parse(rawHist) : [];
+        const matched = hist.find((h) => h.fingerprint === fingerprint);
+        setPreviousUploadMatch(matched ? { fileName: matched.fileName, uploadedAt: matched.uploadedAt } : null);
+      } catch {
+        setPreviousUploadMatch(null);
+      }
       setFileName(parsed.fileName);
       setSheetNames(parsed.sheetNames);
       setSheetsMap(parsed.sheets);
@@ -686,6 +714,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       imported: res.imported,
       replaced: res.replaced,
       skipped: res.skipped,
+      unchangedSkipped: res.unchangedSkipped || 0,
       blankRowsSkipped: res.blankRowsSkipped || 0,
       transitAutoArrived: res.transitAutoArrived,
       linkedGeneral: res.linkedGeneral,
@@ -759,6 +788,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           imported: res.imported,
           replaced: res.replaced,
           skipped: res.skipped,
+          unchangedSkipped: res.unchangedSkipped || 0,
           linkedGeneral: res.linkedGeneral || 0,
           linkedDetailed: res.linkedDetailed || 0,
           linkedTransit: res.linkedTransit || res.transitAutoArrived || 0,
@@ -771,12 +801,37 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           imported: acc.imported + s.imported,
           replaced: acc.replaced + s.replaced,
           skipped: acc.skipped + s.skipped,
+          unchangedSkipped: (acc.unchangedSkipped || 0) + (s.unchangedSkipped || 0),
           linkedGeneral: acc.linkedGeneral + s.linkedGeneral,
           linkedDetailed: acc.linkedDetailed + s.linkedDetailed,
           linkedTransit: acc.linkedTransit + s.linkedTransit,
         }),
-        { imported: 0, replaced: 0, skipped: 0, linkedGeneral: 0, linkedDetailed: 0, linkedTransit: 0 },
+        {
+          imported: 0,
+          replaced: 0,
+          skipped: 0,
+          unchangedSkipped: 0,
+          linkedGeneral: 0,
+          linkedDetailed: 0,
+          linkedTransit: 0,
+        },
       );
+
+      // Persist file fingerprint in localStorage so future re-uploads of the exact same file are recognized
+      if (currentFileFingerprint) {
+        try {
+          const rawHist = localStorage.getItem(uploadHistoryStorageKey);
+          const hist: StoredUploadHistoryEntry[] = rawHist ? JSON.parse(rawHist) : [];
+          const filtered = hist.filter((h) => h.fingerprint !== currentFileFingerprint);
+          const updated: StoredUploadHistoryEntry[] = [
+            { fingerprint: currentFileFingerprint, fileName: currentFile, uploadedAt: new Date().toISOString() },
+            ...filtered,
+          ].slice(0, 40);
+          localStorage.setItem(uploadHistoryStorageKey, JSON.stringify(updated));
+        } catch {
+          // ignore localStorage quota errors
+        }
+      }
 
       setAutoWorkbookResult({ ok: true, sections: committedSections, totals });
       setPendingRejected(allRejected);
@@ -784,6 +839,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       // Clean reset of file wizard state while keeping result banner visible
       setImportStep(0);
       setFileName('');
+      setCurrentFileFingerprint('');
+      setPreviousUploadMatch(null);
       setSheetNames([]);
       setCheckedSheets([]);
       setSheetsMap({});
@@ -797,11 +854,17 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       setTaskEditedRows({});
       setRowsConfirmed(false);
 
+      const unchangedCount = totals.unchangedSkipped || 0;
+      const allUnchanged = totals.imported === 0 && totals.replaced === 0 && unchangedCount > 0;
       notify(
-        totals.skipped > 0 ? 'info' : 'success',
-        isFa
-          ? `بازیابی ${committedSections.length} بخش تکمیل شد: ${totals.imported} جدید، ${totals.replaced} جایگزین، ${totals.skipped} رد شده.`
-          : `Import completed (${committedSections.length} sections): ${totals.imported} imported, ${totals.replaced} replaced, ${totals.skipped} skipped.`,
+        allUnchanged ? 'info' : totals.skipped > unchangedCount ? 'info' : 'success',
+        allUnchanged
+          ? isFa
+            ? `هیچ تغییری برای ثبت وجود نداشت (${unchangedCount.toLocaleString('fa-IR')} ردیف بدون تغییر نادیده گرفته شد).`
+            : `No changes to apply (${unchangedCount} unchanged row(s) skipped).`
+          : isFa
+            ? `بازیابی ${committedSections.length} بخش تکمیل شد: ${totals.imported} جدید، ${totals.replaced} بروزرسانی/جایگزین${unchangedCount > 0 ? `، ${unchangedCount} بدون تغییر` : ''}${totals.skipped - unchangedCount > 0 ? `، ${totals.skipped - unchangedCount} رد شده` : ''}.`
+            : `Import completed (${committedSections.length} sections): ${totals.imported} imported, ${totals.replaced} updated${unchangedCount > 0 ? `, ${unchangedCount} unchanged` : ''}${totals.skipped - unchangedCount > 0 ? `, ${totals.skipped - unchangedCount} skipped` : ''}.`,
       );
       triggerAutoSnapshot(`Import (${committedSections.length} sections)`);
       onRestored();
@@ -1182,6 +1245,19 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           {/* STEP 1: Ask User Which Sheet(s) to Import */}
           {importStep === 1 && fileName && (
             <div className="p-5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-4">
+              {previousUploadMatch && (
+                <div
+                  data-testid="previous-upload-notice"
+                  className="p-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-xs text-emerald-800 dark:text-emerald-200 flex items-start gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>
+                    {isFa
+                      ? `این فایل (با همین محتوا) قبلاً در تاریخ ${formatTimestamp(previousUploadMatch.uploadedAt)} بارگذاری شده است. در مرحله ۳ وضعیت تغییرات به‌صورت هوشمند بررسی خواهد شد.`
+                      : `This exact file content was already uploaded on ${formatTimestamp(previousUploadMatch.uploadedAt)}. Step 3 will automatically inspect any changes against current records.`}
+                  </span>
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h4 className="text-sm font-bold text-[var(--text-primary)]">
@@ -1558,6 +1634,75 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     </span>
                   </div>
 
+                  {/* Smart Delta Change-Detection Banner (top of Step 3 for immediate visibility) */}
+                  {activePreview.deltaSummary && (
+                    activePreview.deltaSummary.isIdentical ? (
+                      <div
+                        data-testid="import-delta-banner"
+                        className="p-3.5 rounded-xl border border-emerald-500/50 bg-emerald-500/10 space-y-1 text-xs"
+                      >
+                        <div className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>
+                            {isFa
+                              ? `هیچ تغییری نسبت به اطلاعات ثبت‌شده قبلی در این فایل وجود ندارد (فایل بدون تغییر است — ۰ ردیف جدید و ۰ تغییر، ${activePreview.deltaSummary.unchangedCount.toLocaleString('fa-IR')} ردیف یکسان).`
+                              : `No changes detected compared to existing records (0 new, 0 modified, ${activePreview.deltaSummary.unchangedCount} identical).`}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (activePreview.deltaSummary.modifiedCount > 0 || activePreview.deltaSummary.unchangedCount > 0) ? (
+                      <div
+                        data-testid="import-delta-banner"
+                        className="p-3.5 rounded-xl border border-sky-500/45 bg-sky-500/10 space-y-2 text-xs"
+                      >
+                        <div className="font-bold text-sky-800 dark:text-sky-200 flex flex-wrap items-center justify-between gap-2">
+                          <span className="flex items-center gap-1.5">
+                            <Sparkles className="w-4 h-4 shrink-0 text-sky-600 dark:text-sky-400" />
+                            <span>
+                              {isFa
+                                ? 'گزارش مقایسه هوشمند تغییرات فایل با دیتابیس فعلی'
+                                : 'Smart Delta Analysis vs. Current Database'}
+                            </span>
+                          </span>
+                          <span className="flex flex-wrap items-center gap-2 text-[11px] font-semibold tabular-nums">
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                              {isFa
+                                ? `جدید: ${activePreview.deltaSummary.newCount.toLocaleString('fa-IR')}`
+                                : `New: ${activePreview.deltaSummary.newCount}`}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-800 dark:text-amber-300">
+                              {isFa
+                                ? `تغییریافته: ${activePreview.deltaSummary.modifiedCount.toLocaleString('fa-IR')}`
+                                : `Modified: ${activePreview.deltaSummary.modifiedCount}`}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border-subtle)]">
+                              {isFa
+                                ? `بدون تغییر: ${activePreview.deltaSummary.unchangedCount.toLocaleString('fa-IR')}`
+                                : `Unchanged: ${activePreview.deltaSummary.unchangedCount}`}
+                            </span>
+                          </span>
+                        </div>
+                        {activePreview.deltaSummary.changedFieldsSample.length > 0 && (
+                          <div className="text-[11px] text-[var(--text-secondary)] space-y-0.5">
+                            <div className="font-semibold text-[var(--text-primary)]">
+                              {isFa ? 'نمونه ردیف‌های تغییریافته:' : 'Sample modified records:'}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5" dir="ltr">
+                              {activePreview.deltaSummary.changedFieldsSample.slice(0, 6).map((item, idx) => (
+                                <span
+                                  key={`${item.keyLabel}-${idx}`}
+                                  className="px-2 py-0.5 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[10px] font-mono"
+                                >
+                                  {item.keyLabel}: {item.changedFields.join(', ')}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : null
+                  )}
+
                   {/* Interactive Column Mapping Confirmation Form (for Core tables) */}
                   {inspection && mappingExpanded && (
                     <div className="p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] space-y-3">
@@ -1631,8 +1776,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     </div>
                   )}
 
-                  {/* Duplicate Warning */}
-                  {activePreview.duplicateRecordsCount > 0 && (
+                  {/* Duplicate Warning (shown when duplicates exist and file is not completely identical) */}
+                  {activePreview.duplicateRecordsCount > 0 && !activePreview.deltaSummary?.isIdentical && (
                     <div className="p-3 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-1.5 text-xs">
                       <div className="font-bold text-[var(--status-warning)] flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -1761,25 +1906,41 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                 <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
                   <div className="flex flex-wrap items-center gap-4">
                     <span className="font-semibold text-[var(--text-secondary)]">
-                      {isFa ? 'برخورد با رکوردهای تکراری:' : 'Duplicate Policy:'}
+                      {isFa ? 'برخورد با رکوردهای تکراری و تغییرات:' : 'Sync & Duplicate Policy:'}
                     </span>
-                    <label className="inline-flex items-center gap-1.5 font-medium cursor-pointer">
+                    <label className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent-primary)] cursor-pointer">
                       <input
                         type="radio"
                         name="wizardDupPolicy"
-                        checked={duplicatePolicy === 'skip'}
-                        onChange={() => setDuplicatePolicy('skip')}
+                        data-testid="dup-policy-delta"
+                        checked={duplicatePolicy === 'delta'}
+                        onChange={() => setDuplicatePolicy('delta')}
                       />
-                      <span>{isFa ? 'رد کردن و ثبت در لاگ' : 'Skip & Log'}</span>
+                      <span>
+                        {isFa
+                          ? 'همگام‌سازی هوشمند تغییرات (ثبت جدیدها + بروزرسانی تغییریافته‌ها، بدون تغییرها نادیده گرفته شوند)'
+                          : 'Smart Delta Sync (add new + update changed, skip unchanged)'}
+                      </span>
                     </label>
                     <label className="inline-flex items-center gap-1.5 font-medium cursor-pointer">
                       <input
                         type="radio"
                         name="wizardDupPolicy"
+                        data-testid="dup-policy-skip"
+                        checked={duplicatePolicy === 'skip'}
+                        onChange={() => setDuplicatePolicy('skip')}
+                      />
+                      <span>{isFa ? 'رد کردن تکراری‌ها و ثبت در لاگ' : 'Skip Duplicates & Log'}</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 font-medium cursor-pointer">
+                      <input
+                        type="radio"
+                        name="wizardDupPolicy"
+                        data-testid="dup-policy-replace"
                         checked={duplicatePolicy === 'replace'}
                         onChange={() => setDuplicatePolicy('replace')}
                       />
-                      <span>{isFa ? 'جایگزینی با اطلاعات فایل' : 'Replace Existing'}</span>
+                      <span>{isFa ? 'جایگزینی کامل با اطلاعات فایل' : 'Replace All Existing'}</span>
                     </label>
                   </div>
                 </div>
@@ -1836,8 +1997,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span>
                   {isFa
-                    ? `ثبت ${autoWorkbookResult.sections.length.toLocaleString('fa-IR')} بخش با موفقیت انجام شد: ${autoWorkbookResult.totals.imported.toLocaleString('fa-IR')} جدید · ${autoWorkbookResult.totals.replaced.toLocaleString('fa-IR')} جایگزین · ${autoWorkbookResult.totals.skipped.toLocaleString('fa-IR')} رد شده`
-                    : `Imported ${autoWorkbookResult.sections.length} section(s): ${autoWorkbookResult.totals.imported} imported · ${autoWorkbookResult.totals.replaced} replaced · ${autoWorkbookResult.totals.skipped} skipped`}
+                    ? `ثبت ${autoWorkbookResult.sections.length.toLocaleString('fa-IR')} بخش با موفقیت انجام شد: ${autoWorkbookResult.totals.imported.toLocaleString('fa-IR')} جدید · ${autoWorkbookResult.totals.replaced.toLocaleString('fa-IR')} بروزرسانی/جایگزین${(autoWorkbookResult.totals.unchangedSkipped || 0) > 0 ? ` · ${(autoWorkbookResult.totals.unchangedSkipped || 0).toLocaleString('fa-IR')} بدون تغییر` : ''}${autoWorkbookResult.totals.skipped - (autoWorkbookResult.totals.unchangedSkipped || 0) > 0 ? ` · ${(autoWorkbookResult.totals.skipped - (autoWorkbookResult.totals.unchangedSkipped || 0)).toLocaleString('fa-IR')} رد شده` : ''}`
+                    : `Imported ${autoWorkbookResult.sections.length} section(s): ${autoWorkbookResult.totals.imported} new · ${autoWorkbookResult.totals.replaced} updated${(autoWorkbookResult.totals.unchangedSkipped || 0) > 0 ? ` · ${autoWorkbookResult.totals.unchangedSkipped} unchanged` : ''}${autoWorkbookResult.totals.skipped - (autoWorkbookResult.totals.unchangedSkipped || 0) > 0 ? ` · ${autoWorkbookResult.totals.skipped - (autoWorkbookResult.totals.unchangedSkipped || 0)} skipped` : ''}`}
                 </span>
               </div>
               {autoWorkbookResult.totals.linkedGeneral +

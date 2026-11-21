@@ -692,5 +692,155 @@ test('detectCandidateScopesForSheet detects multiple sections inside a single sh
   assert.equal(db.gcvDocuments?.some((g) => g.receiptNo === 'GCV-777'), true);
 });
 
+test('Multi-value cells AND repeated numbered columns extract ALL MIV/SMR/GCV documents from a single row', () => {
+  const db = makeEmptyDb();
+
+  // 1) Multi-column MIV (1 & 2) + SMR Contractor + SMR Employer in ONE master row
+  const mivRes = commitOperationalFormImport({
+    db,
+    scope: 'mivDocuments',
+    matrix: [
+      [
+        'شماره محموله',
+        'شماره نگله',
+        'شماره آیتم',
+        'شرح کالا',
+        'شماره حواله ۱',
+        'تاریخ حواله ۱',
+        'تعداد حواله ۱',
+        'شماره حواله ۲',
+        'تاریخ حواله ۲',
+        'تعداد حواله ۲',
+        'شماره برگشتی پیمانکار ۱',
+        'تاریخ برگشتی پیمانکار ۱',
+        'مقدار برگشتی پیمانکار ۱',
+        'شماره برگشتی کارفرما ۱',
+        'تاریخ برگشتی کارفرما ۱',
+        'مقدار برگشتی کارفرما ۱',
+      ],
+      [
+        'PL-2026-01',
+        'PKG-01',
+        '1',
+        'Gate Valve 8 Inch Class 600',
+        'MIV-101',
+        '1404/01/10',
+        '3',
+        'MIV-102',
+        '1404/01/15',
+        '2',
+        'SMR-C-50',
+        '1404/01/20',
+        '1',
+        'SMR-E-60',
+        '1404/01/22',
+        '1',
+      ],
+    ],
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'skip',
+    actorName: 'admin',
+  });
+
+  assert.equal(mivRes.imported, 4);
+  assert.equal(db.mivDocuments?.length, 4);
+  const docNos = (db.mivDocuments || []).map((d) => `${d.docType}:${d.docNo}`).sort();
+  assert.deepEqual(docNos, [
+    'miv_contractor:MIV-101',
+    'miv_contractor:MIV-102',
+    'smr_contractor:SMR-C-50',
+    'smr_mapna:SMR-E-60',
+  ]);
+  assert.equal(db.detailed[0].mivContractorQty, 5);
+  assert.equal(db.detailed[0].smrContractorQty, 1);
+  assert.equal(db.detailed[0].smrMapnaQty, 1);
+
+  // 2) Multi-value cell (newline separated) for GCV with zipped quantities
+  const gcvRes = commitOperationalFormImport({
+    db,
+    scope: 'gcvDocuments',
+    matrix: [
+      ['شماره رسید مصرف', 'تاریخ رسید', 'تعداد رسید مصرف', 'تحویل گیرنده', 'شماره محموله', 'شماره نگله', 'شماره آیتم'],
+      ['GCV-201\nGCV-202', '1404/02/01\n1404/02/05', '2\n4', 'واحد مکانیک', 'PL-2026-01', 'PKG-01', '1'],
+    ],
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'skip',
+    actorName: 'admin',
+  });
+
+  assert.equal(gcvRes.imported, 2);
+  assert.equal(db.gcvDocuments?.length, 2);
+  const gcv201 = db.gcvDocuments?.find((g) => g.receiptNo === 'GCV-201');
+  const gcv202 = db.gcvDocuments?.find((g) => g.receiptNo === 'GCV-202');
+  assert.equal(gcv201?.items[0].qty, 2);
+  assert.equal(gcv202?.items[0].qty, 4);
+  assert.equal(db.detailed[0].gcvDeliveredQty, 6);
+});
+
+test('Delta sync skips unchanged operational documents and updates only modified ones', () => {
+  const db = makeEmptyDb();
+  const matrixV1 = [
+    ['شماره صورتجلسه ورود', 'تاریخ ورود', 'شماره پکینگ لیست', 'توضیحات'],
+    ['SE-DELTA-1', '1404/03/01', 'PL-2026-01', 'نسخه اول'],
+    ['SE-DELTA-2', '1404/03/02', 'PL-2026-01', 'بدون تغییر'],
+  ];
+
+  const first = commitOperationalFormImport({
+    db,
+    scope: 'siteEntryMinutes',
+    matrix: matrixV1,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'delta',
+    actorName: 'admin',
+  });
+  assert.equal(first.imported, 2);
+
+  // Preview identical re-upload -> isIdentical should be true
+  const prevIdentical = previewOperationalFormImport({
+    db,
+    scope: 'siteEntryMinutes',
+    matrix: matrixV1,
+    assumedCalendar: 'jalali',
+    actorName: 'admin',
+  });
+  assert.equal(prevIdentical.deltaSummary?.isIdentical, true);
+  assert.equal(prevIdentical.deltaSummary?.unchangedCount, 2);
+  assert.equal(prevIdentical.deltaSummary?.modifiedCount, 0);
+  assert.equal(prevIdentical.deltaSummary?.newCount, 0);
+
+  // Commit modified V2 (1 modified, 1 unchanged, 1 new)
+  const matrixV2 = [
+    ['شماره صورتجلسه ورود', 'تاریخ ورود', 'شماره پکینگ لیست', 'توضیحات'],
+    ['SE-DELTA-1', '1404/03/01', 'PL-2026-01', 'نسخه ویرایش‌شده'],
+    ['SE-DELTA-2', '1404/03/02', 'PL-2026-01', 'بدون تغییر'],
+    ['SE-DELTA-3', '1404/03/03', 'PL-2026-01', 'جدید'],
+  ];
+  const prevV2 = previewOperationalFormImport({
+    db,
+    scope: 'siteEntryMinutes',
+    matrix: matrixV2,
+    assumedCalendar: 'jalali',
+    actorName: 'admin',
+  });
+  assert.equal(prevV2.deltaSummary?.isIdentical, false);
+  assert.equal(prevV2.deltaSummary?.newCount, 1);
+  assert.equal(prevV2.deltaSummary?.modifiedCount, 1);
+  assert.equal(prevV2.deltaSummary?.unchangedCount, 1);
+
+  const commitV2 = commitOperationalFormImport({
+    db,
+    scope: 'siteEntryMinutes',
+    matrix: matrixV2,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'delta',
+    actorName: 'admin',
+  });
+  assert.equal(commitV2.imported, 1);
+  assert.equal(commitV2.replaced, 1);
+  assert.equal(commitV2.unchangedSkipped, 1);
+  assert.equal(db.siteEntryMinutes?.find((x) => x.minutesNo === 'SE-DELTA-1')?.notes, 'نسخه ویرایش شده');
+});
+
+
 
 

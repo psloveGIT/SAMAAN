@@ -13,6 +13,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -869,10 +870,12 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   const [printSheet, setPrintSheet] = useState<SiteEntryMinutesRecord | null>(null);
   const [printReportOpen, setPrintReportOpen] = useState(false);
 
+  const [packingRenderCap, setPackingRenderCap] = useState(60);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiRequest<SiteEntryApiResponse>('/api/site-entry');
+      const res = await apiRequest<SiteEntryApiResponse>('/api/site-entry?compact=1&limit=120');
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -885,35 +888,45 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
     loadData();
   }, [loadData, refreshSignal]);
 
-  // Compute packing metadata (arrivalDate & priority status within last 7 days)
+  // O(N) packing metadata map (arrivalDate & priority status within last 7 days)
   const packingMetaInfo = useMemo(() => {
     const todayIso = getTodayIso();
     const todayMs = Date.parse(`${todayIso}T00:00:00Z`);
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const generalByPacking = new Map<string, GeneralEntry[]>();
+    for (const g of data?.generalEntries || []) {
+      const pk = (g.packingListNo || '').trim();
+      if (!pk) continue;
+      let bucket = generalByPacking.get(pk);
+      if (!bucket) {
+        bucket = [];
+        generalByPacking.set(pk, bucket);
+      }
+      bucket.push(g);
+    }
     const map = new Map<string, { arrivalDate: string; isRecent: boolean; sortKey: string }>();
-    const generalEntries = data?.generalEntries || [];
 
     for (const pk of data?.packings || []) {
-      const matches = generalEntries.filter((g) => (g.packingListNo || '').trim() === pk);
-      const arrDates = matches.map((g) => (g.arrivalDate || '').trim()).filter(Boolean);
-      const primaryArrival = arrDates[0] || '';
+      const matches = generalByPacking.get(pk) || [];
+      let primaryArrival = '';
       let isRecent = false;
 
       for (const g of matches) {
         const arrStr = (g.arrivalDate || '').trim();
-        if (/^\d{4}-\d{2}-\d{2}$/.test(arrStr)) {
+        if (!primaryArrival && arrStr) primaryArrival = arrStr;
+        if (!isRecent && /^\d{4}-\d{2}-\d{2}$/.test(arrStr)) {
           const ms = Date.parse(`${arrStr}T00:00:00Z`);
           if (Number.isFinite(ms) && todayMs - ms <= sevenDaysMs && ms <= todayMs + 2 * 24 * 60 * 60 * 1000) {
             isRecent = true;
-            break;
           }
         }
-        const createdStr = (g.createdAt || '').slice(0, 10);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(createdStr)) {
-          const ms = Date.parse(`${createdStr}T00:00:00Z`);
-          if (Number.isFinite(ms) && todayMs - ms <= sevenDaysMs) {
-            isRecent = true;
-            break;
+        if (!isRecent) {
+          const createdStr = (g.createdAt || '').slice(0, 10);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(createdStr)) {
+            const ms = Date.parse(`${createdStr}T00:00:00Z`);
+            if (Number.isFinite(ms) && todayMs - ms <= sevenDaysMs) {
+              isRecent = true;
+            }
           }
         }
       }
@@ -1006,7 +1019,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
     [data],
   );
 
-  const togglePacking = (pk: string) => {
+  const togglePacking = async (pk: string) => {
     const isRemoving = selectedPackings.includes(pk);
     if (!isRemoving) {
       const candidateArr = packingMetaInfo.get(pk)?.arrivalDate || '';
@@ -1025,9 +1038,44 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
       : [...selectedPackings, pk];
 
     setSelectedPackings(nextPackings);
-    syncMetadataFromPackings(nextPackings);
 
-    const generalEntries = data?.generalEntries || [];
+    let generalEntries = data?.generalEntries || [];
+    if (!isRemoving && !generalEntries.some((g) => (g.packingListNo || '').trim() === pk)) {
+      try {
+        const fetched = await apiRequest<SiteEntryApiResponse>(
+          `/api/site-entry?compact=1&packing=${encodeURIComponent(pk)}`,
+        );
+        const existingGenIds = new Set(generalEntries.map((g) => g.id));
+        const mergedGeneral = [
+          ...generalEntries,
+          ...(fetched.generalEntries || []).filter((g) => !existingGenIds.has(g.id)),
+        ];
+        const existingTrIds = new Set((data?.transitEntries || []).map((t) => t.id));
+        const mergedTransit = [
+          ...(data?.transitEntries || []),
+          ...(fetched.transitEntries || []).filter((t) => !existingTrIds.has(t.id)),
+        ];
+        const existingDetIds = new Set((data?.detailedItems || []).map((d) => d.id));
+        const mergedDetailed = [
+          ...(data?.detailedItems || []),
+          ...(fetched.detailedItems || []).filter((d) => !existingDetIds.has(d.id)),
+        ];
+        generalEntries = mergedGeneral;
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                generalEntries: mergedGeneral,
+                transitEntries: mergedTransit,
+                detailedItems: mergedDetailed,
+              }
+            : fetched,
+        );
+      } catch {
+        // fallback to existing loaded slice
+      }
+    }
+    syncMetadataFromPackings(nextPackings);
     if (!isRemoving) {
       const addedRows = buildItemsFromGeneral([pk], generalEntries);
       setItems((prev) => [...prev, ...addedRows]);
@@ -1257,10 +1305,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                 #samaan-form-print-root { display: none !important; }
               }
               @media print {
-                @page {
-                  size: A4 portrait;
-                  margin: 7mm;
-                }
+                ${buildPrintPageRule('portrait', isFa, '7mm')}
                 body > *:not(#samaan-form-print-root) {
                   display: none !important;
                 }
@@ -1369,7 +1414,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                           : `Priority Packings (Last 7 Days — ${priorityPackings.length})`}
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-                        {priorityPackings.map((pk) => {
+                        {priorityPackings.slice(0, packingRenderCap).map((pk) => {
                           const checked = selectedPackings.includes(pk);
                           const info = packingMetaInfo.get(pk);
                           const diffDate = Boolean(lockedArrivalDate && info?.arrivalDate && info.arrivalDate !== lockedArrivalDate && !checked);
@@ -1427,43 +1472,61 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                       </button>
 
                       {(showOlderPackings || Boolean(packingSearch.trim()) || priorityPackings.length === 0) && (
-                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-                          {olderPackings.map((pk) => {
-                            const checked = selectedPackings.includes(pk);
-                            const info = packingMetaInfo.get(pk);
-                            const diffDate = Boolean(lockedArrivalDate && info?.arrivalDate && info.arrivalDate !== lockedArrivalDate && !checked);
-                            return (
-                              <label
-                                key={pk}
-                                title={info?.arrivalDate ? `${isFa ? 'تاریخ ورود:' : 'Arrival:'} ${formatDate(info.arrivalDate)}` : ''}
-                                className={`px-2.5 py-2 rounded-lg border text-xs flex flex-col gap-0.5 transition-colors ${
-                                  diffDate
-                                    ? 'opacity-45 cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-subtle)]'
-                                    : checked
-                                      ? 'cursor-pointer border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                                      : 'cursor-pointer border-[var(--border-subtle)] bg-[var(--bg-surface)]'
-                                }`}
+                        <>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                            {olderPackings.slice(0, packingRenderCap).map((pk) => {
+                              const checked = selectedPackings.includes(pk);
+                              const info = packingMetaInfo.get(pk);
+                              const diffDate = Boolean(lockedArrivalDate && info?.arrivalDate && info.arrivalDate !== lockedArrivalDate && !checked);
+                              return (
+                                <label
+                                  key={pk}
+                                  title={info?.arrivalDate ? `${isFa ? 'تاریخ ورود:' : 'Arrival:'} ${formatDate(info.arrivalDate)}` : ''}
+                                  className={`px-2.5 py-2 rounded-lg border text-xs flex flex-col gap-0.5 transition-colors ${
+                                    diffDate
+                                      ? 'opacity-45 cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-subtle)]'
+                                      : checked
+                                        ? 'cursor-pointer border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                                        : 'cursor-pointer border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      disabled={diffDate}
+                                      checked={checked}
+                                      onChange={() => togglePacking(pk)}
+                                    />
+                                    <span dir="ltr" className="truncate tabular-nums">
+                                      {pk}
+                                    </span>
+                                  </div>
+                                  {info?.arrivalDate && (
+                                    <span className="text-[10px] text-[var(--text-muted)] ps-5 tabular-nums">
+                                      {formatDate(info.arrivalDate)}
+                                    </span>
+                                  )}
+                                </label>
+                              );
+                            })}
+                          </div>
+                          {olderPackings.length > packingRenderCap && (
+                            <div className="pt-2 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+                              <span>
+                                {isFa
+                                  ? `نمایش ${packingRenderCap.toLocaleString('fa-IR')} از ${olderPackings.length.toLocaleString('fa-IR')} پکینگ — برای یافتن سریع‌تر از کادر فیلتر بالا استفاده کنید.`
+                                  : `Showing ${packingRenderCap} of ${olderPackings.length} packings — search above to narrow down.`}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setPackingRenderCap((c) => c + 60)}
+                                className="px-2.5 py-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--accent-primary)] font-semibold hover:bg-[var(--bg-subtle)]"
                               >
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    disabled={diffDate}
-                                    checked={checked}
-                                    onChange={() => togglePacking(pk)}
-                                  />
-                                  <span dir="ltr" className="truncate tabular-nums">
-                                    {pk}
-                                  </span>
-                                </div>
-                                {info?.arrivalDate && (
-                                  <span className="text-[10px] text-[var(--text-muted)] ps-5 tabular-nums">
-                                    {formatDate(info.arrivalDate)}
-                                  </span>
-                                )}
-                              </label>
-                            );
-                          })}
-                        </div>
+                                {isFa ? 'نمایش ۶۰ مورد بیشتر' : 'Show 60 more'}
+                              </button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

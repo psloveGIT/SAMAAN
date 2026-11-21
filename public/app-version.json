@@ -1,33 +1,54 @@
 {
-  "version": "2.6.0",
-  "buildId": "2026.05.21-1",
-  "releasedAt": "2026-05-21",
+  "version": "2.7.0",
+  "buildId": "2026.05.22-1",
+  "releasedAt": "2026-05-22",
   "latestRelease": {
-    "version": "2.6.0",
-    "buildId": "2026.05.21-1",
-    "releasedAt": "2026-05-21",
-    "titleFa": "اصلاح دستیار هوشمند جمنای، بازآرایی گروه‌بندی‌شده ستون‌های جزئیات تجهیزات و استخراج خودکار تاریخ مواد شیمیایی",
-    "titleEn": "Gemini AI Assistant Fix, Grouped Detailed Table Columns & Chemical Date Auto-Extraction",
+    "version": "2.7.0",
+    "buildId": "2026.05.22-1",
+    "releasedAt": "2026-05-22",
+    "titleFa": "رفع کامل کندی عملیات انبار و فرم‌های شرکتی، همگام‌سازی هوشمند تغییرات فایل و ارتقای هشدارهای مواد شیمیایی",
+    "titleEn": "Zero-Freeze Operations & Corporate Forms Studio, Smart Delta Import Sync & Chemical Alerts Upgrade",
     "changesFa": [
-      "رفع خطای دستیار هوشمند در گزارش خلاصه پکینگ‌ها، محموله‌های در راه و وزن خالص/ناخالص و اتصال مستقیم به سرویس جمنای سرور",
-      "بازآرایی کامل، نام‌گذاری فارسی شفاف و گروه‌بندی رنگی دوطبقه ستون‌های جدول ثبت جزئیات تجهیزات (حذف ستون‌های تکراری و قدیمی و افزودن «تأمین مجدد جایگزین شده»، «تحویل گیرنده حواله» و «تحویل آورنده»)",
-      "اصلاح کامل فیلتر ستون «دسته‌بندی تخصصی قلم» جهت نمایش ۱۰۰٪ فارسی در زبان فارسی و انگلیسی در زبان انگلیسی",
-      "افزودن انتخاب صریح انبار مقصد برگشت متریال (انبار کارفرما / انبار پیمانکار) و فیلد «نام تحویل آورنده» در فرم ارجاع (SMR) و ثبت خودکار «تحویل گیرنده» از حواله (MIV)",
-      "استخراج خودکار تاریخ تولید و تاریخ انقضای مواد شیمیایی (شمسی و میلادی) از متن و توضیحات هنگام ورود فایل‌های اکسل و CSV و رفع تداخل ستون انبارگردانی با تاریخ تولید",
-      "بازطراحی کامل ورود فایل در پشتیبان‌گیری به ویزارد ۳ مرحله‌ای: انتخاب دستی شیت‌ها، تشخیص و تأیید چندبخش هم‌زمان درون یک شیت و ثبت کنترل‌شده بدون تحمیل خودکار شیت اول",
-      "به‌روزرسانی فوری فهرست تغییرات در اعلان بروزرسانی برنامه همزمان با شناسایی نسخه جدید"
+      "رفع کامل هنگ و فریز در تمام ۹ بخش «عملیات انبار» و بخش «کارفرمایان و فرم‌های شرکتی» با بارگذاری سبک، کش مدل اکسل و بهینه‌سازی رندر",
+      "اصلاح آپلود چندتایی لوگو در گالری لوگوهای کارفرما (افزودن هم‌زمان همه تصاویر انتخاب‌شده) و اعمال استاندارد فرمت شماره تلفن ایران در تمام فرم‌ها",
+      "حذف ارجاعات اکسل از تنظیمات کلیدهای میانبر و افزودن شماره‌گذاری خودکار صفحات چاپی (صفحه: # از #)",
+      "ارتقای بخش مواد شیمیایی داشبورد و جدول جزئیات: نمایش فقط اقلام دارای موجودی با تفکیک رنگی منقضی‌شده و در شرف انقضا، نوار هشدار فشرده و قابل بستن، تغییر نام «موجودی کارفرما» و دکمه‌های فیلتر سریع موجودی کارفرما و پیمانکار",
+      "ادغام مدیریت فرم‌های عملیاتی و آپلودی در یک تب واحد با تشخیص هوشمند فرمول‌های اکسل، انتخاب چندمنبعی داده‌ها، تشخیص و تأیید بخش مقصد فرم و اصلاح کامل پیش‌نمایش A4 عمودی/افقی",
+      "ارتقای بازیابی فایل: استخراج چندمقداره و چندستونه اسناد عملیاتی (حواله‌ها، برگشتی‌ها، رسیدها و صورتجلسه‌ها) و تشخیص هوشمند تغییرات هنگام بارگذاری مجدد فایل (Delta Sync)"
     ],
     "changesEn": [
-      "Fixed Smart AI Assistant summary/weight/packing/transit queries and direct server-side Gemini API routing",
-      "Reorganized, renamed, and color-grouped Detailed Equipment table columns into clean 2-tier semantic headers (added Reprocured Replacement, MIV Receiver, and SMR Deliverer; removed duplicate legacy columns)",
-      "Fixed Item Classification column filter to render strictly Persian labels in Persian mode and English labels in English mode",
-      "Added explicit target warehouse selection (Employer vs. Contractor WH) and Returned By field in SMR, plus automatic Receiver sync from MIV",
-      "Automatic extraction of Persian (Jalali) and English (Gregorian) chemical production & expiration dates during Excel/CSV import, fixing stocktake-to-productionDate column overlap",
-      "Redesigned Backup & Restore file import into a 3-step guided wizard supporting explicit sheet selection and multi-section detection inside a single sheet",
-      "Immediate remote changelog sync when Service Worker detects a new app release"
+      "Eliminated freeze and lag across all 9 Warehouse Operations views and the Employers & Corporate Forms Studio via compact queries, Excel model caching, and deferred rendering",
+      "Fixed multi-select logo upload in Client Gallery and enforced Iranian phone number formatting across all phone inputs",
+      "Removed legacy spreadsheet references from Keyboard Shortcuts settings and added automatic print page numbering (Page: # of #)",
+      "Upgraded Chemical Expiration alerts in Dashboard and Detailed view: in-stock only, distinct expired vs. near-expiry colors, compact dismissible alert bar, Employer Stock rename, and quick stock filter buttons",
+      "Unified Built-in & Uploaded Corporate Forms studio tab with Excel formula detection, multi-source data binding, target operational section confirmation, and crisp Portrait/Landscape A4 preview",
+      "Upgraded Backup & Restore import with multi-value & multi-column operational document extraction and Smart Re-Upload Delta Sync"
     ]
   },
   "changelog": [
+    {
+      "version": "2.7.0",
+      "buildId": "2026.05.22-1",
+      "releasedAt": "2026-05-22",
+      "titleFa": "رفع کامل کندی عملیات انبار و فرم‌های شرکتی، همگام‌سازی هوشمند تغییرات فایل و ارتقای هشدارهای مواد شیمیایی",
+      "titleEn": "Zero-Freeze Operations & Corporate Forms Studio, Smart Delta Import Sync & Chemical Alerts Upgrade",
+      "changesFa": [
+        "رفع کامل هنگ و فریز در تمام ۹ بخش «عملیات انبار» و بخش «کارفرمایان و فرم‌های شرکتی» با بارگذاری سبک، کش مدل اکسل و بهینه‌سازی رندر",
+        "اصلاح آپلود چندتایی لوگو در گالری لوگوهای کارفرما (افزودن هم‌زمان همه تصاویر انتخاب‌شده) و اعمال استاندارد فرمت شماره تلفن ایران در تمام فرم‌ها",
+        "حذف ارجاعات اکسل از تنظیمات کلیدهای میانبر و افزودن شماره‌گذاری خودکار صفحات چاپی (صفحه: # از #)",
+        "ارتقای بخش مواد شیمیایی داشبورد و جدول جزئیات: نمایش فقط اقلام دارای موجودی با تفکیک رنگی منقضی‌شده و در شرف انقضا، نوار هشدار فشرده و قابل بستن، تغییر نام «موجودی کارفرما» و دکمه‌های فیلتر سریع موجودی کارفرما و پیمانکار",
+        "ادغام مدیریت فرم‌های عملیاتی و آپلودی در یک تب واحد با تشخیص هوشمند فرمول‌های اکسل، انتخاب چندمنبعی داده‌ها، تشخیص و تأیید بخش مقصد فرم و اصلاح کامل پیش‌نمایش A4 عمودی/افقی",
+        "ارتقای بازیابی فایل: استخراج چندمقداره و چندستونه اسناد عملیاتی (حواله‌ها، برگشتی‌ها، رسیدها و صورتجلسه‌ها) و تشخیص هوشمند تغییرات هنگام بارگذاری مجدد فایل (Delta Sync)"
+      ],
+      "changesEn": [
+        "Eliminated freeze and lag across all 9 Warehouse Operations views and the Employers & Corporate Forms Studio via compact queries, Excel model caching, and deferred rendering",
+        "Fixed multi-select logo upload in Client Gallery and enforced Iranian phone number formatting across all phone inputs",
+        "Removed legacy spreadsheet references from Keyboard Shortcuts settings and added automatic print page numbering (Page: # of #)",
+        "Upgraded Chemical Expiration alerts in Dashboard and Detailed view: in-stock only, distinct expired vs. near-expiry colors, compact dismissible alert bar, Employer Stock rename, and quick stock filter buttons",
+        "Unified Built-in & Uploaded Corporate Forms studio tab with Excel formula detection, multi-source data binding, target operational section confirmation, and crisp Portrait/Landscape A4 preview",
+        "Upgraded Backup & Restore import with multi-value & multi-column operational document extraction and Smart Re-Upload Delta Sync"
+      ]
+    },
     {
       "version": "2.6.0",
       "buildId": "2026.05.21-1",

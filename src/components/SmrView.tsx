@@ -6,6 +6,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -29,6 +30,8 @@ interface MivApiResponse {
   documents: MivDocumentRecord[];
   detailedItems: DetailedComputed[];
   generalEntries?: GeneralEntry[];
+  packings?: string[];
+  totalDetailedCount?: number;
 }
 
 interface SmrViewProps {
@@ -462,10 +465,14 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
   const [editingDoc, setEditingDoc] = useState<MivDocumentRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MivDocumentRecord | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (opts?: { packing?: string; search?: string; stockFilter?: string }) => {
     setLoading(true);
     try {
-      const res = await apiRequest<MivApiResponse>('/api/miv');
+      const qs = new URLSearchParams({ compact: '1', limit: '80' });
+      if (opts?.packing) qs.set('packing', opts.packing);
+      if (opts?.search) qs.set('search', opts.search);
+      if (opts?.stockFilter) qs.set('stockFilter', opts.stockFilter);
+      const res = await apiRequest<MivApiResponse>(`/api/miv?${qs.toString()}`);
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -475,8 +482,12 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
   }, [notify]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData, refreshSignal]);
+    const sf = docType === 'smr_mapna' ? 'contractor' : '';
+    const timer = window.setTimeout(() => {
+      loadData({ packing: shipmentFilter, search: itemSearch.trim(), stockFilter: sf });
+    }, itemSearch ? 220 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadData, refreshSignal, shipmentFilter, itemSearch, docType]);
 
   const docTypeLabel = useCallback(
     (type: MivDocType) => {
@@ -497,6 +508,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
   const smrPagination = useClientPagination(smrDocuments, 50);
 
   const knownPackings = useMemo(() => {
+    if (data?.packings && data.packings.length > 0) return data.packings;
     const set = new Set<string>();
     for (const d of data?.detailedItems || []) {
       if (d.shipmentNo) set.add(d.shipmentNo);
@@ -804,10 +816,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                   #samaan-smr-print-root { display: none !important; }
                 }
                 @media print {
-                  @page {
-                    size: A4 landscape;
-                    margin: 7mm;
-                  }
+                  ${buildPrintPageRule('landscape', isFa, '7mm')}
                   body > *:not(#samaan-smr-print-root) {
                     display: none !important;
                   }
@@ -951,7 +960,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                 </div>
                 <p className="text-[11px] text-[var(--text-muted)] mt-1">
                   {isFa
-                    ? 'برگشت متریال از انبار پیمانکار به انبار کارفرما — موجودی انبار اصلی افزایش می‌یابد و در ستون «شماره برگشتی به انبار کارفرما» ثبت می‌شود.'
+                    ? 'برگشت متریال از انبار پیمانکار به انبار کارفرما — موجودی کارفرما افزایش می‌یابد و در ستون «شماره برگشتی به انبار کارفرما» ثبت می‌شود.'
                     : 'Returns material from Contractor to Employer/Main Warehouse — increases Main Warehouse stock.'}
                 </p>
               </button>
@@ -1205,7 +1214,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                       </td>
                     </tr>
                   ) : (
-                    eligibleItems.map((item) => {
+                    eligibleItems.slice(0, 80).map((item) => {
                       const avail = getAvailableQty(item, docType);
                       return (
                         <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">

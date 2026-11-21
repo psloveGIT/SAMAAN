@@ -14,6 +14,11 @@ import {
   normalizeCountingUnitToFa,
   normalizeTransitStatus,
 } from './normalizers.ts';
+import {
+  analyzeImportDelta,
+  hasRecordMeaningfulChanges,
+  type ImportDeltaSummary,
+} from './importDelta.ts';
 import { buildDetailedDupKey, buildGeneralDupKey, buildTransitDupKey } from './tableQuery.ts';
 import type {
   CalendarMode,
@@ -246,6 +251,7 @@ export interface OperationalPreviewResult {
   sample: Record<string, unknown>[];
   parsedRecords: Record<string, unknown>[];
   warnings: string[];
+  deltaSummary?: ImportDeltaSummary;
 }
 
 export interface OperationalCommitResult {
@@ -253,6 +259,7 @@ export interface OperationalCommitResult {
   imported: number;
   replaced: number;
   skipped: number;
+  unchangedSkipped?: number;
   linkedGeneral: number;
   linkedDetailed: number;
   linkedTransit: number;
@@ -260,6 +267,16 @@ export interface OperationalCommitResult {
 }
 
 // ---------------- NORMALIZATION HELPERS ----------------
+
+function preserveNewlinesRaw(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  return String(v)
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u200c/g, ' ')
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .trim();
+}
 
 function normKey(v: unknown): string {
   if (v === null || v === undefined) return '';
@@ -309,7 +326,7 @@ function splitListValues(v: unknown): string[] {
   if (Array.isArray(v)) {
     return Array.from(new Set(v.map((x) => normKey(x)).filter(Boolean)));
   }
-  const s = normKey(v);
+  const s = preserveNewlinesRaw(v);
   if (!s) return [];
   return Array.from(
     new Set(
@@ -754,6 +771,218 @@ function dateField(row: Record<string, unknown>, aliases: string[], cal: Calenda
   return parseDateVal(v, cal) || fallback;
 }
 
+// ---------------- MULTI-VALUE & MULTI-COLUMN DOCUMENT EXTRACTION ----------------
+
+interface ExtractedDocTriplet {
+  docNo: string;
+  date: string;
+  qty: number | null;
+  party: string;
+  note: string;
+  docTypeHint?: MivDocType;
+}
+
+/**
+ * Splits a cell containing one or multiple document numbers (newline, comma, Arabic comma,
+ * semicolon, pipe, or spaced slash / slash between two doc tokens) without breaking dates.
+ */
+export function splitMultiDocValues(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.flatMap((item) => splitMultiDocValues(item));
+  }
+  const s = preserveNewlinesRaw(raw);
+  if (!s) return [];
+  const primaryParts = s
+    .split(/[\n،,;|]+/)
+    .map((p) => normKey(p))
+    .filter(Boolean);
+
+  const out: string[] = [];
+  for (const part of primaryParts) {
+    // Split on spaced slash " / " always
+    if (/\s+\/\s+/.test(part)) {
+      for (const sub of part.split(/\s+\/\s+/)) {
+        const clean = normKey(sub);
+        if (clean) out.push(clean);
+      }
+      continue;
+    }
+    // Split on tight "/" only when it looks like multiple doc codes (e.g. MIV-101/MIV-102 or GCV-1/GCV-2)
+    // and NOT a date like 1404/01/15 or a single code like FQP/01
+    if (part.includes('/')) {
+      const slashParts = part.split('/').map((x) => normKey(x)).filter(Boolean);
+      const looksLikeDate = /^\d{2,4}\/\d{1,2}\/\d{1,4}$/.test(normalizeDigits(part));
+      const allLookLikeSeparateDocs =
+        slashParts.length >= 2 &&
+        slashParts.every((sp) => /[a-zA-Z\u0600-\u06ff]/.test(sp) && /\d/.test(normalizeDigits(sp)) && sp.length >= 4);
+      if (!looksLikeDate && allLookLikeSeparateDocs) {
+        out.push(...slashParts);
+        continue;
+      }
+    }
+    out.push(part);
+  }
+  return out;
+}
+
+function splitMultiDateValues(raw: unknown, cal: CalendarMode): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map((x) => parseDateVal(x, cal)).filter(Boolean);
+  }
+  const s = preserveNewlinesRaw(raw);
+  if (!s) return [];
+  return s
+    .split(/[\n،,;|]+|\s+[-–—]\s+/)
+    .map((p) => parseDateVal(p, cal))
+    .filter(Boolean);
+}
+
+function splitMultiNumValues(raw: unknown): Array<number | null> {
+  if (Array.isArray(raw)) {
+    return raw.map((x) => parseNumberVal(x));
+  }
+  const s = preserveNewlinesRaw(raw);
+  if (!s) return [];
+  const parts = s
+    .split(/[\n،,;|/]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.map((p) => parseNumberVal(p));
+}
+
+function splitHeaderTrailingIndex(rawKey: string): { base: string; index: string } {
+  const norm = normHeader(rawKey);
+  // Match trailing index like "شماره حواله 1", "شماره حواله 2", "miv no 1", "docno2"
+  const mSpace = norm.match(/^(.*?)\s+(?:#|no|num|شماره)?\s*(\d{1,2})$/i);
+  if (mSpace && mSpace[1].trim().length >= 2) {
+    return { base: mSpace[1].trim(), index: mSpace[2] };
+  }
+  const mCompact = norm.match(/^([a-z\u0600-\u06ff]+?)(\d{1,2})$/i);
+  if (mCompact && mCompact[1].length >= 3) {
+    return { base: mCompact[1].trim(), index: mCompact[2] };
+  }
+  return { base: norm, index: '' };
+}
+
+function headerMatchesAliases(base: string, aliases: string[], excludeAliases: string[] = []): boolean {
+  if (!base) return false;
+  for (const ex of excludeAliases) {
+    const nex = normHeader(ex);
+    if (nex && base.includes(nex)) return false;
+  }
+  for (const al of aliases) {
+    const nal = normHeader(al);
+    if (!nal) continue;
+    if (base === nal || (nal.length >= 3 && base.includes(nal))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Dynamically discovers ALL single, multi-value (newline/comma/slash), AND repeated/numbered
+ * columns (e.g., "شماره حواله ۱", "تاریخ حواله ۱", "تعداد حواله ۱", "شماره حواله ۲", ...)
+ * inside a row and emits zipped document triplets.
+ */
+function extractMultiDocTriplets(
+  row: Record<string, unknown>,
+  config: {
+    docNoAliases: string[];
+    dateAliases?: string[];
+    qtyAliases?: string[];
+    partyAliases?: string[];
+    noteAliases?: string[];
+    excludeAliases?: string[];
+    docTypeHint?: MivDocType;
+  },
+  cal: CalendarMode,
+): ExtractedDocTriplet[] {
+  const keys = Object.keys(row);
+  const parsedKeys = keys.map((raw) => ({ raw, ...splitHeaderTrailingIndex(raw) }));
+
+  // Find all columns matching docNoAliases, grouped by their trailing index ("", "1", "2", ...)
+  const docColsByIndex = new Map<string, string>();
+  for (const pk of parsedKeys) {
+    if (!headerMatchesAliases(pk.base, config.docNoAliases, config.excludeAliases)) continue;
+    if (!docColsByIndex.has(pk.index)) {
+      docColsByIndex.set(pk.index, pk.raw);
+    }
+  }
+
+  if (docColsByIndex.size === 0) return [];
+
+  const findCompanion = (aliases: string[] | undefined, idx: string): unknown => {
+    if (!aliases || aliases.length === 0) return undefined;
+    // Pass 1: exact same index
+    for (const pk of parsedKeys) {
+      if (pk.index !== idx) continue;
+      if (headerMatchesAliases(pk.base, aliases, config.excludeAliases)) {
+        const v = row[pk.raw];
+        if (v !== undefined && v !== null && normKey(v) !== '') return v;
+      }
+    }
+    // Pass 2: unindexed fallback (only when index is "" or as shared fallback)
+    if (idx !== '') {
+      for (const pk of parsedKeys) {
+        if (pk.index !== '') continue;
+        if (headerMatchesAliases(pk.base, aliases, config.excludeAliases)) {
+          const v = row[pk.raw];
+          if (v !== undefined && v !== null && normKey(v) !== '') return v;
+        }
+      }
+    }
+    return undefined;
+  };
+
+  const sortedIndexes = Array.from(docColsByIndex.keys()).sort((a, b) => {
+    if (a === b) return 0;
+    if (a === '') return -1;
+    if (b === '') return 1;
+    return Number(a) - Number(b);
+  });
+
+  const triplets: ExtractedDocTriplet[] = [];
+  for (const idx of sortedIndexes) {
+    const colKey = docColsByIndex.get(idx)!;
+    const docNos = splitMultiDocValues(row[colKey]);
+    if (docNos.length === 0) continue;
+
+    const rawDate = findCompanion(config.dateAliases, idx);
+    const rawQty = findCompanion(config.qtyAliases, idx);
+    const rawParty = findCompanion(config.partyAliases, idx);
+    const rawNote = findCompanion(config.noteAliases, idx);
+
+    const dates = splitMultiDateValues(rawDate, cal);
+    const qtys = splitMultiNumValues(rawQty);
+    const parties = splitMultiDocValues(rawParty);
+    const noteStr = normKey(rawNote);
+
+    for (let i = 0; i < docNos.length; i += 1) {
+      const docNo = docNos[i];
+      if (!docNo) continue;
+      const dateVal = dates[i] || dates[0] || '';
+      const qtyVal =
+        qtys[i] !== undefined && qtys[i] !== null
+          ? qtys[i]
+          : docNos.length === 1 && qtys[0] !== undefined
+            ? qtys[0]
+            : null;
+      const partyVal = parties[i] || parties[0] || '';
+      triplets.push({
+        docNo,
+        date: dateVal,
+        qty: qtyVal,
+        party: partyVal,
+        note: noteStr,
+        docTypeHint: config.docTypeHint,
+      });
+    }
+  }
+
+  return triplets;
+}
+
 // ---------------- PARSERS FOR ALL 10 OPERATIONAL / CUSTOM FORMS ----------------
 
 export function parseOperationalFormInput(params: {
@@ -789,26 +1018,42 @@ export function parseOperationalFormInput(params: {
     const byKey = new Map<string, SiteEntryMinutesRecord>();
     let seq = 1;
     for (const row of sourceRows) {
-      const minutesNo = strField(row, [
-        'minutesNo',
-        'شماره صورتجلسه ورود',
-        'شماره صورتجلسه',
-        'شماره سند',
-        'شماره',
-      ]);
+      const extractedDocs = extractMultiDocTriplets(
+        row,
+        {
+          docNoAliases: [
+            'minutesNo',
+            'mapnaEntryMinutesNo',
+            'employerEntryMinutesNo',
+            'شماره صورتجلسه ورود',
+            'شماره صورتجلسه مپنا',
+            'شماره صورتجلسه کارفرما',
+            'شماره صورتجلسه',
+            'شماره سند',
+          ],
+          dateAliases: ['date', 'arrivalDate', 'تاریخ صورتجلسه', 'تاریخ ورود', 'تاریخ'],
+        },
+        assumedCalendar,
+      );
+      const fallbackNo = strField(row, ['minutesNo', 'شماره صورتجلسه ورود', 'شماره صورتجلسه', 'شماره سند', 'شماره']);
       const rawPackings = getField(row, ['packingListNos', 'packingListNo', 'shipmentNo', 'پکینگ لیست', 'شماره پکینگ لیست', 'لیست پکینگ', 'شماره محموله']);
       const packings = splitListValues(rawPackings);
-      const date = dateField(row, ['date', 'تاریخ صورتجلسه', 'تاریخ'], assumedCalendar);
-      const arrivalDate = dateField(row, ['arrivalDate', 'تاریخ ورود'], assumedCalendar, date || todayIso);
-      const effectiveNo = minutesNo || (packings[0] ? `SE-${packings[0]}` : `SE-IMP-${seq++}`);
+      const baseDate = dateField(row, ['date', 'تاریخ صورتجلسه', 'تاریخ'], assumedCalendar);
+      const baseArrival = dateField(row, ['arrivalDate', 'تاریخ ورود'], assumedCalendar, baseDate || todayIso);
 
-      if (!minutesNo && packings.length === 0 && !strField(row, ['supplier', 'تامین کننده', 'driverName', 'نام راننده'])) {
+      const docsToProcess: Array<{ docNo: string; date: string }> =
+        extractedDocs.length > 0
+          ? extractedDocs.map((t) => ({ docNo: t.docNo, date: t.date || baseDate }))
+          : fallbackNo
+            ? [{ docNo: fallbackNo, date: baseDate }]
+            : packings.length > 0 || strField(row, ['supplier', 'تامین کننده', 'driverName', 'نام راننده'])
+              ? [{ docNo: packings[0] ? `SE-${packings[0]}` : `SE-IMP-${seq++}`, date: baseDate }]
+              : [];
+
+      if (docsToProcess.length === 0) {
         skippedEmpty += 1;
         continue;
       }
-
-      const key = normMatchKey(effectiveNo);
-      let existing = byKey.get(key);
 
       const rawItems = parseMaybeJson(getField(row, ['items', 'اقلام']));
       const parsedItems: NonNullable<SiteEntryMinutesRecord['items']> = [];
@@ -848,63 +1093,70 @@ export function parseOperationalFormInput(params: {
         }
       }
 
-      if (!existing) {
-        const rawEntryType = normHeader(getField(row, ['entryType', 'نوع ورود']));
-        const rawUsage = normHeader(getField(row, ['goodsUsage', 'کاربری کالا']));
-        const rawCond = normHeader(getField(row, ['conditionStatus', 'وضعیت ظاهری', 'وضعیت بسته']));
-        existing = {
-          id: makeId(),
-          minutesNo: effectiveNo,
-          releaseNoteNo: strField(row, ['releaseNoteNo', 'releaseNo', 'شماره رلیز', 'شماره release note']),
-          projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
-          entryType: rawEntryType.includes('temp') || rawEntryType.includes('موقت') ? 'temporary' : 'permanent',
-          goodsUsage:
-            rawUsage.includes('site') || rawUsage.includes('تجهیز')
-              ? 'site_equip'
-              : rawUsage.includes('general') || rawUsage.includes('عمومی')
-                ? 'general'
-                : 'project',
-          contractNo: strField(row, ['contractNo', 'شماره قرارداد', 'قرارداد']),
-          date: date || arrivalDate || todayIso,
-          arrivalDate: arrivalDate || date || todayIso,
-          packingListNos: packings,
-          supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
-          unit: strField(row, ['unit', 'واحد']),
-          system: strField(row, ['system', 'سیستم']),
-          island: strField(row, ['island', 'جزیره']),
-          origin: strField(row, ['origin', 'dispatchLocation', 'مبدا', 'محل ارسال']),
-          carrierCompany: strField(row, ['carrierCompany', 'carrierContractor', 'شرکت حمل', 'پیمانکار حمل']),
-          trafficLocation: strField(row, ['trafficLocation', 'محل تردد']),
-          vehicleType: strField(row, ['vehicleType', 'نوع خودرو']),
-          driverName: strField(row, ['driverName', 'نام راننده', 'راننده']),
-          vehicleNo: strField(row, ['vehicleNo', 'شماره خودرو', 'پلاک']),
-          waybillNo: strField(row, ['waybillNo', 'billOfLadingNo', 'شماره بارنامه', 'بارنامه']),
-          items: parsedItems.length > 0 ? parsedItems : undefined,
-          warehouseKeeper: strField(row, ['warehouseKeeper', 'انباردار']),
-          contractorManager: strField(row, ['contractorManager', 'مدیر پیمانکار']),
-          mapnaSecurity: strField(row, ['mapnaSecurity', 'نگهبانی مپنا', 'حراست']),
-          qcChecked: parseBoolVal(getField(row, ['qcChecked', 'تایید qc'])),
-          qcTechOffice: strField(row, ['qcTechOffice', 'دفتر فنی']),
-          hseChecked: parseBoolVal(getField(row, ['hseChecked', 'تایید hse'])),
-          hseOfficer: strField(row, ['hseOfficer', 'مسئول hse']),
-          equipmentSupply: strField(row, ['equipmentSupply', 'تامین تجهیزات']),
-          employerRep: strField(row, ['employerRep', 'نماینده کارفرما']),
-          mapnaRep: strField(row, ['mapnaRep', 'نماینده مپنا']),
-          conditionStatus:
-            rawCond.includes('damage') || rawCond.includes('آسیب')
-              ? 'damaged_apparent'
-              : rawCond.includes('short') || rawCond.includes('partial') || rawCond.includes('کسر') || rawCond.includes('ناقص')
-                ? 'shortage_suspected'
-                : 'healthy',
-          notes: strField(row, ['notes', 'توضیحات']),
-          createdAt: now,
-          createdBy: actorName,
-        };
-        byKey.set(key, existing);
-      } else {
-        existing.packingListNos = Array.from(new Set([...existing.packingListNos, ...packings]));
-        if (parsedItems.length > 0) {
-          existing.items = [...(existing.items || []), ...parsedItems];
+      for (const docItem of docsToProcess) {
+        const effectiveNo = docItem.docNo;
+        const date = docItem.date || baseDate;
+        const arrivalDate = baseArrival || date || todayIso;
+        const key = normMatchKey(effectiveNo);
+        let existing = byKey.get(key);
+        if (!existing) {
+          const rawEntryType = normHeader(getField(row, ['entryType', 'نوع ورود']));
+          const rawUsage = normHeader(getField(row, ['goodsUsage', 'کاربری کالا']));
+          const rawCond = normHeader(getField(row, ['conditionStatus', 'وضعیت ظاهری', 'وضعیت بسته']));
+          existing = {
+            id: makeId(),
+            minutesNo: effectiveNo,
+            releaseNoteNo: strField(row, ['releaseNoteNo', 'releaseNo', 'شماره رلیز', 'شماره release note']),
+            projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
+            entryType: rawEntryType.includes('temp') || rawEntryType.includes('موقت') ? 'temporary' : 'permanent',
+            goodsUsage:
+              rawUsage.includes('site') || rawUsage.includes('تجهیز')
+                ? 'site_equip'
+                : rawUsage.includes('general') || rawUsage.includes('عمومی')
+                  ? 'general'
+                  : 'project',
+            contractNo: strField(row, ['contractNo', 'شماره قرارداد', 'قرارداد']),
+            date: date || arrivalDate || todayIso,
+            arrivalDate: arrivalDate || date || todayIso,
+            packingListNos: [...packings],
+            supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
+            unit: strField(row, ['unit', 'واحد']),
+            system: strField(row, ['system', 'سیستم']),
+            island: strField(row, ['island', 'جزیره']),
+            origin: strField(row, ['origin', 'dispatchLocation', 'مبدا', 'محل ارسال']),
+            carrierCompany: strField(row, ['carrierCompany', 'carrierContractor', 'شرکت حمل', 'پیمانکار حمل']),
+            trafficLocation: strField(row, ['trafficLocation', 'محل تردد']),
+            vehicleType: strField(row, ['vehicleType', 'نوع خودرو']),
+            driverName: strField(row, ['driverName', 'نام راننده', 'راننده']),
+            vehicleNo: strField(row, ['vehicleNo', 'شماره خودرو', 'پلاک']),
+            waybillNo: strField(row, ['waybillNo', 'billOfLadingNo', 'شماره بارنامه', 'بارنامه']),
+            items: parsedItems.length > 0 ? [...parsedItems] : undefined,
+            warehouseKeeper: strField(row, ['warehouseKeeper', 'انباردار']),
+            contractorManager: strField(row, ['contractorManager', 'مدیر پیمانکار']),
+            mapnaSecurity: strField(row, ['mapnaSecurity', 'نگهبانی مپنا', 'حراست']),
+            qcChecked: parseBoolVal(getField(row, ['qcChecked', 'تایید qc'])),
+            qcTechOffice: strField(row, ['qcTechOffice', 'دفتر فنی']),
+            hseChecked: parseBoolVal(getField(row, ['hseChecked', 'تایید hse'])),
+            hseOfficer: strField(row, ['hseOfficer', 'مسئول hse']),
+            equipmentSupply: strField(row, ['equipmentSupply', 'تامین تجهیزات']),
+            employerRep: strField(row, ['employerRep', 'نماینده کارفرما']),
+            mapnaRep: strField(row, ['mapnaRep', 'نماینده مپنا']),
+            conditionStatus:
+              rawCond.includes('damage') || rawCond.includes('آسیب')
+                ? 'damaged_apparent'
+                : rawCond.includes('short') || rawCond.includes('partial') || rawCond.includes('کسر') || rawCond.includes('ناقص')
+                  ? 'shortage_suspected'
+                  : 'healthy',
+            notes: strField(row, ['notes', 'توضیحات']),
+            createdAt: now,
+            createdBy: actorName,
+          };
+          byKey.set(key, existing);
+        } else {
+          existing.packingListNos = Array.from(new Set([...existing.packingListNos, ...packings]));
+          if (parsedItems.length > 0) {
+            existing.items = [...(existing.items || []), ...parsedItems];
+          }
         }
       }
     }
@@ -916,18 +1168,31 @@ export function parseOperationalFormInput(params: {
     const byKey = new Map<string, OpiInvitationRecord>();
     let seq = 1;
     for (const row of sourceRows) {
-      const invitationNo = strField(row, ['invitationNo', 'شماره دعوتنامه opi', 'شماره دعوتنامه', 'شماره سند']);
+      const extractedDocs = extractMultiDocTriplets(
+        row,
+        {
+          docNoAliases: ['invitationNo', 'opiInvitationNo', 'شماره دعوتنامه opi', 'شماره دعوتنامه', 'شماره سند'],
+          dateAliases: ['date', 'opiInvitationDate', 'تاریخ بازرسی', 'تاریخ دعوتنامه', 'تاریخ'],
+        },
+        assumedCalendar,
+      );
       const packings = splitListValues(
         getField(row, ['packingNos', 'packingListNos', 'packingListNo', 'shipmentNo', 'شماره پکینگ لیست', 'پکینگ لیست', 'لیست پکینگ']),
       );
-      if (!invitationNo && packings.length === 0) {
+      const baseDate = dateField(row, ['date', 'تاریخ بازرسی', 'تاریخ دعوتنامه', 'تاریخ'], assumedCalendar, todayIso);
+      const baseIssueDate = dateField(row, ['issueDate', 'تاریخ صدور'], assumedCalendar, baseDate);
+
+      const docsToProcess =
+        extractedDocs.length > 0
+          ? extractedDocs.map((t) => ({ docNo: t.docNo, date: t.date || baseDate }))
+          : packings.length > 0
+            ? [{ docNo: `OPI-INV-${seq++}`, date: baseDate }]
+            : [];
+
+      if (docsToProcess.length === 0) {
         skippedEmpty += 1;
         continue;
       }
-      const effectiveNo = invitationNo || `OPI-INV-${seq++}`;
-      const key = normMatchKey(effectiveNo);
-      const date = dateField(row, ['date', 'تاریخ بازرسی', 'تاریخ دعوتنامه', 'تاریخ'], assumedCalendar, todayIso);
-      const issueDate = dateField(row, ['issueDate', 'تاریخ صدور'], assumedCalendar, date);
 
       const rawItems = parseMaybeJson(getField(row, ['items', 'اقلام']));
       const parsedItems: NonNullable<OpiInvitationRecord['items']> = [];
@@ -960,38 +1225,45 @@ export function parseOperationalFormInput(params: {
         }
       }
 
-      let existing = byKey.get(key);
-      if (!existing) {
-        const rawSt = normHeader(getField(row, ['status', 'وضعیت']));
-        existing = {
-          id: makeId(),
-          invitationNo: effectiveNo,
-          issueDate,
-          date,
-          time: strField(row, ['time', 'ساعت', 'زمان بازرسی'], '09:00'),
-          packingNos: packings,
-          location: strField(row, ['location', 'محل بازرسی', 'مکان']),
-          projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
-          system: strField(row, ['system', 'سیستم']),
-          island: strField(row, ['island', 'جزیره']),
-          unit: strField(row, ['unit', 'واحد']),
-          supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
-          contractNo: strField(row, ['contractNo', 'شماره قرارداد']),
-          purchasePackageNo: strField(row, ['purchasePackageNo', 'پکیج خرید', 'شماره پکیج خرید']),
-          items: parsedItems.length > 0 ? parsedItems : undefined,
-          installerContractor: strField(row, ['installerContractor', 'پیمانکار نصب']),
-          supplierRep: strField(row, ['supplierRep', 'نماینده فروشنده']),
-          equipmentSupply: strField(row, ['equipmentSupply', 'تامین تجهیزات']),
-          employerRep: strField(row, ['employerRep', 'نماینده کارفرما']),
-          notes: strField(row, ['notes', 'توضیحات']),
-          status: rawSt.includes('complet') || rawSt.includes('تکمیل') || rawSt.includes('انجام') ? 'completed' : 'issued',
-          createdAt: now,
-          createdBy: actorName,
-        };
-        byKey.set(key, existing);
-      } else {
-        existing.packingNos = Array.from(new Set([...existing.packingNos, ...packings]));
-        if (parsedItems.length > 0) existing.items = [...(existing.items || []), ...parsedItems];
+      for (const docItem of docsToProcess) {
+        const effectiveNo = docItem.docNo;
+        const date = docItem.date || baseDate;
+        const issueDate = baseIssueDate || date;
+        const key = normMatchKey(effectiveNo);
+
+        let existing = byKey.get(key);
+        if (!existing) {
+          const rawSt = normHeader(getField(row, ['status', 'وضعیت']));
+          existing = {
+            id: makeId(),
+            invitationNo: effectiveNo,
+            issueDate,
+            date,
+            time: strField(row, ['time', 'ساعت', 'زمان بازرسی'], '09:00'),
+            packingNos: [...packings],
+            location: strField(row, ['location', 'محل بازرسی', 'مکان']),
+            projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
+            system: strField(row, ['system', 'سیستم']),
+            island: strField(row, ['island', 'جزیره']),
+            unit: strField(row, ['unit', 'واحد']),
+            supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
+            contractNo: strField(row, ['contractNo', 'شماره قرارداد']),
+            purchasePackageNo: strField(row, ['purchasePackageNo', 'پکیج خرید', 'شماره پکیج خرید']),
+            items: parsedItems.length > 0 ? [...parsedItems] : undefined,
+            installerContractor: strField(row, ['installerContractor', 'پیمانکار نصب']),
+            supplierRep: strField(row, ['supplierRep', 'نماینده فروشنده']),
+            equipmentSupply: strField(row, ['equipmentSupply', 'تامین تجهیزات']),
+            employerRep: strField(row, ['employerRep', 'نماینده کارفرما']),
+            notes: strField(row, ['notes', 'توضیحات']),
+            status: rawSt.includes('complet') || rawSt.includes('تکمیل') || rawSt.includes('انجام') ? 'completed' : 'issued',
+            createdAt: now,
+            createdBy: actorName,
+          };
+          byKey.set(key, existing);
+        } else {
+          existing.packingNos = Array.from(new Set([...existing.packingNos, ...packings]));
+          if (parsedItems.length > 0) existing.items = [...(existing.items || []), ...parsedItems];
+        }
       }
     }
     return { scope, records: Array.from(byKey.values()) as unknown as Record<string, unknown>[], skippedEmpty, warnings };
@@ -1002,16 +1274,29 @@ export function parseOperationalFormInput(params: {
     const byKey = new Map<string, OpiMinutesRecord>();
     let seq = 1;
     for (const row of sourceRows) {
-      const minutesNo = strField(row, ['minutesNo', 'opiNo', 'شماره صورتجلسه opi', 'شماره صورتجلسه', 'شماره opi']);
+      const extractedDocs = extractMultiDocTriplets(
+        row,
+        {
+          docNoAliases: ['minutesNo', 'opiNo', 'شماره صورتجلسه opi', 'شماره صورتجلسه گشایش', 'شماره صورتجلسه', 'شماره opi'],
+          dateAliases: ['date', 'opiDate', 'تاریخ opi', 'تاریخ بازرسی', 'تاریخ'],
+        },
+        assumedCalendar,
+      );
       const packingListNo = strField(row, ['packingListNo', 'shipmentNo', 'شماره پکینگ لیست', 'پکینگ لیست', 'شماره محموله']);
-      if (!minutesNo && !packingListNo) {
+      const baseDate = dateField(row, ['date', 'opiDate', 'تاریخ opi', 'تاریخ بازرسی', 'تاریخ'], assumedCalendar, todayIso);
+      const packageNos = splitListValues(getField(row, ['packageNos', 'packageNo', 'شماره نگله', 'نگله ها']));
+
+      const docsToProcess =
+        extractedDocs.length > 0
+          ? extractedDocs.map((t) => ({ docNo: t.docNo, date: t.date || baseDate }))
+          : packingListNo
+            ? [{ docNo: `OPI-MIN-${seq++}`, date: baseDate }]
+            : [];
+
+      if (docsToProcess.length === 0) {
         skippedEmpty += 1;
         continue;
       }
-      const effectiveNo = minutesNo || `OPI-MIN-${seq++}`;
-      const key = normMatchKey(effectiveNo);
-      const date = dateField(row, ['date', 'opiDate', 'تاریخ opi', 'تاریخ بازرسی', 'تاریخ'], assumedCalendar, todayIso);
-      const packageNos = splitListValues(getField(row, ['packageNos', 'packageNo', 'شماره نگله', 'نگله ها']));
 
       const rawItems = parseMaybeJson(getField(row, ['items', 'اقلام']));
       const parsedItems: NonNullable<OpiMinutesRecord['items']> = [];
@@ -1043,46 +1328,52 @@ export function parseOperationalFormInput(params: {
         }
       }
 
-      let existing = byKey.get(key);
-      if (!existing) {
-        const rawRes = normHeader(getField(row, ['resultStatus', 'نتیجه بازرسی', 'وضعیت بازرسی', 'نتیجه']));
-        const merNo = strField(row, ['merNo', 'شماره mer', 'گزارش مغایرت']);
-        existing = {
-          id: makeId(),
-          minutesNo: effectiveNo,
-          invitationNo: strField(row, ['invitationNo', 'شماره دعوتنامه']),
-          date,
-          time: strField(row, ['time', 'ساعت']),
-          packingListNo,
-          packageNos,
-          projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
-          supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
-          system: strField(row, ['system', 'سیستم']),
-          island: strField(row, ['island', 'جزیره']),
-          unit: strField(row, ['unit', 'واحد']),
-          contractNo: strField(row, ['contractNo', 'شماره قرارداد']),
-          purchasePackageNo: strField(row, ['purchasePackageNo', 'پکیج خرید']),
-          items: parsedItems.length > 0 ? parsedItems : undefined,
-          merNo,
-          location: strField(row, ['location', 'محل بازرسی']),
-          storekeeper: strField(row, ['storekeeper', 'انباردار']),
-          mapnaInspector: strField(row, ['mapnaInspector', 'بازرس مپنا']),
-          sellerRep: strField(row, ['sellerRep', 'نماینده فروشنده']),
-          employerInspector: strField(row, ['employerInspector', 'بازرس کارفرما']),
-          contractorInspector: strField(row, ['contractorInspector', 'بازرس پیمانکار']),
-          qcInspector: strField(row, ['qcInspector', 'بازرس qc', 'کنترل کیفیت']),
-          resultStatus:
-            rawRes.includes('discrep') || rawRes.includes('مغایر') || rawRes.includes('کسر') || rawRes.includes('آسیب') || Boolean(merNo)
-              ? 'has_discrepancy'
-              : 'compliant',
-          notes: strField(row, ['notes', 'توضیحات']),
-          createdAt: now,
-          createdBy: actorName,
-        };
-        byKey.set(key, existing);
-      } else {
-        existing.packageNos = Array.from(new Set([...existing.packageNos, ...packageNos]));
-        if (parsedItems.length > 0) existing.items = [...(existing.items || []), ...parsedItems];
+      for (const docItem of docsToProcess) {
+        const effectiveNo = docItem.docNo;
+        const date = docItem.date || baseDate;
+        const key = normMatchKey(effectiveNo);
+
+        let existing = byKey.get(key);
+        if (!existing) {
+          const rawRes = normHeader(getField(row, ['resultStatus', 'نتیجه بازرسی', 'وضعیت بازرسی', 'نتیجه']));
+          const merNo = strField(row, ['merNo', 'شماره mer', 'گزارش مغایرت']);
+          existing = {
+            id: makeId(),
+            minutesNo: effectiveNo,
+            invitationNo: strField(row, ['invitationNo', 'شماره دعوتنامه']),
+            date,
+            time: strField(row, ['time', 'ساعت']),
+            packingListNo,
+            packageNos: [...packageNos],
+            projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
+            supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
+            system: strField(row, ['system', 'سیستم']),
+            island: strField(row, ['island', 'جزیره']),
+            unit: strField(row, ['unit', 'واحد']),
+            contractNo: strField(row, ['contractNo', 'شماره قرارداد']),
+            purchasePackageNo: strField(row, ['purchasePackageNo', 'پکیج خرید']),
+            items: parsedItems.length > 0 ? [...parsedItems] : undefined,
+            merNo,
+            location: strField(row, ['location', 'محل بازرسی']),
+            storekeeper: strField(row, ['storekeeper', 'انباردار']),
+            mapnaInspector: strField(row, ['mapnaInspector', 'بازرس مپنا']),
+            sellerRep: strField(row, ['sellerRep', 'نماینده فروشنده']),
+            employerInspector: strField(row, ['employerInspector', 'بازرس کارفرما']),
+            contractorInspector: strField(row, ['contractorInspector', 'بازرس پیمانکار']),
+            qcInspector: strField(row, ['qcInspector', 'بازرس qc', 'کنترل کیفیت']),
+            resultStatus:
+              rawRes.includes('discrep') || rawRes.includes('مغایر') || rawRes.includes('کسر') || rawRes.includes('آسیب') || Boolean(merNo)
+                ? 'has_discrepancy'
+                : 'compliant',
+            notes: strField(row, ['notes', 'توضیحات']),
+            createdAt: now,
+            createdBy: actorName,
+          };
+          byKey.set(key, existing);
+        } else {
+          existing.packageNos = Array.from(new Set([...existing.packageNos, ...packageNos]));
+          if (parsedItems.length > 0) existing.items = [...(existing.items || []), ...parsedItems];
+        }
       }
     }
     return { scope, records: Array.from(byKey.values()) as unknown as Record<string, unknown>[], skippedEmpty, warnings };
@@ -1093,120 +1384,144 @@ export function parseOperationalFormInput(params: {
     const byKey = new Map<string, OsdrReportRecord>();
     let seq = 1;
     for (const row of sourceRows) {
-      const reportNo = strField(row, ['reportNo', 'merNo', 'شماره گزارش مغایرت', 'شماره mer', 'شماره گزارش', 'شماره osdr']);
+      const extractedDocs = extractMultiDocTriplets(
+        row,
+        {
+          docNoAliases: ['reportNo', 'merNo', 'شماره گزارش مغایرت', 'شماره کسری مغایرت', 'شماره mer', 'شماره گزارش', 'شماره osdr'],
+          dateAliases: ['date', 'تاریخ گزارش', 'تاریخ mer', 'تاریخ'],
+          qtyAliases: ['discrepancyQty', 'مقدار مغایرت', 'تعداد مغایرت'],
+        },
+        assumedCalendar,
+      );
       const packingListNo = strField(row, ['packingListNo', 'shipmentNo', 'شماره پکینگ لیست', 'شماره محموله', 'پکینگ لیست']);
-      if (!reportNo && !packingListNo) {
+      const baseDate = dateField(row, ['date', 'تاریخ گزارش', 'تاریخ'], assumedCalendar, todayIso);
+
+      const docsToProcess =
+        extractedDocs.length > 0
+          ? extractedDocs
+          : packingListNo
+            ? [{ docNo: `MER-IMP-${seq++}`, date: baseDate, qty: null, party: '', note: '' }]
+            : [];
+
+      if (docsToProcess.length === 0) {
         skippedEmpty += 1;
         continue;
       }
-      const effectiveNo = reportNo || `MER-IMP-${seq++}`;
-      const key = normMatchKey(effectiveNo);
-      const date = dateField(row, ['date', 'تاریخ گزارش', 'تاریخ'], assumedCalendar, todayIso);
 
       const rawItems = parseMaybeJson(getField(row, ['items', 'اقلام']));
-      const parsedItems: OsdrReportItem[] = [];
-      if (Array.isArray(rawItems)) {
-        for (const it of rawItems) {
-          if (it && typeof it === 'object') {
-            const obj = it as Record<string, unknown>;
-            const pQty = parseNumberVal(obj.packingQty) ?? 0;
-            const aQty = parseNumberVal(obj.actualQty) ?? 0;
-            const dType = normalizeDiscrepancyType(obj.discrepancyType);
-            const fallbackDisc = parseNumberVal(obj.discrepancyQty) ?? 0;
-            const shortage = parseNumberVal(obj.shortage) ?? (dType === 'shortage' || dType === 'shortage_and_damaged' ? (fallbackDisc || Math.max(0, roundQty(pQty - aQty))) : 0);
-            const surplus = parseNumberVal(obj.surplus) ?? (dType === 'surplus' ? (fallbackDisc || Math.max(0, roundQty(aQty - pQty))) : 0);
-            const damagedQty = parseNumberVal(obj.damagedQty) ?? (dType === 'damaged' || dType === 'shortage_and_damaged' ? fallbackDisc : 0);
+      const buildItems = (overrideDiscQty: number | null): OsdrReportItem[] => {
+        const parsedItems: OsdrReportItem[] = [];
+        if (Array.isArray(rawItems)) {
+          for (const it of rawItems) {
+            if (it && typeof it === 'object') {
+              const obj = it as Record<string, unknown>;
+              const pQty = parseNumberVal(obj.packingQty) ?? 0;
+              const aQty = parseNumberVal(obj.actualQty) ?? 0;
+              const dType = normalizeDiscrepancyType(obj.discrepancyType);
+              const fallbackDisc = parseNumberVal(obj.discrepancyQty) ?? 0;
+              const shortage = parseNumberVal(obj.shortage) ?? (dType === 'shortage' || dType === 'shortage_and_damaged' ? (fallbackDisc || Math.max(0, roundQty(pQty - aQty))) : 0);
+              const surplus = parseNumberVal(obj.surplus) ?? (dType === 'surplus' ? (fallbackDisc || Math.max(0, roundQty(aQty - pQty))) : 0);
+              const damagedQty = parseNumberVal(obj.damagedQty) ?? (dType === 'damaged' || dType === 'shortage_and_damaged' ? fallbackDisc : 0);
+              parsedItems.push({
+                detailedId: normKey(obj.detailedId),
+                shipmentNo: normKey(obj.shipmentNo) || packingListNo,
+                packageNo: normKey(obj.packageNo),
+                itemNo: normKey(obj.itemNo),
+                itemCode: normKey(obj.itemCode),
+                description: normKey(obj.description),
+                countingUnit: normalizeCountingUnitToFa(normKey(obj.countingUnit || obj.uom || 'عدد')),
+                packingQty: pQty,
+                actualQty: aQty,
+                shortage,
+                surplus,
+                damagedQty,
+                discrepancyType: dType,
+                remarks: normKey(obj.remarks),
+              });
+            }
+          }
+        } else {
+          const packingQty = numField(row, ['packingQty', 'مقدار پکینگ']);
+          const actualQty = numField(row, ['actualQty', 'مقدار واقعی']);
+          const damagedRaw = numField(row, ['damagedQty', 'مقدار آسیب دیده', 'آسیب دیده']);
+          const shortageRaw = numField(row, ['shortage', 'کسری', 'مقدار کسری']);
+          const surplusRaw = numField(row, ['surplus', 'اضافی', 'مقدار اضافی']);
+          const explicitDiscType = getField(row, ['discrepancyType', 'نوع مغایرت']);
+          let discType: OsdrReportItem['discrepancyType'] = explicitDiscType ? normalizeDiscrepancyType(explicitDiscType) : 'shortage';
+          const discQtyRaw = overrideDiscQty ?? numField(row, ['discrepancyQty', 'مقدار مغایرت', 'تعداد مغایرت']);
+
+          const pQty = packingQty ?? 0;
+          const aQty = actualQty ?? (packingQty !== null ? Math.max(0, roundQty(packingQty - (shortageRaw ?? (discType === 'shortage' ? (discQtyRaw ?? 0) : 0)))) : 0);
+          let shortage = shortageRaw ?? (packingQty !== null && actualQty !== null ? Math.max(0, roundQty(packingQty - actualQty)) : 0);
+          let surplus = surplusRaw ?? (packingQty !== null && actualQty !== null ? Math.max(0, roundQty(actualQty - packingQty)) : 0);
+          let damagedQty = damagedRaw ?? 0;
+
+          if (discQtyRaw !== null && discQtyRaw > 0) {
+            if (discType === 'damaged' && damagedQty === 0) damagedQty = discQtyRaw;
+            else if (discType === 'surplus' && surplus === 0) surplus = discQtyRaw;
+            else if (discType === 'shortage' && shortage === 0) shortage = discQtyRaw;
+            else if (discType === 'shortage_and_damaged') {
+              if (shortage === 0) shortage = discQtyRaw;
+              if (damagedQty === 0) damagedQty = discQtyRaw;
+            }
+          }
+          if (!explicitDiscType) {
+            if (damagedQty > 0 && shortage > 0) discType = 'shortage_and_damaged';
+            else if (damagedQty > 0) discType = 'damaged';
+            else if (surplus > 0) discType = 'surplus';
+            else discType = 'shortage';
+          }
+
+          const itemDesc = strField(row, ['description', 'itemDescription', 'شرح کالا', 'شرح']);
+          const itemNo = strField(row, ['itemNo', 'شماره آیتم']);
+          const itemCode = strField(row, ['itemCode', 'کد کالا']);
+          const packageNo = strField(row, ['packageNo', 'شماره نگله']);
+          if (itemDesc || itemNo || itemCode || packageNo || shortage > 0 || surplus > 0 || damagedQty > 0) {
             parsedItems.push({
-              detailedId: normKey(obj.detailedId),
-              shipmentNo: normKey(obj.shipmentNo) || packingListNo,
-              packageNo: normKey(obj.packageNo),
-              itemNo: normKey(obj.itemNo),
-              itemCode: normKey(obj.itemCode),
-              description: normKey(obj.description),
-              countingUnit: normalizeCountingUnitToFa(normKey(obj.countingUnit || obj.uom || 'عدد')),
+              detailedId: strField(row, ['detailedId']),
+              shipmentNo: packingListNo,
+              packageNo,
+              itemNo,
+              itemCode,
+              description: itemDesc,
+              countingUnit: normalizeCountingUnitToFa(strField(row, ['countingUnit', 'uom', 'واحد شمارش'], 'عدد')),
               packingQty: pQty,
               actualQty: aQty,
               shortage,
               surplus,
               damagedQty,
-              discrepancyType: dType,
-              remarks: normKey(obj.remarks),
+              discrepancyType: discType,
+              remarks: strField(row, ['remarks', 'شرح مغایرت', 'ملاحظات']),
             });
           }
         }
-      } else {
-        const packingQty = numField(row, ['packingQty', 'مقدار پکینگ']);
-        const actualQty = numField(row, ['actualQty', 'مقدار واقعی']);
-        const damagedRaw = numField(row, ['damagedQty', 'مقدار آسیب دیده', 'آسیب دیده']);
-        const shortageRaw = numField(row, ['shortage', 'کسری', 'مقدار کسری']);
-        const surplusRaw = numField(row, ['surplus', 'اضافی', 'مقدار اضافی']);
-        const explicitDiscType = getField(row, ['discrepancyType', 'نوع مغایرت']);
-        let discType: OsdrReportItem['discrepancyType'] = explicitDiscType ? normalizeDiscrepancyType(explicitDiscType) : 'shortage';
-        const discQtyRaw = numField(row, ['discrepancyQty', 'مقدار مغایرت', 'تعداد مغایرت']);
+        return parsedItems;
+      };
 
-        const pQty = packingQty ?? 0;
-        const aQty = actualQty ?? (packingQty !== null ? Math.max(0, roundQty(packingQty - (shortageRaw ?? (discType === 'shortage' ? (discQtyRaw ?? 0) : 0)))) : 0);
-        let shortage = shortageRaw ?? (packingQty !== null && actualQty !== null ? Math.max(0, roundQty(packingQty - actualQty)) : 0);
-        let surplus = surplusRaw ?? (packingQty !== null && actualQty !== null ? Math.max(0, roundQty(actualQty - packingQty)) : 0);
-        let damagedQty = damagedRaw ?? 0;
+      for (const docItem of docsToProcess) {
+        const effectiveNo = docItem.docNo;
+        const date = docItem.date || baseDate;
+        const key = normMatchKey(effectiveNo);
+        const parsedItems = buildItems(docItem.qty);
 
-        if (discQtyRaw !== null && discQtyRaw > 0) {
-          if (discType === 'damaged' && damagedQty === 0) damagedQty = discQtyRaw;
-          else if (discType === 'surplus' && surplus === 0) surplus = discQtyRaw;
-          else if (discType === 'shortage' && shortage === 0) shortage = discQtyRaw;
-          else if (discType === 'shortage_and_damaged') {
-            if (shortage === 0) shortage = discQtyRaw;
-            if (damagedQty === 0) damagedQty = discQtyRaw;
-          }
+        let existing = byKey.get(key);
+        if (!existing) {
+          existing = {
+            id: makeId(),
+            reportNo: effectiveNo,
+            date,
+            opiMinutesNo: strField(row, ['opiMinutesNo', 'opiNo', 'شماره صورتجلسه opi', 'شماره opi']),
+            packingListNo,
+            supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
+            items: parsedItems,
+            notes: strField(row, ['notes', 'توضیحات']),
+            createdAt: now,
+            createdBy: actorName,
+          };
+          byKey.set(key, existing);
+        } else if (parsedItems.length > 0) {
+          existing.items.push(...parsedItems);
         }
-        if (!explicitDiscType) {
-          if (damagedQty > 0 && shortage > 0) discType = 'shortage_and_damaged';
-          else if (damagedQty > 0) discType = 'damaged';
-          else if (surplus > 0) discType = 'surplus';
-          else discType = 'shortage';
-        }
-
-        const itemDesc = strField(row, ['description', 'itemDescription', 'شرح کالا', 'شرح']);
-        const itemNo = strField(row, ['itemNo', 'شماره آیتم']);
-        const itemCode = strField(row, ['itemCode', 'کد کالا']);
-        const packageNo = strField(row, ['packageNo', 'شماره نگله']);
-        if (itemDesc || itemNo || itemCode || packageNo || shortage > 0 || surplus > 0 || damagedQty > 0) {
-          parsedItems.push({
-            detailedId: strField(row, ['detailedId']),
-            shipmentNo: packingListNo,
-            packageNo,
-            itemNo,
-            itemCode,
-            description: itemDesc,
-            countingUnit: normalizeCountingUnitToFa(strField(row, ['countingUnit', 'uom', 'واحد شمارش'], 'عدد')),
-            packingQty: pQty,
-            actualQty: aQty,
-            shortage,
-            surplus,
-            damagedQty,
-            discrepancyType: discType,
-            remarks: strField(row, ['remarks', 'شرح مغایرت', 'ملاحظات']),
-          });
-        }
-      }
-
-      let existing = byKey.get(key);
-      if (!existing) {
-        existing = {
-          id: makeId(),
-          reportNo: effectiveNo,
-          date,
-          opiMinutesNo: strField(row, ['opiMinutesNo', 'opiNo', 'شماره صورتجلسه opi', 'شماره opi']),
-          packingListNo,
-          supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
-          items: parsedItems,
-          notes: strField(row, ['notes', 'توضیحات']),
-          createdAt: now,
-          createdBy: actorName,
-        };
-        byKey.set(key, existing);
-      } else if (parsedItems.length > 0) {
-        existing.items.push(...parsedItems);
       }
     }
     return { scope, records: Array.from(byKey.values()) as unknown as Record<string, unknown>[], skippedEmpty, warnings };
@@ -1217,93 +1532,119 @@ export function parseOperationalFormInput(params: {
     const byKey = new Map<string, GcvDocumentRecord>();
     let seq = 1;
     for (const row of sourceRows) {
-      const receiptNo = strField(row, ['receiptNo', 'gcvReceiptNo', 'شماره رسید gcv', 'شماره رسید', 'شماره سند']);
-      const receiver = strField(row, ['receiver', 'تحویل گیرنده', 'گیرنده']);
-      if (!receiptNo && !receiver) {
+      const extractedDocs = extractMultiDocTriplets(
+        row,
+        {
+          docNoAliases: ['receiptNo', 'gcvReceiptNo', 'شماره رسید gcv', 'شماره رسید مصرف', 'شماره رسید', 'شماره سند'],
+          dateAliases: ['date', 'تاریخ رسید مصرف', 'تاریخ رسید', 'تاریخ'],
+          qtyAliases: ['gcvDeliveredQty', 'تعداد رسید مصرف', 'مقدار تحویل شده', 'تعداد تحویلی', 'qty', 'تعداد', 'مقدار'],
+          partyAliases: ['receiver', 'تحویل گیرنده', 'گیرنده'],
+        },
+        assumedCalendar,
+      );
+      const baseReceiver = strField(row, ['receiver', 'تحویل گیرنده', 'گیرنده']);
+      const baseDate = dateField(row, ['date', 'تاریخ رسید مصرف', 'تاریخ رسید', 'تاریخ'], assumedCalendar, todayIso);
+
+      const docsToProcess =
+        extractedDocs.length > 0
+          ? extractedDocs
+          : baseReceiver
+            ? [{ docNo: `GCV-IMP-${seq++}`, date: baseDate, qty: null, party: baseReceiver, note: '' }]
+            : [];
+
+      if (docsToProcess.length === 0) {
         skippedEmpty += 1;
         continue;
       }
-      const effectiveNo = receiptNo || `GCV-IMP-${seq++}`;
-      const key = normMatchKey(effectiveNo);
-      const date = dateField(row, ['date', 'تاریخ رسید', 'تاریخ'], assumedCalendar, todayIso);
 
       const rawItems = parseMaybeJson(getField(row, ['items', 'اقلام']));
-      const parsedItems: DocumentLineItem[] = [];
-      if (Array.isArray(rawItems)) {
-        for (const it of rawItems) {
-          if (it && typeof it === 'object') {
-            const obj = it as Record<string, unknown>;
+      const buildGcvItems = (overrideQty: number | null): DocumentLineItem[] => {
+        const parsedItems: DocumentLineItem[] = [];
+        if (Array.isArray(rawItems)) {
+          for (const it of rawItems) {
+            if (it && typeof it === 'object') {
+              const obj = it as Record<string, unknown>;
+              parsedItems.push({
+                detailedId: normKey(obj.detailedId),
+                shipmentNo: normKey(obj.shipmentNo || obj.packingListNo),
+                packageNo: normKey(obj.packageNo),
+                itemNo: normKey(obj.itemNo),
+                description: normKey(obj.description),
+                qty: parseNumberVal(obj.qty) ?? 1,
+                technicalInfo: normKey(obj.technicalInfo),
+                tagNo: normKey(obj.tagNo || obj.itemCode),
+                uom: normalizeCountingUnitToFa(normKey(obj.uom)),
+                remark: normKey(obj.remark || obj.remarks),
+              });
+            }
+          }
+        } else {
+          const shipmentNo = strField(row, ['shipmentNo', 'packingListNo', 'شماره محموله', 'شماره پکینگ لیست', 'پکینگ لیست']);
+          const itemNo = strField(row, ['itemNo', 'شماره آیتم']);
+          const desc = strField(row, ['description', 'itemDescription', 'شرح کالا', 'شرح']);
+          const qty = overrideQty ?? numField(row, ['qty', 'gcvDeliveredQty', 'تعداد رسید مصرف', 'مقدار تحویل شده', 'تعداد تحویلی', 'تعداد', 'مقدار'], 1) ?? 1;
+          if (shipmentNo || itemNo || desc) {
             parsedItems.push({
-              detailedId: normKey(obj.detailedId),
-              shipmentNo: normKey(obj.shipmentNo || obj.packingListNo),
-              packageNo: normKey(obj.packageNo),
-              itemNo: normKey(obj.itemNo),
-              description: normKey(obj.description),
-              qty: parseNumberVal(obj.qty) ?? 1,
-              technicalInfo: normKey(obj.technicalInfo),
-              tagNo: normKey(obj.tagNo || obj.itemCode),
-              uom: normalizeCountingUnitToFa(normKey(obj.uom)),
-              remark: normKey(obj.remark || obj.remarks),
+              detailedId: strField(row, ['detailedId']),
+              shipmentNo,
+              packageNo: strField(row, ['packageNo', 'شماره نگله']),
+              itemNo,
+              description: desc,
+              qty: qty > 0 ? qty : 1,
+              technicalInfo: strField(row, ['technicalInfo', 'size', 'سایز', 'اندازه', 'مشخصات فنی']),
+              tagNo: strField(row, ['tagNo', 'itemCode', 'کد کالا', 'تگ']),
+              uom: normalizeCountingUnitToFa(strField(row, ['uom', 'countingUnit', 'واحد شمارش'])),
+              remark: strField(row, ['remark', 'remarks', 'ملاحظات']),
             });
           }
         }
-      } else {
-        const shipmentNo = strField(row, ['shipmentNo', 'packingListNo', 'شماره محموله', 'شماره پکینگ لیست', 'پکینگ لیست']);
-        const itemNo = strField(row, ['itemNo', 'شماره آیتم']);
-        const desc = strField(row, ['description', 'itemDescription', 'شرح کالا', 'شرح']);
-        const qty = numField(row, ['qty', 'gcvDeliveredQty', 'مقدار تحویل شده', 'تعداد تحویلی', 'تعداد', 'مقدار'], 1) ?? 1;
-        if (shipmentNo || itemNo || desc) {
-          parsedItems.push({
-            detailedId: strField(row, ['detailedId']),
-            shipmentNo,
-            packageNo: strField(row, ['packageNo', 'شماره نگله']),
-            itemNo,
-            description: desc,
-            qty: qty > 0 ? qty : 1,
-            technicalInfo: strField(row, ['technicalInfo', 'size', 'سایز', 'مشخصات فنی']),
-            tagNo: strField(row, ['tagNo', 'itemCode', 'کد کالا', 'تگ']),
-            uom: normalizeCountingUnitToFa(strField(row, ['uom', 'countingUnit', 'واحد شمارش'])),
-            remark: strField(row, ['remark', 'remarks', 'ملاحظات']),
-          });
-        }
-      }
+        return parsedItems;
+      };
 
-      let existing = byKey.get(key);
-      if (!existing) {
-        const rawPb = normHeader(getField(row, ['purchaseBy', 'خرید توسط']));
-        existing = {
-          id: makeId(),
-          receiptNo: effectiveNo,
-          date,
-          receiver: receiver || 'مصرف مستقیم کارگاه',
-          projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
-          purchaseRequestNo: strField(row, ['purchaseRequestNo', 'شماره درخواست خرید', 'درخواست خرید']),
-          supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
-          buyerName: strField(row, ['buyerName', 'نام خریدار', 'کارپرداز']),
-          purchasePackageNo: strField(row, ['purchasePackageNo', 'پکیج خرید']),
-          releaseNoteNo: strField(row, ['releaseNoteNo', 'شماره رلیز']),
-          purchaseBy:
-            rawPb.includes('site') || rawPb.includes('کارگاه')
-              ? 'site_admin'
-              : rawPb.includes('contractor') || rawPb.includes('پیمانکار')
-                ? 'contractor_supplier'
-                : rawPb.includes('tehran') || rawPb.includes('تهران')
-                  ? 'tehran_proc'
-                  : undefined,
-          islandSystem: strField(row, ['islandSystem', 'جزیره و سیستم', 'سیستم']),
-          waybillNo: strField(row, ['waybillNo', 'شماره بارنامه']),
-          storekeeper: strField(row, ['storekeeper', 'انباردار']),
-          receiverManager: strField(row, ['receiverManager', 'مدیر تحویل گیرنده'], receiver),
-          equipmentSupply: strField(row, ['equipmentSupply', 'تامین تجهیزات']),
-          mapnaSiteManager: strField(row, ['mapnaSiteManager', 'مدیر کارگاه مپنا']),
-          notes: strField(row, ['notes', 'توضیحات']),
-          items: parsedItems,
-          createdAt: now,
-          createdBy: actorName,
-        };
-        byKey.set(key, existing);
-      } else if (parsedItems.length > 0) {
-        existing.items.push(...parsedItems);
+      for (const docItem of docsToProcess) {
+        const effectiveNo = docItem.docNo;
+        const date = docItem.date || baseDate;
+        const receiver = docItem.party || baseReceiver || 'مصرف مستقیم کارگاه';
+        const key = normMatchKey(effectiveNo);
+        const parsedItems = buildGcvItems(docItem.qty);
+
+        let existing = byKey.get(key);
+        if (!existing) {
+          const rawPb = normHeader(getField(row, ['purchaseBy', 'خرید توسط']));
+          existing = {
+            id: makeId(),
+            receiptNo: effectiveNo,
+            date,
+            receiver,
+            projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
+            purchaseRequestNo: strField(row, ['purchaseRequestNo', 'شماره درخواست خرید', 'درخواست خرید']),
+            supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
+            buyerName: strField(row, ['buyerName', 'نام خریدار', 'کارپرداز']),
+            purchasePackageNo: strField(row, ['purchasePackageNo', 'پکیج خرید']),
+            releaseNoteNo: strField(row, ['releaseNoteNo', 'شماره رلیز']),
+            purchaseBy:
+              rawPb.includes('site') || rawPb.includes('کارگاه')
+                ? 'site_admin'
+                : rawPb.includes('contractor') || rawPb.includes('پیمانکار')
+                  ? 'contractor_supplier'
+                  : rawPb.includes('tehran') || rawPb.includes('تهران')
+                    ? 'tehran_proc'
+                    : undefined,
+            islandSystem: strField(row, ['islandSystem', 'جزیره و سیستم', 'سیستم']),
+            waybillNo: strField(row, ['waybillNo', 'شماره بارنامه']),
+            storekeeper: strField(row, ['storekeeper', 'انباردار']),
+            receiverManager: strField(row, ['receiverManager', 'مدیر تحویل گیرنده'], receiver),
+            equipmentSupply: strField(row, ['equipmentSupply', 'تامین تجهیزات']),
+            mapnaSiteManager: strField(row, ['mapnaSiteManager', 'مدیر کارگاه مپنا']),
+            notes: strField(row, ['notes', 'توضیحات']),
+            items: parsedItems,
+            createdAt: now,
+            createdBy: actorName,
+          };
+          byKey.set(key, existing);
+        } else if (parsedItems.length > 0) {
+          existing.items.push(...parsedItems);
+        }
       }
     }
     return { scope, records: Array.from(byKey.values()) as unknown as Record<string, unknown>[], skippedEmpty, warnings };
@@ -1314,100 +1655,204 @@ export function parseOperationalFormInput(params: {
     const byKey = new Map<string, MivDocumentRecord>();
     let seq = 1;
     for (const row of sourceRows) {
-      const docNo = strField(row, ['docNo', 'mivNo', 'smrNo', 'شماره حواله', 'شماره فرم ارجاع', 'شماره سند', 'شماره miv', 'شماره smr']);
-      const docType = normalizeMivDocType(getField(row, ['docType', 'نوع سند', 'نوع حواله', 'نوع فرم']), sheetName);
+      const explicitDocTypeRaw = getField(row, ['docType', 'نوع سند', 'نوع حواله', 'نوع فرم']);
+      const hasExplicitDocTypeCol = explicitDocTypeRaw !== undefined && normKey(explicitDocTypeRaw) !== '';
+      const defaultDocType = normalizeMivDocType(explicitDocTypeRaw, sheetName);
       const shipmentNo = strField(row, ['shipmentNo', 'packingListNo', 'شماره محموله', 'شماره پکینگ لیست']);
-      if (!docNo && !shipmentNo && !strField(row, ['description', 'شرح کالا'])) {
-        skippedEmpty += 1;
-        continue;
+      const baseDate = dateField(row, ['date', 'تاریخ حواله', 'تاریخ ارجاع', 'تاریخ'], assumedCalendar, todayIso);
+
+      // Extract ALL typed MIV/SMR columns in the SAME row (supports numbered columns 1, 2, ... AND multi-value cells!)
+      let triplets: Array<ExtractedDocTriplet & { resolvedType: MivDocType }> = [];
+
+      if (hasExplicitDocTypeCol) {
+        const genericDocs = extractMultiDocTriplets(
+          row,
+          {
+            docNoAliases: ['docNo', 'mivNo', 'smrNo', 'شماره حواله', 'شماره فرم ارجاع', 'شماره سند', 'شماره miv', 'شماره smr'],
+            dateAliases: ['date', 'تاریخ حواله', 'تاریخ ارجاع', 'تاریخ'],
+            qtyAliases: ['qty', 'مقدار تحویلی', 'مقدار ارجاع', 'مقدار حواله', 'تعداد حواله', 'تعداد', 'مقدار'],
+            partyAliases: ['party', 'receiver', 'تحویل گیرنده', 'تحویل آورنده', 'پیمانکار', 'طرف مقابل'],
+            noteAliases: ['returnReason', 'علت ارجاع', 'دلیل برگشت', 'notes', 'توضیحات'],
+          },
+          assumedCalendar,
+        );
+        triplets = genericDocs.map((t) => ({ ...t, resolvedType: defaultDocType }));
+      } else {
+        // Multi-family detection: a master sheet can have MIV Contractor + MIV Mapna + SMR Contractor + SMR Mapna columns simultaneously!
+        const mivContractorDocs = extractMultiDocTriplets(
+          row,
+          {
+            docNoAliases: ['mivContractorNo', 'شماره miv پیمانکار', 'شماره حواله پیمانکار', 'شماره حواله', 'شماره miv', 'mivNo', 'docNo'],
+            dateAliases: ['mivContractorDate', 'تاریخ miv پیمانکار', 'تاریخ حواله پیمانکار', 'تاریخ حواله', 'date', 'تاریخ'],
+            qtyAliases: ['mivContractorQty', 'مجموع تعداد تحویل شده با حواله', 'مقدار حواله پیمانکار', 'تعداد حواله پیمانکار', 'مقدار حواله', 'تعداد حواله', 'مقدار تحویلی', 'qty', 'تعداد', 'مقدار'],
+            partyAliases: ['mivReceiver', 'تحویل گیرنده حواله', 'تحویل گیرنده', 'party', 'پیمانکار'],
+            excludeAliases: ['مپنا', 'mapna', 'کارفرما', 'برگشت', 'ارجاع', 'smr', 'return'],
+          },
+          assumedCalendar,
+        );
+        const mivMapnaDocs = extractMultiDocTriplets(
+          row,
+          {
+            docNoAliases: ['mivMapnaNo', 'شماره miv مپنا', 'شماره حواله مپنا', 'شماره حواله کارفرما'],
+            dateAliases: ['mivMapnaDate', 'تاریخ miv مپنا', 'تاریخ حواله مپنا', 'تاریخ حواله کارفرما'],
+            qtyAliases: ['mivMapnaQty', 'مقدار حواله مپنا', 'تعداد حواله مپنا', 'مقدار حواله کارفرما'],
+            partyAliases: ['mivReceiver', 'تحویل گیرنده حواله', 'تحویل گیرنده', 'party'],
+            excludeAliases: ['برگشت', 'ارجاع', 'smr', 'return'],
+          },
+          assumedCalendar,
+        );
+        const smrContractorDocs = extractMultiDocTriplets(
+          row,
+          {
+            docNoAliases: ['smrContractorNo', 'شماره smr پیمانکار', 'شماره برگشتی به انبار پیمانکار', 'شماره برگشتی پیمانکار', 'شماره ارجاع پیمانکار', 'شماره فرم ارجاع', 'smrNo'],
+            dateAliases: ['smrContractorDate', 'تاریخ برگشتی پیمانکار', 'تاریخ برگشتی به انبار پیمانکار', 'تاریخ ارجاع پیمانکار', 'تاریخ ارجاع'],
+            qtyAliases: ['smrContractorQty', 'مقدار برگشتی پیمانکار', 'تعداد برگشتی پیمانکار', 'مقدار برگشتی به انبار پیمانکار', 'مقدار ارجاع'],
+            partyAliases: ['smrDeliverer', 'تحویل آورنده', 'party', 'پیمانکار'],
+            noteAliases: ['smrContractorNote', 'توضیحات برگشتی پیمانکار', 'علت ارجاع', 'دلیل برگشت'],
+            excludeAliases: ['مپنا', 'mapna', 'کارفرما'],
+          },
+          assumedCalendar,
+        );
+        const smrMapnaDocs = extractMultiDocTriplets(
+          row,
+          {
+            docNoAliases: ['smrMapnaNo', 'شماره smr مپنا', 'شماره برگشتی به انبار کارفرما', 'شماره برگشتی به انبار مپنا', 'شماره برگشتی کارفرما', 'شماره ارجاع کارفرما', 'شماره ارجاع مپنا'],
+            dateAliases: ['smrMapnaDate', 'تاریخ برگشتی کارفرما', 'تاریخ برگشتی مپنا', 'تاریخ برگشتی به انبار کارفرما'],
+            qtyAliases: ['smrMapnaQty', 'مقدار برگشتی کارفرما', 'تعداد برگشتی کارفرما', 'مقدار برگشتی مپنا', 'مقدار برگشتی به انبار کارفرما'],
+            partyAliases: ['smrDeliverer', 'تحویل آورنده', 'party'],
+            noteAliases: ['smrMapnaNote', 'توضیحات برگشتی کارفرما', 'توضیحات برگشتی مپنا', 'علت ارجاع'],
+            excludeAliases: ['پیمانکار', 'contractor'],
+          },
+          assumedCalendar,
+        );
+
+        for (const t of mivContractorDocs) triplets.push({ ...t, resolvedType: defaultDocType === 'miv_mapna' ? 'miv_mapna' : 'miv_contractor' });
+        for (const t of mivMapnaDocs) triplets.push({ ...t, resolvedType: 'miv_mapna' });
+        for (const t of smrContractorDocs) triplets.push({ ...t, resolvedType: 'smr_contractor' });
+        for (const t of smrMapnaDocs) triplets.push({ ...t, resolvedType: 'smr_mapna' });
       }
-      const effectiveNo = docNo || `${docType.toUpperCase()}-${seq++}`;
-      const key = `${docType}|${normMatchKey(effectiveNo)}`;
-      const date = dateField(row, ['date', 'تاریخ حواله', 'تاریخ ارجاع', 'تاریخ'], assumedCalendar, todayIso);
+
+      if (triplets.length === 0) {
+        if (!shipmentNo && !strField(row, ['description', 'شرح کالا'])) {
+          skippedEmpty += 1;
+          continue;
+        }
+        // Only generate synthetic docNo if there is an explicit docType or qty column on a dedicated MIV sheet
+        if (hasExplicitDocTypeCol) {
+          triplets.push({
+            docNo: `${defaultDocType.toUpperCase()}-${seq++}`,
+            date: baseDate,
+            qty: null,
+            party: '',
+            note: '',
+            resolvedType: defaultDocType,
+          });
+        } else {
+          skippedEmpty += 1;
+          continue;
+        }
+      }
 
       const rawItems = parseMaybeJson(getField(row, ['items', 'اقلام']));
-      const parsedItems: DocumentLineItem[] = [];
-      if (Array.isArray(rawItems)) {
-        for (const it of rawItems) {
-          if (it && typeof it === 'object') {
-            const obj = it as Record<string, unknown>;
+      const buildMivItems = (overrideQty: number | null, overrideNote: string): DocumentLineItem[] => {
+        const parsedItems: DocumentLineItem[] = [];
+        if (Array.isArray(rawItems)) {
+          for (const it of rawItems) {
+            if (it && typeof it === 'object') {
+              const obj = it as Record<string, unknown>;
+              parsedItems.push({
+                detailedId: normKey(obj.detailedId),
+                shipmentNo: normKey(obj.shipmentNo || obj.packingListNo),
+                packageNo: normKey(obj.packageNo),
+                itemNo: normKey(obj.itemNo),
+                description: normKey(obj.description),
+                qty: parseNumberVal(obj.qty) ?? 1,
+                requestedQty: parseNumberVal(obj.requestedQty) ?? undefined,
+                technicalInfo: normKey(obj.technicalInfo),
+                tagNo: normKey(obj.tagNo || obj.itemCode),
+                codeNo: normKey(obj.codeNo || obj.itemCode),
+                location: normKey(obj.location),
+                uom: normalizeCountingUnitToFa(normKey(obj.uom)),
+                opiNo: normKey(obj.opiNo),
+                returnReason: normKey(obj.returnReason),
+                remark: normKey(obj.remark || obj.remarks),
+              });
+            }
+          }
+        } else {
+          const itemNo = strField(row, ['itemNo', 'شماره آیتم']);
+          const desc = strField(row, ['description', 'itemDescription', 'شرح کالا', 'شرح']);
+          const qty = overrideQty ?? numField(row, ['qty', 'مقدار تحویلی', 'مقدار ارجاع', 'مقدار حواله', 'تعداد', 'مقدار'], 1) ?? 1;
+          const reqQty = numField(row, ['requestedQty', 'مقدار درخواستی', 'تعداد درخواستی']);
+          if (shipmentNo || itemNo || desc) {
             parsedItems.push({
-              detailedId: normKey(obj.detailedId),
-              shipmentNo: normKey(obj.shipmentNo || obj.packingListNo),
-              packageNo: normKey(obj.packageNo),
-              itemNo: normKey(obj.itemNo),
-              description: normKey(obj.description),
-              qty: parseNumberVal(obj.qty) ?? 1,
-              requestedQty: parseNumberVal(obj.requestedQty) ?? undefined,
-              technicalInfo: normKey(obj.technicalInfo),
-              tagNo: normKey(obj.tagNo || obj.itemCode),
-              codeNo: normKey(obj.codeNo || obj.itemCode),
-              location: normKey(obj.location),
-              uom: normalizeCountingUnitToFa(normKey(obj.uom)),
-              opiNo: normKey(obj.opiNo),
-              returnReason: normKey(obj.returnReason),
-              remark: normKey(obj.remark || obj.remarks),
+              detailedId: strField(row, ['detailedId']),
+              shipmentNo,
+              packageNo: strField(row, ['packageNo', 'شماره نگله']),
+              itemNo,
+              description: desc,
+              qty: qty > 0 ? qty : 1,
+              requestedQty: reqQty !== null && reqQty > 0 ? reqQty : qty > 0 ? qty : 1,
+              technicalInfo: strField(row, ['technicalInfo', 'size', 'سایز', 'اندازه']),
+              tagNo: strField(row, ['tagNo', 'itemCode', 'کد کالا']),
+              codeNo: strField(row, ['codeNo', 'itemCode', 'کد کالا']),
+              location: strField(row, ['location', 'storageLocation', 'محل نگهداری']),
+              uom: normalizeCountingUnitToFa(strField(row, ['uom', 'countingUnit', 'واحد شمارش'])),
+              opiNo: strField(row, ['opiNo', 'شماره opi', 'شماره دعوتنامه']),
+              returnReason: overrideNote || strField(row, ['returnReason', 'علت ارجاع', 'دلیل برگشت']),
+              remark: strField(row, ['remark', 'remarks', 'ملاحظات']),
             });
           }
         }
-      } else {
-        const itemNo = strField(row, ['itemNo', 'شماره آیتم']);
-        const desc = strField(row, ['description', 'itemDescription', 'شرح کالا', 'شرح']);
-        const qty = numField(row, ['qty', 'مقدار تحویلی', 'مقدار ارجاع', 'مقدار حواله', 'تعداد', 'مقدار'], 1) ?? 1;
-        const reqQty = numField(row, ['requestedQty', 'مقدار درخواستی', 'تعداد درخواستی']);
-        if (shipmentNo || itemNo || desc) {
-          parsedItems.push({
-            detailedId: strField(row, ['detailedId']),
-            shipmentNo,
-            packageNo: strField(row, ['packageNo', 'شماره نگله']),
-            itemNo,
-            description: desc,
-            qty: qty > 0 ? qty : 1,
-            requestedQty: reqQty !== null && reqQty > 0 ? reqQty : qty > 0 ? qty : 1,
-            technicalInfo: strField(row, ['technicalInfo', 'size', 'سایز']),
-            tagNo: strField(row, ['tagNo', 'itemCode', 'کد کالا']),
-            codeNo: strField(row, ['codeNo', 'itemCode', 'کد کالا']),
-            location: strField(row, ['location', 'storageLocation', 'محل نگهداری']),
-            uom: normalizeCountingUnitToFa(strField(row, ['uom', 'countingUnit', 'واحد شمارش'])),
-            opiNo: strField(row, ['opiNo', 'شماره opi']),
-            returnReason: strField(row, ['returnReason', 'علت ارجاع', 'دلیل برگشت']),
-            remark: strField(row, ['remark', 'remarks', 'ملاحظات']),
-          });
-        }
-      }
+        return parsedItems;
+      };
 
-      let existing = byKey.get(key);
-      if (!existing) {
-        existing = {
-          id: makeId(),
-          docType,
-          docNo: effectiveNo,
-          date,
-          party: strField(row, ['party', 'طرف مقابل', 'پیمانکار', 'واحد گیرنده', 'تحویل گیرنده']),
-          projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
-          contractNo: strField(row, ['contractNo', 'شماره قرارداد']),
-          purchasePackageNo: strField(row, ['purchasePackageNo', 'پکیج خرید']),
-          supplier: strField(row, ['supplier', 'تامین کننده']),
-          releaseNoteNo: strField(row, ['releaseNoteNo', 'شماره رلیز']),
-          islandSystem: strField(row, ['islandSystem', 'جزیره و سیستم', 'سیستم']),
-          unit: strField(row, ['unit', 'واحد']),
-          receiptNo: strField(row, ['receiptNo', 'شماره رسید']),
-          storekeeper: strField(row, ['storekeeper', 'انباردار']),
-          equipmentSupply: strField(row, ['equipmentSupply', 'تامین تجهیزات']),
-          techOffice: strField(row, ['techOffice', 'دفتر فنی']),
-          installationDept: strField(row, ['installationDept', 'واحد نصب']),
-          qcInspector: strField(row, ['qcInspector', 'کنترل کیفیت']),
-          installerRep: strField(row, ['installerRep', 'نماینده نصب']),
-          requester: strField(row, ['requester', 'درخواست کننده']),
-          receiver: strField(row, ['receiver', 'تحویل گیرنده']),
-          notes: strField(row, ['notes', 'توضیحات']),
-          items: parsedItems,
-          createdAt: now,
-          createdBy: actorName,
-        };
-        byKey.set(key, existing);
-      } else if (parsedItems.length > 0) {
-        existing.items.push(...parsedItems);
+      for (const docItem of triplets) {
+        const docType = docItem.resolvedType;
+        const effectiveNo = docItem.docNo;
+        const date = docItem.date || baseDate;
+        const key = `${docType}|${normMatchKey(effectiveNo)}`;
+        const parsedItems = buildMivItems(docItem.qty, docItem.note);
+
+        const existing = byKey.get(key);
+        if (!existing) {
+          const created: MivDocumentRecord = {
+            id: makeId(),
+            docType,
+            docNo: effectiveNo,
+            date,
+            party:
+              docItem.party ||
+              (docType.startsWith('smr')
+                ? strField(row, ['deliverer', 'smrDeliverer', 'تحویل آورنده', 'party', 'طرف مقابل', 'پیمانکار'])
+                : strField(row, ['party', 'طرف مقابل', 'پیمانکار', 'واحد گیرنده', 'تحویل گیرنده'])),
+            projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
+            contractNo: strField(row, ['contractNo', 'شماره قرارداد']),
+            purchasePackageNo: strField(row, ['purchasePackageNo', 'پکیج خرید']),
+            supplier: strField(row, ['supplier', 'تامین کننده']),
+            releaseNoteNo: strField(row, ['releaseNoteNo', 'شماره رلیز']),
+            islandSystem: strField(row, ['islandSystem', 'جزیره و سیستم', 'سیستم']),
+            unit: strField(row, ['unit', 'واحد']),
+            receiptNo: strField(row, ['receiptNo', 'شماره رسید']),
+            storekeeper: strField(row, ['storekeeper', 'انباردار']),
+            equipmentSupply: strField(row, ['equipmentSupply', 'تامین تجهیزات']),
+            techOffice: strField(row, ['techOffice', 'دفتر فنی']),
+            installationDept: strField(row, ['installationDept', 'واحد نصب']),
+            qcInspector: strField(row, ['qcInspector', 'کنترل کیفیت']),
+            installerRep: strField(row, ['installerRep', 'نماینده نصب']),
+            requester: strField(row, ['requester', 'درخواست کننده']),
+            receiver:
+              docItem.party ||
+              strField(row, ['receiver', 'mivReceiver', 'deliverer', 'smrDeliverer', 'تحویل گیرنده حواله', 'تحویل گیرنده', 'تحویل آورنده']),
+            notes: docItem.note || strField(row, ['notes', 'توضیحات']),
+            items: parsedItems,
+            createdAt: now,
+            createdBy: actorName,
+          };
+          byKey.set(key, created);
+        } else if (parsedItems.length > 0) {
+          existing.items.push(...parsedItems);
+        }
       }
     }
     return { scope, records: Array.from(byKey.values()) as unknown as Record<string, unknown>[], skippedEmpty, warnings };
@@ -1418,66 +1863,86 @@ export function parseOperationalFormInput(params: {
     const out: SubstitutionRecord[] = [];
     let seq = 1;
     for (const row of sourceRows) {
-      const docNo = strField(row, [
-        'docNo',
-        'repNo',
-        'شماره فرم جایگزینی',
-        'شماره سند جایگزینی',
-        'شماره جایگزینی',
-        'شماره rep',
-        'شماره فرم',
-        'شماره سند',
-      ]);
+      const extractedDocs = extractMultiDocTriplets(
+        row,
+        {
+          docNoAliases: [
+            'docNo',
+            'repNo',
+            'شماره فرم جایگزینی',
+            'شماره سند جایگزینی',
+            'شماره جایگزینی',
+            'شماره rep',
+            'شماره فرم',
+            'شماره سند',
+          ],
+          dateAliases: ['date', 'تاریخ جایگزینی', 'تاریخ'],
+          qtyAliases: ['qty', 'تعداد جایگزینی', 'تعداد', 'مقدار'],
+        },
+        assumedCalendar,
+      );
       const subDesc = strField(row, ['substituteDescription', 'شرح کالای جایگزین', 'مشخصات کالای جایگزین', 'کالای جایگزین']);
       const origDesc = strField(row, ['originalDescription', 'description', 'شرح کالای اصلی', 'شرح کالا']);
-      if (!docNo && !subDesc && !origDesc) {
+      const baseDate = dateField(row, ['date', 'تاریخ جایگزینی', 'تاریخ'], assumedCalendar, todayIso);
+
+      const docsToProcess =
+        extractedDocs.length > 0
+          ? extractedDocs
+          : subDesc || origDesc
+            ? [{ docNo: `SUB-IMP-${seq++}`, date: baseDate, qty: null, party: '', note: '' }]
+            : [];
+
+      if (docsToProcess.length === 0) {
         skippedEmpty += 1;
         continue;
       }
-      const qty = numField(row, ['qty', 'تعداد جایگزینی', 'تعداد', 'مقدار'], 1) ?? 1;
-      out.push({
-        id: makeId(),
-        docNo: docNo || `SUB-IMP-${seq++}`,
-        date: dateField(row, ['date', 'تاریخ جایگزینی', 'تاریخ'], assumedCalendar, todayIso),
-        detailedId: strField(row, ['detailedId']),
-        shipmentNo: strField(row, ['shipmentNo', 'packingListNo', 'شماره محموله', 'شماره پکینگ لیست', 'پکینگ لیست مبدا', 'پکینگ لیست']),
-        packageNo: strField(row, ['packageNo', 'شماره نگله']),
-        itemNo: strField(row, ['itemNo', 'شماره آیتم']),
-        projectName: strField(row, ['projectName', 'نام پروژه']),
-        contractNo: strField(row, ['contractNo', 'شماره قرارداد']),
-        system: strField(row, ['system', 'سیستم']),
-        island: strField(row, ['island', 'جزیره']),
-        unit: strField(row, ['unit', 'واحد', 'واحد مبدا']),
-        supplier: strField(row, ['supplier', 'تامین کننده']),
-        supplyUrgency: strField(row, ['supplyUrgency', 'فوریت تامین']),
-        installerContractor: strField(row, ['installerContractor', 'پیمانکار نصب']),
-        mivNo: strField(row, ['mivNo', 'شماره miv']),
-        merNcrNo: strField(row, ['merNcrNo', 'merNo', 'شماره mer']),
-        originalDescription: origDesc,
-        originalItemCode: strField(row, ['originalItemCode', 'itemCode', 'کد کالای اصلی', 'کد کالا']),
-        originalDrawingNo: strField(row, ['originalDrawingNo', 'شماره نقشه اصلی']),
-        originalRemarks: strField(row, ['originalRemarks', 'ملاحظات کالای اصلی']),
-        substitutePackageNo: strField(row, ['substitutePackageNo', 'نگله جایگزین']),
-        substituteDescription: subDesc || origDesc || '-',
-        substituteItemCode: strField(row, ['substituteItemCode', 'کد کالای جایگزین']),
-        substituteSize: strField(row, ['substituteSize', 'سایز جایگزین']),
-        substituteDrawingNo: strField(row, ['substituteDrawingNo', 'شماره نقشه جایگزین']),
-        substituteRemarks: strField(row, ['substituteRemarks', 'ملاحظات جایگزین']),
-        qty: qty > 0 ? qty : 1,
-        countingUnit: normalizeCountingUnitToFa(strField(row, ['countingUnit', 'uom', 'واحد شمارش'])) || 'عدد',
-        reason: strField(row, ['reason', 'دلیل جایگزینی', 'علت جایگزینی'], 'جایگزینی تجهیز'),
-        supplierNotes: strField(row, ['supplierNotes', 'توضیحات تامین کننده']),
-        reprocureBy: strField(row, ['reprocureBy', 'تامین مجدد توسط']),
-        costBorneBy: strField(row, ['costBorneBy', 'هزینه به عهده']),
-        approvedBy: strField(row, ['approvedBy', 'تایید کننده']),
-        mapnaRep: strField(row, ['mapnaRep', 'نماینده مپنا']),
-        installerSignatory: strField(row, ['installerSignatory', 'امضای پیمانکار نصب']),
-        supplierSignatory: strField(row, ['supplierSignatory', 'امضای فروشنده']),
-        status: normalizeSubstitutionStatus(getField(row, ['status', 'وضعیت جایگزینی', 'وضعیت'])),
-        notes: strField(row, ['notes', 'توضیحات']),
-        createdAt: now,
-        createdBy: actorName,
-      });
+
+      for (const docItem of docsToProcess) {
+        const qty = docItem.qty ?? numField(row, ['qty', 'تعداد جایگزینی', 'تعداد', 'مقدار'], 1) ?? 1;
+        out.push({
+          id: makeId(),
+          docNo: docItem.docNo,
+          date: docItem.date || baseDate,
+          detailedId: strField(row, ['detailedId']),
+          shipmentNo: strField(row, ['shipmentNo', 'packingListNo', 'شماره محموله', 'شماره پکینگ لیست', 'پکینگ لیست مبدا', 'پکینگ لیست']),
+          packageNo: strField(row, ['packageNo', 'شماره نگله']),
+          itemNo: strField(row, ['itemNo', 'شماره آیتم']),
+          projectName: strField(row, ['projectName', 'نام پروژه']),
+          contractNo: strField(row, ['contractNo', 'شماره قرارداد']),
+          system: strField(row, ['system', 'سیستم']),
+          island: strField(row, ['island', 'جزیره']),
+          unit: strField(row, ['unit', 'واحد', 'واحد مبدا']),
+          supplier: strField(row, ['supplier', 'تامین کننده']),
+          supplyUrgency: strField(row, ['supplyUrgency', 'فوریت تامین']),
+          installerContractor: strField(row, ['installerContractor', 'پیمانکار نصب']),
+          mivNo: strField(row, ['mivNo', 'شماره miv']),
+          merNcrNo: strField(row, ['merNcrNo', 'merNo', 'شماره mer']),
+          originalDescription: origDesc,
+          originalItemCode: strField(row, ['originalItemCode', 'itemCode', 'کد کالای اصلی', 'کد کالا']),
+          originalDrawingNo: strField(row, ['originalDrawingNo', 'شماره نقشه اصلی']),
+          originalRemarks: strField(row, ['originalRemarks', 'ملاحظات کالای اصلی']),
+          substitutePackageNo: strField(row, ['substitutePackageNo', 'نگله جایگزین']),
+          substituteDescription: subDesc || origDesc || '-',
+          substituteItemCode: strField(row, ['substituteItemCode', 'کد کالای جایگزین']),
+          substituteSize: strField(row, ['substituteSize', 'سایز جایگزین']),
+          substituteDrawingNo: strField(row, ['substituteDrawingNo', 'شماره نقشه جایگزین']),
+          substituteRemarks: strField(row, ['substituteRemarks', 'ملاحظات جایگزین']),
+          qty: qty > 0 ? qty : 1,
+          countingUnit: normalizeCountingUnitToFa(strField(row, ['countingUnit', 'uom', 'واحد شمارش'])) || 'عدد',
+          reason: strField(row, ['reason', 'دلیل جایگزینی', 'علت جایگزینی'], 'جایگزینی تجهیز'),
+          supplierNotes: strField(row, ['supplierNotes', 'توضیحات تامین کننده']),
+          reprocureBy: strField(row, ['reprocureBy', 'تامین مجدد توسط']),
+          costBorneBy: strField(row, ['costBorneBy', 'هزینه به عهده']),
+          approvedBy: strField(row, ['approvedBy', 'تایید کننده']),
+          mapnaRep: strField(row, ['mapnaRep', 'نماینده مپنا']),
+          installerSignatory: strField(row, ['installerSignatory', 'امضای پیمانکار نصب']),
+          supplierSignatory: strField(row, ['supplierSignatory', 'امضای فروشنده']),
+          status: normalizeSubstitutionStatus(getField(row, ['status', 'وضعیت جایگزینی', 'وضعیت'])),
+          notes: strField(row, ['notes', 'توضیحات']),
+          createdAt: now,
+          createdBy: actorName,
+        });
+      }
     }
     return { scope, records: out as unknown as Record<string, unknown>[], skippedEmpty, warnings };
   }
@@ -2031,6 +2496,50 @@ export function previewOperationalFormImport(params: {
     }
   }
 
+  // Compute smart delta summary against existing DB records
+  let deltaSummary: ImportDeltaSummary | undefined;
+  const computeOpDelta = (
+    existingArr: Record<string, unknown>[],
+    keyFn: (r: Record<string, unknown>) => string,
+  ): ImportDeltaSummary => {
+    const analysis = analyzeImportDelta({
+      incomingRows: parsed.records,
+      existingRows: existingArr,
+      getIncomingKey: (r) => keyFn(r),
+      getExistingKey: (r) => keyFn(r),
+    });
+    return {
+      isIdentical: analysis.isIdentical,
+      newCount: analysis.newCount,
+      modifiedCount: analysis.modifiedCount,
+      unchangedCount: analysis.unchangedCount,
+      totalIncoming: analysis.totalIncoming,
+      changedFieldsSample: analysis.changedFieldsSample,
+    };
+  };
+
+  if (scope === 'siteEntryMinutes') {
+    deltaSummary = computeOpDelta((db.siteEntryMinutes || []) as unknown as Record<string, unknown>[], (r) => normMatchKey(r.minutesNo));
+  } else if (scope === 'opiInvitations') {
+    deltaSummary = computeOpDelta((db.opiInvitations || []) as unknown as Record<string, unknown>[], (r) => normMatchKey(r.invitationNo));
+  } else if (scope === 'opiMinutes') {
+    deltaSummary = computeOpDelta((db.opiMinutes || []) as unknown as Record<string, unknown>[], (r) => normMatchKey(r.minutesNo));
+  } else if (scope === 'osdrReports') {
+    deltaSummary = computeOpDelta((db.osdrReports || []) as unknown as Record<string, unknown>[], (r) => normMatchKey(r.reportNo));
+  } else if (scope === 'gcvDocuments') {
+    deltaSummary = computeOpDelta((db.gcvDocuments || []) as unknown as Record<string, unknown>[], (r) => normMatchKey(r.receiptNo));
+  } else if (scope === 'mivDocuments') {
+    deltaSummary = computeOpDelta((db.mivDocuments || []) as unknown as Record<string, unknown>[], (r) => `${String(r.docType || '')}|${normMatchKey(r.docNo)}`);
+  } else if (scope === 'substitutions') {
+    deltaSummary = computeOpDelta((db.substitutions || []) as unknown as Record<string, unknown>[], (r) => normMatchKey(r.docNo));
+  } else if (scope === 'materialEstimates') {
+    deltaSummary = computeOpDelta((db.materialEstimates || []) as unknown as Record<string, unknown>[], (r) => `${normMatchKey(r.mtoCode)}|${normMatchKey(r.itemCode)}|${normMatchKey(r.description)}`);
+  } else if (scope === 'periodicInspections') {
+    deltaSummary = computeOpDelta((db.periodicInspections || []) as unknown as Record<string, unknown>[], (r) => `${normMatchKey(r.inspectionDate)}|${normMatchKey(r.projectName)}`);
+  } else if (scope === 'customFormSubmissions') {
+    deltaSummary = computeOpDelta((db.customFormSubmissions || []) as unknown as Record<string, unknown>[], (r) => `${normMatchKey(r.formId)}|${normMatchKey(r.docNo)}`);
+  }
+
   return {
     scope,
     totalRows: parsed.records.length,
@@ -2045,6 +2554,7 @@ export function previewOperationalFormImport(params: {
     sample: parsed.records.slice(0, 8),
     parsedRecords: parsed.records,
     warnings: parsed.warnings,
+    deltaSummary,
   };
 }
 
@@ -2069,7 +2579,7 @@ export function commitOperationalFormImport(params: {
   structuredRecords?: Record<string, unknown>[];
   sheetName?: string;
   assumedCalendar: CalendarMode;
-  duplicateRecordPolicy: 'replace' | 'skip';
+  duplicateRecordPolicy: 'replace' | 'skip' | 'delta';
   actorName: string;
 }): OperationalCommitResult {
   const { db, scope, duplicateRecordPolicy, actorName } = params;
@@ -2093,10 +2603,21 @@ export function commitOperationalFormImport(params: {
   let imported = 0;
   let replaced = 0;
   let skipped = 0;
+  let unchangedSkipped = 0;
   const linkedGeneralIds = new Set<string>();
   const linkedDetailedIds = new Set<string>();
   const linkedTransitIds = new Set<string>();
   const warnings = [...parsed.warnings];
+
+  const shouldSkipUnchanged = (existingRec: unknown, incomingRec: unknown): boolean => {
+    if (duplicateRecordPolicy !== 'delta' || !existingRec) return false;
+    if (!hasRecordMeaningfulChanges(existingRec as Record<string, unknown>, incomingRec as Record<string, unknown>)) {
+      unchangedSkipped += 1;
+      skipped += 1;
+      return true;
+    }
+    return false;
+  };
 
   // ---- 1. SITE ENTRY MINUTES ----
   if (scope === 'siteEntryMinutes') {
@@ -2106,6 +2627,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       // Cross-link with General & Transit
       for (const pk of raw.packingListNos || []) {
@@ -2183,6 +2705,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       for (const pk of raw.packingNos || []) {
         const k = normMatchKey(pk);
@@ -2235,6 +2758,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       const pk = normMatchKey(raw.packingListNo);
       const genMatches = idx.generalByPacking.get(pk) || [];
@@ -2292,6 +2816,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       const pk = normMatchKey(raw.packingListNo);
       for (const g of idx.generalByPacking.get(pk) || []) {
@@ -2354,6 +2879,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       // If replacing an existing GCV doc, rollback its previous qty delta on linked detailed items first
       if (existing) {
@@ -2426,6 +2952,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       // Rollback old quantities on replace to prevent double-counting
       if (existing) {
@@ -2526,6 +3053,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       const d = findMatchingDetailedItem(idx, {
         detailedId: raw.detailedId,
@@ -2589,6 +3117,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       // Cross-link with Detailed rows by itemCode, mtoCode, or description
       const matchedDetailed: DetailedEntry[] = [];
@@ -2660,6 +3189,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
       if (existing) {
         Object.assign(existing, { ...raw, id: existing.id, createdAt: existing.createdAt, createdBy: existing.createdBy });
         replaced += 1;
@@ -2689,6 +3219,17 @@ export function commitOperationalFormImport(params: {
       }
       const hadStocktake = Boolean(normKey(d.stocktakeStatus) || normKey(d.stocktakeInfo));
       if (hadStocktake && duplicateRecordPolicy === 'skip') {
+        skipped += 1;
+        continue;
+      }
+      if (
+        hadStocktake &&
+        duplicateRecordPolicy === 'delta' &&
+        normMatchKey(d.stocktakeStatus) === normMatchKey(raw.stocktakeStatus) &&
+        (!raw.stocktakeDate || normMatchKey(d.stocktakeDate) === normMatchKey(raw.stocktakeDate)) &&
+        (!raw.storageLocation || normMatchKey(d.storageLocation) === normMatchKey(raw.storageLocation))
+      ) {
+        unchangedSkipped += 1;
         skipped += 1;
         continue;
       }
@@ -2727,6 +3268,7 @@ export function commitOperationalFormImport(params: {
         skipped += 1;
         continue;
       }
+      if (shouldSkipUnchanged(existing, raw)) continue;
 
       const pk = normMatchKey(raw.packingListNo);
       if (pk) {
@@ -2756,6 +3298,7 @@ export function commitOperationalFormImport(params: {
     imported,
     replaced,
     skipped,
+    unchangedSkipped,
     linkedGeneral: linkedGeneralIds.size,
     linkedDetailed: linkedDetailedIds.size,
     linkedTransit: linkedTransitIds.size,
@@ -2804,6 +3347,7 @@ export interface AutoWorkbookCommitSection {
   imported: number;
   replaced: number;
   skipped: number;
+  unchangedSkipped?: number;
   linkedGeneral: number;
   linkedDetailed: number;
   linkedTransit: number;
@@ -2817,6 +3361,7 @@ export interface AutoWorkbookCommitSummary {
     imported: number;
     replaced: number;
     skipped: number;
+    unchangedSkipped?: number;
     linkedGeneral: number;
     linkedDetailed: number;
     linkedTransit: number;
@@ -3234,7 +3779,7 @@ export function commitAutoWorkbook(params: {
   db: ImportableDatabase;
   sheets: AutoWorkbookSheetInput[];
   assumedCalendar: CalendarMode;
-  duplicateRecordPolicy: 'replace' | 'skip';
+  duplicateRecordPolicy: 'replace' | 'skip' | 'delta';
   actorName: string;
 }): AutoWorkbookCommitSummary {
   const { db, sheets, assumedCalendar, duplicateRecordPolicy, actorName } = params;
@@ -3273,6 +3818,7 @@ export function commitAutoWorkbook(params: {
         imported: res.imported,
         replaced: res.replaced,
         skipped: res.skipped,
+        unchangedSkipped: res.unchangedSkipped || 0,
         linkedGeneral: res.linkedGeneral,
         linkedDetailed: res.linkedDetailed,
         linkedTransit: res.linkedTransit,
@@ -3285,6 +3831,7 @@ export function commitAutoWorkbook(params: {
     let imported = 0;
     let replaced = 0;
     let skipped = 0;
+    let unchangedSkipped = 0;
     let linkedTransit = 0;
 
     if (scope === 'transit') {
@@ -3310,6 +3857,11 @@ export function commitAutoWorkbook(params: {
         const existing = k ? dbByKey.get(k) : undefined;
         if (existing) {
           if (duplicateRecordPolicy === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          if (duplicateRecordPolicy === 'delta' && !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, { ...r, overallStatus: normStatus } as unknown as Record<string, unknown>)) {
+            unchangedSkipped += 1;
             skipped += 1;
             continue;
           }
@@ -3359,6 +3911,11 @@ export function commitAutoWorkbook(params: {
             skipped += 1;
             continue;
           }
+          if (duplicateRecordPolicy === 'delta' && !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, r as unknown as Record<string, unknown>)) {
+            unchangedSkipped += 1;
+            skipped += 1;
+            continue;
+          }
           Object.assign(existing, {
             ...r,
             id: existing.id,
@@ -3399,6 +3956,11 @@ export function commitAutoWorkbook(params: {
         const existing = k ? dbByKey.get(k) : undefined;
         if (existing) {
           if (duplicateRecordPolicy === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          if (duplicateRecordPolicy === 'delta' && !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, { ...r, countingUnit: normalizeCountingUnitToFa(r.countingUnit) } as unknown as Record<string, unknown>)) {
+            unchangedSkipped += 1;
             skipped += 1;
             continue;
           }
@@ -3465,6 +4027,7 @@ export function commitAutoWorkbook(params: {
       imported,
       replaced,
       skipped,
+      unchangedSkipped,
       linkedGeneral: 0,
       linkedDetailed: 0,
       linkedTransit,
@@ -3477,11 +4040,12 @@ export function commitAutoWorkbook(params: {
       imported: acc.imported + s.imported,
       replaced: acc.replaced + s.replaced,
       skipped: acc.skipped + s.skipped,
+      unchangedSkipped: (acc.unchangedSkipped || 0) + (s.unchangedSkipped || 0),
       linkedGeneral: acc.linkedGeneral + s.linkedGeneral,
       linkedDetailed: acc.linkedDetailed + s.linkedDetailed,
       linkedTransit: acc.linkedTransit + s.linkedTransit,
     }),
-    { imported: 0, replaced: 0, skipped: 0, linkedGeneral: 0, linkedDetailed: 0, linkedTransit: 0 },
+    { imported: 0, replaced: 0, skipped: 0, unchangedSkipped: 0, linkedGeneral: 0, linkedDetailed: 0, linkedTransit: 0 },
   );
 
   return { ok: true, sections, totals };

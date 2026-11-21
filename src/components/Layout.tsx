@@ -678,7 +678,7 @@ export const Layout: React.FC<LayoutProps> = ({
                   setMobileMenuOpen(false);
                   onOpenShortcuts();
                 }}
-                title={`${isFa ? 'تنظیمات کلیدهای میانبر (اکسل)' : 'Keyboard Shortcuts (Excel)'} (${shortcuts.shortcutsSettings || 'Ctrl+/'})`}
+                title={`${isFa ? 'تنظیمات کلیدهای میانبر' : 'Keyboard Shortcuts'} (${shortcuts.shortcutsSettings || 'Ctrl+/'})`}
                 className={`h-8 w-8 rounded-xl border border-[var(--border-subtle)] bg-transparent hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] flex items-center justify-center shrink-0 transition-colors ${
                   sidebarCollapsed ? 'lg:hidden' : ''
                 }`}
@@ -818,7 +818,7 @@ export const Layout: React.FC<LayoutProps> = ({
                     <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)]">
                       <span className="font-bold text-[var(--text-primary)] flex items-center gap-1.5">
                         <History className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                        {isFa ? 'تاریخچه عملیات (اکسل)' : 'Action History'}
+                        {isFa ? 'تاریخچه عملیات' : 'Action History'}
                       </span>
                       <span dir="ltr" className="text-[10px] font-mono text-[var(--text-muted)]">
                         {shortcuts.undo || 'Ctrl+Z'} / {shortcuts.redo || 'Ctrl+Y'}

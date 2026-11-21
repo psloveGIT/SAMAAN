@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Calculator, FlaskConical, Printer, X } from 'lucide-react';
+import { Calculator, Printer, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { formatDisplayNumber } from '../shared/jalali.ts';
 import type { SelectionFormulaSummary } from '../shared/types.ts';
@@ -25,7 +25,7 @@ const SelectionSummaryBarInner: React.FC<SelectionSummaryBarProps> = ({
   onClearSelection,
   onPrintSelected,
 }) => {
-  const { prefs, t, formatDate } = useApp();
+  const { prefs, t } = useApp();
   const isFa = prefs.language === 'fa';
 
   const metrics: { label: string; value: number; unit?: string; highlight?: 'danger' | 'warning' | 'accent' }[] = [];
@@ -93,7 +93,6 @@ const SelectionSummaryBarInner: React.FC<SelectionSummaryBarProps> = ({
     }
   }
 
-  const expiringChemicals = scope === 'detailed' ? summary.expiringChemicals || [] : [];
   const packingsByIsland = scope === 'general' ? summary.packingsByIsland || [] : [];
 
   return (
@@ -180,60 +179,6 @@ const SelectionSummaryBarInner: React.FC<SelectionSummaryBarProps> = ({
         </div>
       )}
 
-      {/* Detailed: Chemical Expiration Warning Banner (< 1 month) */}
-      {expiringChemicals.length > 0 && (
-        <div className="p-3 rounded-xl border border-[var(--status-danger)] bg-[var(--status-danger-bg)] space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-[var(--status-danger)]">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <FlaskConical className="w-4 h-4 shrink-0" />
-            <span>
-              {isFa
-                ? `هشدار انقضای مواد شیمیایی (${fmtNum(expiringChemicals.length, prefs.language)} قلم با مهلت کمتر از یک ماه یا منقضی‌شده)`
-                : `Chemical Expiration Alert (${expiringChemicals.length} item(s) expiring within 30 days or expired)`}
-            </span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-[11px]">
-            {expiringChemicals.map((chem) => (
-              <div
-                key={chem.id}
-                className="px-2.5 py-1.5 rounded-lg bg-[var(--bg-surface)]/90 border border-[var(--status-danger)]/30 flex flex-wrap items-center justify-between gap-2"
-              >
-                <div className="min-w-0">
-                  <span className="font-bold text-[var(--text-primary)]">
-                    {chem.chemicalType || chem.description || '-'}
-                  </span>
-                  <span className="text-[var(--text-muted)] ms-2 tabular-nums" dir="ltr">
-                    [{chem.shipmentNo} / {chem.packageNo || '-'} / #{chem.itemNo || '-'}]
-                  </span>
-                  {chem.description && chem.chemicalType && (
-                    <div className="text-[10px] text-[var(--text-secondary)] truncate">
-                      {chem.description}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 shrink-0 tabular-nums">
-                  <span className="text-[var(--text-secondary)]">
-                    {isFa ? 'انقضاء:' : 'Exp:'} {formatDate(chem.expirationDate)}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-[var(--status-danger)] text-white font-bold">
-                    {chem.daysRemaining < 0
-                      ? isFa
-                        ? `منقضی (${fmtNum(Math.abs(chem.daysRemaining), prefs.language)} روز قبل)`
-                        : `Expired (${Math.abs(chem.daysRemaining)}d ago)`
-                      : chem.daysRemaining === 0
-                        ? isFa
-                          ? 'انقضاء امروز'
-                          : 'Expires Today'
-                        : isFa
-                          ? `${fmtNum(chem.daysRemaining, prefs.language)} روز مانده`
-                          : `${chem.daysRemaining}d left`}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

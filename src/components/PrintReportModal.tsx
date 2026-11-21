@@ -99,7 +99,15 @@ export function PrintReportModal<T>({
         @media print {
           @page {
             size: A4 ${orientation};
-            margin: 8mm;
+            margin: 8mm 8mm 13mm 8mm;
+            @bottom-center {
+              content: ${isFa ? '"صفحه: " counter(page) " از " counter(pages)' : '"Page: " counter(page) " of " counter(pages)'};
+              font-family: 'Vazirmatn', 'Plus Jakarta Sans', system-ui, sans-serif;
+              font-size: 8.5pt;
+              font-weight: 600;
+              color: #334155;
+              direction: ${isFa ? 'rtl' : 'ltr'};
+            }
           }
           body > *:not(#samaan-print-root) {
             display: none !important;

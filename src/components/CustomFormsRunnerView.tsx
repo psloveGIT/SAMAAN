@@ -22,6 +22,7 @@ import {
   resolveEmployerLogoById,
 } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import type {
   CustomEmployerForm,
   CustomFormSubmission,
@@ -70,6 +71,7 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
   const [submissions, setSubmissions] = useState<CustomFormSubmission[]>([]);
   const [generalRows, setGeneralRows] = useState<GeneralEntry[]>([]);
   const [detailedRows, setDetailedRows] = useState<DetailedComputed[]>([]);
+  const [serverPackings, setServerPackings] = useState<string[]>([]);
   const [siteEntryRows, setSiteEntryRows] = useState<SiteEntryMinutesRecord[]>([]);
   const [transitRows, setTransitRows] = useState<TransitEntry[]>([]);
 
@@ -119,25 +121,28 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
     [customForms, selectedLegacyId],
   );
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (packingParam = '') => {
     try {
+      const pkQs = packingParam ? `&packing=${encodeURIComponent(packingParam)}` : '';
       const [cfRes, seRes, trRes] = await Promise.allSettled([
         apiRequest<{
           submissions?: CustomFormSubmission[];
           generalEntries?: GeneralEntry[];
           detailedItems?: DetailedComputed[];
-        }>('/api/custom-forms'),
-        apiRequest<{ records?: SiteEntryMinutesRecord[] }>('/api/site-entry'),
-        apiRequest<{ items?: TransitEntry[] }>('/api/transit?page=1&pageSize=1000'),
+          packings?: string[];
+        }>(`/api/custom-forms?compact=1&limit=120${pkQs}`),
+        apiRequest<{ minutes?: SiteEntryMinutesRecord[]; records?: SiteEntryMinutesRecord[] }>('/api/site-entry?compact=1&limit=80'),
+        apiRequest<{ items?: TransitEntry[] }>('/api/transit?page=1&pageSize=120'),
       ]);
 
       if (cfRes.status === 'fulfilled') {
         setSubmissions(cfRes.value.submissions || []);
         setGeneralRows(cfRes.value.generalEntries || []);
         setDetailedRows(cfRes.value.detailedItems || []);
+        if (cfRes.value.packings) setServerPackings(cfRes.value.packings);
       }
       if (seRes.status === 'fulfilled') {
-        setSiteEntryRows(seRes.value.records || []);
+        setSiteEntryRows(seRes.value.minutes || seRes.value.records || []);
       }
       if (trRes.status === 'fulfilled') {
         setTransitRows(trRes.value.items || []);
@@ -148,11 +153,11 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData, refreshSignal]);
+    loadData(selectedPackingNo);
+  }, [loadData, refreshSignal, selectedPackingNo]);
 
   const packingOptions = useMemo(() => {
-    const unique = new Set<string>();
+    const unique = new Set<string>(serverPackings);
     generalRows.forEach((g) => {
       if (g.packingListNo) unique.add(g.packingListNo);
     });
@@ -163,22 +168,31 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
       if (t.packingListNo) unique.add(t.packingListNo);
     });
     return Array.from(unique).sort((a, b) => a.localeCompare(b));
-  }, [generalRows, detailedRows, transitRows]);
+  }, [serverPackings, generalRows, detailedRows, transitRows]);
 
   const effectiveSource: UploadedFormDataSource =
     dataSourceOverride || activeUploadedForm?.dataSource || 'general';
+
+  const effectiveSources: UploadedFormDataSource[] = useMemo(() => {
+    if (dataSourceOverride) return [dataSourceOverride];
+    if (activeUploadedForm?.dataSources && activeUploadedForm.dataSources.length > 0) {
+      return activeUploadedForm.dataSources;
+    }
+    return [effectiveSource];
+  }, [dataSourceOverride, activeUploadedForm?.dataSources, effectiveSource]);
 
   const effectiveUploadedForm: EmployerUploadedForm | null = useMemo(() => {
     if (!activeUploadedForm) return null;
     return {
       ...activeUploadedForm,
       dataSource: effectiveSource,
+      dataSources: effectiveSources,
       printSettings: {
         ...(activeUploadedForm.printSettings || DEFAULT_UPLOADED_FORM_PRINT_SETTINGS),
         ...printOverrides,
       },
     };
-  }, [activeUploadedForm, effectiveSource, printOverrides]);
+  }, [activeUploadedForm, effectiveSource, effectiveSources, printOverrides]);
 
   const selectedSiteEntryRecord = useMemo(
     () => siteEntryRows.find((r) => r.id === selectedSiteEntryId) || null,
@@ -194,6 +208,7 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
       employer: activeEmployer,
       calendar: prefs.calendar,
       dataSource: effectiveSource,
+      dataSources: effectiveSources,
       siteEntry: selectedSiteEntryRecord,
       packingListNo: selectedPackingNo,
       generalRows,
@@ -207,6 +222,7 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
     activeEmployer,
     prefs.calendar,
     effectiveSource,
+    effectiveSources,
     selectedSiteEntryRecord,
     selectedPackingNo,
     generalRows,
@@ -448,10 +464,7 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
                   #samaan-form-print-root { display: none !important; }
                 }
                 @media print {
-                  @page {
-                    size: A4 ${effectiveUploadedForm.printSettings.orientation};
-                    margin: 0mm;
-                  }
+                  ${buildPrintPageRule(effectiveUploadedForm.printSettings.orientation, isFa, '6mm')}
                   body > *:not(#samaan-form-print-root) {
                     display: none !important;
                   }

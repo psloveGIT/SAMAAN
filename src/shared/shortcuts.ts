@@ -35,14 +35,14 @@ export interface ShortcutDefinition {
 }
 
 export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
-  // Editing & Undo/Redo (Excel Standard)
+  // Editing & Undo/Redo
   {
     id: 'undo',
     category: 'editing',
     labelFa: 'بازگردانی آخرین عملیات (Undo)',
     labelEn: 'Undo Last Action',
-    descriptionFa: 'لغو و بازگردانی آخرین تغییر ثبت‌شده در داده‌های انبار (مشابه اکسل)',
-    descriptionEn: 'Revert the last recorded warehouse data change (like Excel)',
+    descriptionFa: 'لغو و بازگردانی آخرین تغییر ثبت‌شده در داده‌های انبار',
+    descriptionEn: 'Revert the last recorded warehouse data change',
     defaultCombo: 'Ctrl+Z',
     allowInInputs: false,
   },
@@ -51,8 +51,8 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     category: 'editing',
     labelFa: 'انجام مجدد عملیات (Redo)',
     labelEn: 'Redo Action',
-    descriptionFa: 'اعمال مجدد آخرین تغییری که بازگردانی شده است (مشابه اکسل)',
-    descriptionEn: 'Re-apply the most recently undone change (like Excel)',
+    descriptionFa: 'اعمال مجدد آخرین تغییری که بازگردانی شده است',
+    descriptionEn: 'Re-apply the most recently undone change',
     defaultCombo: 'Ctrl+Y',
     allowInInputs: false,
   },
@@ -61,7 +61,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     category: 'editing',
     labelFa: 'ذخیره فرم یا پنجره فعال',
     labelEn: 'Save Active Form / Dialog',
-    descriptionFa: 'ثبت و ذخیره سریع فرم یا پنجره ویرایش باز (مشابه Ctrl+S در اکسل)',
+    descriptionFa: 'ثبت و ذخیره سریع فرم یا پنجره ویرایش باز',
     descriptionEn: 'Quickly submit and save the currently open edit dialog or form',
     defaultCombo: 'Ctrl+S',
     allowInInputs: true,
@@ -91,10 +91,10 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   {
     id: 'exportExcel',
     category: 'table',
-    labelFa: 'خروجی اکسل جدول فعال',
-    labelEn: 'Export Active Table to Excel',
-    descriptionFa: 'دریافت فایل اکسل از داده‌های فیلترشده در صفحه فعلی',
-    descriptionEn: 'Export the currently filtered rows in the active table to Excel',
+    labelFa: 'خروجی صفحه‌گسترده جدول فعال',
+    labelEn: 'Export Active Table to Spreadsheet',
+    descriptionFa: 'دریافت فایل صفحه‌گسترده (XLSX) از داده‌های فیلترشده در صفحه فعلی',
+    descriptionEn: 'Export the currently filtered rows in the active table to a spreadsheet file',
     defaultCombo: 'Ctrl+E',
     allowInInputs: false,
   },

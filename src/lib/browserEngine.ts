@@ -22,6 +22,13 @@ import {
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { buildYearMonths, getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
 import {
+  collectUniquePackings,
+  queryOpsDetailed,
+  queryOpsGeneral,
+  queryOpsTransit,
+  slimDetailedForOps,
+} from '../shared/opsProjection.ts';
+import {
   DEFAULT_TRANSIT_STATUSES,
   getTransitStatusOptions,
   inferItemClassification,
@@ -42,6 +49,7 @@ import {
 } from '../shared/customFilters.ts';
 import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
 import { getLocalVersionPayload } from '../shared/appVersion.ts';
+import { analyzeImportDelta, hasRecordMeaningfulChanges } from '../shared/importDelta.ts';
 import {
   commitAutoWorkbook,
   commitOperationalFormImport,
@@ -1011,6 +1019,9 @@ async function handleStaticApiRequestInner<T>(
     requireAuth();
     const formIdFilter = normKey(query.get('formId'));
     const q = normKey(query.get('q'));
+    const compact = query.get('compact') === '1';
+    const packingFilter = normKey(query.get('packing'));
+    const limit = Math.min(500, Math.max(10, Number(query.get('limit') || 120) || 120));
     const submissions = (db.customFormSubmissions || []).filter((sub) => {
       if (formIdFilter && sub.formId !== formIdFilter) return false;
       if (q) {
@@ -1018,16 +1029,17 @@ async function handleStaticApiRequestInner<T>(
       }
       return true;
     });
-    const packings = Array.from(
-      new Set([
-        ...db.general.map((g) => normKey(g.packingListNo)).filter(Boolean),
-        ...db.detailed.map((d) => normKey(d.shipmentNo)).filter(Boolean),
-      ]),
-    );
+    const packings = collectUniquePackings(db.general, db.detailed);
+    const generalEntries = compact
+      ? queryOpsGeneral(db.general, { compact: true, packing: packingFilter, limit })
+      : [...db.general].reverse();
+    const detailedItems = compact
+      ? queryOpsDetailed(db.detailed.map(computeDetailedEntry), { compact: true, packing: packingFilter, limit })
+      : [...db.detailed.map(computeDetailedEntry)].reverse().map(slimDetailedForOps);
     return {
       submissions: [...submissions].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-      generalEntries: [...db.general].reverse(),
-      detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
+      generalEntries,
+      detailedItems,
       packings,
     } as T;
   }
@@ -2045,12 +2057,28 @@ async function handleStaticApiRequestInner<T>(
     const damagedOnly = query.get('damagedOnly') === 'true';
     const discrepancyOnly = query.get('discrepancyOnly') === 'true';
     const replacedOnly = query.get('replacedOnly') === 'true';
+    const hasEmployerStock = query.get('hasEmployerStock') === 'true';
+    const hasContractorStock = query.get('hasContractorStock') === 'true';
+    const chemicalExpiry = (query.get('chemicalExpiry') || '').trim();
     const fromDate = query.get('fromDate') || '';
     const toDate = query.get('toDate') || '';
     const fetchAll = query.get('all') === 'true';
     const allIds = query.get('allIds') === 'true';
     const page = Math.max(1, Number(query.get('page') || 1));
     const pageSize = Math.min(5000, Math.max(10, Number(query.get('pageSize') || 50)));
+
+    const allExpiringChems = getExpiringChemicals(db.detailed.map(computeDetailedEntry), 30);
+    const expiredChemIds = new Set<string>();
+    const expiringSoonChemIds = new Set<string>();
+    for (const c of allExpiringChems) {
+      if (c.daysRemaining < 0) expiredChemIds.add(c.id);
+      else expiringSoonChemIds.add(c.id);
+    }
+    const chemicalAlertSummary = {
+      expiredCount: expiredChemIds.size,
+      expiringSoonCount: expiringSoonChemIds.size,
+      totalAlertCount: allExpiringChems.length,
+    };
 
     const substitutedIds = new Set(
       (db.substitutions || []).map((s) => s.detailedId).filter(Boolean),
@@ -2104,6 +2132,11 @@ async function handleStaticApiRequestInner<T>(
       ) {
         continue;
       }
+      if (hasEmployerStock && (comp.opiPending || comp.mapnaInventory <= 0)) continue;
+      if (hasContractorStock && (comp.opiPending || comp.contractorInventory <= 0)) continue;
+      if (chemicalExpiry === 'expired' && !expiredChemIds.has(comp.id)) continue;
+      if (chemicalExpiry === 'expiring_soon' && !expiringSoonChemIds.has(comp.id)) continue;
+      if (chemicalExpiry === 'all' && !expiredChemIds.has(comp.id) && !expiringSoonChemIds.has(comp.id)) continue;
       computedRaw.push(comp);
     }
 
@@ -2119,6 +2152,7 @@ async function handleStaticApiRequestInner<T>(
         ids: computedAll.map((d) => d.id),
         total,
         filteredSummary,
+        chemicalAlertSummary,
       } as T;
     }
 
@@ -2132,6 +2166,7 @@ async function handleStaticApiRequestInner<T>(
       pageSize: fetchAll ? Math.max(1, total) : pageSize,
       totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
+      chemicalAlertSummary,
     } as T;
   }
 
@@ -5493,6 +5528,7 @@ async function handleStaticApiRequestInner<T>(
         warnings: opPrev.warnings,
         sample: opPrev.sample,
         parsedRows: opPrev.parsedRecords,
+        deltaSummary: opPrev.deltaSummary,
       } as T;
     }
 
@@ -5540,6 +5576,13 @@ async function handleStaticApiRequestInner<T>(
         generalDupKey,
         (r) => `${r.packingListNo || '-'} / ${r.packageNo || r.mapnaEntryMinutesNo || '-'}`,
       );
+      const deltaAnalysis = analyzeImportDelta({
+        incomingRows: parsed.rows as unknown as Record<string, unknown>[],
+        existingRows: db.general as unknown as Record<string, unknown>[],
+        getIncomingKey: (r) => generalDupKey(r as Partial<GeneralEntry>),
+        getExistingKey: (r) => generalDupKey(r as Partial<GeneralEntry>),
+        getKeyLabel: (r) => `${String(r.packingListNo || '-')} / ${String(r.packageNo || '-')}`,
+      });
       return {
         scope: 'general',
         totalRows: parsed.rows.length,
@@ -5547,6 +5590,14 @@ async function handleStaticApiRequestInner<T>(
         parseRejectedRows: parsed.rejectedRows,
         duplicateRowNos,
         ...dupStats,
+        deltaSummary: {
+          isIdentical: deltaAnalysis.isIdentical,
+          newCount: deltaAnalysis.newCount,
+          modifiedCount: deltaAnalysis.modifiedCount,
+          unchangedCount: deltaAnalysis.unchangedCount,
+          totalIncoming: deltaAnalysis.totalIncoming,
+          changedFieldsSample: deltaAnalysis.changedFieldsSample,
+        },
         sample: parsed.rows.slice(0, 5),
         parsedRows: parsed.rows,
         columnInspection: { ...columnInspection, mapping: activeMapping },
@@ -5561,6 +5612,13 @@ async function handleStaticApiRequestInner<T>(
         detailedDupKey,
         (r) => `${r.shipmentNo || '-'} / ${r.packageNo || '-'} / #${r.itemNo || '-'}`,
       );
+      const deltaAnalysis = analyzeImportDelta({
+        incomingRows: parsed.rows as unknown as Record<string, unknown>[],
+        existingRows: db.detailed as unknown as Record<string, unknown>[],
+        getIncomingKey: (r) => detailedDupKey(r as Partial<DetailedEntry>),
+        getExistingKey: (r) => detailedDupKey(r as Partial<DetailedEntry>),
+        getKeyLabel: (r) => `${String(r.shipmentNo || '-')} / ${String(r.packageNo || '-')} / #${String(r.itemNo || '-')}`,
+      });
       return {
         scope: 'detailed',
         totalRows: parsed.rows.length,
@@ -5568,6 +5626,14 @@ async function handleStaticApiRequestInner<T>(
         parseRejectedRows: parsed.rejectedRows,
         duplicateRowNos,
         ...dupStats,
+        deltaSummary: {
+          isIdentical: deltaAnalysis.isIdentical,
+          newCount: deltaAnalysis.newCount,
+          modifiedCount: deltaAnalysis.modifiedCount,
+          unchangedCount: deltaAnalysis.unchangedCount,
+          totalIncoming: deltaAnalysis.totalIncoming,
+          changedFieldsSample: deltaAnalysis.changedFieldsSample,
+        },
         sample: parsed.rows.slice(0, 5),
         parsedRows: parsed.rows,
         columnInspection: { ...columnInspection, mapping: activeMapping },
@@ -5580,6 +5646,13 @@ async function handleStaticApiRequestInner<T>(
       transitDupKey,
       (r) => `${r.packingListNo || '-'} / ${r.packageNo || '-'}`,
     );
+    const deltaAnalysis = analyzeImportDelta({
+      incomingRows: parsed.rows as unknown as Record<string, unknown>[],
+      existingRows: db.transit as unknown as Record<string, unknown>[],
+      getIncomingKey: (r) => transitDupKey(r as Partial<TransitEntry>),
+      getExistingKey: (r) => transitDupKey(r as Partial<TransitEntry>),
+      getKeyLabel: (r) => `${String(r.packingListNo || '-')} / ${String(r.packageNo || '-')}`,
+    });
     return {
       scope: 'transit',
       totalRows: parsed.rows.length,
@@ -5587,6 +5660,14 @@ async function handleStaticApiRequestInner<T>(
       parseRejectedRows: parsed.rejectedRows,
       duplicateRowNos: 0,
       ...dupStats,
+      deltaSummary: {
+        isIdentical: deltaAnalysis.isIdentical,
+        newCount: deltaAnalysis.newCount,
+        modifiedCount: deltaAnalysis.modifiedCount,
+        unchangedCount: deltaAnalysis.unchangedCount,
+        totalIncoming: deltaAnalysis.totalIncoming,
+        changedFieldsSample: deltaAnalysis.changedFieldsSample,
+      },
       sample: parsed.rows.slice(0, 5),
       parsedRows: parsed.rows,
       columnInspection: { ...columnInspection, mapping: activeMapping },
@@ -5607,7 +5688,12 @@ async function handleStaticApiRequestInner<T>(
     const matrix = Array.isArray(rawMatrix) && rawMatrix.length > 0 ? rawMatrix : csvText ? parseCsvMatrix(csvText) : [];
     const hasEdited = Boolean(editedRows && editedRows.length > 0);
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
-    const dupPolicy: 'replace' | 'skip' = body.duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const dupPolicy: 'replace' | 'skip' | 'delta' =
+      body.duplicateRecordPolicy === 'replace'
+        ? 'replace'
+        : body.duplicateRecordPolicy === 'delta'
+          ? 'delta'
+          : 'skip';
     const resolvedExtended: ExtendedImportScope =
       (body.scope as ExtendedImportScope | undefined) ||
       detectExtendedScope(matrix, sheetName, sectionHint, structuredRecords) ||
@@ -5642,6 +5728,7 @@ async function handleStaticApiRequestInner<T>(
         imported: opResult.imported,
         replaced: opResult.replaced,
         skipped: opResult.skipped,
+        unchangedSkipped: opResult.unchangedSkipped || 0,
         parseRejectedCount: 0,
         blankRowsSkipped: 0,
         transitAutoArrived: opResult.linkedTransit,
@@ -5660,6 +5747,7 @@ async function handleStaticApiRequestInner<T>(
     let imported = 0;
     let replaced = 0;
     let skipped = 0;
+    let unchangedSkipped = 0;
     let blankRowsSkipped = 0;
     let transitAutoArrived = 0;
     const touchedPackings = new Set<string>();
@@ -5729,6 +5817,10 @@ async function handleStaticApiRequestInner<T>(
               canEditAndRetry: true,
               parsedRow: r as unknown as Record<string, unknown>,
             });
+            return;
+          }
+          if (dupPolicy === 'delta' && !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, r as unknown as Record<string, unknown>)) {
+            unchangedSkipped += 1;
             return;
           }
           Object.assign(existing, {
@@ -5837,6 +5929,21 @@ async function handleStaticApiRequestInner<T>(
               canEditAndRetry: true,
               parsedRow: r as unknown as Record<string, unknown>,
             });
+            return;
+          }
+          if (
+            dupPolicy === 'delta' &&
+            !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, {
+              ...cleanDetailedRow,
+              countingUnit: normalizeCountingUnitToFa(cleanDetailedRow.countingUnit),
+              generalDescription: genDesc,
+              itemCategory: resolvedItemCategory,
+              chemicalType: resolvedChemicalType,
+              productionDate: resolvedProdDate,
+              expirationDate: resolvedExpDate,
+            } as unknown as Record<string, unknown>)
+          ) {
+            unchangedSkipped += 1;
             return;
           }
           Object.assign(existing, {
@@ -5950,6 +6057,16 @@ async function handleStaticApiRequestInner<T>(
             db.categories.transitStatus,
           );
           const resolvedStatus = arrived ? 'رسیده' : normalizedStatus;
+          if (
+            dupPolicy === 'delta' &&
+            !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, {
+              ...r,
+              overallStatus: resolvedStatus,
+            } as unknown as Record<string, unknown>)
+          ) {
+            unchangedSkipped += 1;
+            return;
+          }
           Object.assign(existing, {
             ...r,
             id: existing.id,
@@ -6013,6 +6130,7 @@ async function handleStaticApiRequestInner<T>(
       imported,
       replaced,
       skipped,
+      unchangedSkipped,
       parseRejectedCount: collectParseRejects ? rejectedRecords.filter((r) => r.reasonCode === 'missing_required').length : 0,
       blankRowsSkipped,
       transitAutoArrived,
@@ -6027,7 +6145,12 @@ async function handleStaticApiRequestInner<T>(
       throw new StaticEngineError(errMsg('شیتی برای تحلیل و ورود ارسال نشده است', 'No sheets provided for auto-import'), 400);
     }
     const cal = (body.assumedCalendar as CalendarMode) || 'jalali';
-    const dupPolicy: 'replace' | 'skip' = body.duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const dupPolicy: 'replace' | 'skip' | 'delta' =
+      body.duplicateRecordPolicy === 'replace'
+        ? 'replace'
+        : body.duplicateRecordPolicy === 'delta'
+          ? 'delta'
+          : 'skip';
     const actorName = u.fullName || u.username;
 
     if (body.dryRun) {

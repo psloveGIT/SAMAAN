@@ -414,7 +414,7 @@ export function answerLocalWarehouseQuestion(
         for (const u of pl.totalsByUnit) {
           lines.push(
             isFa
-              ? `- **${u.unit}** (${f(u.rowCount)} ردیف): موجودی انبار اصلی **${f(u.mainWarehouseStockSum)}** · موجودی پیمانکار **${f(u.contractorStockSum)}** · مقدار پکینگ ${f(u.packingQtySum)} · کسری ${f(u.shortageSum)}`
+              ? `- **${u.unit}** (${f(u.rowCount)} ردیف): موجودی کارفرما **${f(u.mainWarehouseStockSum)}** · موجودی پیمانکار **${f(u.contractorStockSum)}** · مقدار پکینگ ${f(u.packingQtySum)} · کسری ${f(u.shortageSum)}`
               : `- **${u.unit}** (${f(u.rowCount)} rows): Main Stock **${f(u.mainWarehouseStockSum)}** · Contractor Stock **${f(u.contractorStockSum)}** · Packing Qty ${f(u.packingQtySum)} · Shortage ${f(u.shortageSum)}`,
           );
         }
@@ -470,7 +470,7 @@ export function answerLocalWarehouseQuestion(
         for (const u of res.totalsByUnit) {
           lines.push(
             isFa
-              ? `- **واحد ${u.unit}** (${f(u.rowCount)} ردیف): موجودی انبار اصلی **${f(u.mainWarehouseStockSum)} ${u.unit}** | موجودی پیمانکار **${f(u.contractorStockSum)} ${u.unit}** | کل موجودی سایت **${f(u.totalSiteStockSum)} ${u.unit}** (مقدار پکینگ: ${f(u.packingQtySum)} · مقدار واقعی: ${f(u.actualQtySum)}${u.shortageSum > 0 ? ` · کسری: ${f(u.shortageSum)}` : ''}${u.damagedQtySum > 0 ? ` · آسیب‌دیده: ${f(u.damagedQtySum)}` : ''})`
+              ? `- **واحد ${u.unit}** (${f(u.rowCount)} ردیف): موجودی کارفرما **${f(u.mainWarehouseStockSum)} ${u.unit}** | موجودی پیمانکار **${f(u.contractorStockSum)} ${u.unit}** | کل موجودی سایت **${f(u.totalSiteStockSum)} ${u.unit}** (مقدار پکینگ: ${f(u.packingQtySum)} · مقدار واقعی: ${f(u.actualQtySum)}${u.shortageSum > 0 ? ` · کسری: ${f(u.shortageSum)}` : ''}${u.damagedQtySum > 0 ? ` · آسیب‌دیده: ${f(u.damagedQtySum)}` : ''})`
               : `- **Unit: ${u.unit}** (${f(u.rowCount)} rows): Main Warehouse Stock **${f(u.mainWarehouseStockSum)} ${u.unit}** | Contractor Stock **${f(u.contractorStockSum)} ${u.unit}** | Total Site Stock **${f(u.totalSiteStockSum)} ${u.unit}** (Packing: ${f(u.packingQtySum)} · Actual: ${f(u.actualQtySum)}${u.shortageSum > 0 ? ` · Shortage: ${f(u.shortageSum)}` : ''}${u.damagedQtySum > 0 ? ` · Damaged: ${f(u.damagedQtySum)}` : ''})`,
           );
         }
@@ -650,7 +650,7 @@ export function answerLocalWarehouseQuestion(
     const lines = agg.groups.map((g) => {
       const row = g as { group: string; rows: number; mainStockRows: number; contractorStockRows: number };
       return isFa
-        ? `- **${row.group}:** ${f(row.rows)} ردیف (دارای موجودی انبار اصلی: **${f(row.mainStockRows)}** ردیف · موجودی پیمانکار: **${f(row.contractorStockRows)}** ردیف)`
+        ? `- **${row.group}:** ${f(row.rows)} ردیف (دارای موجودی کارفرما: **${f(row.mainStockRows)}** ردیف · موجودی پیمانکار: **${f(row.contractorStockRows)}** ردیف)`
         : `- **${row.group}:** ${f(row.rows)} rows (Main Stock: **${f(row.mainStockRows)}** rows · Contractor Stock: **${f(row.contractorStockRows)}** rows)`;
     });
     if (lines.length > 0) {
@@ -663,7 +663,7 @@ export function answerLocalWarehouseQuestion(
     const lines = agg.groups.map((g) => {
       const row = g as { group: string; rows: number; mainStockRows: number; contractorStockRows: number };
       return isFa
-        ? `- **${row.group}:** ${f(row.rows)} ردیف (موجودی انبار اصلی: ${f(row.mainStockRows)} ردیف · پیمانکار: ${f(row.contractorStockRows)} ردیف)`
+        ? `- **${row.group}:** ${f(row.rows)} ردیف (موجودی کارفرما: ${f(row.mainStockRows)} ردیف · پیمانکار: ${f(row.contractorStockRows)} ردیف)`
         : `- **${row.group}:** ${f(row.rows)} rows (Main Stock: ${f(row.mainStockRows)} · Contractor: ${f(row.contractorStockRows)})`;
     });
     if (lines.length > 0) {

@@ -115,7 +115,7 @@ export const ShortcutsSettingsModal: React.FC<ShortcutsSettingsModalProps> = ({ 
   const categoryLabels: Record<ShortcutCategory | 'all', string> = useMemo(
     () => ({
       all: isFa ? 'همه کلیدها' : 'All Shortcuts',
-      editing: isFa ? 'ویرایش و بازگردانی (اکسل)' : 'Editing & Undo/Redo',
+      editing: isFa ? 'ویرایش و بازگردانی' : 'Editing & Undo/Redo',
       table: isFa ? 'جست‌وجو و عملیات جدول' : 'Search & Table Actions',
       navigation: isFa ? 'ناوبری سریع بخش‌ها' : 'Quick Navigation',
       workspace: isFa ? 'ابزارها و محیط کار' : 'Workspace & Tools',
@@ -177,7 +177,7 @@ export const ShortcutsSettingsModal: React.FC<ShortcutsSettingsModalProps> = ({ 
             </div>
             <div className="min-w-0">
               <h3 className="text-base font-bold text-[var(--text-primary)] truncate">
-                {isFa ? 'کلیدهای میانبر صفحه‌کلید (مشابه اکسل)' : 'Excel-Style Keyboard Shortcuts'}
+                {isFa ? 'تنظیمات کلیدهای میانبر صفحه‌کلید' : 'Keyboard Shortcuts Settings'}
               </h3>
               <p className="text-xs text-[var(--text-muted)] truncate">
                 {isFa
@@ -437,8 +437,8 @@ export const ShortcutsSettingsModal: React.FC<ShortcutsSettingsModalProps> = ({ 
               notify(
                 'info',
                 isFa
-                  ? 'تمامی کلیدهای میانبر به حالت پیش‌فرض اکسل بازگردانده شدند.'
-                  : 'All shortcuts reset to Excel defaults.',
+                  ? 'تمامی کلیدهای میانبر به حالت پیش‌فرض سامانه بازگردانده شدند.'
+                  : 'All shortcuts reset to system defaults.',
               );
             }}
             className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] disabled:opacity-45 disabled:pointer-events-none text-xs font-medium text-[var(--text-secondary)] flex items-center gap-1.5 transition-colors"
@@ -446,8 +446,8 @@ export const ShortcutsSettingsModal: React.FC<ShortcutsSettingsModalProps> = ({ 
             <RotateCcw className="w-3.5 h-3.5" />
             <span>
               {isFa
-                ? `بازگردانی همه به پیش‌فرض اکسل${customizedCount > 0 ? ` (${customizedCount})` : ''}`
-                : `Reset All to Excel Defaults${customizedCount > 0 ? ` (${customizedCount})` : ''}`}
+                ? `بازگردانی همه به حالت پیش‌فرض${customizedCount > 0 ? ` (${customizedCount})` : ''}`
+                : `Reset All to Defaults${customizedCount > 0 ? ` (${customizedCount})` : ''}`}
             </span>
           </button>
 

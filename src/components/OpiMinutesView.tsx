@@ -16,6 +16,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -962,7 +963,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiRequest<OpiMinutesApiResponse>('/api/opi-minutes');
+      const res = await apiRequest<OpiMinutesApiResponse>('/api/opi-minutes?compact=1&limit=100&onlyDiscrepancy=1');
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -974,6 +975,29 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   useEffect(() => {
     loadData();
   }, [loadData, refreshSignal]);
+
+  // Fetch specific packing items on demand for OPI Minutes or OSDR filter
+  useEffect(() => {
+    const targetPk = packingListNo || osdrPackingNo;
+    if (!targetPk) return;
+    let active = true;
+    apiRequest<OpiMinutesApiResponse>(`/api/opi-minutes?compact=1&packing=${encodeURIComponent(targetPk)}`)
+      .then((fetched) => {
+        if (!active) return;
+        setData((prev) => {
+          if (!prev) return fetched;
+          const detIds = new Set(prev.detailedItems.map((d) => d.id));
+          const genIds = new Set((prev.generalEntries || []).map((g) => g.id));
+          return {
+            ...prev,
+            detailedItems: [...prev.detailedItems, ...(fetched.detailedItems || []).filter((d) => !detIds.has(d.id))],
+            generalEntries: [...(prev.generalEntries || []), ...(fetched.generalEntries || []).filter((g) => !genIds.has(g.id))],
+          };
+        });
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [packingListNo, osdrPackingNo]);
 
   const syncFromPacking = useCallback(
     (pk: string, pkgs: string[]) => {
@@ -1457,10 +1481,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 #samaan-mom-print-root { display: none !important; }
               }
               @media print {
-                @page {
-                  size: A4 portrait;
-                  margin: 7mm;
-                }
+                ${buildPrintPageRule('portrait', isFa, '7mm')}
                 body > *:not(#samaan-mom-print-root) {
                   display: none !important;
                 }
@@ -1509,10 +1530,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                 #samaan-mer-print-root { display: none !important; }
               }
               @media print {
-                @page {
-                  size: A4 portrait;
-                  margin: 7mm;
-                }
+                ${buildPrintPageRule('portrait', isFa, '7mm')}
                 body > *:not(#samaan-mer-print-root) {
                   display: none !important;
                 }
@@ -2317,7 +2335,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                           </td>
                         </tr>
                       ) : (
-                        discrepancyItems.map((item) => {
+                        discrepancyItems.slice(0, 80).map((item) => {
                           const discType = getDiscrepancyType(item);
                           return (
                             <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">

@@ -66,7 +66,7 @@ export const DETAILED_FILTER_FIELDS: FilterFieldOption[] = [
   { key: 'actualQty', labelFa: 'مقدار واقعی', labelEn: 'Actual Qty', isNumeric: true },
   { key: 'shortage', labelFa: 'کسری', labelEn: 'Shortage', isNumeric: true },
   { key: 'damagedQty', labelFa: 'آسیب دیده', labelEn: 'Damaged Qty', isNumeric: true },
-  { key: 'mapnaInventory', labelFa: 'موجودی انبار اصلی', labelEn: 'Main Warehouse Stock', isNumeric: true },
+  { key: 'mapnaInventory', labelFa: 'موجودی کارفرما', labelEn: 'Employer Stock', isNumeric: true },
   { key: 'contractorInventory', labelFa: 'موجودی پیمانکار', labelEn: 'Contractor Stock', isNumeric: true },
   { key: 'storageLocation', labelFa: 'محل نگهداری', labelEn: 'Storage Location' },
   { key: 'opiNo', labelFa: 'شماره دعوتنامه', labelEn: 'Invitation No.' },

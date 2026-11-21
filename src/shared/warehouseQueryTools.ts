@@ -1608,7 +1608,7 @@ export function formatDetailedItemsMarkdownTable(items: DetailedSearchItemView[]
   const f = (n: number) => formatDisplayNumber(n, lang);
 
   const header = isFa
-    ? '| پکینگ / نگله | شرح کالا | سایز | موجودی انبار اصلی | موجودی پیمانکار | کسری | محل نگهداری |'
+    ? '| پکینگ / نگله | شرح کالا | سایز | موجودی کارفرما | موجودی پیمانکار | کسری | محل نگهداری |'
     : '| Packing / Pkg | Description | Size | Main Stock | Contractor Stock | Shortage | Location |';
   const sep = '|---|---|---|---|---|---|---|';
 

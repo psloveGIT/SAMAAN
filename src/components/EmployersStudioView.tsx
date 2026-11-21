@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
   Building2,
   Check,
+  CheckCircle2,
   Copy,
   Download,
   FilePlus2,
@@ -9,10 +11,12 @@ import {
   FileText,
   FileUp,
   ImagePlus,
+  Layers,
   LayoutTemplate,
   Plus,
   RotateCcw,
   Save,
+  Sparkles,
   Star,
   Trash2,
   Upload,
@@ -29,6 +33,7 @@ import {
   sanitizeEmployerProfile,
 } from '../shared/employers.ts';
 import type { ResolvedEmployerProfile } from '../shared/employers.ts';
+import { sanitizeIranPhoneInput, validateAndFormatIranPhone } from '../shared/iranPhone.ts';
 import type {
   BuiltInFormKey,
   EmployerFormTemplate,
@@ -43,6 +48,7 @@ import {
   parseExcelSheetModel,
   parseUploadedFormFile,
   SAMAAN_BINDABLE_FIELDS,
+  UPLOADED_FORM_DATA_SOURCE_OPTIONS,
 } from '../shared/uploadedFormEngine.ts';
 import {
   OfficialExtraMetaStrip,
@@ -188,13 +194,15 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     const first = employers[0];
     return first ? structuredClone(first) : createEmptyDraft('');
   });
-  const [studioTab, setStudioTab] = useState<'profile' | 'builtin' | 'custom'>('profile');
+  const [studioTab, setStudioTab] = useState<'profile' | 'forms'>('profile');
+  const [formsMode, setFormsMode] = useState<'builtin' | 'uploaded'>('builtin');
   const [selectedFormKey, setSelectedFormKey] = useState<BuiltInFormKey>('siteEntry');
   const [selectedUploadedFormId, setSelectedUploadedFormId] = useState<string>(
     () => employers[0]?.uploadedForms?.[0]?.id || '',
   );
   const [uploadingForm, setUploadingForm] = useState(false);
   const [newTokenName, setNewTokenName] = useState('');
+  const [phoneError, setPhoneError] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -204,9 +212,11 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     const found = employers.find((e) => e.id === selectedId);
     if (found && !dirty) {
       setDraft(structuredClone(found));
+      setPhoneError('');
     } else if (!found && employers.length > 0 && !dirty) {
       setSelectedId(employers[0].id);
       setDraft(structuredClone(employers[0]));
+      setPhoneError('');
     }
   }, [employers, selectedId, dirty]);
 
@@ -214,6 +224,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     setSelectedId(emp.id);
     setDraft(structuredClone(emp));
     setSelectedUploadedFormId(emp.uploadedForms?.[0]?.id || '');
+    setPhoneError('');
     setDirty(false);
     setConfirmDeleteId(null);
   };
@@ -223,6 +234,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     setDraft(createEmptyDraft(''));
     setSelectedUploadedFormId('');
     setStudioTab('profile');
+    setPhoneError('');
     setDirty(true);
     setConfirmDeleteId(null);
   };
@@ -232,11 +244,12 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     setDirty(true);
   };
 
-  const handleUploadLogos = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  // Snapshot File[] synchronously before input value reset so multi-file selection adds ALL logos
+  const handleUploadLogos = async (fileList: File[]) => {
+    if (!fileList || fileList.length === 0) return;
     const added: EmployerLogoAsset[] = [];
-    for (let i = 0; i < files.length; i += 1) {
-      const file = files[i];
+    for (let i = 0; i < fileList.length; i += 1) {
+      const file = fileList[i];
       if (file.size > 4 * 1024 * 1024) {
         notify('warning', isFa ? `حجم فایل ${file.name} بیش از ۴ مگابایت است.` : `${file.name} exceeds 4MB.`);
         continue;
@@ -245,7 +258,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
         const dataUrl = await processLogoImageFile(file);
         const baseName = file.name.replace(/\.[^.]+$/, '') || `لوگو ${i + 1}`;
         added.push({
-          id: `logo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `logo-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
           label: baseName,
           dataUrl,
           isDefault: false,
@@ -274,6 +287,15 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
       setStudioTab('profile');
       return;
     }
+    const phoneCheck = validateAndFormatIranPhone(draft.phone || '');
+    if (!phoneCheck.valid) {
+      const msg = isFa ? phoneCheck.errorFa || 'فرمت شماره تلفن ایران معتبر نیست.' : phoneCheck.errorEn || 'Invalid Iranian phone number.';
+      setPhoneError(msg);
+      notify('error', msg);
+      setStudioTab('profile');
+      return;
+    }
+    setPhoneError('');
     setSaving(true);
     try {
       const payload: Partial<EmployerProfile> = {
@@ -281,6 +303,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
         nameFa: draft.nameFa.trim(),
         companyFullName: draft.companyFullName.trim() || draft.nameFa.trim(),
         shortName: draft.shortName.trim() || draft.nameFa.trim(),
+        phone: phoneCheck.formatted,
       };
       let saved: EmployerProfile;
       if (selectedId === '__new__' || !draft.id) {
@@ -432,23 +455,27 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
   const uploadedForms = draft.uploadedForms || [];
   const activeUploadedForm =
     uploadedForms.find((f) => f.id === selectedUploadedFormId) || uploadedForms[0] || null;
+  const deferredUploadedForm = useDeferredValue(activeUploadedForm);
 
+  // Only re-parse Excel sheet metadata when the binary file or selected worksheet changes (never on typing title/code!)
+  const activeExcelBase64 = activeUploadedForm?.fileType === 'excel' ? activeUploadedForm.fileDataBase64 : '';
+  const activeExcelSheetName = activeUploadedForm?.fileType === 'excel' ? activeUploadedForm.sheetName : undefined;
   const activeExcelSheetMeta = useMemo(() => {
-    if (!activeUploadedForm || activeUploadedForm.fileType !== 'excel') return null;
+    if (!activeExcelBase64) return null;
     try {
-      return parseExcelSheetModel(activeUploadedForm.fileDataBase64, activeUploadedForm.sheetName);
+      return parseExcelSheetModel(activeExcelBase64, activeExcelSheetName);
     } catch {
       return null;
     }
-  }, [activeUploadedForm]);
+  }, [activeExcelBase64, activeExcelSheetName]);
 
-  const handleUploadCompanyFormFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  const handleUploadCompanyFormFiles = async (fileList: File[]) => {
+    if (!fileList || fileList.length === 0) return;
     setUploadingForm(true);
     try {
       const createdList: EmployerUploadedForm[] = [];
-      for (let i = 0; i < files.length; i += 1) {
-        const file = files[i];
+      for (let i = 0; i < fileList.length; i += 1) {
+        const file = fileList[i];
         if (file.size > 8 * 1024 * 1024) {
           notify('warning', isFa ? `حجم فایل ${file.name} بیش از ۸ مگابایت است.` : `${file.name} exceeds 8MB.`);
           continue;
@@ -469,8 +496,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
         notify(
           'success',
           isFa
-            ? `${createdList.length} فرم رسمی شرکت اضافه شد. لطفاً دکمه «ذخیره تغییرات» را بزنید.`
-            : `Uploaded ${createdList.length} form(s). Remember to save.`,
+            ? `${createdList.length} فرم رسمی شرکت اضافه و تحلیل هوشمند شد. لطفاً بخش مرتبط را تأیید و «ذخیره تغییرات» را بزنید.`
+            : `Uploaded & analyzed ${createdList.length} form(s). Confirm target section and save.`,
         );
       }
     } finally {
@@ -506,14 +533,20 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     });
   };
 
+  const draftContractRef = draft.contractRef;
+  const draftCompanyFullName = draft.companyFullName;
+  const draftNameFa = draft.nameFa;
+  const activeUploadedFormCode = activeUploadedForm?.formCode;
+
   const samplePreviewData = useMemo(() => {
     const headerTokens: Record<string, string> = {
       projectName: activeProject?.name || 'نیروگاه نمونه (پیش‌نمایش)',
-      contractNo: activeProject?.code || draft.contractRef || 'CNT-1404',
-      employerName: draft.companyFullName || draft.nameFa || 'کارفرما',
+      contractNo: activeProject?.code || draftContractRef || 'CNT-1404',
+      employerName: draftCompanyFullName || draftNameFa || 'کارفرما',
       todayDate: '1404/02/15',
-      docNo: activeUploadedForm?.formCode || 'FRM-001',
+      docNo: activeUploadedFormCode || 'FRM-001',
       minutesNo: '404-012',
+      employerEntryMinutesNo: 'EMP-404-08',
       releaseNoteNo: 'RN-8841',
       packingListNo: 'PK-1042-A',
       packageNo: 'PKG-03',
@@ -529,7 +562,31 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
       driverName: 'آقای رضایی',
       grossWeight: '4,250',
       netWeight: '3,980',
+      weighbridgeWeight: '4,260',
       dimensions: '3.2 × 1.8 × 1.5',
+      opiNo: 'OPI-404-021',
+      opiDate: '1404/02/12',
+      merNo: 'MER-404-04',
+      merStatus: 'باز',
+      gcvReceiptNo: 'GCV-404-09',
+      gcvDeliveredQty: '2',
+      receiver: 'واحد نصب توربین',
+      mivContractorNo: 'MIV-404-17',
+      mivContractorDate: '1404/02/14',
+      mivContractorQty: '1',
+      smrContractorNo: 'SMR-C-03',
+      smrContractorDate: '1404/02/15',
+      smrContractorQty: '0',
+      smrMapnaNo: 'SMR-E-01',
+      smrMapnaDate: '1404/02/15',
+      smrMapnaQty: '0',
+      smrDeliverer: 'مهندس محمدی',
+      repNo: 'REP-404-02',
+      repStatus: 'تأیید شده',
+      repReprocured: 'تأمین شده',
+      repDescription: 'جایگزینی شیر هم‌تراز',
+      mapnaInventory: '1',
+      contractorInventory: '1',
       overallStatus: 'تحویل در کارگاه',
       remarks: 'تست خودکار تطبیق ارتفاع سطر با متن طولانی تجهیز جهت بررسی نمایش صحیح و چاپ A4 بدون برش متن در سلول',
     };
@@ -539,12 +596,14 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
         rowNo: '1',
         itemNo: '001',
         itemCode: 'TUR-VALV-402',
+        size: '8" CL600',
         description:
           'شیر کنترل فشار اصلی توربین بخار با فلنج کلاس ۶۰۰ و عملگر الکتریکی کامل همراه با متعلقات نصب و دفترچه راهنما',
         packingQty: '2',
         actualQty: '2',
         countingUnit: 'دستگاه',
         shortage: '0',
+        surplus: '0',
         damagedQty: '0',
         storageLocation: 'سالن A - ردیف ۳',
       },
@@ -553,17 +612,19 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
         rowNo: '2',
         itemNo: '002',
         itemCode: 'GSK-109',
+        size: 'DN200',
         description: 'واشر آب‌بندی فشار بالا',
         packingQty: '10',
         actualQty: '10',
         countingUnit: 'عدد',
         shortage: '0',
+        surplus: '0',
         damagedQty: '0',
         storageLocation: 'قفسه B12',
       },
     ];
     return { headerTokens, lineRows };
-  }, [activeProject?.name, activeProject?.code, activeUploadedForm?.formCode, draft]);
+  }, [activeProject?.name, activeProject?.code, activeUploadedFormCode, draftContractRef, draftCompanyFullName, draftNameFa]);
 
   const logoSelectorGrid = (
     selectedLogoId: string | undefined,
@@ -832,7 +893,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
           </div>
         </div>
 
-        {/* Studio Section Tabs */}
+        {/* Studio Section Tabs (Merged Built-in & Uploaded Corporate Forms into Tab 2) */}
         <div className="px-4 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)] flex flex-wrap gap-1">
           {[
             {
@@ -841,19 +902,15 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
               label: isFa ? '۱. اطلاعات پایه و گالری لوگوها' : '1. Identity & Multi-Logos',
             },
             {
-              key: 'builtin' as const,
+              key: 'forms' as const,
               icon: <LayoutTemplate className="w-3.5 h-3.5" />,
-              label: isFa ? '۲. طراحی و لوگوی فرم‌های عملیاتی' : '2. Design Operational Forms',
-            },
-            {
-              key: 'custom' as const,
-              icon: <FileUp className="w-3.5 h-3.5" />,
-              label: isFa ? '۳. فرم‌های آپلودی شرکتی (Word / Excel / PDF)' : '3. Uploaded Company Forms',
+              label: isFa ? '۲. مدیریت، طراحی و آپلود فرم‌ها' : '2. Forms Design & Corporate Uploads',
             },
           ].map((tab) => (
             <button
               key={tab.key}
               type="button"
+              data-testid={`studio-tab-${tab.key}`}
               onClick={() => setStudioTab(tab.key)}
               className={`h-10 px-3 text-xs font-semibold border-b-2 flex items-center gap-1.5 transition-colors ${
                 studioTab === tab.key
@@ -986,15 +1043,42 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'تلفن / فکس' : 'Phone'}
+                  {isFa ? 'تلفن / فکس (فرمت ایران)' : 'Phone (Iran Format)'}
                 </label>
                 <input
-                  type="text"
+                  type="tel"
                   dir="ltr"
+                  data-testid="employer-phone-input"
                   value={draft.phone || ''}
-                  onChange={(e) => patchDraft((p) => ({ ...p, phone: e.target.value }))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                  placeholder="021-88776655 / 0912-345-6789"
+                  onChange={(e) => {
+                    const sanitized = sanitizeIranPhoneInput(e.target.value);
+                    patchDraft((p) => ({ ...p, phone: sanitized }));
+                    if (phoneError) {
+                      const chk = validateAndFormatIranPhone(sanitized);
+                      if (chk.valid) setPhoneError('');
+                    }
+                  }}
+                  onBlur={() => {
+                    const chk = validateAndFormatIranPhone(draft.phone || '');
+                    if (!chk.valid) {
+                      setPhoneError(isFa ? chk.errorFa || '' : chk.errorEn || '');
+                    } else {
+                      setPhoneError('');
+                      if (chk.formatted !== (draft.phone || '')) {
+                        patchDraft((p) => ({ ...p, phone: chk.formatted }));
+                      }
+                    }
+                  }}
+                  className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono ${
+                    phoneError ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)]'
+                  }`}
                 />
+                {phoneError && (
+                  <div data-testid="employer-phone-error" className="text-[10.5px] text-[var(--status-danger)] mt-1">
+                    {phoneError}
+                  </div>
+                )}
               </div>
               <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] pt-5 cursor-pointer">
                 <input
@@ -1050,12 +1134,14 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                   <span>{isFa ? 'آپلود لوگو (تکی یا چندتایی)' : 'Upload Logo(s)'}</span>
                   <input
                     type="file"
+                    data-testid="employer-logo-upload-input"
                     accept="image/*"
                     multiple
                     className="hidden"
                     onChange={(e) => {
-                      handleUploadLogos(e.target.files);
+                      const files = Array.from(e.target.files || []);
                       e.currentTarget.value = '';
+                      void handleUploadLogos(files);
                     }}
                   />
                 </label>
@@ -1145,9 +1231,57 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
           </div>
         )}
 
-        {/* Tab 2: Built-In Form Designer */}
-        {studioTab === 'builtin' && (
+        {/* Tab 2: Unified Forms Management (Built-In Operational Designer + Uploaded Corporate Forms) */}
+        {studioTab === 'forms' && (
           <div className="p-5 space-y-5">
+            {/* Unified Mode Switcher inside Tab 2 */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]">
+              <div className="inline-flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  data-testid="forms-mode-builtin"
+                  onClick={() => setFormsMode('builtin')}
+                  className={`h-9 px-3.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                    formsMode === 'builtin'
+                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] shadow-xs'
+                      : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  <LayoutTemplate className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'طراحی و لوگوی فرم‌های عملیاتی' : 'Operational Forms Designer'}</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="forms-mode-uploaded"
+                  onClick={() => setFormsMode('uploaded')}
+                  className={`h-9 px-3.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                    formsMode === 'uploaded'
+                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] shadow-xs'
+                      : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  <FileUp className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'فرم‌های آپلودی شرکتی (Excel / Word / PDF)' : 'Uploaded Company Forms'}</span>
+                  {uploadedForms.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-black/15 text-[10px] font-mono">
+                      {uploadedForms.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+              <div className="text-[11px] text-[var(--text-muted)]">
+                {formsMode === 'builtin'
+                  ? isFa
+                    ? 'سفارشی‌سازی چیدمان، لوگو، امضاها و ستون‌های ۱۱ فرم استاندارد سامانه'
+                    : 'Customize logos, signatures, and columns for built-in forms'
+                  : isFa
+                    ? 'آپلود فرم رسمی شرکت، اتصال چندمنبعی به بخش‌های سامانه و تطبیق خودکار فرمول‌ها'
+                    : 'Upload official corporate files with multi-source data binding and formula detection'}
+              </div>
+            </div>
+
+            {formsMode === 'builtin' && (
+              <div className="space-y-5">
             {/* Built-in Form Selector Strip */}
             <div className="flex flex-wrap gap-1.5">
               {BUILT_IN_FORM_DEFINITIONS.map((def) => {
@@ -1633,12 +1767,12 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                 </div>
               </div>
             </div>
-          </div>
-        )}
+              </div>
+            )}
 
-        {/* Tab 3: Company Uploaded Forms (Excel, Word, PDF, Image) */}
-        {studioTab === 'custom' && (
-          <div className="p-5 space-y-4">
+            {/* Mode 2: Company Uploaded Forms (Excel, Word, PDF, Image) */}
+            {formsMode === 'uploaded' && (
+              <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-1.5">
                 {uploadedForms.map((uf) => (
@@ -1672,13 +1806,15 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                   </span>
                   <input
                     type="file"
+                    data-testid="company-form-upload-input"
                     accept=".xlsx,.xls,.xlsm,.csv,.docx,.doc,.pdf,.png,.jpg,.jpeg,.webp,.svg"
                     multiple
                     disabled={uploadingForm}
                     className="hidden"
                     onChange={(e) => {
-                      handleUploadCompanyFormFiles(e.target.files);
+                      const files = Array.from(e.target.files || []);
                       e.currentTarget.value = '';
+                      void handleUploadCompanyFormFiles(files);
                     }}
                   />
                 </label>
@@ -1695,8 +1831,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                 </div>
                 <p className="text-xs text-[var(--text-muted)] max-w-xl mx-auto leading-relaxed">
                   {isFa
-                    ? 'فایل‌های آماده و کددار شرکت را با فرمت Excel (.xlsx)، Word (.docx)، PDF یا تصویر وارد کنید. می‌توانید متغیرهای {{نام_فیلد}} یا ستون‌های اکسل را به داده‌های سامانه متصل کرده، تنظیمات پرینت A4 و تطبیق خودکار ارتفاع سطر را کالیبره کنید.'
-                    : 'Upload official coded Excel, Word, PDF, or Image forms, bind SAMAAN fields, and calibrate A4 print settings with automatic Excel-style row height scaling.'}
+                    ? 'فایل‌های آماده و کددار شرکت را با فرمت Excel (.xlsx)، Word (.docx)، PDF یا تصویر وارد کنید. سامانه به‌صورت هوشمند فرمول‌های اکسل، بخش عملیاتی متناظر و اتصال داده‌ها به یک یا چند بخش مختلف را شناسایی می‌کند.'
+                    : 'Upload official coded Excel, Word, PDF, or Image forms. The system detects formulas, matching operational section, and multi-source bindings.'}
                 </p>
               </div>
             ) : (
@@ -1720,7 +1856,91 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     </button>
                   </div>
 
-                  {/* Form Identity & Data Source */}
+                  {/* Target App Operational Section Auto-Detection & User Confirmation */}
+                  <div
+                    data-testid="target-section-card"
+                    className={`p-3 rounded-lg border space-y-2 ${
+                      activeUploadedForm.targetSectionConfirmed
+                        ? 'border-emerald-500/40 bg-emerald-500/5'
+                        : 'border-amber-500/40 bg-amber-500/5'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--text-primary)]">
+                        {activeUploadedForm.targetSectionConfirmed ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        )}
+                        <span>
+                          {isFa
+                            ? 'تطبیق با بخش عملیاتی متناظر در برنامه (تشخیص هوشمند + تأیید کاربر):'
+                            : 'Target Operational Section in App (Auto-Detect + Confirm):'}
+                        </span>
+                      </div>
+                      {activeUploadedForm.targetSectionConfirmed && (
+                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                          {isFa ? 'تأیید شده' : 'Confirmed'}
+                        </span>
+                      )}
+                    </div>
+                    {(activeUploadedForm.targetSectionReasonFa || activeUploadedForm.targetSectionReasonEn) && (
+                      <div className="text-[10.5px] text-[var(--text-secondary)]">
+                        {isFa ? activeUploadedForm.targetSectionReasonFa : activeUploadedForm.targetSectionReasonEn}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        data-testid="target-section-select"
+                        value={activeUploadedForm.targetAppSection || 'custom_standalone'}
+                        onChange={(e) =>
+                          patchUploadedForm((f) => ({
+                            ...f,
+                            targetAppSection: e.target.value as BuiltInFormKey | 'custom_standalone',
+                            targetSectionConfirmed: true,
+                          }))
+                        }
+                        className="flex-1 min-w-[200px] h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                      >
+                        <option value="custom_standalone">
+                          {isFa ? 'فرم اختصاصی مستقل (در منوی فرم‌های اختصاصی کارفرما)' : 'Standalone Custom Form'}
+                        </option>
+                        {BUILT_IN_FORM_DEFINITIONS.map((def) => (
+                          <option key={def.key} value={def.key}>
+                            {isFa ? `بخش: ${def.titleFa}` : `Section: ${def.titleEn}`}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        data-testid="confirm-target-section-btn"
+                        onClick={() =>
+                          patchUploadedForm((f) => ({
+                            ...f,
+                            targetSectionConfirmed: !f.targetSectionConfirmed,
+                          }))
+                        }
+                        className={`h-8 px-3 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors ${
+                          activeUploadedForm.targetSectionConfirmed
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]'
+                        }`}
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>
+                          {activeUploadedForm.targetSectionConfirmed
+                            ? isFa
+                              ? 'انطباق تأیید شد'
+                              : 'Confirmed'
+                            : isFa
+                              ? 'تأیید انطباق بخش'
+                              : 'Confirm Match'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Form Identity */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
@@ -1728,6 +1948,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                       </label>
                       <input
                         type="text"
+                        data-testid="uploaded-form-title-input"
                         value={activeUploadedForm.titleFa}
                         onChange={(e) =>
                           patchUploadedForm((f) => ({ ...f, titleFa: e.target.value }))
@@ -1750,29 +1971,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                         className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
                       />
                     </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                        {isFa ? 'منبع خواندن اطلاعات از سامانه' : 'Data Source Binding'}
-                      </label>
-                      <select
-                        value={activeUploadedForm.dataSource}
-                        onChange={(e) =>
-                          patchUploadedForm((f) => ({
-                            ...f,
-                            dataSource: e.target.value as UploadedFormDataSource,
-                          }))
-                        }
-                        className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                      >
-                        <option value="general">{isFa ? 'ثبت کلی تجهیزات و پکینگ لیست' : 'General / Packing List'}</option>
-                        <option value="siteEntry">{isFa ? 'صورتجلسات ورود کالا به کارگاه' : 'Site Entry Minutes'}</option>
-                        <option value="detailed">{isFa ? 'ثبت جزئیات تجهیزات (اقلام)' : 'Detailed Equipment Items'}</option>
-                        <option value="transit">{isFa ? 'تجهیزات در راه' : 'In-Transit Equipment'}</option>
-                        <option value="manual">{isFa ? 'ورود دستی مقادیر در زمان پرینت' : 'Manual Entry Only'}</option>
-                      </select>
-                    </div>
                     {activeUploadedForm.fileType === 'excel' && activeExcelSheetMeta && (
-                      <div>
+                      <div className="sm:col-span-2">
                         <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
                           {isFa ? 'شیت فعال اکسل' : 'Active Worksheet'}
                         </label>
@@ -1785,6 +1985,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                               ...f,
                               sheetName: nextSheet,
                               detectedTokens: parsed.detectedTokens,
+                              detectedFormulas: parsed.detectedFormulas,
                             }));
                           }}
                           dir="ltr"
@@ -1799,6 +2000,163 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                       </div>
                     )}
                   </div>
+
+                  {/* Multi-Source Data Binding Selector (1 to 5 system sections simultaneously) */}
+                  <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2.5">
+                    {(() => {
+                      const currentSources: UploadedFormDataSource[] =
+                        activeUploadedForm.dataSources && activeUploadedForm.dataSources.length > 0
+                          ? activeUploadedForm.dataSources
+                          : [activeUploadedForm.dataSource || 'general'];
+                      const setSourcesCount = (count: number) => {
+                        const clamped = Math.min(5, Math.max(1, count));
+                        const next = [...currentSources];
+                        const fallbacks: UploadedFormDataSource[] = ['general', 'detailed', 'siteEntry', 'miv', 'gcv'];
+                        while (next.length < clamped) {
+                          const candidate = fallbacks.find((s) => !next.includes(s)) || 'detailed';
+                          next.push(candidate);
+                        }
+                        const trimmed = next.slice(0, clamped);
+                        patchUploadedForm((f) => ({
+                          ...f,
+                          dataSource: trimmed[0],
+                          dataSources: trimmed,
+                        }));
+                      };
+                      return (
+                        <>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[11px] font-bold text-[var(--text-primary)] flex items-center gap-1.5">
+                              <Layers className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                              <span>
+                                {isFa
+                                  ? 'منابع خواندن اطلاعات از سامانه (امکان اتصال همزمان به چند بخش):'
+                                  : 'Multi-Source Data Binding (Bind 1 to 5 System Sections):'}
+                              </span>
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <label className="text-[10.5px] text-[var(--text-muted)]">
+                                {isFa ? 'تعداد منابع:' : 'Sources:'}
+                              </label>
+                              <select
+                                data-testid="multi-source-count-select"
+                                value={currentSources.length}
+                                onChange={(e) => setSourcesCount(Number(e.target.value) || 1)}
+                                className="h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
+                              >
+                                {[1, 2, 3, 4, 5].map((n) => (
+                                  <option key={n} value={n}>
+                                    {n}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            {currentSources.map((src, sIdx) => (
+                              <div key={`${sIdx}-${src}`} className="flex items-center gap-2">
+                                <span className="text-[10.5px] font-semibold text-[var(--text-muted)] w-16 shrink-0">
+                                  {isFa ? `منبع ${sIdx + 1}:` : `Source ${sIdx + 1}:`}
+                                </span>
+                                <select
+                                  data-testid={`data-source-select-${sIdx}`}
+                                  value={src}
+                                  onChange={(e) => {
+                                    const nextVal = e.target.value as UploadedFormDataSource;
+                                    const updated = currentSources.map((item, i) => (i === sIdx ? nextVal : item));
+                                    patchUploadedForm((f) => ({
+                                      ...f,
+                                      dataSource: updated[0],
+                                      dataSources: updated,
+                                    }));
+                                  }}
+                                  className="flex-1 h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                                >
+                                  {UPLOADED_FORM_DATA_SOURCE_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                      {isFa ? opt.labelFa : opt.labelEn}
+                                    </option>
+                                  ))}
+                                </select>
+                                {currentSources.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const updated = currentSources.filter((_, i) => i !== sIdx);
+                                      patchUploadedForm((f) => ({
+                                        ...f,
+                                        dataSource: updated[0] || 'general',
+                                        dataSources: updated,
+                                      }));
+                                    }}
+                                    className="p-1 text-[var(--status-danger)]"
+                                    title={isFa ? 'حذف منبع' : 'Remove source'}
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Detected Excel Formulas & Smart SAMAAN Field Bindings */}
+                  {activeUploadedForm.fileType === 'excel' && (activeUploadedForm.detectedFormulas || []).length > 0 && (
+                    <div
+                      data-testid="detected-formulas-panel"
+                      className="pt-3 border-t border-[var(--border-subtle)] space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-[var(--text-primary)] flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                          <span>
+                            {isFa
+                              ? `فرمول‌های شناسایی‌شده در فایل اکسل (${activeUploadedForm.detectedFormulas?.length} سلول):`
+                              : `Detected Excel Formulas (${activeUploadedForm.detectedFormulas?.length} cells):`}
+                          </span>
+                        </span>
+                      </div>
+                      <div className="space-y-1.5 max-h-44 overflow-y-auto pe-1">
+                        {(activeUploadedForm.detectedFormulas || []).map((fm, fIdx) => (
+                          <div
+                            key={`${fm.cellRef}-${fIdx}`}
+                            className="grid grid-cols-12 gap-1.5 items-center bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1"
+                          >
+                            <div dir="ltr" className="col-span-2 text-[10.5px] font-mono font-bold text-[var(--accent-primary)]">
+                              {fm.cellRef}
+                            </div>
+                            <div dir="ltr" className="col-span-4 text-[10px] font-mono text-[var(--text-secondary)] truncate" title={fm.formula}>
+                              {fm.formula}
+                            </div>
+                            <select
+                              value={fm.boundFieldKey || ''}
+                              onChange={(e) =>
+                                patchUploadedForm((f) => ({
+                                  ...f,
+                                  detectedFormulas: (f.detectedFormulas || []).map((item, i) =>
+                                    i === fIdx ? { ...item, boundFieldKey: e.target.value || undefined } : item,
+                                  ),
+                                }))
+                              }
+                              className="col-span-6 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[10.5px]"
+                            >
+                              <option value="">
+                                {isFa ? '-- بدون جایگزینی (حفظ فرمول اصلی) --' : '-- Keep Formula --'}
+                              </option>
+                              {SAMAAN_BINDABLE_FIELDS.map((sf) => (
+                                <option key={sf.key} value={sf.key}>
+                                  {isFa ? sf.labelFa : sf.labelEn}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Optional Company Logo Overlay */}
                   <div className="space-y-1.5">
@@ -2186,11 +2544,12 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     </span>
                   </div>
                   <UploadedFormA4Sheet
-                    form={activeUploadedForm}
+                    form={deferredUploadedForm || activeUploadedForm}
                     employer={resolvedPreview}
                     headerTokens={samplePreviewData.headerTokens}
                     lineRows={samplePreviewData.lineRows}
                     isFa={isFa}
+                    onOrientationChange={(orientation) => patchUploadedPrintSettings({ orientation })}
                   />
                 </div>
               </div>
@@ -2224,6 +2583,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                   ))}
                 </div>
               </details>
+            )}
+              </div>
             )}
           </div>
         )}

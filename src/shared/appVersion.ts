@@ -16,11 +16,34 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.6.0';
-export const APP_BUILD_ID = '2026.05.21-1';
-export const APP_RELEASED_AT = '2026-05-21';
+export const APP_VERSION = '2.7.0';
+export const APP_BUILD_ID = '2026.05.22-1';
+export const APP_RELEASED_AT = '2026-05-22';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.7.0',
+    buildId: '2026.05.22-1',
+    releasedAt: '2026-05-22',
+    titleFa: 'رفع کامل کندی عملیات انبار و فرم‌های شرکتی، همگام‌سازی هوشمند تغییرات فایل و ارتقای هشدارهای مواد شیمیایی',
+    titleEn: 'Zero-Freeze Operations & Corporate Forms Studio, Smart Delta Import Sync & Chemical Alerts Upgrade',
+    changesFa: [
+      'رفع کامل هنگ و فریز در تمام ۹ بخش «عملیات انبار» و بخش «کارفرمایان و فرم‌های شرکتی» با بارگذاری سبک، کش مدل اکسل و بهینه‌سازی رندر',
+      'اصلاح آپلود چندتایی لوگو در گالری لوگوهای کارفرما (افزودن هم‌زمان همه تصاویر انتخاب‌شده) و اعمال استاندارد فرمت شماره تلفن ایران در تمام فرم‌ها',
+      'حذف ارجاعات اکسل از تنظیمات کلیدهای میانبر و افزودن شماره‌گذاری خودکار صفحات چاپی (صفحه: # از #)',
+      'ارتقای بخش مواد شیمیایی داشبورد و جدول جزئیات: نمایش فقط اقلام دارای موجودی با تفکیک رنگی منقضی‌شده و در شرف انقضا، نوار هشدار فشرده و قابل بستن، تغییر نام «موجودی کارفرما» و دکمه‌های فیلتر سریع موجودی کارفرما و پیمانکار',
+      'ادغام مدیریت فرم‌های عملیاتی و آپلودی در یک تب واحد با تشخیص هوشمند فرمول‌های اکسل، انتخاب چندمنبعی داده‌ها، تشخیص و تأیید بخش مقصد فرم و اصلاح کامل پیش‌نمایش A4 عمودی/افقی',
+      'ارتقای بازیابی فایل: استخراج چندمقداره و چندستونه اسناد عملیاتی (حواله‌ها، برگشتی‌ها، رسیدها و صورتجلسه‌ها) و تشخیص هوشمند تغییرات هنگام بارگذاری مجدد فایل (Delta Sync)',
+    ],
+    changesEn: [
+      'Eliminated freeze and lag across all 9 Warehouse Operations views and the Employers & Corporate Forms Studio via compact queries, Excel model caching, and deferred rendering',
+      'Fixed multi-select logo upload in Client Gallery and enforced Iranian phone number formatting across all phone inputs',
+      'Removed legacy spreadsheet references from Keyboard Shortcuts settings and added automatic print page numbering (Page: # of #)',
+      'Upgraded Chemical Expiration alerts in Dashboard and Detailed view: in-stock only, distinct expired vs. near-expiry colors, compact dismissible alert bar, Employer Stock rename, and quick stock filter buttons',
+      'Unified Built-in & Uploaded Corporate Forms studio tab with Excel formula detection, multi-source data binding, target operational section confirmation, and crisp Portrait/Landscape A4 preview',
+      'Upgraded Backup & Restore import with multi-value & multi-column operational document extraction and Smart Re-Upload Delta Sync',
+    ],
+  },
   {
     version: '2.6.0',
     buildId: '2026.05.21-1',

@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import type { DetailedComputed, GeneralEntry } from '../shared/types.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
 import { OfficialExtraMetaStrip } from './OfficialSheetHeader.tsx';
@@ -529,13 +530,13 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
     try {
       const params = new URLSearchParams({
         page: '1',
-        pageSize: '1000',
+        pageSize: '120',
         ...(q ? { q } : {}),
         ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
       });
       const [detRes, genRes] = await Promise.all([
         apiRequest<{ items: DetailedComputed[] }>(`/api/detailed?${params.toString()}`),
-        apiRequest<{ items: GeneralEntry[] }>('/api/general?page=1&pageSize=1000').catch(() => ({
+        apiRequest<{ items: GeneralEntry[] }>(`/api/general?page=1&pageSize=120${shipmentFilter ? `&packingListNo=${encodeURIComponent(shipmentFilter)}` : ''}`).catch(() => ({
           items: [] as GeneralEntry[],
         })),
       ]);
@@ -549,8 +550,11 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
   }, [q, shipmentFilter, notify]);
 
   useEffect(() => {
-    loadItems();
-  }, [loadItems, refreshSignal]);
+    const timer = window.setTimeout(() => {
+      loadItems();
+    }, q || shipmentFilter ? 220 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadItems, refreshSignal, q, shipmentFilter]);
 
   const knownLocations = useMemo(
     () => Array.from(new Set(items.map((i) => i.storageLocation).filter(Boolean))),
@@ -641,10 +645,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
                 #samaan-label-print-root { display: none !important; }
               }
               @media print {
-                @page {
-                  size: A4 portrait;
-                  margin: 8mm;
-                }
+                ${buildPrintPageRule('portrait', isFa, '8mm')}
                 body > *:not(#samaan-label-print-root) {
                   display: none !important;
                 }

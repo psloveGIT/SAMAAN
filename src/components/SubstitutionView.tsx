@@ -13,6 +13,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -526,10 +527,12 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   const [editingRec, setEditingRec] = useState<SubstitutionRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SubstitutionRecord | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (searchTerm?: string) => {
     setLoading(true);
     try {
-      const res = await apiRequest<SubstitutionsApiResponse>('/api/substitutions');
+      const qs = new URLSearchParams({ compact: '1', limit: '80' });
+      if (searchTerm) qs.set('search', searchTerm);
+      const res = await apiRequest<SubstitutionsApiResponse>(`/api/substitutions?${qs.toString()}`);
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -539,8 +542,11 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   }, [notify]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData, refreshSignal]);
+    const timer = window.setTimeout(() => {
+      loadData(itemSearch.trim());
+    }, itemSearch ? 220 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadData, refreshSignal, itemSearch]);
 
   const filteredItems = useMemo(() => {
     const all = data?.detailedItems || [];
@@ -813,10 +819,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                   #samaan-rep-print-root { display: none !important; }
                 }
                 @media print {
-                  @page {
-                    size: A4 portrait;
-                    margin: 7mm;
-                  }
+                  ${buildPrintPageRule('portrait', isFa, '7mm')}
                   body > *:not(#samaan-rep-print-root) {
                     display: none !important;
                   }

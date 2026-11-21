@@ -9,6 +9,7 @@ import {
   type ResolvedEmployerProfile,
 } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import type { PeriodicInspectionAnswer, PeriodicInspectionRecord } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
@@ -860,10 +861,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                   #samaan-periodic-print-root { display: none !important; }
                 }
                 @media print {
-                  @page {
-                    size: A4 landscape;
-                    margin: 6mm;
-                  }
+                  ${buildPrintPageRule('landscape', isFa, '6mm')}
                   body > *:not(#samaan-periodic-print-root) {
                     display: none !important;
                   }

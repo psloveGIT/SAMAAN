@@ -15,6 +15,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -668,10 +669,12 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const [resultOpiDate, setResultOpiDate] = useState(getTodayIso());
   const [rowDrafts, setRowDrafts] = useState<Record<string, ResultRowDraft>>({});
 
+  const [packingRenderCap, setPackingRenderCap] = useState(60);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiRequest<OpiApiResponse>('/api/opi');
+      const res = await apiRequest<OpiApiResponse>('/api/opi?compact=1&limit=100');
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -683,6 +686,28 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   useEffect(() => {
     loadData();
   }, [loadData, refreshSignal]);
+
+  // Fetch specific packing items on demand when recording OPI results
+  useEffect(() => {
+    if (!resultPackingFilter) return;
+    let active = true;
+    apiRequest<OpiApiResponse>(`/api/opi?compact=1&packing=${encodeURIComponent(resultPackingFilter)}`)
+      .then((fetched) => {
+        if (!active) return;
+        setData((prev) => {
+          if (!prev) return fetched;
+          const detIds = new Set(prev.detailedItems.map((d) => d.id));
+          const genIds = new Set((prev.generalEntries || []).map((g) => g.id));
+          return {
+            ...prev,
+            detailedItems: [...prev.detailedItems, ...(fetched.detailedItems || []).filter((d) => !detIds.has(d.id))],
+            generalEntries: [...(prev.generalEntries || []), ...(fetched.generalEntries || []).filter((g) => !genIds.has(g.id))],
+          };
+        });
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [resultPackingFilter]);
 
   const filteredPackings = useMemo(() => {
     const all = data?.packings || [];
@@ -714,17 +739,30 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     [data, editingInvitation],
   );
 
-  const togglePacking = (pk: string) => {
+  const togglePacking = async (pk: string) => {
     const isRemoving = selectedPackings.includes(pk);
     const nextPackings = isRemoving
       ? selectedPackings.filter((x) => x !== pk)
       : [...selectedPackings, pk];
 
     setSelectedPackings(nextPackings);
+
+    let detItems = data?.detailedItems || [];
+    let genEntries = data?.generalEntries || [];
+    if (!isRemoving && !detItems.some((d) => (d.shipmentNo || '').trim() === pk)) {
+      try {
+        const fetched = await apiRequest<OpiApiResponse>(`/api/opi?compact=1&packing=${encodeURIComponent(pk)}`);
+        const detIds = new Set(detItems.map((d) => d.id));
+        const genIds = new Set(genEntries.map((g) => g.id));
+        detItems = [...detItems, ...(fetched.detailedItems || []).filter((d) => !detIds.has(d.id))];
+        genEntries = [...genEntries, ...(fetched.generalEntries || []).filter((g) => !genIds.has(g.id))];
+        setData((prev) => (prev ? { ...prev, detailedItems: detItems, generalEntries: genEntries } : fetched));
+      } catch {
+        // fallback to loaded slice
+      }
+    }
     syncMetadataFromPackings(nextPackings);
 
-    const detItems = data?.detailedItems || [];
-    const genEntries = data?.generalEntries || [];
     if (!isRemoving) {
       const addedRows = buildOpiItemsForPackings([pk], detItems, genEntries);
       setItems((prev) => [...prev, ...addedRows]);
@@ -1044,10 +1082,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                 #samaan-opi-print-root { display: none !important; }
               }
               @media print {
-                @page {
-                  size: A4 portrait;
-                  margin: 7mm;
-                }
+                ${buildPrintPageRule('portrait', isFa, '7mm')}
                 body > *:not(#samaan-opi-print-root) {
                   display: none !important;
                 }
@@ -1310,28 +1345,46 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                       {t.controls.noData}
                     </div>
                   ) : (
-                    filteredPackings.map((pk) => {
-                      const checked = selectedPackings.includes(pk);
-                      return (
-                        <label
-                          key={pk}
-                          className={`px-2.5 py-2 rounded-lg border text-xs cursor-pointer flex items-center gap-2 transition-colors ${
-                            checked
-                              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => togglePacking(pk)}
-                          />
-                          <span dir="ltr" className="truncate tabular-nums">
-                            {pk}
+                    <>
+                      {filteredPackings.slice(0, packingRenderCap).map((pk) => {
+                        const checked = selectedPackings.includes(pk);
+                        return (
+                          <label
+                            key={pk}
+                            className={`px-2.5 py-2 rounded-lg border text-xs cursor-pointer flex items-center gap-2 transition-colors ${
+                              checked
+                                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => togglePacking(pk)}
+                            />
+                            <span dir="ltr" className="truncate tabular-nums">
+                              {pk}
+                            </span>
+                          </label>
+                        );
+                      })}
+                      {filteredPackings.length > packingRenderCap && (
+                        <div className="col-span-full pt-2 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+                          <span>
+                            {isFa
+                              ? `نمایش ${packingRenderCap.toLocaleString('fa-IR')} از ${filteredPackings.length.toLocaleString('fa-IR')} پکینگ — برای یافتن سریع‌تر فیلتر کنید.`
+                              : `Showing ${packingRenderCap} of ${filteredPackings.length} packings — use filter above.`}
                           </span>
-                        </label>
-                      );
-                    })
+                          <button
+                            type="button"
+                            onClick={() => setPackingRenderCap((c) => c + 60)}
+                            className="px-2.5 py-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--accent-primary)] font-semibold hover:bg-[var(--bg-subtle)]"
+                          >
+                            {isFa ? 'نمایش ۶۰ مورد بیشتر' : 'Show 60 more'}
+                          </button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

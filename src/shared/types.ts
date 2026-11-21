@@ -150,6 +150,13 @@ export type UploadedFormDataSource =
   | 'general'
   | 'detailed'
   | 'transit'
+  | 'opi'
+  | 'opiMinutes'
+  | 'gcv'
+  | 'miv'
+  | 'smr'
+  | 'substitution'
+  | 'balance'
   | 'manual';
 
 export interface UploadedFormPrintSettings {
@@ -172,6 +179,16 @@ export interface UploadedFormTableColumnBinding {
   fieldKey: string;
 }
 
+export interface UploadedFormFormulaDetection {
+  cellRef: string;
+  rowIndex: number;
+  colIndex: number;
+  formula: string;
+  label?: string;
+  suggestedFieldKey?: string;
+  boundFieldKey?: string;
+}
+
 export interface EmployerUploadedForm {
   id: string;
   titleFa: string;
@@ -185,6 +202,16 @@ export interface EmployerUploadedForm {
   detectedTokens?: string[];
   tokenBindings?: Record<string, string>;
   dataSource: UploadedFormDataSource;
+  /** Multiple system sections this form can pull & merge data from simultaneously */
+  dataSources?: UploadedFormDataSource[];
+  /** Auto-detected or user-selected operational app section matching this uploaded form */
+  targetAppSection?: BuiltInFormKey | 'custom_standalone';
+  targetSectionConfidence?: 'high' | 'medium' | 'low';
+  targetSectionReasonFa?: string;
+  targetSectionReasonEn?: string;
+  targetSectionConfirmed?: boolean;
+  /** Formulas detected inside Excel cells (cell.f) with smart field suggestions */
+  detectedFormulas?: UploadedFormFormulaDetection[];
   printSettings: UploadedFormPrintSettings;
   tableStartRowIndex?: number;
   tableColumnBindings?: UploadedFormTableColumnBinding[];
@@ -852,6 +879,9 @@ export interface ExpiringChemicalNotice {
   productionDate: string;
   expirationDate: string;
   daysRemaining: number;
+  isExpired?: boolean;
+  mapnaInventory?: number;
+  contractorInventory?: number;
 }
 
 export interface IslandPackingCount {

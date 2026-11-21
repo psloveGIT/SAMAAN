@@ -6,6 +6,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -28,6 +29,8 @@ interface GcvApiResponse {
   documents: GcvDocumentRecord[];
   detailedItems: DetailedComputed[];
   generalEntries?: GeneralEntry[];
+  packings?: string[];
+  totalDetailedCount?: number;
 }
 
 interface GcvViewProps {
@@ -534,10 +537,13 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   const [printDoc, setPrintDoc] = useState<GcvDocumentRecord | null>(null);
   const [printReportOpen, setPrintReportOpen] = useState(false);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (opts?: { packing?: string; search?: string }) => {
     setLoading(true);
     try {
-      const res = await apiRequest<GcvApiResponse>('/api/gcv');
+      const qs = new URLSearchParams({ compact: '1', limit: '80' });
+      if (opts?.packing) qs.set('packing', opts.packing);
+      if (opts?.search) qs.set('search', opts.search);
+      const res = await apiRequest<GcvApiResponse>(`/api/gcv?${qs.toString()}`);
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -547,8 +553,11 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   }, [notify]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData, refreshSignal]);
+    const timer = window.setTimeout(() => {
+      loadData({ packing: shipmentFilter, search: itemSearch.trim() });
+    }, itemSearch ? 220 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadData, refreshSignal, shipmentFilter, itemSearch]);
 
   const oldQtyByDetailedId = useMemo(() => {
     const map = new Map<string, number>();
@@ -564,6 +573,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   );
 
   const knownPackings = useMemo(() => {
+    if (data?.packings && data.packings.length > 0) return data.packings;
     const set = new Set<string>();
     for (const d of data?.detailedItems || []) {
       if (!d.opiPending && (d.mapnaInventory > 0 || oldQtyByDetailedId.has(d.id)) && d.shipmentNo) {
@@ -846,10 +856,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                   #samaan-gcv-print-root { display: none !important; }
                 }
                 @media print {
-                  @page {
-                    size: A4 landscape;
-                    margin: 7mm;
-                  }
+                  ${buildPrintPageRule('landscape', isFa, '7mm')}
                   body > *:not(#samaan-gcv-print-root) {
                     display: none !important;
                   }
@@ -1178,7 +1185,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-semibold text-[var(--text-secondary)]">
                 {isFa
-                  ? 'اقلام آماده تحویل از موجودی انبار اصلی (دارای بازرسی ثبت‌شده)'
+                  ? 'اقلام آماده تحویل از موجودی کارفرما (دارای بازرسی ثبت‌شده)'
                   : 'Deliverable Items from Main Warehouse Stock (OPI Recorded)'}
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1233,7 +1240,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                       </td>
                     </tr>
                   ) : (
-                    deliverableItems.map((item) => {
+                    deliverableItems.slice(0, 80).map((item) => {
                       const avail = getAvailableQty(item);
                       return (
                         <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
@@ -1507,7 +1514,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         message={
           deleteTarget
             ? isFa
-              ? `آیا از حذف رسید شماره ${deleteTarget.receiptNo} اطمینان دارید؟ مقدار تحویلی به موجودی انبار اصلی بازگردانده می‌شود.`
+              ? `آیا از حذف رسید شماره ${deleteTarget.receiptNo} اطمینان دارید؟ مقدار تحویلی به موجودی کارفرما بازگردانده می‌شود.`
               : `Delete GCV Receipt ${deleteTarget.receiptNo}? Delivered quantities will return to main inventory.`
             : ''
         }

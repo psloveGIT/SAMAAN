@@ -6,6 +6,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { roundQty, toNum } from '../shared/formulas.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import type { DetailedComputed, GeneralEntry, MaterialEstimateRecord } from '../shared/types.ts';
 import {
   BuiltInSheetHeaderRow,
@@ -549,7 +550,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
     try {
       const params = new URLSearchParams({
         page: '1',
-        pageSize: '1000',
+        pageSize: '120',
         ...(q ? { q } : {}),
         ...(shipmentFilter ? { shipmentNo: shipmentFilter } : {}),
       });
@@ -558,7 +559,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
         apiRequest<{ records: MaterialEstimateRecord[] }>('/api/estimations').catch(() => ({
           records: [] as MaterialEstimateRecord[],
         })),
-        apiRequest<{ items: GeneralEntry[] }>('/api/general?page=1&pageSize=1000').catch(() => ({
+        apiRequest<{ items: GeneralEntry[] }>(`/api/general?page=1&pageSize=120${shipmentFilter ? `&packingListNo=${encodeURIComponent(shipmentFilter)}` : ''}`).catch(() => ({
           items: [] as GeneralEntry[],
         })),
       ]);
@@ -573,8 +574,11 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
   }, [q, shipmentFilter, notify]);
 
   useEffect(() => {
-    loadItems();
-  }, [loadItems, refreshSignal]);
+    const timer = window.setTimeout(() => {
+      loadItems();
+    }, q || shipmentFilter ? 220 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadItems, refreshSignal, q, shipmentFilter]);
 
   const statusPresets = useMemo(
     () => BALANCE_STATUS_PAIRS.map((p) => (isFa ? p.fa : p.en)),
@@ -770,10 +774,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
                   #samaan-bmr-print-root { display: none !important; }
                 }
                 @media print {
-                  @page {
-                    size: A4 landscape;
-                    margin: 7mm;
-                  }
+                  ${buildPrintPageRule('landscape', isFa, '7mm')}
                   body > *:not(#samaan-bmr-print-root) {
                     display: none !important;
                   }

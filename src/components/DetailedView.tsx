@@ -54,6 +54,11 @@ interface DetailedListResponse {
   pageSize: number;
   totalPages: number;
   filteredSummary: SelectionFormulaSummary;
+  chemicalAlertSummary?: {
+    expiredCount: number;
+    expiringSoonCount: number;
+    totalAlertCount: number;
+  };
 }
 
 interface GeneralSharedInfo {
@@ -204,6 +209,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [damagedOnly, setDamagedOnly] = useState(false);
   const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
   const [replacedOnly, setReplacedOnly] = useState(false);
+  const [employerStockOnly, setEmployerStockOnly] = useState(false);
+  const [contractorStockOnly, setContractorStockOnly] = useState(false);
+  const [chemicalExpiryFilter, setChemicalExpiryFilter] = useState<'' | 'all' | 'expired' | 'expiring_soon'>('');
+  const [chemAlertDismissed, setChemAlertDismissed] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
@@ -310,6 +319,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       ...(damagedOnly ? { damagedOnly: 'true' } : {}),
       ...(discrepancyOnly ? { discrepancyOnly: 'true' } : {}),
       ...(replacedOnly ? { replacedOnly: 'true' } : {}),
+      ...(employerStockOnly ? { hasEmployerStock: 'true' } : {}),
+      ...(contractorStockOnly ? { hasContractorStock: 'true' } : {}),
+      ...(chemicalExpiryFilter ? { chemicalExpiry: chemicalExpiryFilter } : {}),
       ...(fromDate ? { fromDate } : {}),
       ...(toDate ? { toDate } : {}),
       ...(Object.keys(colFilters).length > 0
@@ -330,6 +342,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     damagedOnly,
     discrepancyOnly,
     replacedOnly,
+    employerStockOnly,
+    contractorStockOnly,
+    chemicalExpiryFilter,
     fromDate,
     toDate,
     colFilters,
@@ -1427,7 +1442,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       shortageOnly ||
       damagedOnly ||
       discrepancyOnly ||
-      replacedOnly,
+      replacedOnly ||
+      employerStockOnly ||
+      contractorStockOnly ||
+      chemicalExpiryFilter,
   );
 
   const clearTopFilters = () => {
@@ -1443,6 +1461,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     setDamagedOnly(false);
     setDiscrepancyOnly(false);
     setReplacedOnly(false);
+    setEmployerStockOnly(false);
+    setContractorStockOnly(false);
+    setChemicalExpiryFilter('');
     clearSelection();
     setPage(1);
   };
@@ -1503,6 +1524,34 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             >
               <Link2 className="w-3.5 h-3.5" />
               <span>{isFa ? 'جایگزین شده' : 'Replaced'}</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="filter-employer-stock"
+              onClick={() => { setEmployerStockOnly((v) => !v); clearSelection(); setPage(1); }}
+              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+                employerStockOnly
+                  ? 'border-emerald-600 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold'
+                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${employerStockOnly ? 'bg-emerald-600' : 'bg-emerald-500/60'}`} />
+              <span>{isFa ? 'موجودی کارفرما' : 'Employer Stock'}</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="filter-contractor-stock"
+              onClick={() => { setContractorStockOnly((v) => !v); clearSelection(); setPage(1); }}
+              className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+                contractorStockOnly
+                  ? 'border-sky-600 bg-sky-500/15 text-sky-700 dark:text-sky-300 font-semibold'
+                  : 'border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${contractorStockOnly ? 'bg-sky-600' : 'bg-sky-500/60'}`} />
+              <span>{isFa ? 'موجودی پیمانکار' : 'Contractor Stock'}</span>
             </button>
 
             {hasTopFilters && (
@@ -1724,6 +1773,115 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           />
         </div>
       </div>
+
+      {/* Compact Dismissible Chemical Expiration Alert (In-Stock Only) */}
+      {(() => {
+        const chemSummary = data?.chemicalAlertSummary;
+        const totalAlerts = chemSummary?.totalAlertCount ?? 0;
+        if (totalAlerts <= 0 || (chemAlertDismissed && !chemicalExpiryFilter)) return null;
+        return (
+          <div
+            data-testid="detailed-chem-alert"
+            className="rounded-xl border border-amber-500/35 bg-gradient-to-l from-rose-500/[0.06] via-amber-500/[0.06] to-transparent px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs"
+          >
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex items-center gap-1.5 font-bold text-[var(--text-primary)]">
+                <FlaskConical className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>
+                  {isFa ? 'هشدار انقضای مواد شیمیایی موجود در انبار:' : 'In-Stock Chemical Expiry Alert:'}
+                </span>
+              </div>
+
+              {(chemSummary?.expiredCount ?? 0) > 0 && (
+                <button
+                  type="button"
+                  data-testid="chem-filter-expired"
+                  onClick={() => {
+                    setChemicalExpiryFilter((prev) => (prev === 'expired' ? '' : 'expired'));
+                    clearSelection();
+                    setPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold tabular-nums transition-all ${
+                    chemicalExpiryFilter === 'expired'
+                      ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                      : 'bg-rose-600/12 text-rose-700 dark:text-rose-300 border-rose-600/35 hover:bg-rose-600/20'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${chemicalExpiryFilter === 'expired' ? 'bg-white' : 'bg-rose-600'}`} />
+                  <span>
+                    {isFa
+                      ? `${formatDisplayNumber(chemSummary?.expiredCount ?? 0, prefs.language)} قلم منقضی‌شده`
+                      : `${chemSummary?.expiredCount ?? 0} Expired`}
+                  </span>
+                </button>
+              )}
+
+              {(chemSummary?.expiringSoonCount ?? 0) > 0 && (
+                <button
+                  type="button"
+                  data-testid="chem-filter-expiring"
+                  onClick={() => {
+                    setChemicalExpiryFilter((prev) => (prev === 'expiring_soon' ? '' : 'expiring_soon'));
+                    clearSelection();
+                    setPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold tabular-nums transition-all ${
+                    chemicalExpiryFilter === 'expiring_soon'
+                      ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                      : 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${chemicalExpiryFilter === 'expiring_soon' ? 'bg-white' : 'bg-amber-500'}`} />
+                  <span>
+                    {isFa
+                      ? `${formatDisplayNumber(chemSummary?.expiringSoonCount ?? 0, prefs.language)} قلم در شرف انقضا`
+                      : `${chemSummary?.expiringSoonCount ?? 0} Expiring (< 30d)`}
+                  </span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                data-testid="chem-filter-all"
+                onClick={() => {
+                  setChemicalExpiryFilter((prev) => (prev === 'all' ? '' : 'all'));
+                  clearSelection();
+                  setPage(1);
+                }}
+                className={`px-2.5 py-1 rounded-lg border text-xs font-semibold transition-colors ${
+                  chemicalExpiryFilter === 'all'
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] border-[var(--accent-primary)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                }`}
+              >
+                {chemicalExpiryFilter === 'all'
+                  ? isFa
+                    ? 'لغو فیلتر انقضا'
+                    : 'Clear Expiry Filter'
+                  : isFa
+                    ? `فیلتر همه (${formatDisplayNumber(totalAlerts, prefs.language)})`
+                    : `Show All (${totalAlerts})`}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              data-testid="dismiss-chem-alert"
+              onClick={() => {
+                setChemAlertDismissed(true);
+                if (chemicalExpiryFilter) {
+                  setChemicalExpiryFilter('');
+                  setPage(1);
+                }
+              }}
+              title={isFa ? 'بستن اعلان' : 'Dismiss alert'}
+              className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Formula Selection Summary Bar */}
       {(items.length > 0 || selectedCount > 0) && (
@@ -2008,7 +2166,11 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                                 ? 'font-bold text-[var(--status-warning)]'
                                 : col.key === 'mapnaInventory'
                                   ? 'font-semibold text-[var(--accent-primary)]'
-                                  : ''
+                                  : col.key === 'expirationDate' && chemDays !== null && chemDays < 0 && (row.mapnaInventory > 0 || row.contractorInventory > 0)
+                                    ? 'font-bold text-rose-600 dark:text-rose-400'
+                                    : col.key === 'expirationDate' && chemDays !== null && chemDays >= 0 && chemDays <= 30 && (row.mapnaInventory > 0 || row.contractorInventory > 0)
+                                      ? 'font-bold text-amber-700 dark:text-amber-400'
+                                      : ''
                           }`}
                           title={String(display)}
                         >
@@ -2069,32 +2231,41 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                             <span>{t.itemCategories.spare_parts}</span>
                           </span>
                         )}
-                        {row.itemCategory === 'chemicals' && (
-                          <span
-                            className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${
-                              chemDays !== null && chemDays <= 30
-                                ? 'text-[var(--status-danger)]'
-                                : 'text-[var(--accent-primary)]'
-                            }`}
-                          >
+                        {row.itemCategory === 'chemicals' && (() => {
+                          const hasChemStock = row.mapnaInventory > 0 || row.contractorInventory > 0;
+                          const isExpiredChem = hasChemStock && chemDays !== null && chemDays < 0;
+                          const isNearExpiryChem = hasChemStock && chemDays !== null && chemDays >= 0 && chemDays <= 30;
+                          return (
                             <span
-                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                chemDays !== null && chemDays <= 30
-                                  ? 'bg-[var(--status-danger)]'
-                                  : 'bg-[var(--accent-primary)]'
+                              className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${
+                                isExpiredChem
+                                  ? 'text-rose-600 dark:text-rose-400'
+                                  : isNearExpiryChem
+                                    ? 'text-amber-700 dark:text-amber-400'
+                                    : 'text-[var(--accent-primary)]'
                               }`}
-                            />
-                            <FlaskConical className="w-3 h-3 shrink-0 opacity-80" />
-                            <span>
-                              {t.itemCategories.chemicals}
-                              {chemDays !== null && chemDays <= 30
-                                ? chemDays < 0
-                                  ? ` (${isFa ? 'منقضی' : 'Exp'})`
-                                  : ` (${formatDisplayNumber(chemDays, prefs.language)} ${isFa ? 'روز' : 'd'})`
-                                : ''}
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                  isExpiredChem
+                                    ? 'bg-rose-600'
+                                    : isNearExpiryChem
+                                      ? 'bg-amber-500'
+                                      : 'bg-[var(--accent-primary)]'
+                                }`}
+                              />
+                              <FlaskConical className="w-3 h-3 shrink-0 opacity-80" />
+                              <span>
+                                {t.itemCategories.chemicals}
+                                {isExpiredChem
+                                  ? ` (${isFa ? 'منقضی' : 'Expired'})`
+                                  : isNearExpiryChem && chemDays !== null
+                                    ? ` (${formatDisplayNumber(chemDays, prefs.language)} ${isFa ? 'روز مانده' : 'd left'})`
+                                    : ''}
+                              </span>
                             </span>
-                          </span>
-                        )}
+                          );
+                        })()}
                       </div>
                     </td>
 

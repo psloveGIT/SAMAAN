@@ -45,6 +45,13 @@ import {
 } from './src/shared/formulas.ts';
 import { buildYearMonths, getMonthKeyFromIso, normalizeDigits } from './src/shared/jalali.ts';
 import {
+  collectUniquePackings,
+  queryOpsDetailed,
+  queryOpsGeneral,
+  queryOpsTransit,
+  slimDetailedForOps,
+} from './src/shared/opsProjection.ts';
+import {
   DEFAULT_TRANSIT_STATUSES,
   getTransitStatusOptions,
   inferItemClassification,
@@ -54,6 +61,7 @@ import {
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
 import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
 import { getLocalVersionPayload } from './src/shared/appVersion.ts';
+import { analyzeImportDelta, hasRecordMeaningfulChanges } from './src/shared/importDelta.ts';
 import {
   commitAutoWorkbook,
   commitOperationalFormImport,
@@ -434,6 +442,9 @@ async function startServer() {
     const store = activeProjectStore();
     const formIdFilter = normKey(String(req.query.formId || ''));
     const q = normKey(String(req.query.q || ''));
+    const compact = String(req.query.compact || '') === '1';
+    const packingFilter = normKey(String(req.query.packing || ''));
+    const limit = Math.min(500, Math.max(10, Number(req.query.limit || 120) || 120));
     const submissions = (store.db.customFormSubmissions || []).filter((sub) => {
       if (formIdFilter && sub.formId !== formIdFilter) return false;
       if (q) {
@@ -441,13 +452,17 @@ async function startServer() {
       }
       return true;
     });
-    const packings = Array.from(
-      new Set(store.db.general.map((g) => normKey(g.packingListNo)).filter(Boolean)),
-    ).sort((a, b) => a.localeCompare(b));
+    const packings = collectUniquePackings(store.db.general, store.db.detailed);
+    const generalEntries = compact
+      ? queryOpsGeneral(store.db.general, { compact: true, packing: packingFilter, limit })
+      : [...store.db.general].reverse();
+    const detailedItems = compact
+      ? queryOpsDetailed(store.getDetailedComputedList(), { compact: true, packing: packingFilter, limit })
+      : [...store.getDetailedComputedList()].reverse().map(slimDetailedForOps);
     res.json({
       submissions: [...submissions].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-      generalEntries: [...store.db.general].reverse(),
-      detailedItems: [...store.getDetailedComputedList()].reverse(),
+      generalEntries,
+      detailedItems,
       packings,
     });
   });
@@ -1695,12 +1710,28 @@ async function startServer() {
     const damagedOnly = String(req.query.damagedOnly || '') === 'true';
     const discrepancyOnly = String(req.query.discrepancyOnly || '') === 'true';
     const replacedOnly = String(req.query.replacedOnly || '') === 'true';
+    const hasEmployerStock = String(req.query.hasEmployerStock || '') === 'true';
+    const hasContractorStock = String(req.query.hasContractorStock || '') === 'true';
+    const chemicalExpiry = String(req.query.chemicalExpiry || '').trim();
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
     const fetchAll = String(req.query.all || '') === 'true';
     const allIds = String(req.query.allIds || '') === 'true';
     const page = Math.max(1, Number(req.query.page || 1));
     const pageSize = Math.min(5000, Math.max(10, Number(req.query.pageSize || 50)));
+
+    const allExpiringChems = getExpiringChemicals(store.getDetailedComputedList(), 30);
+    const expiredChemIds = new Set<string>();
+    const expiringSoonChemIds = new Set<string>();
+    for (const c of allExpiringChems) {
+      if (c.daysRemaining < 0) expiredChemIds.add(c.id);
+      else expiringSoonChemIds.add(c.id);
+    }
+    const chemicalAlertSummary = {
+      expiredCount: expiredChemIds.size,
+      expiringSoonCount: expiringSoonChemIds.size,
+      totalAlertCount: allExpiringChems.length,
+    };
 
     const substitutedIds = new Set(
       (store.db.substitutions || []).map((s) => s.detailedId).filter(Boolean),
@@ -1785,6 +1816,11 @@ async function startServer() {
       ) {
         continue;
       }
+      if (hasEmployerStock && (comp.opiPending || comp.mapnaInventory <= 0)) continue;
+      if (hasContractorStock && (comp.opiPending || comp.contractorInventory <= 0)) continue;
+      if (chemicalExpiry === 'expired' && !expiredChemIds.has(comp.id)) continue;
+      if (chemicalExpiry === 'expiring_soon' && !expiringSoonChemIds.has(comp.id)) continue;
+      if (chemicalExpiry === 'all' && !expiredChemIds.has(comp.id) && !expiringSoonChemIds.has(comp.id)) continue;
       computedRaw.push(comp);
     }
 
@@ -1800,6 +1836,7 @@ async function startServer() {
         ids: computedAll.map((d) => d.id),
         total,
         filteredSummary,
+        chemicalAlertSummary,
       });
       return;
     }
@@ -1815,6 +1852,7 @@ async function startServer() {
       pageSize: fetchAll ? Math.max(1, total) : pageSize,
       totalPages: fetchAll ? 1 : Math.max(1, Math.ceil(total / pageSize)),
       filteredSummary,
+      chemicalAlertSummary,
     });
   });
 
@@ -5832,6 +5870,7 @@ async function startServer() {
         warnings: opPrev.warnings,
         sample: opPrev.sample,
         parsedRows: opPrev.parsedRecords,
+        deltaSummary: opPrev.deltaSummary,
       });
       return;
     }
@@ -5879,6 +5918,13 @@ async function startServer() {
         generalDupKey,
         (r) => `${r.packingListNo || '-'} / ${r.packageNo || r.mapnaEntryMinutesNo || '-'}`,
       );
+      const deltaAnalysis = analyzeImportDelta({
+        incomingRows: parsed.rows as unknown as Record<string, unknown>[],
+        existingRows: store.db.general as unknown as Record<string, unknown>[],
+        getIncomingKey: (r) => generalDupKey(r as Partial<GeneralEntry>),
+        getExistingKey: (r) => generalDupKey(r as Partial<GeneralEntry>),
+        getKeyLabel: (r) => `${String(r.packingListNo || '-')} / ${String(r.packageNo || '-')}`,
+      });
       res.json({
         scope: 'general',
         totalRows: parsed.rows.length,
@@ -5886,6 +5932,14 @@ async function startServer() {
         parseRejectedRows: parsed.rejectedRows,
         duplicateRowNos,
         ...dupStats,
+        deltaSummary: {
+          isIdentical: deltaAnalysis.isIdentical,
+          newCount: deltaAnalysis.newCount,
+          modifiedCount: deltaAnalysis.modifiedCount,
+          unchangedCount: deltaAnalysis.unchangedCount,
+          totalIncoming: deltaAnalysis.totalIncoming,
+          changedFieldsSample: deltaAnalysis.changedFieldsSample,
+        },
         sample: parsed.rows.slice(0, 5),
         parsedRows: parsed.rows,
         columnInspection: { ...columnInspection, mapping: activeMapping },
@@ -5901,6 +5955,13 @@ async function startServer() {
         detailedDupKey,
         (r) => `${r.shipmentNo || '-'} / ${r.packageNo || '-'} / #${r.itemNo || '-'}`,
       );
+      const deltaAnalysis = analyzeImportDelta({
+        incomingRows: parsed.rows as unknown as Record<string, unknown>[],
+        existingRows: store.db.detailed as unknown as Record<string, unknown>[],
+        getIncomingKey: (r) => detailedDupKey(r as Partial<DetailedEntry>),
+        getExistingKey: (r) => detailedDupKey(r as Partial<DetailedEntry>),
+        getKeyLabel: (r) => `${String(r.shipmentNo || '-')} / ${String(r.packageNo || '-')} / #${String(r.itemNo || '-')}`,
+      });
       res.json({
         scope: 'detailed',
         totalRows: parsed.rows.length,
@@ -5908,6 +5969,14 @@ async function startServer() {
         parseRejectedRows: parsed.rejectedRows,
         duplicateRowNos,
         ...dupStats,
+        deltaSummary: {
+          isIdentical: deltaAnalysis.isIdentical,
+          newCount: deltaAnalysis.newCount,
+          modifiedCount: deltaAnalysis.modifiedCount,
+          unchangedCount: deltaAnalysis.unchangedCount,
+          totalIncoming: deltaAnalysis.totalIncoming,
+          changedFieldsSample: deltaAnalysis.changedFieldsSample,
+        },
         sample: parsed.rows.slice(0, 5),
         parsedRows: parsed.rows,
         columnInspection: { ...columnInspection, mapping: activeMapping },
@@ -5922,6 +5991,13 @@ async function startServer() {
       transitDupKey,
       (r) => `${r.packingListNo || '-'} / ${r.packageNo || '-'}`,
     );
+    const deltaAnalysis = analyzeImportDelta({
+      incomingRows: parsed.rows as unknown as Record<string, unknown>[],
+      existingRows: store.db.transit as unknown as Record<string, unknown>[],
+      getIncomingKey: (r) => transitDupKey(r as Partial<TransitEntry>),
+      getExistingKey: (r) => transitDupKey(r as Partial<TransitEntry>),
+      getKeyLabel: (r) => `${String(r.packingListNo || '-')} / ${String(r.packageNo || '-')}`,
+    });
     res.json({
       scope: 'transit',
       totalRows: parsed.rows.length,
@@ -5929,6 +6005,14 @@ async function startServer() {
       parseRejectedRows: parsed.rejectedRows,
       duplicateRowNos: 0,
       ...dupStats,
+      deltaSummary: {
+        isIdentical: deltaAnalysis.isIdentical,
+        newCount: deltaAnalysis.newCount,
+        modifiedCount: deltaAnalysis.modifiedCount,
+        unchangedCount: deltaAnalysis.unchangedCount,
+        totalIncoming: deltaAnalysis.totalIncoming,
+        changedFieldsSample: deltaAnalysis.changedFieldsSample,
+      },
       sample: parsed.rows.slice(0, 5),
       parsedRows: parsed.rows,
       columnInspection: { ...columnInspection, mapping: activeMapping },
@@ -5957,7 +6041,7 @@ async function startServer() {
       sectionHint?: string;
       scope?: ExtendedImportScope;
       assumedCalendar?: CalendarMode;
-      duplicateRecordPolicy?: 'replace' | 'skip';
+      duplicateRecordPolicy?: 'replace' | 'skip' | 'delta';
       forceAddDuplicates?: boolean;
       includeParserRejections?: boolean;
       columnMapping?: Record<string, number>;
@@ -5975,7 +6059,12 @@ async function startServer() {
       return;
     }
     const cal = assumedCalendar || 'jalali';
-    const dupPolicy: 'replace' | 'skip' = duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const dupPolicy: 'replace' | 'skip' | 'delta' =
+      duplicateRecordPolicy === 'replace'
+        ? 'replace'
+        : duplicateRecordPolicy === 'delta'
+          ? 'delta'
+          : 'skip';
     const resolvedExtended: ExtendedImportScope =
       scope ||
       detectExtendedScope(matrix, sheetName, sectionHint, structuredRecords) ||
@@ -6010,6 +6099,7 @@ async function startServer() {
         imported: opResult.imported,
         replaced: opResult.replaced,
         skipped: opResult.skipped,
+        unchangedSkipped: opResult.unchangedSkipped || 0,
         parseRejectedCount: 0,
         blankRowsSkipped: 0,
         transitAutoArrived: opResult.linkedTransit,
@@ -6029,6 +6119,7 @@ async function startServer() {
     let imported = 0;
     let replaced = 0;
     let skipped = 0;
+    let unchangedSkipped = 0;
     let blankRowsSkipped = 0;
     let transitAutoArrived = 0;
     const touchedPackings = new Set<string>();
@@ -6099,6 +6190,10 @@ async function startServer() {
               canEditAndRetry: true,
               parsedRow: r as unknown as Record<string, unknown>,
             });
+            return;
+          }
+          if (dupPolicy === 'delta' && !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, r as unknown as Record<string, unknown>)) {
+            unchangedSkipped += 1;
             return;
           }
           Object.assign(existing, {
@@ -6217,6 +6312,21 @@ async function startServer() {
             });
             return;
           }
+          if (
+            dupPolicy === 'delta' &&
+            !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, {
+              ...cleanDetailedRow,
+              countingUnit: normalizeCountingUnitToFa(cleanDetailedRow.countingUnit),
+              generalDescription: genDesc,
+              itemCategory: resolvedItemCategory,
+              chemicalType: resolvedChemicalType,
+              productionDate: resolvedProdDate,
+              expirationDate: resolvedExpDate,
+            } as unknown as Record<string, unknown>)
+          ) {
+            unchangedSkipped += 1;
+            return;
+          }
           Object.assign(existing, {
             ...cleanDetailedRow,
             countingUnit: normalizeCountingUnitToFa(cleanDetailedRow.countingUnit),
@@ -6333,6 +6443,16 @@ async function startServer() {
             store.db.categories.transitStatus,
           );
           const resolvedStatus = alreadyArrived ? 'رسیده' : normalizedStatus;
+          if (
+            dupPolicy === 'delta' &&
+            !hasRecordMeaningfulChanges(existing as unknown as Record<string, unknown>, {
+              ...r,
+              overallStatus: resolvedStatus,
+            } as unknown as Record<string, unknown>)
+          ) {
+            unchangedSkipped += 1;
+            return;
+          }
           Object.assign(existing, {
             ...r,
             id: existing.id,
@@ -6400,6 +6520,7 @@ async function startServer() {
       imported,
       replaced,
       skipped,
+      unchangedSkipped,
       parseRejectedCount: collectParseRejects ? rejectedRecords.filter((r) => r.reasonCode === 'missing_required').length : 0,
       blankRowsSkipped,
       transitAutoArrived,
@@ -6411,7 +6532,7 @@ async function startServer() {
     const { sheets, assumedCalendar, duplicateRecordPolicy, dryRun } = req.body as {
       sheets?: AutoWorkbookSheetInput[];
       assumedCalendar?: CalendarMode;
-      duplicateRecordPolicy?: 'replace' | 'skip';
+      duplicateRecordPolicy?: 'replace' | 'skip' | 'delta';
       dryRun?: boolean;
     };
     if (!Array.isArray(sheets) || sheets.length === 0) {
@@ -6419,7 +6540,12 @@ async function startServer() {
       return;
     }
     const cal = assumedCalendar || 'jalali';
-    const dupPolicy: 'replace' | 'skip' = duplicateRecordPolicy === 'replace' ? 'replace' : 'skip';
+    const dupPolicy: 'replace' | 'skip' | 'delta' =
+      duplicateRecordPolicy === 'replace'
+        ? 'replace'
+        : duplicateRecordPolicy === 'delta'
+          ? 'delta'
+          : 'skip';
     const actorName = req.currentUser!.fullName || req.currentUser!.username;
 
     if (dryRun) {

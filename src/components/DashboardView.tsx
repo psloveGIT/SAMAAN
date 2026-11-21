@@ -325,56 +325,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {renderUnifiedStrip(secondaryKpis, 'secondary')}
       </div>
 
-      {/* Chemical Expiration Warning Alert */}
-      {expiringChemicals.length > 0 && (
-        <div className="rounded-2xl border border-[var(--status-danger)]/35 bg-[var(--status-danger-bg)] p-4.5 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--status-danger)]">
-              <FlaskConical className="w-4 h-4 shrink-0" />
-              <span>
-                {isFa
-                  ? `هشدار انقضای مواد شیمیایی (${fmt(expiringChemicals.length)} قلم زیر یک ماه تا انقضاء)`
-                  : `Chemical Expiration Warnings (${fmt(expiringChemicals.length)} item(s) < 1 month)`}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigate('detailed')}
-              className="text-xs font-semibold text-[var(--status-danger)] hover:underline flex items-center gap-1"
-            >
-              <span>{isFa ? 'بررسی در جزئیات' : 'Review in Detailed'}</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            {expiringChemicals.slice(0, 6).map((chem) => (
-              <button
-                key={chem.id}
-                type="button"
-                onClick={() => onInspectDetailedShipment(chem.shipmentNo)}
-                className="p-2.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--status-danger)]/30 text-start hover:bg-[var(--bg-subtle)]/70 flex items-center justify-between gap-2 text-xs transition-colors"
-              >
-                <div className="min-w-0">
-                  <div className="font-bold truncate">{chem.chemicalType || chem.description}</div>
-                  <div className="text-[11px] text-[var(--text-muted)] tabular-nums" dir="ltr">
-                    {chem.shipmentNo} · {chem.packageNo || '-'} · #{chem.itemNo || '-'}
-                  </div>
-                </div>
-                <span className="shrink-0 px-2 py-0.5 rounded bg-[var(--status-danger)] text-white text-[11px] font-bold tabular-nums">
-                  {chem.daysRemaining < 0
-                    ? isFa
-                      ? `منقضی (${fmt(Math.abs(chem.daysRemaining))} روز)`
-                      : `Expired`
-                    : isFa
-                      ? `${fmt(chem.daysRemaining)} روز`
-                      : `${fmt(chem.daysRemaining)}d`}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Main Analytics Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Monthly Trend in Active Calendar */}
@@ -554,65 +504,107 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </div>
 
-        {/* مواد شیمیایی با تاریخ انقضای زیر یک ماه */}
-        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
-              <span className="w-2 h-2 rounded-full bg-[var(--status-danger)]" />
-              <FlaskConical className="w-4 h-4 text-[var(--status-danger)]" />
-              <span>
-                {isFa
-                  ? `مواد شیمیایی با تاریخ انقضای زیر یک ماه (${fmt(expiringChemicals.length)})`
-                  : `Chemicals Expiring Within 1 Month (${fmt(expiringChemicals.length)})`}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigate('detailed')}
-              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+        {/* مواد شیمیایی منقضی‌شده و در شرف انقضا */}
+        {(() => {
+          const expiredCount = expiringChemicals.filter((c) => c.daysRemaining < 0).length;
+          const nearCount = expiringChemicals.length - expiredCount;
+          return (
+            <div
+              data-testid="dashboard-chemicals-card"
+              className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden"
             >
-              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          {expiringChemicals.length === 0 ? (
-            <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
-              {isFa ? 'ماده شیمیایی با انقضای زیر یک ماه یافت نشد.' : 'No chemicals expiring within 1 month.'}
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--border-subtle)]">
-              {expiringChemicals.map((chem) => (
-                <button
-                  key={chem.id}
-                  type="button"
-                  onClick={() => onInspectDetailedShipment(chem.shipmentNo)}
-                  className="w-full px-5 py-3 text-start hover:bg-[var(--bg-subtle)]/60 flex items-center justify-between gap-4 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold truncate bidi-plaintext">
-                      {chem.chemicalType || chem.description}
-                    </div>
-                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
-                      <span dir="ltr">{chem.shipmentNo}</span>
-                      {chem.packageNo && <span dir="ltr">· {chem.packageNo}</span>}
-                      {chem.itemNo && <span dir="ltr">· #{chem.itemNo}</span>}
-                      {chem.expirationDate && <span dir="ltr">· {formatDate(chem.expirationDate)}</span>}
-                    </div>
-                  </div>
-                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-bold tabular-nums">
-                    {chem.daysRemaining < 0
-                      ? isFa
-                        ? `منقضی (${fmt(Math.abs(chem.daysRemaining))} روز)`
-                        : `Expired (${fmt(Math.abs(chem.daysRemaining))}d)`
-                      : isFa
-                        ? `${fmt(chem.daysRemaining)} روز مانده`
-                        : `${fmt(chem.daysRemaining)}d left`}
+              <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+                  <FlaskConical className="w-4 h-4 text-[var(--status-danger)] shrink-0" />
+                  <span>
+                    {isFa
+                      ? `مواد شیمیایی منقضی‌شده و در شرف انقضا (${fmt(expiringChemicals.length)})`
+                      : `Expired & Expiring Chemicals (${fmt(expiringChemicals.length)})`}
                   </span>
+                  {expiredCount > 0 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-600/15 text-rose-700 dark:text-rose-300 border border-rose-600/30 text-[11px] font-bold tabular-nums">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                      {isFa ? `${fmt(expiredCount)} منقضی` : `${fmt(expiredCount)} expired`}
+                    </span>
+                  )}
+                  {nearCount > 0 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/35 text-[11px] font-bold tabular-nums">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      {isFa ? `${fmt(nearCount)} در شرف انقضا` : `${fmt(nearCount)} expiring soon`}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('detailed')}
+                  className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+                >
+                  <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
                 </button>
-              ))}
+              </div>
+              {expiringChemicals.length === 0 ? (
+                <div className="px-5 py-8 text-center text-xs text-[var(--text-muted)]">
+                  {isFa
+                    ? 'ماده شیمیایی موجود در انبار که منقضی یا در شرف انقضا باشد، یافت نشد.'
+                    : 'No in-stock expired or expiring chemicals found.'}
+                </div>
+              ) : (
+                <div className="divide-y divide-[var(--border-subtle)] max-h-[340px] overflow-y-auto">
+                  {expiringChemicals.map((chem) => {
+                    const isExpired = chem.daysRemaining < 0;
+                    return (
+                      <button
+                        key={chem.id}
+                        type="button"
+                        onClick={() => onInspectDetailedShipment(chem.shipmentNo)}
+                        className={`w-full px-5 py-3 text-start flex items-center justify-between gap-4 transition-colors border-s-4 ${
+                          isExpired
+                            ? 'border-s-rose-600 bg-rose-500/[0.04] hover:bg-rose-500/[0.09]'
+                            : 'border-s-amber-500 bg-amber-500/[0.04] hover:bg-amber-500/[0.09]'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate bidi-plaintext text-[var(--text-primary)]">
+                            {chem.description || chem.chemicalType || '-'}
+                          </div>
+                          <div className="text-[11px] text-[var(--text-muted)] mt-0.5 tabular-nums flex flex-wrap gap-x-2 bidi-plaintext">
+                            <span dir="ltr">{chem.shipmentNo}</span>
+                            {chem.packageNo && <span dir="ltr">· {chem.packageNo}</span>}
+                            {chem.itemNo && <span dir="ltr">· #{chem.itemNo}</span>}
+                            {chem.expirationDate && <span dir="ltr">· {formatDate(chem.expirationDate)}</span>}
+                            {chem.chemicalType && chem.description && chem.chemicalType !== chem.description && (
+                              <span>· {chem.chemicalType}</span>
+                            )}
+                          </div>
+                        </div>
+                        <span
+                          className={`shrink-0 px-2.5 py-0.5 rounded-md text-xs font-bold tabular-nums ${
+                            isExpired
+                              ? 'bg-rose-600 text-white'
+                              : 'bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/40'
+                          }`}
+                        >
+                          {isExpired
+                            ? isFa
+                              ? `منقضی (${fmt(Math.abs(chem.daysRemaining))} روز)`
+                              : `Expired (${fmt(Math.abs(chem.daysRemaining))}d)`
+                            : chem.daysRemaining === 0
+                              ? isFa
+                                ? 'انقضاء امروز'
+                                : 'Expires Today'
+                              : isFa
+                                ? `${fmt(chem.daysRemaining)} روز مانده`
+                                : `${fmt(chem.daysRemaining)}d left`}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          );
+        })()}
 
         {/* اقلام جایگزین شده فعال */}
         <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
