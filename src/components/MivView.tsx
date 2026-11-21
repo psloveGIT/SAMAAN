@@ -582,11 +582,11 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const docTypeLabel = useCallback(
     (type: MivDocType) => {
       if (type === 'miv_contractor') {
-        return isFa ? 'درخواست و حواله مصرف پیمانکار (MIV Contractor)' : 'MIV Contractor Issue';
+        return isFa ? 'حواله مصرف از انبار پیمانکار (MIV)' : 'MIV Issue (Contractor Warehouse)';
       }
       return isFa
-        ? `درخواست و حواله تحویل/مصرف ${activeEmployer.isConfigured ? activeEmployer.shortName : 'انبار اصلی'} (MIV Main)`
-        : 'MIV Main Stock Issue';
+        ? `حواله تحویل از انبار ${activeEmployer.isConfigured ? activeEmployer.shortName : 'کارفرما / اصلی'} (MIV)`
+        : 'MIV Issue (Main/Employer Warehouse)';
     },
     [isFa, activeEmployer.isConfigured, activeEmployer.shortName],
   );
@@ -878,6 +878,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
       { key: 'projectName', header: isFa ? 'پروژه' : 'Project', getValue: (r) => r.projectName || '' },
       { key: 'contractNo', header: isFa ? 'شماره قرارداد/درخواست' : 'Contract / Req No.', getValue: (r) => r.contractNo || '' },
       { key: 'party', header: isFa ? 'پیمانکار / درخواست‌کننده' : 'Contractor / Party', getValue: (r) => r.party || '' },
+      { key: 'receiver', header: isFa ? 'تحویل گیرنده' : 'Receiver', getValue: (r) => r.receiver || '' },
       { key: 'receiptNo', header: isFa ? 'شماره رسید' : 'Receipt No.', getValue: (r) => r.receiptNo || '' },
       { key: 'itemCount', header: isFa ? 'تعداد اقلام' : 'Items', getValue: (r) => r.items.length },
       {
@@ -1149,15 +1150,16 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             </div>
 
             <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'تحویل گیرنده (پیمانکار)' : 'Receiver'}
+              <label className="block text-[11px] font-semibold text-[var(--accent-primary)] mb-1">
+                {isFa ? 'تحویل گیرنده (ثبت در جزئیات تجهیزات)' : 'Receiver (Synced to Detailed)'}
               </label>
               <input
                 type="text"
                 dir={!receiver ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                 value={receiver}
                 onChange={(e) => setReceiver(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                placeholder={isFa ? 'نام تحویل گیرنده...' : 'Receiver name...'}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
               />
             </div>
           </div>
@@ -1361,6 +1363,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                 <th className="py-2.5 px-4">{isFa ? 'تاریخ' : 'Date'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'شماره قرارداد' : 'Contract'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Party'}</th>
+                <th className="py-2.5 px-4">{isFa ? 'تحویل گیرنده' : 'Receiver'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'تعداد اقلام' : 'Items'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
@@ -1368,13 +1371,13 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : mivDocuments.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
@@ -1392,6 +1395,9 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                       {doc.contractNo || '-'}
                     </td>
                     <td className="py-2.5 px-4 bidi-plaintext">{doc.party || '-'}</td>
+                    <td className="py-2.5 px-4 bidi-plaintext font-medium text-[var(--accent-primary)]">
+                      {doc.receiver || '-'}
+                    </td>
                     <td className="py-2.5 px-4 tabular-nums">{doc.items.length}</td>
                     <td className="py-2.5 px-4">
                       <div className="inline-flex items-center gap-1.5">

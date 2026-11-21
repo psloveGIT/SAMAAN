@@ -333,42 +333,45 @@ export interface DetailedEntry {
   actualQty: number | null; // مقدار واقعی (Populated via OPI result; null = pending OPI)
   damagedQty: number | null; // آسیب دیده (Populated via OPI result)
   mtoRef: string; // MTO
-  repNo: string; // شماره REP
-  repStatus: string; // وضعیت REP
-  repDescription: string; // توضیحات REP
+  repNo: string; // شماره جایگزینی (REP)
+  repStatus: string; // وضعیت جایگزینی (REP)
+  repReprocured?: string; // تأمین مجدد جایگزین شده
+  repDescription: string; // توضیحات جایگزینی (REP)
   countingUnit: string; // واحد شمارش
   island: string; // جزیره
   system: string; // سیستم
   subSystem: string; // ساب سیستم
   unit: string; // واحد
-  opiNo: string; // شماره OPI
-  opiDate: string; // تاریخ OPI
-  merNo: string; // شماره MER
-  merStatus: string; // وضعیت MER
-  notes: string; // توضیحات
+  opiNo: string; // شماره دعوتنامه (OPI)
+  opiDate: string; // تاریخ دعوتنامه (OPI)
+  merNo: string; // شماره کسری/مغایرت (MER)
+  merStatus: string; // وضعیت کسری/مغایرت (MER)
+  notes: string; // توضیحات کسری/مغایرت
   materialBalanceNo: string; // شماره بالانس متریال
   balanceStatus: string; // وضعیت بالانس
   storageLocation: string; // محل نگهداری
-  gcvReceiptNo: string; // شماره رسید GCV-Rahkaran
+  gcvReceiptNo: string; // شماره رسید مصرف (GCV)
   receiver: string; // تحویل گیرنده
-  gcvDeliveredQty: number | null; // مقدار تحویل شده
-  mivContractorNo: string; // شماره MIV پیمانکار
-  mivContractorDate: string; // تاریخ MIV پیمانکار
-  mivContractorQty: number | null; // تعداد تحویل شده پیمانکار
-  smrContractorNo: string; // شماره SMR پیمانکار
-  smrContractorDate: string; // تاریخ SMR پیمانکار
-  smrContractorQty: number | null; // تعداد SMR پیمانکار
-  smrContractorNote: string; // توضیحات SMR پیمانکار
-  smrMapnaNo: string; // شماره SMR مپنا
-  smrMapnaDate: string; // تاریخ SMR مپنا
-  smrMapnaQty: number | null; // تعداد SMR مپنا
-  smrMapnaNote: string; // توضیحات SMR مپنا
-  mivMapnaNo: string; // شماره MIV مپنا
-  mivMapnaDate: string; // تاریخ MIV مپنا
-  mivMapnaQty: number | null; // تعداد تحویل شده مپنا
-  stocktakeInfo: string; // انبار گردانی / تاریخ تولید
+  gcvDeliveredQty: number | null; // تعداد رسید مصرف
+  mivContractorNo: string; // شماره حواله (MIV)
+  mivContractorDate: string; // تاریخ حواله (MIV)
+  mivContractorQty: number | null; // مجموع تعداد تحویل شده با حواله
+  mivReceiver?: string; // تحویل گیرنده (حواله)
+  smrContractorNo: string; // شماره برگشتی به انبار پیمانکار (SMR)
+  smrContractorDate: string; // تاریخ برگشتی (پیمانکار)
+  smrContractorQty: number | null; // مجموع تعداد برگشتی (پیمانکار)
+  smrContractorNote: string; // توضیحات SMR (پیمانکار)
+  smrMapnaNo: string; // شماره برگشتی به انبار کارفرما (SMR)
+  smrMapnaDate: string; // تاریخ برگشتی (کارفرما)
+  smrMapnaQty: number | null; // مجموع تعداد برگشتی (کارفرما)
+  smrMapnaNote: string; // توضیحات SMR (کارفرما)
+  smrDeliverer?: string; // تحویل آورنده (برگشت متریال)
+  mivMapnaNo: string; // legacy field retained for DB compatibility
+  mivMapnaDate: string; // legacy field retained for DB compatibility
+  mivMapnaQty: number | null; // legacy field retained for DB compatibility
+  stocktakeInfo: string; // legacy field retained for DB compatibility
   stocktakeStatus?: string; // وضعیت انبارگردانی
-  stocktakeDate?: string; // تاریخ وضعیت انبارگردانی
+  stocktakeDate?: string; // تاریخ آخرین انبارگردانی
   itemCategory?: '' | 'special_tools' | 'chemicals' | 'spare_parts'; // نوع قلم: ابزار مخصوص / مواد شیمیایی / لوازم یدکی
   chemicalType?: string; // نوع ماده شیمیایی
   productionDate?: string; // تاریخ تولید ماده شیمیایی (ISO YYYY-MM-DD)
@@ -690,6 +693,7 @@ export interface MivDocumentRecord {
   installerRep?: string;
   requester?: string;
   receiver?: string;
+  deliveredBy?: string;
   notes?: string;
   items: DocumentLineItem[];
   createdAt: string;

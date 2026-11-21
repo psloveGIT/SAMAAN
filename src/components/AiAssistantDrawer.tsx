@@ -337,14 +337,14 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({ open, onCl
                 <div className="space-y-1">
                   <div className="font-semibold">
                     {isFa
-                      ? 'سرویس هوش مصنوعی آماده دریافت کلید سرور است'
-                      : 'Server AI Key Required'}
+                      ? 'کلید هوش مصنوعی جمنای (GEMINI_API_KEY) در سرور تنظیم نشده است'
+                      : 'Gemini API Key (GEMINI_API_KEY) Not Configured'}
                   </div>
                   <p className="text-[11px] opacity-90">
                     {analysisNotice ||
                       (isFa
-                        ? 'کلید GEMINI_API_KEY در سرور تنظیم نشده است. آمار زنده زیر مستقیماً از پایگاه داده محاسبه شده است.'
-                        : 'GEMINI_API_KEY is not configured on the server. Live operational metrics below are computed directly from the database.')}
+                        ? 'برای فعال‌سازی کامل دستیار هوشمند جمنای، متغیر GEMINI_API_KEY را در بخش تنظیمات پروژه (Settings > Secrets) ثبت کنید. آمار زنده زیر مستقیماً از پایگاه داده محاسبه شده است.'
+                        : 'To enable live Gemini AI answers, configure GEMINI_API_KEY in project Settings > Secrets. Live operational metrics below are computed directly from the database.')}
                   </p>
                 </div>
               </div>

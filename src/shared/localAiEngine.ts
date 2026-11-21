@@ -128,10 +128,22 @@ const SUBJECT_STOP_PHRASES_FA = [
   'پکینگ لیست',
   'پکینگ لیست ها',
   'پکینگ ها',
+  'پکینگها',
+  'ردیف های ثبتی',
+  'ردیفهای ثبتی',
+  'ردیف های',
+  'ردیفهای',
+  'محموله های در راه',
+  'محمولههای در راه',
+  'محموله های',
+  'محمولههای',
   'تامین کننده',
   'تامین کنندگان',
+  'وزن خالص ناخالص',
   'وزن ناخالص',
   'وزن خالص',
+  'خالص ناخالص',
+  'کل انبار',
   'کرایه حمل',
   'مواد شیمیایی',
   'ابزار مخصوص',
@@ -153,23 +165,26 @@ const SUBJECT_STOP_WORDS = new Set([
   'یک', 'یه', 'ها', 'های', 'دارای', 'بدون', 'فقط', 'هم', 'الان', 'فعلی', 'فعلا', 'لطفا', 'میشه', 'میتونی',
   'بیشترین', 'کمترین', 'بهترین', 'مهمترین', 'فعال', 'باز', 'بسته', 'یکتا', 'جدید', 'اخیر',
   'جزیره', 'جزایر', 'سیستم', 'واحد', 'سوله', 'محل', 'نگهداری', 'انبارها',
-  'مپنا', 'پیمانکار', 'کارفرما', 'پکینگ', 'محموله', 'نگله', 'آیتم', 'ردیف', 'ردیفها', 'ردیفهای',
-  'کسری', 'مغایرت', 'خراب', 'آسیب', 'جایگزین', 'جایگزینی', 'بازرسی', 'گشایش', 'ارسال', 'رسیده',
-  'وزن', 'تن', 'کرایه', 'حمل', 'ترانزیت', 'انقضا', 'منقضی', 'روز', 'ماه', 'سال',
+  'مپنا', 'پیمانکار', 'کارفرما', 'پکینگ', 'پکینگها', 'پکینگهای', 'محموله', 'محمولهها', 'محمولههای',
+  'نگله', 'نگلهها', 'نگلههای', 'آیتم', 'آیتمها', 'آیتمهای', 'ردیف', 'ردیفها', 'ردیفهای',
+  'ثبت', 'ثبتی', 'ثبتشده', 'خالص', 'ناخالص', 'کلی', 'جزئیات', 'جزئی', 'آمار', 'امار', 'اطلاعات', 'تحلیل', 'بررسی',
+  'کسری', 'مغایرت', 'مغایرتها', 'خراب', 'آسیب', 'جایگزین', 'جایگزینی', 'بازرسی', 'گشایش', 'ارسال', 'رسیده',
+  'وزن', 'تن', 'کرایه', 'حمل', 'ترانزیت', 'انقضا', 'انقضاء', 'منقضی', 'روز', 'ماه', 'سال', 'لازم', 'مورد', 'موارد',
   'اسناد', 'سند', 'رسید', 'حواله', 'صورتجلسه', 'دعوتنامه', 'برآورد', 'تفکیک', 'اولویت', 'اولویتها', 'اقدام', 'اقدامات',
+  'پیشنهادی', 'پیشنهاد', 'عملیاتی', 'انبارگردانی', 'موازنه', 'بالانس',
   // English conversational & generic domain words
   'what', 'which', 'where', 'who', 'when', 'how', 'much', 'many', 'is', 'are', 'was', 'were', 'be',
   'do', 'does', 'did', 'we', 'have', 'has', 'had', 'there', 'any', 'some', 'all', 'total', 'sum',
   'count', 'number', 'qty', 'quantity', 'stock', 'inventory', 'available', 'left', 'remaining',
   'show', 'list', 'give', 'tell', 'find', 'search', 'check', 'get', 'summary', 'report', 'status',
-  'overview', 'breakdown', 'detail', 'details', 'info', 'information', 'please', 'me', 'us', 'the',
-  'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'from', 'by', 'with', 'about', 'and', 'or',
+  'overview', 'breakdown', 'detail', 'details', 'detailed', 'general', 'info', 'information', 'please', 'me', 'us', 'the',
+  'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'from', 'by', 'with', 'about', 'and', 'or', 'vs',
   'item', 'items', 'equipment', 'material', 'materials', 'warehouse', 'main', 'contractor', 'mapna',
   'location', 'storage', 'island', 'islands', 'supplier', 'suppliers', 'vendor', 'packing', 'packings',
-  'shipment', 'package', 'packages', 'row', 'rows', 'shortage', 'shortages', 'damaged', 'damage',
-  'discrepancy', 'discrepancies', 'open', 'pending', 'active', 'expiring', 'expired', 'days',
+  'shipment', 'shipments', 'package', 'packages', 'row', 'rows', 'recorded', 'registered', 'shortage', 'shortages', 'damaged', 'damage',
+  'discrepancy', 'discrepancies', 'open', 'pending', 'active', 'expiring', 'expired', 'days', 'within',
   'transit', 'shipping', 'inspection', 'arrived', 'weight', 'gross', 'net', 'ton', 'tons', 'tonnage',
-  'freight', 'cost', 'priority', 'priorities', 'actions', 'recommended', 'document', 'documents',
+  'freight', 'cost', 'priority', 'priorities', 'actions', 'recommended', 'document', 'documents', 'provide', 'summarize',
 ]);
 
 /**
@@ -179,13 +194,18 @@ const SUBJECT_STOP_WORDS = new Set([
  *  - `موجودی Pipe 8" چقدر است و در کدام انبار نگهداری می‌شود؟` -> `pipe 8"`
  *  - `چند متر لوله ۸ اینچ داریم؟` -> `لوله 8 اینچ`
  *  - `تفکیک موجودی بر اساس جزیره چگونه است؟` -> ``
+ *  - `خلاصه تعداد پکینگ‌ها، ردیف‌های ثبتی، محموله‌های در راه و وزن خالص/ناخالص کل انبار را گزارش بده.` -> ``
  */
 export function extractEntitySubjectFromQuestion(prompt: string): string {
   let text = normalizeSearchText(prompt);
   if (!text) return '';
 
-  // Remove polite / question punctuation while preserving inches `"` and technical symbols (`-`, `/`, `.`)
-  text = text.replace(/[؟?!،,;؛()[\]{}]/g, ' ');
+  // Remove polite / question punctuation while preserving inches `"` and technical numeric symbols (`1/2"`, `2.5`)
+  text = text.replace(/[؟?!،,;؛()[\]{}:«»]/g, ' ');
+  // Normalize slashes between letters (e.g. "خالص/ناخالص", "net/gross") into spaces while keeping fractions like "1/2"
+  text = text.replace(/(?<=[a-z\u0600-\u06ff])\/(?=[a-z\u0600-\u06ff])/gi, ' ');
+  // Strip sentence-ending or isolated dots without breaking decimal numbers like 2.5 or codes like A.100
+  text = text.replace(/(?<!\d)\.(?!\d)/g, ' ');
 
   // Remove multi-word framing phrases first (longest first)
   const sortedPhrases = [...SUBJECT_STOP_PHRASES_FA].sort((a, b) => b.length - a.length);
@@ -219,11 +239,16 @@ export function extractEntitySubjectFromQuestion(prompt: string): string {
       kept.push(preservedSizes[Number(sizeMatch[1])]);
       continue;
     }
-    const clean = tok.replace(/^["'`]+|["'`]+$/g, '');
+    const clean = tok.replace(/^["'`./\\-]+|["'`./\\-]+$/g, '');
     if (!clean) continue;
     if (SUBJECT_STOP_WORDS.has(clean)) continue;
+    // Strip Persian plural suffixes ("ها"/"های") and check stopword base too
+    const singularBase = clean.replace(/(?:های|ها)$/, '');
+    if (singularBase && singularBase !== clean && SUBJECT_STOP_WORDS.has(singularBase)) continue;
     // Ignore isolated "mer" / "rep" / "opi" / "gcv" / "miv" / "smr" / "osdr" when there's no code attached
     if (/^(mer|rep|opi|gcv|miv|smr|osdr)$/i.test(clean)) continue;
+    // Ignore bare numbers like "30" from "زیر 30 روز"
+    if (/^\d+$/.test(clean) && !preservedSizes.length) continue;
     kept.push(clean);
   }
 

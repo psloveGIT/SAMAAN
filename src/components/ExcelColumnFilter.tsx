@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowDownAZ, ArrowUpZA, Check, ChevronDown, Filter, Search, X } from 'lucide-react';
 import { apiRequest } from '../lib/api.ts';
+import { getTranslations } from '../shared/i18n.ts';
 import { EMPTY_CELL_TOKEN } from '../shared/tableQuery.ts';
 
 interface RawColumnValueItem {
@@ -92,19 +93,31 @@ const ExcelColumnFilterInner: React.FC<ExcelColumnFilterProps> = ({
     )
       .then((res) => {
         if (cancelled) return;
+        const t = getTranslations(lang);
+        const localizeOptionLabel = (tok: string, rawLabel: string): string => {
+          if (colKey === 'itemCategory') {
+            const norm = tok.trim().toLowerCase();
+            if (tok === EMPTY_CELL_TOKEN || norm === '' || norm === 'standard') return t.itemCategories.standard;
+            if (norm === 'special_tools') return t.itemCategories.special_tools;
+            if (norm === 'chemicals') return t.itemCategories.chemicals;
+            if (norm === 'spare_parts') return t.itemCategories.spare_parts;
+          }
+          return rawLabel;
+        };
         const rawVals = Array.isArray(res?.values) ? res.values : [];
         const vals = rawVals.map((v) => {
           if (typeof v === 'string') {
+            const rawLbl = v === EMPTY_CELL_TOKEN ? '' : v;
             return {
               token: v,
-              label: v === EMPTY_CELL_TOKEN ? '' : v,
+              label: localizeOptionLabel(v, rawLbl),
               count: 0,
             };
           }
           const tok = String(v?.token ?? '');
-          const lbl = String(v?.label ?? (tok === EMPTY_CELL_TOKEN ? '' : tok));
+          const rawLbl = String(v?.label ?? (tok === EMPTY_CELL_TOKEN ? '' : tok));
           const cnt = typeof v?.count === 'number' && Number.isFinite(v.count) ? v.count : 0;
-          return { token: tok, label: lbl, count: cnt };
+          return { token: tok, label: localizeOptionLabel(tok, rawLbl), count: cnt };
         });
         setOptions(vals);
         const currentActive = activeValuesRef.current;
@@ -123,7 +136,7 @@ const ExcelColumnFilterInner: React.FC<ExcelColumnFilterProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, scope, colKey, calendar, refreshSignal]);
+  }, [open, scope, colKey, calendar, lang, refreshSignal]);
 
   useEffect(() => {
     if (!open) return;
@@ -349,7 +362,7 @@ const ExcelColumnFilterInner: React.FC<ExcelColumnFilterProps> = ({
                     <span>{isFa ? '(انتخاب همه)' : '(Select All)'}</span>
                   </label>
                   {filteredOptions.slice(0, renderLimit).map((opt) => {
-                    const isBlank = opt.token === EMPTY_CELL_TOKEN;
+                    const isBlank = opt.token === EMPTY_CELL_TOKEN && colKey !== 'itemCategory';
                     const safeCount = typeof opt.count === 'number' && Number.isFinite(opt.count) ? opt.count : 0;
                     return (
                       <label

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   commitAutoWorkbook,
   commitOperationalFormImport,
+  detectCandidateScopesForSheet,
   detectExtendedScope,
   previewAutoWorkbook,
   previewOperationalFormImport,
@@ -623,5 +624,73 @@ test('Combined MIV/SMR sheet, compact General sheet, Substitution headers, and S
   assert.equal(db.detailed[0].storageLocation, 'سوله B-04');
   assert.equal(res.totals.imported, 7);
 });
+
+test('detectCandidateScopesForSheet detects multiple sections inside a single sheet and commits them selectively', () => {
+  const db = makeEmptyDb();
+  const combinedMatrix = [
+    [
+      'تاریخ ورود',
+      'شماره محموله',
+      'شماره نگله',
+      'شماره آیتم',
+      'شرح کلی',
+      'شرح',
+      'مقدار پکینگ',
+      'مقدار واقعی',
+      'شماره بالانس متریال',
+      'شماره رسید مصرف',
+      'تعداد رسید مصرف',
+      'تحویل گیرنده',
+      'وضعیت انبارگردانی',
+      'تاریخ آخرین انبارگردانی',
+    ],
+    [
+      '1404/05/01',
+      'PL-MULTI-1',
+      'PKG-1',
+      '1',
+      'Valve',
+      'Globe Valve 4 Inch',
+      '10',
+      '10',
+      'MB-100',
+      'GCV-777',
+      '4',
+      'مهندس رضایی',
+      'موجود و تایید شده',
+      '1404/06/01',
+    ],
+  ];
+
+  const candidates = detectCandidateScopesForSheet({
+    db,
+    sheet: { name: 'MasterData', matrix: combinedMatrix },
+    assumedCalendar: 'jalali',
+    actorName: 'admin',
+  });
+
+  const candidateScopes = candidates.map((c) => c.scope);
+  assert.equal(candidates[0].scope, 'detailed');
+  assert.equal(candidates[0].isPrimary, true);
+  assert.ok(candidateScopes.includes('stocktake'), 'should detect stocktake inside combined sheet');
+  assert.ok(candidateScopes.includes('gcvDocuments'), 'should detect gcvDocuments inside combined sheet');
+
+  // Commit the SAME sheet into two user-confirmed sections: detailed + gcvDocuments
+  const res = commitAutoWorkbook({
+    db,
+    sheets: [
+      { name: 'MasterData', matrix: combinedMatrix, forcedScope: 'detailed' },
+      { name: 'MasterData', matrix: combinedMatrix, forcedScope: 'gcvDocuments' },
+    ],
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'skip',
+    actorName: 'admin',
+  });
+
+  assert.equal(res.sections.length, 2);
+  assert.equal(db.detailed.some((d) => d.shipmentNo === 'PL-MULTI-1'), true);
+  assert.equal(db.gcvDocuments?.some((g) => g.receiptNo === 'GCV-777'), true);
+});
+
 
 

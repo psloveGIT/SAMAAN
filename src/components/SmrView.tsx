@@ -370,11 +370,13 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>پیمانکار نصب:</div>
+              <div style={{ fontWeight: 700 }}>پیمانکار نصب / تحویل آورنده:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
-              {doc.installerRep || doc.party || ''}
+              {[doc.installerRep || doc.party, doc.deliveredBy ? `تحویل آورنده: ${doc.deliveredBy}` : '']
+                .filter(Boolean)
+                .join(' — ')}
             </div>
           </div>
         </div>
@@ -446,6 +448,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
   const [techOffice, setTechOffice] = useState('');
   const [qcInspector, setQcInspector] = useState('');
   const [installerRep, setInstallerRep] = useState('');
+  const [deliveredBy, setDeliveredBy] = useState('');
   const [notes, setNotes] = useState('');
 
   const [itemSearch, setItemSearch] = useState('');
@@ -478,11 +481,11 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
   const docTypeLabel = useCallback(
     (type: MivDocType) => {
       if (type === 'smr_contractor') {
-        return isFa ? 'ارجاع / برگشت به انبار پیمانکار (SMR Contractor)' : 'SMR Contractor Return';
+        return isFa ? 'برگشت به انبار پیمانکار (SMR پیمانکار)' : 'Return to Contractor Warehouse (SMR)';
       }
       return isFa
-        ? `ارجاع قطعات و کالا از پیمانکار به ${activeEmployer.isConfigured ? activeEmployer.shortName : 'انبار اصلی'} (SMR Main)`
-        : 'SMR Return to Main Warehouse';
+        ? `برگشت به انبار ${activeEmployer.isConfigured ? activeEmployer.shortName : 'کارفرما / اصلی'} (SMR کارفرما)`
+        : 'Return to Employer/Main Warehouse (SMR)';
     },
     [isFa, activeEmployer.isConfigured, activeEmployer.shortName],
   );
@@ -648,6 +651,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
     setTechOffice('');
     setQcInspector('');
     setInstallerRep('');
+    setDeliveredBy('');
     setNotes('');
     setQtyMap({});
     setReasonMap({});
@@ -669,6 +673,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
     setTechOffice(doc.techOffice || '');
     setQcInspector(doc.qcInspector || '');
     setInstallerRep(doc.installerRep || '');
+    setDeliveredBy(doc.deliveredBy || '');
     setNotes(doc.notes || '');
     setShipmentFilter('');
     setItemSearch('');
@@ -709,6 +714,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
         techOffice,
         qcInspector,
         installerRep: installerRep || party,
+        deliveredBy,
         notes,
         items: selectedEntries,
       };
@@ -772,6 +778,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
       { key: 'purchasePackageNo', header: isFa ? 'شماره بسته خرید' : 'Purchase Package', getValue: (r) => r.purchasePackageNo || '' },
       { key: 'supplier', header: t.headers.supplier, getValue: (r) => r.supplier || '' },
       { key: 'party', header: isFa ? 'پیمانکار نصب' : 'Installer Contractor', getValue: (r) => r.party || '' },
+      { key: 'deliveredBy', header: isFa ? 'تحویل آورنده' : 'Returned By', getValue: (r) => r.deliveredBy || '' },
       { key: 'releaseNoteNo', header: 'Realised Note No.', getValue: (r) => r.releaseNoteNo || '' },
       { key: 'itemCount', header: isFa ? 'تعداد اقلام' : 'Items', getValue: (r) => r.items.length },
       {
@@ -873,25 +880,86 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
             </div>
           </div>
 
-          {/* Row 1: Type, SMR No, SMR Date, Project, Purchase Package */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'نوع فرم ارجاع' : 'Return Form Type'} *
-              </label>
-              <select
-                value={docType}
-                onChange={(e) => {
-                  setDocType(e.target.value as SmrOnlyType);
+          {/* Target Warehouse Chooser: Employer WH vs Contractor WH */}
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-3.5 space-y-2.5">
+            <div className="text-xs font-bold text-[var(--text-primary)]">
+              {isFa
+                ? 'متریال به کدام انبار برگشت می‌خورد؟ *'
+                : 'Which warehouse is the material being returned to? *'}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setDocType('smr_contractor');
                   setQtyMap({});
                 }}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
+                className={`text-start p-3 rounded-xl border transition-all ${
+                  docType === 'smr_contractor'
+                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent-primary)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-strong)]'
+                }`}
               >
-                <option value="smr_contractor">{docTypeLabel('smr_contractor')}</option>
-                <option value="smr_mapna">{docTypeLabel('smr_mapna')}</option>
-              </select>
-            </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-[var(--text-primary)]">
+                    {isFa ? 'برگشت به انبار پیمانکار' : 'Return to Contractor Warehouse'}
+                  </span>
+                  <span
+                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                      docType === 'smr_contractor'
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]'
+                        : 'border-[var(--border-strong)]'
+                    }`}
+                  >
+                    {docType === 'smr_contractor' && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  {isFa
+                    ? 'برگشت متریال مصرف‌نشده از سایت به انبار پیمانکار — موجودی انبار پیمانکار افزایش می‌یابد و در ستون «شماره برگشتی به انبار پیمانکار» ثبت می‌شود.'
+                    : 'Returns unused material to Contractor Warehouse — increases Contractor stock.'}
+                </p>
+              </button>
 
+              <button
+                type="button"
+                onClick={() => {
+                  setDocType('smr_mapna');
+                  setQtyMap({});
+                }}
+                className={`text-start p-3 rounded-xl border transition-all ${
+                  docType === 'smr_mapna'
+                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent-primary)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-strong)]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-[var(--text-primary)]">
+                    {isFa
+                      ? `برگشت به انبار کارفرما (${activeEmployer.isConfigured ? activeEmployer.shortName : 'انبار اصلی'})`
+                      : 'Return to Employer / Main Warehouse'}
+                  </span>
+                  <span
+                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                      docType === 'smr_mapna'
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]'
+                        : 'border-[var(--border-strong)]'
+                    }`}
+                  >
+                    {docType === 'smr_mapna' && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                  {isFa
+                    ? 'برگشت متریال از انبار پیمانکار به انبار کارفرما — موجودی انبار اصلی افزایش می‌یابد و در ستون «شماره برگشتی به انبار کارفرما» ثبت می‌شود.'
+                    : 'Returns material from Contractor to Employer/Main Warehouse — increases Main Warehouse stock.'}
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* Row 1: SMR No, SMR Date, Delivered By, Purchase Package */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                 {isFa ? 'شماره فرم (SMR No.)' : 'SMR No.'} *
@@ -914,6 +982,20 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
               value={date}
               onChange={setDate}
             />
+
+            <div>
+              <label className="block text-[11px] font-semibold text-[var(--accent-primary)] mb-1">
+                {isFa ? 'نام تحویل آورنده (ثبت در جزئیات تجهیزات)' : 'Returned By / Deliverer (Synced to Detailed)'}
+              </label>
+              <input
+                type="text"
+                dir={!deliveredBy ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                value={deliveredBy}
+                onChange={(e) => setDeliveredBy(e.target.value)}
+                placeholder={isFa ? 'نام شخص تحویل آورنده...' : 'Person returning material...'}
+                className="w-full h-9 px-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
 
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
@@ -1254,6 +1336,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                 <th className="py-2.5 px-4">SMR Date</th>
                 <th className="py-2.5 px-4">{t.headers.supplier}</th>
                 <th className="py-2.5 px-4">{isFa ? 'پیمانکار نصب' : 'Contractor'}</th>
+                <th className="py-2.5 px-4">{isFa ? 'تحویل آورنده' : 'Returned By'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'تعداد اقلام' : 'Items'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
@@ -1261,13 +1344,13 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : smrDocuments.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
@@ -1283,6 +1366,9 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
                     </td>
                     <td className="py-2.5 px-4 bidi-plaintext">{doc.supplier || '-'}</td>
                     <td className="py-2.5 px-4 bidi-plaintext">{doc.party || '-'}</td>
+                    <td className="py-2.5 px-4 bidi-plaintext font-medium text-[var(--accent-primary)]">
+                      {doc.deliveredBy || '-'}
+                    </td>
                     <td className="py-2.5 px-4 tabular-nums">{doc.items.length}</td>
                     <td className="py-2.5 px-4">
                       <div className="inline-flex items-center gap-1.5">

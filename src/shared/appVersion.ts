@@ -16,11 +16,36 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.5.1';
-export const APP_BUILD_ID = '2026.05.20-2';
-export const APP_RELEASED_AT = '2026-05-20';
+export const APP_VERSION = '2.6.0';
+export const APP_BUILD_ID = '2026.05.21-1';
+export const APP_RELEASED_AT = '2026-05-21';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.6.0',
+    buildId: '2026.05.21-1',
+    releasedAt: '2026-05-21',
+    titleFa: 'اصلاح دستیار هوشمند جمنای، بازآرایی گروه‌بندی‌شده ستون‌های جزئیات تجهیزات و استخراج خودکار تاریخ مواد شیمیایی',
+    titleEn: 'Gemini AI Assistant Fix, Grouped Detailed Table Columns & Chemical Date Auto-Extraction',
+    changesFa: [
+      'رفع خطای دستیار هوشمند در گزارش خلاصه پکینگ‌ها، محموله‌های در راه و وزن خالص/ناخالص و اتصال مستقیم به سرویس جمنای سرور',
+      'بازآرایی کامل، نام‌گذاری فارسی شفاف و گروه‌بندی رنگی دوطبقه ستون‌های جدول ثبت جزئیات تجهیزات (حذف ستون‌های تکراری و قدیمی و افزودن «تأمین مجدد جایگزین شده»، «تحویل گیرنده حواله» و «تحویل آورنده»)',
+      'اصلاح کامل فیلتر ستون «دسته‌بندی تخصصی قلم» جهت نمایش ۱۰۰٪ فارسی در زبان فارسی و انگلیسی در زبان انگلیسی',
+      'افزودن انتخاب صریح انبار مقصد برگشت متریال (انبار کارفرما / انبار پیمانکار) و فیلد «نام تحویل آورنده» در فرم ارجاع (SMR) و ثبت خودکار «تحویل گیرنده» از حواله (MIV)',
+      'استخراج خودکار تاریخ تولید و تاریخ انقضای مواد شیمیایی (شمسی و میلادی) از متن و توضیحات هنگام ورود فایل‌های اکسل و CSV و رفع تداخل ستون انبارگردانی با تاریخ تولید',
+      'بازطراحی کامل ورود فایل در پشتیبان‌گیری به ویزارد ۳ مرحله‌ای: انتخاب دستی شیت‌ها، تشخیص و تأیید چندبخش هم‌زمان درون یک شیت و ثبت کنترل‌شده بدون تحمیل خودکار شیت اول',
+      'به‌روزرسانی فوری فهرست تغییرات در اعلان بروزرسانی برنامه همزمان با شناسایی نسخه جدید',
+    ],
+    changesEn: [
+      'Fixed Smart AI Assistant summary/weight/packing/transit queries and direct server-side Gemini API routing',
+      'Reorganized, renamed, and color-grouped Detailed Equipment table columns into clean 2-tier semantic headers (added Reprocured Replacement, MIV Receiver, and SMR Deliverer; removed duplicate legacy columns)',
+      'Fixed Item Classification column filter to render strictly Persian labels in Persian mode and English labels in English mode',
+      'Added explicit target warehouse selection (Employer vs. Contractor WH) and Returned By field in SMR, plus automatic Receiver sync from MIV',
+      'Automatic extraction of Persian (Jalali) and English (Gregorian) chemical production & expiration dates during Excel/CSV import, fixing stocktake-to-productionDate column overlap',
+      'Redesigned Backup & Restore file import into a 3-step guided wizard supporting explicit sheet selection and multi-section detection inside a single sheet',
+      'Immediate remote changelog sync when Service Worker detects a new app release',
+    ],
+  },
   {
     version: '2.5.1',
     buildId: '2026.05.20-2',

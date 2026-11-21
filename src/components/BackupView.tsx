@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
   CheckCircle2,
   ClipboardList,
   Columns3,
@@ -10,6 +13,7 @@ import {
   Layers,
   Link2,
   Loader2,
+  Plus,
   PlusCircle,
   RefreshCw,
   RotateCcw,
@@ -327,30 +331,32 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const [loadingSnapId, setLoadingSnapId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Unified Spreadsheet / CSV / JSON Import state (Core + All 10 Operational/Custom Forms)
+  // Unified 3-Step Guided Spreadsheet / CSV / JSON Import Wizard State
+  const [importStep, setImportStep] = useState<0 | 1 | 2 | 3>(0);
   const [fileName, setFileName] = useState('');
   const [sheetNames, setSheetNames] = useState<string[]>([]);
-  const [selectedSheet, setSelectedSheet] = useState('');
+  const [checkedSheets, setCheckedSheets] = useState<string[]>([]);
   const [sheetsMap, setSheetsMap] = useState<Record<string, string[][]>>({});
   const [structuredSheetsMap, setStructuredSheetsMap] = useState<Record<string, StructuredSheetPayload>>({});
-  const [importScope, setImportScope] = useState<'auto' | ExtendedImportScope>('auto');
   const [assumedCalendar, setAssumedCalendar] = useState<'jalali' | 'gregorian'>('jalali');
   const [duplicatePolicy, setDuplicatePolicy] = useState<'replace' | 'skip'>('skip');
-  const [preview, setPreview] = useState<PreviewResponse | null>(null);
-  const [columnMapping, setColumnMapping] = useState<Record<string, number> | null>(null);
-  const [editedRows, setEditedRows] = useState<Record<string, unknown>[]>([]);
+  const [analyzingSheets, setAnalyzingSheets] = useState(false);
+
+  // Step 2: Detected multi-section candidates per selected sheet & user-confirmed target scopes
+  const [autoWorkbookPreview, setAutoWorkbookPreview] = useState<AutoWorkbookPreviewSection[]>([]);
+  const [selectedScopesBySheet, setSelectedScopesBySheet] = useState<Record<string, ExtendedImportScope[]>>({});
+
+  // Step 3: Confirmed (sheetName, scope) tasks, lazy per-task preview, column mapping & edited rows
+  const [confirmedTasks, setConfirmedTasks] = useState<Array<{ taskKey: string; sheetName: string; scope: ExtendedImportScope }>>([]);
+  const [activeTaskKey, setActiveTaskKey] = useState<string>('');
+  const [loadingTaskKey, setLoadingTaskKey] = useState<string | null>(null);
+  const [taskPreviews, setTaskPreviews] = useState<Record<string, PreviewResponse>>({});
+  const [taskMappings, setTaskMappings] = useState<Record<string, Record<string, number>>>({});
+  const [taskEditedRows, setTaskEditedRows] = useState<Record<string, Record<string, unknown>[]>>({});
   const [mappingExpanded, setMappingExpanded] = useState(true);
   const [rowsConfirmed, setRowsConfirmed] = useState(false);
-  const [importResult, setImportResult] = useState<CommitResponse | null>(null);
   const [importing, setImporting] = useState(false);
-  const [importedSheets, setImportedSheets] = useState<string[]>([]);
-  const [postSheetPrompt, setPostSheetPrompt] = useState<string | null>(null);
-
-  // Multi-Sheet / Multi-Section Auto-Workbook Detection State
-  const [autoWorkbookPreview, setAutoWorkbookPreview] = useState<AutoWorkbookPreviewSection[]>([]);
-  const [sheetScopeOverrides, setSheetScopeOverrides] = useState<Record<string, ExtendedImportScope | 'skip'>>({});
   const [autoWorkbookResult, setAutoWorkbookResult] = useState<AutoWorkbookCommitSummary | null>(null);
-  const [autoImporting, setAutoImporting] = useState(false);
 
   // Import Log & Rejected Records Recovery State (persisted per active project in sessionStorage)
   const logsStorageKey = `samaan_import_logs_${activeProjectId}`;
@@ -421,94 +427,65 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     void loadSnapshots();
   }, [loadSnapshots]);
 
-  const runPreview = useCallback(
+  const loadTaskPreview = useCallback(
     async (
-      matrix: string[][],
-      scopeVal: 'auto' | ExtendedImportScope,
+      taskKey: string,
+      sheetNameParam: string,
+      scopeVal: ExtendedImportScope,
       calVal: 'jalali' | 'gregorian',
       explicitMapping?: Record<string, number>,
-      sheetNameParam?: string,
-      structuredParam?: StructuredSheetPayload,
     ) => {
-      const hasStruct = Boolean(structuredParam?.records && structuredParam.records.length > 0);
-      if ((!matrix || matrix.length === 0) && !hasStruct) return;
+      const matrix = sheetsMap[sheetNameParam] || [];
+      const structPayload = structuredSheetsMap[sheetNameParam];
+      const hasStruct = Boolean(structPayload?.records && structPayload.records.length > 0);
+      if (matrix.length === 0 && !hasStruct) return;
+      setLoadingTaskKey(taskKey);
       try {
         const res = await apiRequest<PreviewResponse>('/api/import/preview', {
           method: 'POST',
           body: JSON.stringify({
             matrix,
-            ...(hasStruct ? { structuredRecords: structuredParam!.records, sectionHint: structuredParam!.sectionHint } : {}),
-            ...(sheetNameParam ? { sheetName: sheetNameParam } : {}),
-            scope: scopeVal === 'auto' ? undefined : scopeVal,
+            ...(hasStruct ? { structuredRecords: structPayload!.records, sectionHint: structPayload!.sectionHint } : {}),
+            sheetName: sheetNameParam,
+            scope: scopeVal,
             assumedCalendar: calVal,
             ...(explicitMapping ? { columnMapping: explicitMapping } : {}),
           }),
         });
-        setPreview(res);
-        setColumnMapping(res.columnInspection?.mapping || explicitMapping || null);
-        setEditedRows(res.parsedRows || res.sample || []);
-        setRowsConfirmed(Boolean(res.isOperational));
+        setTaskPreviews((prev) => ({ ...prev, [taskKey]: res }));
+        if (res.columnInspection?.mapping || explicitMapping) {
+          setTaskMappings((prev) => ({
+            ...prev,
+            [taskKey]: res.columnInspection?.mapping || explicitMapping || {},
+          }));
+        }
+        setTaskEditedRows((prev) => ({
+          ...prev,
+          [taskKey]: res.parsedRows || res.sample || [],
+        }));
       } catch (err) {
         if (err instanceof ApiError) notify('error', err.message);
+      } finally {
+        setLoadingTaskKey((cur) => (cur === taskKey ? null : cur));
       }
     },
-    [notify],
+    [notify, sheetsMap, structuredSheetsMap],
   );
 
-  const runAutoWorkbookPreview = useCallback(
-    async (
-      names: string[],
-      sMap: Record<string, string[][]>,
-      structMap: Record<string, StructuredSheetPayload>,
-      calVal: 'jalali' | 'gregorian',
-    ) => {
-      if (names.length === 0) {
-        setAutoWorkbookPreview([]);
-        return;
-      }
-      try {
-        const payloadSheets = names.map((nm) => ({
-          name: nm,
-          matrix: sMap[nm] || [],
-          ...(structMap[nm]?.records?.length
-            ? { structuredRecords: structMap[nm].records, sectionHint: structMap[nm].sectionHint }
-            : {}),
-        }));
-        const res = await apiRequest<{ detectedSheets: AutoWorkbookPreviewSection[] }>('/api/import/auto-workbook', {
-          method: 'POST',
-          body: JSON.stringify({
-            sheets: payloadSheets,
-            assumedCalendar: calVal,
-            dryRun: true,
-          }),
-        });
-        setAutoWorkbookPreview(res.detectedSheets || []);
-        const initOverrides: Record<string, ExtendedImportScope | 'skip'> = {};
-        for (const ds of res.detectedSheets || []) {
-          initOverrides[ds.sheetName] = ds.scope || 'skip';
-        }
-        setSheetScopeOverrides(initOverrides);
-      } catch {
-        setAutoWorkbookPreview([]);
-      }
-    },
-    [],
-  );
-
+  // Step 0 -> Step 1: Parse file and ONLY ask user which sheet(s) to import (NEVER auto-preview/import Sheet 1!)
   const handleSelectDataFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    setImportResult(null);
     setAutoWorkbookResult(null);
     setAutoWorkbookPreview([]);
-    setSheetScopeOverrides({});
-    setPreview(null);
-    setColumnMapping(null);
-    setEditedRows([]);
+    setSelectedScopesBySheet({});
+    setConfirmedTasks([]);
+    setActiveTaskKey('');
+    setTaskPreviews({});
+    setTaskMappings({});
+    setTaskEditedRows({});
     setRowsConfirmed(false);
-    setImportedSheets([]);
-    setPostSheetPrompt(null);
     try {
       const parsed = await parseSpreadsheetFile(file);
       const nextStructMap = parsed.structuredSheets || {};
@@ -516,15 +493,9 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       setSheetNames(parsed.sheetNames);
       setSheetsMap(parsed.sheets);
       setStructuredSheetsMap(nextStructMap);
-      setSelectedSheet(parsed.defaultSheet);
-      const matrix = parsed.sheets[parsed.defaultSheet] || [];
-      const structPayload = nextStructMap[parsed.defaultSheet];
-      await Promise.all([
-        runPreview(matrix, importScope, assumedCalendar, undefined, parsed.defaultSheet, structPayload),
-        parsed.sheetNames.length > 1
-          ? runAutoWorkbookPreview(parsed.sheetNames, parsed.sheets, nextStructMap, assumedCalendar)
-          : Promise.resolve(),
-      ]);
+      // Single-sheet files (e.g. CSV) pre-check that 1 sheet for convenience; multi-sheet workbooks ask the user explicitly!
+      setCheckedSheets(parsed.sheetNames.length === 1 ? [parsed.sheetNames[0]] : []);
+      setImportStep(1);
     } catch (err) {
       notify(
         'error',
@@ -537,61 +508,168 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     }
   };
 
-  const handleSheetChange = async (nextSheet: string) => {
-    setSelectedSheet(nextSheet);
-    setImportResult(null);
-    setPostSheetPrompt(null);
-    setColumnMapping(null);
-    const matrix = sheetsMap[nextSheet] || [];
-    const structPayload = structuredSheetsMap[nextSheet];
-    await runPreview(matrix, importScope, assumedCalendar, undefined, nextSheet, structPayload);
+  const toggleCheckedSheet = (sheetName: string) => {
+    setCheckedSheets((prev) =>
+      prev.includes(sheetName) ? prev.filter((s) => s !== sheetName) : [...prev, sheetName],
+    );
   };
 
-  const handleScopeOrCalendarChange = async (
-    nextScope: 'auto' | ExtendedImportScope,
-    nextCal: 'jalali' | 'gregorian',
+  // Step 1 -> Step 2: Detect ALL candidate target sections ONLY for the sheets checked by the user
+  const handleAnalyzeSelectedSheets = async (
+    sheetsToAnalyze: string[] = checkedSheets,
+    calVal: 'jalali' | 'gregorian' = assumedCalendar,
   ) => {
-    setImportScope(nextScope);
-    setAssumedCalendar(nextCal);
-    setColumnMapping(null);
-    const matrix = sheetsMap[selectedSheet] || [];
-    const structPayload = structuredSheetsMap[selectedSheet];
-    if (matrix.length > 0 || structPayload?.records?.length) {
-      await runPreview(matrix, nextScope, nextCal, undefined, selectedSheet, structPayload);
+    if (sheetsToAnalyze.length === 0) {
+      notify('error', isFa ? 'لطفاً حداقل یک شیت از فایل را انتخاب کنید.' : 'Please select at least one sheet.');
+      return;
     }
-    if (sheetNames.length > 1) {
-      await runAutoWorkbookPreview(sheetNames, sheetsMap, structuredSheetsMap, nextCal);
+    setAnalyzingSheets(true);
+    try {
+      const payloadSheets = sheetsToAnalyze.map((nm) => ({
+        name: nm,
+        matrix: sheetsMap[nm] || [],
+        ...(structuredSheetsMap[nm]?.records?.length
+          ? {
+              structuredRecords: structuredSheetsMap[nm].records,
+              sectionHint: structuredSheetsMap[nm].sectionHint,
+            }
+          : {}),
+      }));
+      const res = await apiRequest<{ detectedSheets: AutoWorkbookPreviewSection[] }>('/api/import/auto-workbook', {
+        method: 'POST',
+        body: JSON.stringify({
+          sheets: payloadSheets,
+          assumedCalendar: calVal,
+          dryRun: true,
+        }),
+      });
+      const detected = res.detectedSheets || [];
+      setAutoWorkbookPreview(detected);
+      const initScopes: Record<string, ExtendedImportScope[]> = {};
+      for (const sec of detected) {
+        if (sec.scope) {
+          initScopes[sec.sheetName] = [sec.scope];
+        } else {
+          initScopes[sec.sheetName] = [];
+        }
+      }
+      setSelectedScopesBySheet(initScopes);
+      setImportStep(2);
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setAnalyzingSheets(false);
+    }
+  };
+
+  const toggleSheetTargetScope = (sheetName: string, scope: ExtendedImportScope) => {
+    setSelectedScopesBySheet((prev) => {
+      const current = prev[sheetName] || [];
+      const next = current.includes(scope)
+        ? current.filter((s) => s !== scope)
+        : [...current, scope];
+      return { ...prev, [sheetName]: next };
+    });
+  };
+
+  const addManualScopeToSheet = (sheetName: string, scope: ExtendedImportScope) => {
+    setSelectedScopesBySheet((prev) => {
+      const current = prev[sheetName] || [];
+      if (current.includes(scope)) return prev;
+      return { ...prev, [sheetName]: [...current, scope] };
+    });
+  };
+
+  // Step 2 -> Step 3: Build confirmed (sheetName, scope) tasks in dependency order and preview the first task
+  const handleProceedToReview = async () => {
+    const tasks: Array<{ taskKey: string; sheetName: string; scope: ExtendedImportScope }> = [];
+    for (const sheetName of checkedSheets) {
+      const scopes = selectedScopesBySheet[sheetName] || [];
+      for (const scope of scopes) {
+        tasks.push({
+          taskKey: `${sheetName}::${scope}`,
+          sheetName,
+          scope,
+        });
+      }
+    }
+    if (tasks.length === 0) {
+      notify(
+        'error',
+        isFa
+          ? 'حداقل یک بخش مقصد را برای شیت‌های انتخاب‌شده تایید کنید.'
+          : 'Please select at least one target section to continue.',
+      );
+      return;
+    }
+    tasks.sort((a, b) => EXTENDED_SCOPE_META[a.scope].order - EXTENDED_SCOPE_META[b.scope].order);
+    setConfirmedTasks(tasks);
+    setTaskPreviews({});
+    setTaskMappings({});
+    setTaskEditedRows({});
+    setRowsConfirmed(false);
+    setActiveTaskKey(tasks[0].taskKey);
+    setImportStep(3);
+    await loadTaskPreview(tasks[0].taskKey, tasks[0].sheetName, tasks[0].scope, assumedCalendar);
+  };
+
+  const handleSelectReviewTask = async (task: { taskKey: string; sheetName: string; scope: ExtendedImportScope }) => {
+    setActiveTaskKey(task.taskKey);
+    if (!taskPreviews[task.taskKey]) {
+      await loadTaskPreview(task.taskKey, task.sheetName, task.scope, assumedCalendar, taskMappings[task.taskKey]);
+    }
+  };
+
+  const handleCalendarChange = async (nextCal: 'jalali' | 'gregorian') => {
+    setAssumedCalendar(nextCal);
+    if (importStep === 2 && checkedSheets.length > 0) {
+      await handleAnalyzeSelectedSheets(checkedSheets, nextCal);
+    } else if (importStep === 3 && activeTaskKey) {
+      setTaskPreviews({});
+      setTaskEditedRows({});
+      const activeTask = confirmedTasks.find((t) => t.taskKey === activeTaskKey);
+      if (activeTask) {
+        await loadTaskPreview(activeTask.taskKey, activeTask.sheetName, activeTask.scope, nextCal, taskMappings[activeTask.taskKey]);
+      }
     }
   };
 
   const handleMappingChange = async (fieldKey: string, colIdx: number) => {
-    if (!preview || preview.isOperational) return;
+    const activeTask = confirmedTasks.find((t) => t.taskKey === activeTaskKey);
+    const activePreview = activeTaskKey ? taskPreviews[activeTaskKey] : undefined;
+    if (!activeTask || !activePreview || activePreview.isOperational) return;
     const nextMap: Record<string, number> = {
-      ...(columnMapping || preview.columnInspection?.mapping || {}),
+      ...(taskMappings[activeTaskKey] || activePreview.columnInspection?.mapping || {}),
       [fieldKey]: colIdx,
     };
-    setColumnMapping(nextMap);
-    const matrix = sheetsMap[selectedSheet] || [];
-    if (matrix.length > 0) {
-      await runPreview(matrix, preview.scope, assumedCalendar, nextMap, selectedSheet, structuredSheetsMap[selectedSheet]);
-    }
+    setTaskMappings((prev) => ({ ...prev, [activeTaskKey]: nextMap }));
+    await loadTaskPreview(activeTask.taskKey, activeTask.sheetName, activeTask.scope, assumedCalendar, nextMap);
   };
 
   const handleCellEdit = (rowIndex: number, key: string, value: string, isNumeric?: boolean) => {
-    setEditedRows((prev) =>
-      prev.map((row, i) => {
-        if (i !== rowIndex) return row;
-        if (isNumeric) {
-          const cleaned = value.trim();
-          return { ...row, [key]: cleaned === '' ? null : Number(cleaned) };
-        }
-        return { ...row, [key]: value };
-      }),
-    );
+    if (!activeTaskKey) return;
+    setTaskEditedRows((prev) => {
+      const current = prev[activeTaskKey] || [];
+      return {
+        ...prev,
+        [activeTaskKey]: current.map((row, i) => {
+          if (i !== rowIndex) return row;
+          if (isNumeric) {
+            const cleaned = value.trim();
+            return { ...row, [key]: cleaned === '' ? null : Number(cleaned) };
+          }
+          return { ...row, [key]: value };
+        }),
+      };
+    });
   };
 
   const handleRemovePreviewRow = (rowIndex: number) => {
-    setEditedRows((prev) => prev.filter((_, i) => i !== rowIndex));
+    if (!activeTaskKey) return;
+    setTaskEditedRows((prev) => ({
+      ...prev,
+      [activeTaskKey]: (prev[activeTaskKey] || []).filter((_, i) => i !== rowIndex),
+    }));
   };
 
   const recordLogSession = (
@@ -632,137 +710,105 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setImportLogs((prev) => [entry, ...prev].slice(0, 20));
   };
 
-  const handleCommitImport = async () => {
-    const matrix = sheetsMap[selectedSheet] || [];
-    const structPayload = structuredSheetsMap[selectedSheet];
-    const hasStruct = Boolean(structPayload?.records?.length);
-    if (matrix.length === 0 && editedRows.length === 0 && !hasStruct) return;
+  // Step 3 Final Commit: executes ONLY user-confirmed (sheetName, scope) tasks in strict dependency order
+  const handleCommitWizardTasks = async () => {
+    if (confirmedTasks.length === 0) return;
     const currentFile = fileName || (isFa ? 'فایل ورودی' : 'Uploaded File');
     setImporting(true);
     try {
-      const targetScope = preview?.scope || (importScope === 'auto' ? undefined : importScope);
-      const isOp = targetScope ? isOperationalScope(targetScope) : Boolean(preview?.isOperational);
-      const res = await apiRequest<CommitResponse>('/api/import/commit', {
-        method: 'POST',
-        body: JSON.stringify({
-          matrix,
-          ...(hasStruct ? { structuredRecords: structPayload!.records, sectionHint: structPayload!.sectionHint } : {}),
-          ...(selectedSheet ? { sheetName: selectedSheet } : {}),
-          scope: targetScope,
-          assumedCalendar,
-          duplicateRecordPolicy: duplicatePolicy,
-          includeParserRejections: !isOp,
-          ...(!isOp && columnMapping ? { columnMapping } : {}),
-          ...(editedRows.length > 0 ? { editedRows } : {}),
-        }),
-      });
-      setImportResult(res);
-      setPendingRejected(res.rejectedRecords || []);
-      recordLogSession(res, `${currentFile}${sheetNames.length > 1 ? ` (${selectedSheet})` : ''}`, isFa);
+      const committedSections: AutoWorkbookCommitSummary['sections'] = [];
+      const allRejected: ImportRejectedRecord[] = [];
 
-      setPreview(null);
-      setEditedRows([]);
-      setColumnMapping(null);
+      for (const task of confirmedTasks) {
+        const matrix = sheetsMap[task.sheetName] || [];
+        const structPayload = structuredSheetsMap[task.sheetName];
+        const hasStruct = Boolean(structPayload?.records?.length);
+        const isOp = isOperationalScope(task.scope);
+        const customMap = taskMappings[task.taskKey];
+        const edited = taskEditedRows[task.taskKey];
+
+        const res = await apiRequest<CommitResponse>('/api/import/commit', {
+          method: 'POST',
+          body: JSON.stringify({
+            matrix,
+            ...(hasStruct ? { structuredRecords: structPayload!.records, sectionHint: structPayload!.sectionHint } : {}),
+            sheetName: task.sheetName,
+            scope: task.scope,
+            assumedCalendar,
+            duplicateRecordPolicy: duplicatePolicy,
+            includeParserRejections: !isOp,
+            ...(!isOp && customMap ? { columnMapping: customMap } : {}),
+            ...(!isOp && edited && edited.length > 0 ? { editedRows: edited } : {}),
+          }),
+        });
+
+        if (res.rejectedRecords && res.rejectedRecords.length > 0) {
+          allRejected.push(...res.rejectedRecords);
+        }
+
+        recordLogSession(
+          res,
+          `${currentFile}${sheetNames.length > 1 ? ` [${task.sheetName}]` : ''}`,
+          isFa,
+        );
+
+        committedSections.push({
+          sheetName: task.sheetName,
+          scope: res.scope,
+          isOperational: isOp,
+          imported: res.imported,
+          replaced: res.replaced,
+          skipped: res.skipped,
+          linkedGeneral: res.linkedGeneral || 0,
+          linkedDetailed: res.linkedDetailed || 0,
+          linkedTransit: res.linkedTransit || res.transitAutoArrived || 0,
+          warnings: res.warnings || [],
+        });
+      }
+
+      const totals = committedSections.reduce(
+        (acc, s) => ({
+          imported: acc.imported + s.imported,
+          replaced: acc.replaced + s.replaced,
+          skipped: acc.skipped + s.skipped,
+          linkedGeneral: acc.linkedGeneral + s.linkedGeneral,
+          linkedDetailed: acc.linkedDetailed + s.linkedDetailed,
+          linkedTransit: acc.linkedTransit + s.linkedTransit,
+        }),
+        { imported: 0, replaced: 0, skipped: 0, linkedGeneral: 0, linkedDetailed: 0, linkedTransit: 0 },
+      );
+
+      setAutoWorkbookResult({ ok: true, sections: committedSections, totals });
+      setPendingRejected(allRejected);
+
+      // Clean reset of file wizard state while keeping result banner visible
+      setImportStep(0);
+      setFileName('');
+      setSheetNames([]);
+      setCheckedSheets([]);
+      setSheetsMap({});
+      setStructuredSheetsMap({});
+      setAutoWorkbookPreview([]);
+      setSelectedScopesBySheet({});
+      setConfirmedTasks([]);
+      setActiveTaskKey('');
+      setTaskPreviews({});
+      setTaskMappings({});
+      setTaskEditedRows({});
       setRowsConfirmed(false);
 
-      if (sheetNames.length > 1) {
-        setImportedSheets((prev) => (prev.includes(selectedSheet) ? prev : [...prev, selectedSheet]));
-        setPostSheetPrompt(selectedSheet);
-      } else {
-        setFileName('');
-        setSheetNames([]);
-        setSelectedSheet('');
-        setSheetsMap({});
-        setStructuredSheetsMap({});
-        setPostSheetPrompt(null);
-      }
-      const linkSummaryFa =
-        (res.linkedGeneral || 0) + (res.linkedDetailed || 0) + (res.linkedTransit || 0) > 0
-          ? ` · ارتباط‌دهی: کلی ${res.linkedGeneral || 0}، جزئیات ${res.linkedDetailed || 0}، در راه ${res.linkedTransit || 0}`
-          : '';
       notify(
-        res.skipped > 0 ? 'info' : 'success',
+        totals.skipped > 0 ? 'info' : 'success',
         isFa
-          ? `عملیات تکمیل شد (${getScopeDisplayLabel(res.scope, true)}): ${res.imported} جدید، ${res.replaced} جایگزین، ${res.skipped} رد شده${linkSummaryFa}.`
-          : `Import completed (${getScopeDisplayLabel(res.scope, false)}): ${res.imported} imported, ${res.replaced} replaced, ${res.skipped} skipped.`,
+          ? `بازیابی ${committedSections.length} بخش تکمیل شد: ${totals.imported} جدید، ${totals.replaced} جایگزین، ${totals.skipped} رد شده.`
+          : `Import completed (${committedSections.length} sections): ${totals.imported} imported, ${totals.replaced} replaced, ${totals.skipped} skipped.`,
       );
-      triggerAutoSnapshot(`Import (${res.scope})`);
+      triggerAutoSnapshot(`Import (${committedSections.length} sections)`);
       onRestored();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
       setImporting(false);
-    }
-  };
-
-  const handleCommitAutoWorkbook = async () => {
-    const activeSheets = sheetNames
-      .map((nm) => {
-        const chosen = sheetScopeOverrides[nm];
-        if (chosen === 'skip') return null;
-        const structPayload = structuredSheetsMap[nm];
-        return {
-          name: nm,
-          matrix: sheetsMap[nm] || [],
-          ...(structPayload?.records?.length
-            ? { structuredRecords: structPayload.records, sectionHint: structPayload.sectionHint }
-            : {}),
-          ...(chosen ? { forcedScope: chosen } : {}),
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => Boolean(x));
-
-    if (activeSheets.length === 0) {
-      notify('error', isFa ? 'حداقل یک شیت معتبر برای ورود انتخاب کنید.' : 'Select at least one valid sheet to import.');
-      return;
-    }
-
-    const currentFile = fileName || (isFa ? 'فایل چندبخشی' : 'Multi-Sheet Workbook');
-    setAutoImporting(true);
-    try {
-      const res = await apiRequest<AutoWorkbookCommitSummary>('/api/import/auto-workbook', {
-        method: 'POST',
-        body: JSON.stringify({
-          sheets: activeSheets,
-          assumedCalendar,
-          duplicateRecordPolicy: duplicatePolicy,
-          dryRun: false,
-        }),
-      });
-      setAutoWorkbookResult(res);
-      for (const sec of res.sections) {
-        recordLogSession(
-          {
-            scope: sec.scope,
-            isOperational: sec.isOperational,
-            imported: sec.imported,
-            replaced: sec.replaced,
-            skipped: sec.skipped,
-            transitAutoArrived: sec.linkedTransit,
-            linkedGeneral: sec.linkedGeneral,
-            linkedDetailed: sec.linkedDetailed,
-            linkedTransit: sec.linkedTransit,
-          },
-          `${currentFile} [${sec.sheetName}]`,
-          isFa,
-        );
-      }
-      setImportedSheets(res.sections.map((s) => s.sheetName));
-      setPreview(null);
-      setEditedRows([]);
-      setPostSheetPrompt(null);
-      notify(
-        'success',
-        isFa
-          ? `ورود خودکار ${res.sections.length} بخش تکمیل شد: ${res.totals.imported} جدید، ${res.totals.replaced} جایگزین (ارتباط با کلی: ${res.totals.linkedGeneral}، جزئیات: ${res.totals.linkedDetailed}، در راه: ${res.totals.linkedTransit}).`
-          : `Auto-imported ${res.sections.length} sections: ${res.totals.imported} imported, ${res.totals.replaced} replaced.`,
-      );
-      triggerAutoSnapshot(`Auto-Workbook (${res.sections.length} sections)`);
-      onRestored();
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    } finally {
-      setAutoImporting(false);
     }
   };
 
@@ -906,21 +952,21 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   };
 
   const clearImportSelection = () => {
+    setImportStep(0);
     setFileName('');
     setSheetNames([]);
-    setSelectedSheet('');
+    setCheckedSheets([]);
     setSheetsMap({});
     setStructuredSheetsMap({});
     setAutoWorkbookPreview([]);
-    setSheetScopeOverrides({});
-    setAutoWorkbookResult(null);
-    setPreview(null);
-    setColumnMapping(null);
-    setEditedRows([]);
+    setSelectedScopesBySheet({});
+    setConfirmedTasks([]);
+    setActiveTaskKey('');
+    setTaskPreviews({});
+    setTaskMappings({});
+    setTaskEditedRows({});
     setRowsConfirmed(false);
-    setImportResult(null);
-    setImportedSheets([]);
-    setPostSheetPrompt(null);
+    setAutoWorkbookResult(null);
   };
 
   const handleManualSnapshot = async () => {
@@ -1019,23 +1065,33 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     }
   };
 
-  const inspection = preview && !preview.isOperational ? preview.columnInspection : undefined;
+  const activeTask = confirmedTasks.find((t) => t.taskKey === activeTaskKey) || null;
+  const activePreview = activeTaskKey ? taskPreviews[activeTaskKey] : undefined;
+  const activeEditedRows = activeTaskKey ? taskEditedRows[activeTaskKey] || [] : [];
+  const activeMapping = activeTaskKey ? taskMappings[activeTaskKey] : undefined;
+  const inspection = activePreview && !activePreview.isOperational ? activePreview.columnInspection : undefined;
   const activeFieldDefs =
-    inspection && preview && !preview.isOperational
-      ? editableFieldsForScope(preview.scope as 'general' | 'detailed' | 'transit')
+    inspection && activePreview && !activePreview.isOperational
+      ? editableFieldsForScope(activePreview.scope as 'general' | 'detailed' | 'transit')
           .map((k) => inspection.targetFields.find((tf) => tf.key === k))
           .filter((tf): tf is ImportColumnDef => Boolean(tf))
       : [];
+
+  const totalSelectedTargetCount = checkedSheets.reduce(
+    (sum, s) => sum + (selectedScopesBySheet[s]?.length || 0),
+    0,
+  );
 
   const hasReplaceablePending = pendingRejected.some((r) => r.canForceReplace);
 
   return (
     <div className="max-w-6xl space-y-6">
-      {/* Section 1: Data Import from Excel / CSV / JSON with column mapping, pre-commit review, & duplicate handling */}
+      {/* Section 1: Clean 3-Step Guided Import Wizard (Select Sheets -> Confirm Target Sections -> Review & Commit) */}
       {canImport && (
-        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-6 space-y-4">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-6 space-y-5">
+          {/* Header & File Upload Action */}
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
+            <div className="space-y-1">
               <h3 className="text-base font-bold flex items-center gap-2">
                 <FileSpreadsheet className="w-4 h-4 text-[var(--accent-primary)]" />
                 <span>
@@ -1044,20 +1100,29 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     : 'Import & Restore Data from File (Excel, CSV, JSON)'}
                 </span>
               </h3>
-              <p className="text-xs text-[var(--text-secondary)] mt-1">
+              <p className="text-xs text-[var(--text-secondary)]">
                 {isFa
-                  ? 'تشخیص خودکار جداول در راه، کلی و جزئیات همراه با تمامی فرم‌های عملیاتی و اختصاصی کارفرما (صورتجلسه ورود، دعوتنامه و صورتجلسه OPI، گزارش MER، رسید GCV، حواله MIV/SMR، جایگزینی، برآورد MTO، انبارگردانی و بازدید ادواری) با ارتباط‌دهی هوشمند.'
-                  : 'Auto-detects Core tables (Transit, General, Detailed) and all 10 operational & custom employer forms from Excel, CSV, or JSON with automatic cross-linking.'}
+                  ? 'ابتدا شیت‌های دلخواه فایل را انتخاب کنید، سپس بخش‌های مقصد هر شیت را تایید نمایید و در پایان ستون‌ها را بررسی و ثبت کنید.'
+                  : 'Step 1: Pick sheets · Step 2: Confirm target sections per sheet · Step 3: Verify columns and commit.'}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={assumedCalendar}
+                onChange={(e) => void handleCalendarChange(e.target.value as 'jalali' | 'gregorian')}
+                title={isFa ? 'تقویم تاریخ‌های فایل ورودی' : 'Source Date Calendar'}
+                className="h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
+              >
+                <option value="jalali">{isFa ? 'تقویم فایل: شمسی' : 'Calendar: Jalali'}</option>
+                <option value="gregorian">{isFa ? 'تقویم فایل: میلادی' : 'Calendar: Gregorian'}</option>
+              </select>
               {fileName && (
                 <button
                   type="button"
                   onClick={clearImportSelection}
                   className="h-9 px-3 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
                 >
-                  {isFa ? 'پاک کردن فایل' : 'Clear File'}
+                  {isFa ? 'بستن فایل' : 'Close File'}
                 </button>
               )}
               <label className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-sm">
@@ -1073,216 +1138,731 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'بخش مقصد' : 'Target Section'}
-              </label>
-              <select
-                value={importScope}
-                onChange={(e) =>
-                  handleScopeOrCalendarChange(
-                    e.target.value as 'auto' | ExtendedImportScope,
-                    assumedCalendar,
-                  )
-                }
-                className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-              >
-                <option value="auto">
-                  {isFa ? 'تشخیص خودکار (همه جداول و فرم‌ها)' : 'Auto-Detect (All Tables & Forms)'}
-                </option>
-                <optgroup label={isFa ? 'جداول پایه انبار' : 'Core Warehouse Tables'}>
-                  <option value="transit">{getScopeDisplayLabel('transit', isFa)}</option>
-                  <option value="general">{getScopeDisplayLabel('general', isFa)}</option>
-                  <option value="detailed">{getScopeDisplayLabel('detailed', isFa)}</option>
-                </optgroup>
-                <optgroup label={isFa ? 'فرم‌های عملیاتی و اختصاصی کارفرما' : 'Operational & Custom Employer Forms'}>
-                  {ALL_EXTENDED_SCOPES.filter((sc) => isOperationalScope(sc)).map((sc) => (
-                    <option key={sc} value={sc}>
-                      {getScopeDisplayLabel(sc, isFa)}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'تقویم تاریخ‌های فایل' : 'Source Date Calendar'}
-              </label>
-              <select
-                value={assumedCalendar}
-                onChange={(e) =>
-                  handleScopeOrCalendarChange(
-                    importScope,
-                    e.target.value as 'jalali' | 'gregorian',
-                  )
-                }
-                className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-              >
-                <option value="jalali">{isFa ? 'شمسی (جلالی)' : 'Jalali (Shamsi)'}</option>
-                <option value="gregorian">{isFa ? 'میلادی' : 'Gregorian'}</option>
-              </select>
-            </div>
-
-            {sheetNames.length > 1 && (
-              <div>
-                <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'انتخاب شیت / بخش جهت پیش‌نمایش' : 'Inspect Sheet / Section'}
-                </label>
-                <select
-                  value={selectedSheet}
-                  onChange={(e) => handleSheetChange(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                >
-                  {sheetNames.map((s) => (
-                    <option key={s} value={s}>
-                      {importedSheets.includes(s) ? `✓ ${s}` : s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-
-          {/* Multi-Sheet / Multi-Section Auto-Import & Cross-Linking Panel */}
-          {fileName && sheetNames.length > 1 && autoWorkbookPreview.length > 0 && (
-            <div className="p-4 rounded-xl border border-[var(--accent-primary)]/35 bg-[var(--accent-soft)]/55 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="space-y-0.5">
-                  <div className="text-xs font-bold text-[var(--text-primary)] flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-                    <span>
-                      {isFa
-                        ? `تشخیص خودکار چندبخشی: ${autoWorkbookPreview.length.toLocaleString('fa-IR')} شیت/بخش در فایل «${fileName}» شناسایی شد`
-                        : `Multi-Section Auto-Detection: ${autoWorkbookPreview.length} sheets/sections found in "${fileName}"`}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[var(--text-secondary)]">
-                    {isFa
-                      ? 'تمامی بخش‌ها به ترتیب اولویت (در راه ← کلی ← جزئیات ← فرم‌های عملیاتی و اختصاصی) ثبت شده و به‌صورت خودکار به هم متصل می‌شوند.'
-                      : 'All sections are imported in dependency order (Transit → General → Detailed → Operational & Custom Forms) with automatic cross-linking.'}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={duplicatePolicy}
-                    onChange={(e) => setDuplicatePolicy(e.target.value as 'replace' | 'skip')}
-                    className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-medium"
-                    aria-label={isFa ? 'سیاست تکراری‌ها' : 'Duplicate Policy'}
-                  >
-                    <option value="skip">{isFa ? 'رد کردن تکراری‌ها' : 'Skip Duplicates'}</option>
-                    <option value="replace">{isFa ? 'جایگزینی تکراری‌ها' : 'Replace Duplicates'}</option>
-                  </select>
-                  <button
-                    type="button"
-                    disabled={autoImporting}
-                    onClick={handleCommitAutoWorkbook}
-                    className="h-8 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
-                  >
-                    {autoImporting ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Layers className="w-3.5 h-3.5" />
-                    )}
-                    <span>
-                      {autoImporting
-                        ? isFa ? 'در حال ثبت و ارتباط‌دهی...' : 'Importing & Linking...'
-                        : isFa ? 'ورود خودکار همه بخش‌ها و ارتباط‌دهی هوشمند' : 'Auto-Import All Sections & Link'}
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {autoWorkbookPreview.map((sec) => {
-                  const chosen = sheetScopeOverrides[sec.sheetName] ?? sec.scope ?? 'skip';
-                  const isDone = importedSheets.includes(sec.sheetName);
-                  const totalEstLinks = sec.estimatedLinks.general + sec.estimatedLinks.detailed + sec.estimatedLinks.transit;
+          {/* Clean 3-Step Progress Indicator when a file is loaded */}
+          {importStep > 0 && fileName && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {[
+                  { n: 1 as const, label: isFa ? '۱. انتخاب شیت‌ها' : '1. Select Sheets' },
+                  { n: 2 as const, label: isFa ? '۲. تایید بخش‌های مقصد' : '2. Confirm Target Sections' },
+                  { n: 3 as const, label: isFa ? '۳. تطبیق ستون‌ها و ثبت نهایی' : '3. Review & Commit' },
+                ].map((st, idx) => {
+                  const isCurrent = importStep === st.n;
+                  const isDone = importStep > st.n;
                   return (
-                    <div
-                      key={sec.sheetName}
-                      className={`p-2.5 rounded-xl border text-[11px] flex flex-wrap items-center justify-between gap-2 ${
-                        isDone
-                          ? 'border-[var(--status-success)] bg-[var(--status-success-bg)]/40'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
-                      }`}
-                    >
-                      <div className="min-w-0 space-y-0.5">
-                        <div className="font-bold text-[var(--text-primary)] flex items-center gap-1.5 truncate">
-                          {isDone && <CheckCircle2 className="w-3.5 h-3.5 text-[var(--status-success)] shrink-0" />}
-                          <span className="truncate">{sec.sheetName}</span>
-                          <span className="text-[10px] font-normal text-[var(--text-muted)] tabular-nums">
-                            ({isFa ? `${sec.rowCount.toLocaleString('fa-IR')} ردیف` : `${sec.rowCount} rows`})
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-muted)] tabular-nums">
-                          {sec.duplicateDbCount > 0 && (
-                            <span className="text-[var(--status-warning)] font-medium">
-                              {isFa ? `${sec.duplicateDbCount} تکراری` : `${sec.duplicateDbCount} dup`}
-                            </span>
-                          )}
-                          {totalEstLinks > 0 && (
-                            <span className="inline-flex items-center gap-0.5 text-[var(--accent-primary)] font-medium">
-                              <Link2 className="w-3 h-3" />
-                              {isFa
-                                ? `ارتباط: کلی ${sec.estimatedLinks.general} · جزئیات ${sec.estimatedLinks.detailed} · در راه ${sec.estimatedLinks.transit}`
-                                : `Links: G ${sec.estimatedLinks.general} · D ${sec.estimatedLinks.detailed} · T ${sec.estimatedLinks.transit}`}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <select
-                        value={chosen}
-                        onChange={(e) =>
-                          setSheetScopeOverrides((prev) => ({
-                            ...prev,
-                            [sec.sheetName]: e.target.value as ExtendedImportScope | 'skip',
-                          }))
-                        }
-                        className="h-7 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] max-w-[200px]"
+                    <React.Fragment key={st.n}>
+                      {idx > 0 && <span className="text-[var(--text-muted)]">←</span>}
+                      <button
+                        type="button"
+                        disabled={st.n > importStep}
+                        onClick={() => {
+                          if (st.n < importStep) setImportStep(st.n);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                          isCurrent
+                            ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] shadow-sm'
+                            : isDone
+                              ? 'bg-[var(--status-success-bg)] text-[var(--status-success)] hover:opacity-90 cursor-pointer'
+                              : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] cursor-not-allowed'
+                        }`}
                       >
-                        <option value="skip">{isFa ? '-- نادیده گرفتن شیت --' : '-- Skip Sheet --'}</option>
-                        {ALL_EXTENDED_SCOPES.map((sc) => (
-                          <option key={sc} value={sc}>
-                            {getScopeDisplayLabel(sc, isFa)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                        {isDone && <Check className="w-3.5 h-3.5" />}
+                        <span>{st.label}</span>
+                      </button>
+                    </React.Fragment>
                   );
                 })}
+              </div>
+              <div className="text-[11px] font-medium text-[var(--text-secondary)] truncate max-w-[260px]" title={fileName}>
+                {isFa ? `فایل: ${fileName}` : `File: ${fileName}`}
               </div>
             </div>
           )}
 
-          {/* Multi-Section Auto-Workbook Commit Result Summary */}
+          {/* STEP 1: Ask User Which Sheet(s) to Import */}
+          {importStep === 1 && fileName && (
+            <div className="p-5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-bold text-[var(--text-primary)]">
+                    {isFa
+                      ? 'از کدام شیت‌های این فایل می‌خواهید اطلاعات بازیابی کنید؟'
+                      : 'Which sheet(s) from this file would you like to import?'}
+                  </h4>
+                  <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                    {isFa
+                      ? 'تنها شیت‌هایی که تیک بزنید بررسی و بازیابی می‌شوند. هیچ شیتی بدون انتخاب شما پردازش نخواهد شد.'
+                      : 'Only checked sheets will be analyzed and imported. Unchecked sheets are completely ignored.'}
+                  </p>
+                </div>
+                {sheetNames.length > 1 && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setCheckedSheets([...sheetNames])}
+                      className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] font-medium"
+                    >
+                      {isFa ? 'انتخاب همه شیت‌ها' : 'Select All'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCheckedSheets([])}
+                      className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] font-medium text-[var(--text-secondary)]"
+                    >
+                      {isFa ? 'لغو انتخاب همه' : 'Clear All'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {sheetNames.map((sName) => {
+                  const isChecked = checkedSheets.includes(sName);
+                  const mat = sheetsMap[sName] || [];
+                  const structRows = structuredSheetsMap[sName]?.records?.length || 0;
+                  const estRows = structRows || Math.max(0, mat.length - 1);
+                  return (
+                    <label
+                      key={sName}
+                      className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between gap-3 transition-all ${
+                        isChecked
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]/70 shadow-sm'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--accent-primary)]/40'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2.5 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleCheckedSheet(sName)}
+                          className="w-4 h-4 rounded accent-[var(--accent-primary)] shrink-0"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-bold text-[var(--text-primary)] truncate">
+                            {sName}
+                          </span>
+                          <span className="block text-[11px] text-[var(--text-muted)] tabular-nums">
+                            {isFa
+                              ? `حدود ${estRows.toLocaleString('fa-IR')} ردیف داده`
+                              : `~${estRows} data rows`}
+                          </span>
+                        </span>
+                      </span>
+                      {isChecked && <CheckCircle2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />}
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="pt-2 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs text-[var(--text-secondary)] tabular-nums">
+                  {isFa
+                    ? `${checkedSheets.length.toLocaleString('fa-IR')} شیت از ${sheetNames.length.toLocaleString('fa-IR')} شیت انتخاب شده`
+                    : `${checkedSheets.length} of ${sheetNames.length} sheet(s) selected`}
+                </span>
+                <button
+                  type="button"
+                  disabled={checkedSheets.length === 0 || analyzingSheets}
+                  onClick={() => void handleAnalyzeSelectedSheets()}
+                  className="h-9 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2 disabled:opacity-50 shadow-sm"
+                >
+                  {analyzingSheets ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                  <span>
+                    {analyzingSheets
+                      ? isFa ? 'در حال تحلیل شیت‌های انتخاب‌شده...' : 'Analyzing Selected Sheets...'
+                      : isFa ? 'ادامه: تشخیص هوشمند بخش‌های مقصد' : 'Next: Detect Target Sections'}
+                  </span>
+                  {!analyzingSheets && (isFa ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />)}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2: Confirm Target Section(s) for Each Selected Sheet (supports 1 or MULTIPLE sections per sheet!) */}
+          {importStep === 2 && fileName && (
+            <div className="p-5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-4">
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-[var(--text-primary)] flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
+                  <span>
+                    {isFa
+                      ? 'تایید بخش‌های مقصد نرم‌افزار برای هر شیت انتخاب‌شده'
+                      : 'Confirm Target Software Section(s) for Each Selected Sheet'}
+                  </span>
+                </h4>
+                <p className="text-[11px] text-[var(--text-secondary)]">
+                  {isFa
+                    ? 'یک شیت می‌تواند حاوی اطلاعات یک بخش یا همزمان چند بخش مختلف باشد (مثلاً جدول جزئیات + انبارگردانی + رسید/حواله). برای هر شیت، بخش یا بخش‌هایی که می‌خواهید بازیابی شوند را تیک بزنید یا در صورت نیاز بخش دیگری اضافه کنید.'
+                    : 'A single sheet can contain data for one or multiple sections (e.g. Detailed + Stocktake + GCV/MIV). Check the section(s) you want each sheet to populate, or add any other section manually.'}
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {autoWorkbookPreview.map((sec) => {
+                  const chosenScopes = selectedScopesBySheet[sec.sheetName] || [];
+                  const detectedCandidates = sec.candidates || [];
+                  const detectedScopeSet = new Set(detectedCandidates.map((c) => c.scope));
+                  const manualExtraScopes = chosenScopes.filter((sc) => !detectedScopeSet.has(sc));
+
+                  return (
+                    <div
+                      key={sec.sheetName}
+                      className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] space-y-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <FileSpreadsheet className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                          <span className="text-xs font-bold text-[var(--text-primary)]">{sec.sheetName}</span>
+                          <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                            ({isFa ? `${chosenScopes.length.toLocaleString('fa-IR')} بخش انتخاب‌شده` : `${chosenScopes.length} selected`})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Plus className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const val = e.target.value as ExtendedImportScope | '';
+                              if (val) addManualScopeToSheet(sec.sheetName, val);
+                            }}
+                            className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] font-medium"
+                          >
+                            <option value="">
+                              {isFa ? '+ افزودن بخش دیگر برای این شیت...' : '+ Add another section to this sheet...'}
+                            </option>
+                            <optgroup label={isFa ? 'جداول پایه انبار' : 'Core Tables'}>
+                              {(['transit', 'general', 'detailed'] as ExtendedImportScope[])
+                                .filter((sc) => !chosenScopes.includes(sc))
+                                .map((sc) => (
+                                  <option key={sc} value={sc}>
+                                    {getScopeDisplayLabel(sc, isFa)}
+                                  </option>
+                                ))}
+                            </optgroup>
+                            <optgroup label={isFa ? 'فرم‌های عملیاتی و اختصاصی کارفرما' : 'Operational & Custom Forms'}>
+                              {ALL_EXTENDED_SCOPES.filter((sc) => isOperationalScope(sc) && !chosenScopes.includes(sc)).map((sc) => (
+                                <option key={sc} value={sc}>
+                                  {getScopeDisplayLabel(sc, isFa)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          </select>
+                        </div>
+                      </div>
+
+                      {detectedCandidates.length === 0 && manualExtraScopes.length === 0 ? (
+                        <div className="p-3 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning-bg)]/40 text-xs text-[var(--status-warning)]">
+                          {isFa
+                            ? 'بخش مقصد این شیت به‌صورت خودکار شناسایی نشد. لطفاً از منوی «افزودن بخش دیگر» در بالا، بخش مورد نظر را انتخاب کنید.'
+                            : 'No section was auto-detected for this sheet. Choose a target section from the dropdown above.'}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                          {detectedCandidates.map((cand) => {
+                            const active = chosenScopes.includes(cand.scope);
+                            const linksTotal =
+                              cand.estimatedLinks.general +
+                              cand.estimatedLinks.detailed +
+                              cand.estimatedLinks.transit;
+                            return (
+                              <label
+                                key={cand.scope}
+                                className={`p-3 rounded-xl border cursor-pointer transition-all space-y-1.5 ${
+                                  active
+                                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]/70 shadow-sm'
+                                    : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:border-[var(--accent-primary)]/40'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="flex items-center gap-2 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={active}
+                                      onChange={() => toggleSheetTargetScope(sec.sheetName, cand.scope)}
+                                      className="w-4 h-4 rounded accent-[var(--accent-primary)] shrink-0 mt-0.5"
+                                    />
+                                    <span className="text-xs font-bold text-[var(--text-primary)] leading-snug">
+                                      {getScopeDisplayLabel(cand.scope, isFa)}
+                                    </span>
+                                  </span>
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
+                                      cand.isPrimary
+                                        ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                                        : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
+                                    }`}
+                                  >
+                                    {cand.isPrimary
+                                      ? isFa ? 'پیشنهاد اصلی' : 'Primary'
+                                      : isFa ? 'بخش مرتبط' : 'Detected'}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 ps-6 text-[10px] text-[var(--text-secondary)] tabular-nums">
+                                  <span>
+                                    {isFa
+                                      ? `${cand.rowCount.toLocaleString('fa-IR')} ردیف/سند`
+                                      : `${cand.rowCount} record(s)`}
+                                  </span>
+                                  {cand.duplicateDbCount > 0 && (
+                                    <span className="text-[var(--status-warning)] font-medium">
+                                      · {isFa ? `${cand.duplicateDbCount.toLocaleString('fa-IR')} تکراری` : `${cand.duplicateDbCount} dup`}
+                                    </span>
+                                  )}
+                                  {linksTotal > 0 && (
+                                    <span className="inline-flex items-center gap-0.5 text-[var(--accent-primary)] font-medium">
+                                      <Link2 className="w-3 h-3" />
+                                      {isFa ? `${linksTotal.toLocaleString('fa-IR')} ارتباط` : `${linksTotal} links`}
+                                    </span>
+                                  )}
+                                </div>
+                              </label>
+                            );
+                          })}
+
+                          {manualExtraScopes.map((sc) => (
+                            <label
+                              key={sc}
+                              className="p-3 rounded-xl border border-[var(--accent-primary)] bg-[var(--accent-soft)]/70 cursor-pointer space-y-1.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="flex items-center gap-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked
+                                    onChange={() => toggleSheetTargetScope(sec.sheetName, sc)}
+                                    className="w-4 h-4 rounded accent-[var(--accent-primary)] shrink-0 mt-0.5"
+                                  />
+                                  <span className="text-xs font-bold text-[var(--text-primary)] leading-snug">
+                                    {getScopeDisplayLabel(sc, isFa)}
+                                  </span>
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--accent-primary)] text-[10px] font-semibold shrink-0">
+                                  {isFa ? 'انتخاب دستی' : 'Manual'}
+                                </span>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="pt-2 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setImportStep(1)}
+                  className="h-9 px-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                >
+                  {isFa ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
+                  <span>{isFa ? 'بازگشت به انتخاب شیت‌ها' : 'Back to Sheets'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={totalSelectedTargetCount === 0}
+                  onClick={() => void handleProceedToReview()}
+                  className="h-9 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2 disabled:opacity-50 shadow-sm"
+                >
+                  <Columns3 className="w-4 h-4" />
+                  <span>
+                    {isFa
+                      ? `ادامه: تطبیق ستون‌ها و پیش‌نمایش (${totalSelectedTargetCount.toLocaleString('fa-IR')} بخش)`
+                      : `Next: Verify Columns & Preview (${totalSelectedTargetCount})`}
+                  </span>
+                  {isFa ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3: Column Mapping, Pre-Import Review & Final Commit (ONLY for confirmed tasks!) */}
+          {importStep === 3 && fileName && confirmedTasks.length > 0 && (
+            <div className="p-5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-4">
+              {/* Task Tabs for Confirmed (Sheet -> Section) Pairs */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {confirmedTasks.map((task) => {
+                    const isActive = task.taskKey === activeTaskKey;
+                    const cached = taskPreviews[task.taskKey];
+                    return (
+                      <button
+                        key={task.taskKey}
+                        type="button"
+                        onClick={() => void handleSelectReviewTask(task)}
+                        className={`h-8 px-3 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                          isActive
+                            ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-contrast)] shadow-sm'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-[var(--accent-primary)]/50'
+                        }`}
+                      >
+                        <span>{getScopeDisplayLabel(task.scope, isFa)}</span>
+                        {sheetNames.length > 1 && (
+                          <span className={`text-[10px] ${isActive ? 'opacity-85' : 'text-[var(--text-muted)]'}`}>
+                            ({task.sheetName})
+                          </span>
+                        )}
+                        {cached && (
+                          <span className={`text-[10px] tabular-nums px-1.5 py-0.5 rounded ${isActive ? 'bg-white/20' : 'bg-[var(--bg-subtle)]'}`}>
+                            {cached.totalRows.toLocaleString(isFa ? 'fa-IR' : 'en-US')}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {inspection && (
+                  <button
+                    type="button"
+                    onClick={() => setMappingExpanded((v) => !v)}
+                    className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium flex items-center gap-1.5"
+                  >
+                    <Columns3 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                    <span>{mappingExpanded ? (isFa ? 'بستن تطبیق ستون‌ها' : 'Hide Mapping') : (isFa ? 'تطبیق ستون‌ها' : 'Column Mapping')}</span>
+                  </button>
+                )}
+              </div>
+
+              {loadingTaskKey === activeTaskKey || !activePreview ? (
+                <div className="py-10 flex items-center justify-center gap-2 text-xs text-[var(--text-secondary)]">
+                  <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
+                  <span>{isFa ? 'در حال آماده‌سازی پیش‌نمایش و تطبیق ستون‌ها...' : 'Loading preview and column mapping...'}</span>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Active Task Summary */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="font-semibold flex flex-wrap items-center gap-1.5">
+                      <span>{activeTask?.sheetName}</span>
+                      <span className="text-[var(--text-muted)]">→</span>
+                      <span className="text-[var(--accent-primary)] font-bold">
+                        {getScopeDisplayLabel(activePreview.scope, isFa)}
+                      </span>
+                      {activePreview.isOperational && activePreview.estimatedLinks && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold tabular-nums">
+                          <Link2 className="w-3 h-3" />
+                          {isFa
+                            ? `ارتباط خودکار: کلی ${activePreview.estimatedLinks.general} · جزئیات ${activePreview.estimatedLinks.detailed} · در راه ${activePreview.estimatedLinks.transit}`
+                            : `Auto-Links: G ${activePreview.estimatedLinks.general} · D ${activePreview.estimatedLinks.detailed} · T ${activePreview.estimatedLinks.transit}`}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[var(--text-secondary)] tabular-nums font-medium">
+                      {isFa
+                        ? `${activeEditedRows.length.toLocaleString('fa-IR')} ردیف/سند آماده ثبت`
+                        : `${activeEditedRows.length} record(s) ready`}
+                    </span>
+                  </div>
+
+                  {/* Interactive Column Mapping Confirmation Form (for Core tables) */}
+                  {inspection && mappingExpanded && (
+                    <div className="p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] space-y-3">
+                      <div>
+                        <div className="text-xs font-bold text-[var(--text-primary)]">
+                          {isFa
+                            ? 'تایید و اصلاح تطبیق ستون‌های فایل با فیلدهای نرم‌افزار'
+                            : 'Verify & Adjust Source Column Mapping'}
+                        </div>
+                        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                          {isFa
+                            ? 'در صورت متفاوت بودن نام ستون‌ها در فایل شما، ستون متناظر را برای هر فیلد بررسی یا اصلاح کنید.'
+                            : 'Review or adjust which file column maps to each system field.'}
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto p-1">
+                        {inspection.targetFields.map((tf) => {
+                          const mappedIdx = (activeMapping || inspection.mapping)[tf.key] ?? -1;
+                          return (
+                            <div
+                              key={tf.key}
+                              className={`p-2 rounded-lg border text-[11px] space-y-1 ${
+                                tf.required && mappedIdx < 0
+                                  ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)]/40'
+                                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]'
+                              }`}
+                            >
+                              <div className="font-semibold flex items-center justify-between gap-1">
+                                <span>
+                                  {isFa ? tf.labelFa : tf.labelEn}
+                                  {tf.required ? ' *' : ''}
+                                </span>
+                                {mappedIdx >= 0 && (
+                                  <span className="text-[10px] text-[var(--status-success)]">✓</span>
+                                )}
+                              </div>
+                              <select
+                                value={mappedIdx}
+                                onChange={(e) => void handleMappingChange(tf.key, Number(e.target.value))}
+                                className="w-full h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
+                              >
+                                <option value={-1}>
+                                  {isFa ? '-- بدون نگاشت (نادیده گرفتن) --' : '-- Unmapped (Ignore) --'}
+                                </option>
+                                {inspection.fileColumns.map((fc) => (
+                                  <option key={fc.index} value={fc.index}>
+                                    {isFa ? `ستون ${fc.index + 1}` : `Col ${fc.index + 1}`}: {fc.header}
+                                    {fc.samples[0] ? ` (${fc.samples[0].slice(0, 22)})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Parser Incomplete Rows Notice */}
+                  {(activePreview.parseRejectedRows?.length || 0) > 0 && (
+                    <div className="p-3 rounded-xl border border-[var(--status-danger)]/50 bg-[var(--status-danger-bg)]/40 space-y-1 text-xs">
+                      <div className="font-bold text-[var(--status-danger)] flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>
+                          {isFa
+                            ? `${activePreview.parseRejectedRows!.length.toLocaleString('fa-IR')} ردیف دارای مقدار بودند اما فیلدهای کلیدی آن‌ها خالی بود.`
+                            : `${activePreview.parseRejectedRows!.length} row(s) missed required identifier fields.`}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Duplicate Warning */}
+                  {activePreview.duplicateRecordsCount > 0 && (
+                    <div className="p-3 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-1.5 text-xs">
+                      <div className="font-bold text-[var(--status-warning)] flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>
+                          {isFa
+                            ? `${activePreview.duplicateRecordsCount.toLocaleString('fa-IR')} رکورد تکراری شناسایی شد (${(activePreview.duplicateDbCount ?? activePreview.duplicateRecordsCount).toLocaleString('fa-IR')} در دیتابیس، ${(activePreview.duplicateInFileCount ?? 0).toLocaleString('fa-IR')} درون فایل).`
+                            : `${activePreview.duplicateRecordsCount} duplicate record(s) found.`}
+                        </span>
+                      </div>
+                      {activePreview.duplicateSamples.length > 0 && (
+                        <div className="text-[11px] text-[var(--text-secondary)] tabular-nums" dir="ltr">
+                          {activePreview.duplicateSamples.join(' | ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Pre-Import Editable Rows Review Table (Core Tables) */}
+                  {activeEditedRows.length > 0 && activeFieldDefs.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="font-bold text-[var(--text-primary)]">
+                          {isFa ? 'پیش‌نمایش داده‌ها (قابل ویرایش پیش از ثبت)' : 'Pre-Import Row Preview (Editable)'}
+                        </span>
+                        <span className="text-[11px] text-[var(--text-muted)]">
+                          {isFa
+                            ? `نمایش ${Math.min(activeEditedRows.length, 25).toLocaleString('fa-IR')} از ${activeEditedRows.length.toLocaleString('fa-IR')} ردیف`
+                            : `Showing ${Math.min(activeEditedRows.length, 25)} of ${activeEditedRows.length} rows`}
+                        </span>
+                      </div>
+
+                      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
+                        <StickyTableWrapper maxHeightClass="max-h-72">
+                          <table className="w-full text-[11px]">
+                            <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
+                              <tr>
+                                <th className="py-2 px-2">#</th>
+                                {activeFieldDefs.map((tf) => (
+                                  <th key={tf.key} className="py-2 px-2 whitespace-nowrap font-semibold">
+                                    {isFa ? tf.labelFa : tf.labelEn}
+                                  </th>
+                                ))}
+                                <th className="py-2 px-2">{isFa ? 'حذف' : 'Remove'}</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[var(--border-subtle)]">
+                              {activeEditedRows.slice(0, 25).map((row, rIdx) => (
+                                <tr key={rIdx} className="hover:bg-[var(--bg-subtle)]/40">
+                                  <td className="py-1.5 px-2 tabular-nums text-[var(--text-muted)]">{rIdx + 1}</td>
+                                  {activeFieldDefs.map((tf) => {
+                                    const rawVal = row[tf.key];
+                                    const strVal = rawVal === null || rawVal === undefined ? '' : String(rawVal);
+                                    return (
+                                      <td key={tf.key} className="py-1 px-1.5 min-w-[110px]">
+                                        <input
+                                          type={tf.isNumeric ? 'number' : 'text'}
+                                          step={tf.isNumeric ? 'any' : undefined}
+                                          value={strVal}
+                                          onChange={(e) => handleCellEdit(rIdx, tf.key, e.target.value, tf.isNumeric)}
+                                          className="w-full h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                                        />
+                                      </td>
+                                    );
+                                  })}
+                                  <td className="py-1 px-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemovePreviewRow(rIdx)}
+                                      className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                                      title={isFa ? 'حذف ردیف از ورود' : 'Remove row'}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </StickyTableWrapper>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Operational Form Parsed Documents Preview */}
+                  {activePreview.isOperational && activeEditedRows.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="font-bold text-[var(--text-primary)]">
+                          {isFa
+                            ? `پیش‌نمایش اسناد استخراج‌شده برای بخش «${getScopeDisplayLabel(activePreview.scope, true)}»`
+                            : `Extracted Documents for "${getScopeDisplayLabel(activePreview.scope, false)}"`}
+                        </span>
+                        <span className="text-[11px] text-[var(--text-muted)]">
+                          {isFa
+                            ? `نمایش ${Math.min(activeEditedRows.length, 20).toLocaleString('fa-IR')} از ${activeEditedRows.length.toLocaleString('fa-IR')} سند`
+                            : `Showing ${Math.min(activeEditedRows.length, 20)} of ${activeEditedRows.length} documents`}
+                        </span>
+                      </div>
+                      <div className="divide-y divide-[var(--border-subtle)] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-64 overflow-y-auto">
+                        {activeEditedRows.slice(0, 20).map((row, idx) => {
+                          const sum = summarizeOperationalRow(activePreview.scope, row, isFa, prefs.calendar);
+                          return (
+                            <div key={idx} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <div className="min-w-0">
+                                <div className="font-bold text-[var(--text-primary)] truncate">
+                                  {idx + 1}. {sum.primary}
+                                </div>
+                                <div className="text-[11px] text-[var(--text-secondary)] truncate">{sum.secondary}</div>
+                              </div>
+                              {sum.badge && (
+                                <span className="px-2 py-0.5 rounded-md bg-[var(--bg-subtle)] text-[11px] font-medium text-[var(--text-primary)] shrink-0">
+                                  {sum.badge}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Unified Duplicate Policy + Confirmation + Commit Bar */}
+              <div className="pt-3 border-t border-[var(--border-subtle)] space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <span className="font-semibold text-[var(--text-secondary)]">
+                      {isFa ? 'برخورد با رکوردهای تکراری:' : 'Duplicate Policy:'}
+                    </span>
+                    <label className="inline-flex items-center gap-1.5 font-medium cursor-pointer">
+                      <input
+                        type="radio"
+                        name="wizardDupPolicy"
+                        checked={duplicatePolicy === 'skip'}
+                        onChange={() => setDuplicatePolicy('skip')}
+                      />
+                      <span>{isFa ? 'رد کردن و ثبت در لاگ' : 'Skip & Log'}</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 font-medium cursor-pointer">
+                      <input
+                        type="radio"
+                        name="wizardDupPolicy"
+                        checked={duplicatePolicy === 'replace'}
+                        onChange={() => setDuplicatePolicy('replace')}
+                      />
+                      <span>{isFa ? 'جایگزینی با اطلاعات فایل' : 'Replace Existing'}</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="inline-flex items-center gap-2 text-xs font-medium cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rowsConfirmed}
+                      onChange={(e) => setRowsConfirmed(e.target.checked)}
+                      className="rounded border-[var(--border-strong)]"
+                    />
+                    <span>
+                      {isFa
+                        ? `تایید می‌کنم ${confirmedTasks.length.toLocaleString('fa-IR')} بخش انتخاب‌شده بررسی شده و در نرم‌افزار ثبت شوند.`
+                        : `I confirm importing the ${confirmedTasks.length} selected section(s) into the system.`}
+                    </span>
+                  </label>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setImportStep(2)}
+                      className="h-9 px-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                    >
+                      {isFa ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
+                      <span>{isFa ? 'بازگشت به بخش‌ها' : 'Back to Sections'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={importing || !rowsConfirmed}
+                      onClick={() => void handleCommitWizardTasks()}
+                      className="h-9 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+                    >
+                      {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      <span>
+                        {importing
+                          ? isFa ? 'در حال ثبت و ارتباط‌دهی...' : 'Importing...'
+                          : isFa
+                            ? `تأیید و ثبت نهایی (${confirmedTasks.length.toLocaleString('fa-IR')} بخش)`
+                            : `Confirm & Import (${confirmedTasks.length})`}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Unified Completion Result Summary */}
           {autoWorkbookResult && (
             <div className="p-4 rounded-xl border border-[var(--status-success)] bg-[var(--status-success-bg)]/45 space-y-2.5 text-xs">
               <div className="font-bold text-[var(--status-success)] flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span>
                   {isFa
-                    ? `ثبت خودکار ${autoWorkbookResult.sections.length.toLocaleString('fa-IR')} بخش با موفقیت انجام شد: ${autoWorkbookResult.totals.imported.toLocaleString('fa-IR')} جدید · ${autoWorkbookResult.totals.replaced.toLocaleString('fa-IR')} جایگزین · ${autoWorkbookResult.totals.skipped.toLocaleString('fa-IR')} رد شده`
-                    : `Auto-imported ${autoWorkbookResult.sections.length} sections: ${autoWorkbookResult.totals.imported} imported · ${autoWorkbookResult.totals.replaced} replaced · ${autoWorkbookResult.totals.skipped} skipped`}
+                    ? `ثبت ${autoWorkbookResult.sections.length.toLocaleString('fa-IR')} بخش با موفقیت انجام شد: ${autoWorkbookResult.totals.imported.toLocaleString('fa-IR')} جدید · ${autoWorkbookResult.totals.replaced.toLocaleString('fa-IR')} جایگزین · ${autoWorkbookResult.totals.skipped.toLocaleString('fa-IR')} رد شده`
+                    : `Imported ${autoWorkbookResult.sections.length} section(s): ${autoWorkbookResult.totals.imported} imported · ${autoWorkbookResult.totals.replaced} replaced · ${autoWorkbookResult.totals.skipped} skipped`}
                 </span>
               </div>
-              <div className="text-[11px] text-[var(--text-primary)] flex flex-wrap items-center gap-3 tabular-nums">
-                <span className="inline-flex items-center gap-1 font-semibold text-[var(--accent-primary)]">
-                  <Link2 className="w-3.5 h-3.5" />
-                  {isFa
-                    ? `مجموع ارتباط‌های هوشمند: جدول کلی (${autoWorkbookResult.totals.linkedGeneral}) · جدول جزئیات (${autoWorkbookResult.totals.linkedDetailed}) · کالاهای در راه (${autoWorkbookResult.totals.linkedTransit})`
-                    : `Cross-Links Applied: General (${autoWorkbookResult.totals.linkedGeneral}) · Detailed (${autoWorkbookResult.totals.linkedDetailed}) · Transit (${autoWorkbookResult.totals.linkedTransit})`}
-                </span>
-              </div>
+              {autoWorkbookResult.totals.linkedGeneral +
+                autoWorkbookResult.totals.linkedDetailed +
+                autoWorkbookResult.totals.linkedTransit >
+                0 && (
+                <div className="text-[11px] text-[var(--text-primary)] flex flex-wrap items-center gap-3 tabular-nums">
+                  <span className="inline-flex items-center gap-1 font-semibold text-[var(--accent-primary)]">
+                    <Link2 className="w-3.5 h-3.5" />
+                    {isFa
+                      ? `ارتباط‌دهی هوشمند: کلی (${autoWorkbookResult.totals.linkedGeneral}) · جزئیات (${autoWorkbookResult.totals.linkedDetailed}) · در راه (${autoWorkbookResult.totals.linkedTransit})`
+                      : `Cross-Links: General (${autoWorkbookResult.totals.linkedGeneral}) · Detailed (${autoWorkbookResult.totals.linkedDetailed}) · Transit (${autoWorkbookResult.totals.linkedTransit})`}
+                  </span>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-[11px]">
                 {autoWorkbookResult.sections.map((sec) => (
                   <div
                     key={`${sec.sheetName}-${sec.scope}`}
                     className="px-2.5 py-1.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between gap-2 tabular-nums"
                   >
-                    <span className="font-semibold truncate">{getScopeDisplayLabel(sec.scope, isFa)}</span>
+                    <span className="font-semibold truncate">
+                      {getScopeDisplayLabel(sec.scope, isFa)}
+                      <span className="text-[10px] font-normal text-[var(--text-muted)] ms-1">({sec.sheetName})</span>
+                    </span>
                     <span className="text-[var(--text-secondary)] shrink-0">
                       +{sec.imported}
                       {sec.replaced > 0 ? ` / ↻${sec.replaced}` : ''}
@@ -1290,384 +1870,6 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* Multi-Sheet Continuation Prompt */}
-          {postSheetPrompt && sheetNames.length > 1 && (
-            <div className="p-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] space-y-3 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-bold text-[var(--text-primary)]">
-                  {isFa
-                    ? `اطلاعات شیت «${postSheetPrompt}» با موفقیت ثبت شد. آیا می‌خواهید از سایر شیت‌های این فایل نیز اطلاعات وارد کنید؟`
-                    : `Sheet "${postSheetPrompt}" was imported. Would you like to import data from the remaining sheets of this workbook?`}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const remaining = sheetNames.filter((s) => !importedSheets.includes(s));
-                      const next = remaining[0] || sheetNames.find((s) => s !== selectedSheet) || sheetNames[0];
-                      if (next) void handleSheetChange(next);
-                    }}
-                    className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] font-semibold"
-                  >
-                    {isFa ? 'بله، انتخاب شیت بعدی' : 'Yes, Import Next Sheet'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearImportSelection}
-                    className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] font-medium"
-                  >
-                    {isFa ? 'خیر، بستن فایل' : 'No, Close File'}
-                  </button>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {sheetNames.map((s) => {
-                  const done = importedSheets.includes(s);
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => void handleSheetChange(s)}
-                      className={`h-7 px-2.5 rounded-lg border text-[11px] font-medium flex items-center gap-1 ${
-                        done
-                          ? 'border-[var(--status-success)] bg-[var(--status-success-bg)] text-[var(--status-success)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--accent-primary)]'
-                      }`}
-                    >
-                      {done && <CheckCircle2 className="w-3 h-3" />}
-                      <span>{s}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {fileName && preview && (
-            <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="font-semibold flex flex-wrap items-center gap-1.5">
-                  <span>{isFa ? `پیش‌نمایش فایل: ${fileName}` : `Preview: ${fileName}`} ·</span>
-                  <span className="text-[var(--accent-primary)] font-bold">
-                    {getScopeDisplayLabel(preview.scope, isFa)}
-                  </span>
-                  {preview.isOperational && preview.estimatedLinks && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold tabular-nums">
-                      <Link2 className="w-3 h-3" />
-                      {isFa
-                        ? `ارتباط خودکار: کلی ${preview.estimatedLinks.general} · جزئیات ${preview.estimatedLinks.detailed} · در راه ${preview.estimatedLinks.transit}`
-                        : `Auto-Links: G ${preview.estimatedLinks.general} · D ${preview.estimatedLinks.detailed} · T ${preview.estimatedLinks.transit}`}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[var(--text-secondary)] tabular-nums">
-                    {isFa
-                      ? `${editedRows.length.toLocaleString('fa-IR')} ردیف/سند آماده ثبت`
-                      : `${editedRows.length} record(s) ready`}
-                  </span>
-                  {inspection && (
-                    <button
-                      type="button"
-                      onClick={() => setMappingExpanded((v) => !v)}
-                      className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-medium flex items-center gap-1"
-                    >
-                      <Columns3 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                      <span>{isFa ? 'تطبیق ستون‌ها' : 'Column Mapping'}</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Interactive Column Mapping Confirmation Form */}
-              {inspection && mappingExpanded && (
-                <div className="p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <div className="text-xs font-bold text-[var(--text-primary)]">
-                        {isFa
-                          ? 'تایید و اصلاح تطبیق ستون‌های فایل با فیلدهای نرم‌افزار'
-                          : 'Verify & Adjust Source Column Mapping'}
-                      </div>
-                      <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                        {isFa
-                          ? 'در صورت متفاوت بودن نام ستون‌ها در فایل شما، ستون متناظر را از فهرست هر فیلد انتخاب کنید تا داده‌ها دقیقاً در جای درست ثبت شوند.'
-                          : 'If column headers differ in your file, select the matching file column for each system field.'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto p-1">
-                    {inspection.targetFields.map((tf) => {
-                      const mappedIdx = (columnMapping || inspection.mapping)[tf.key] ?? -1;
-                      return (
-                        <div
-                          key={tf.key}
-                          className={`p-2 rounded-lg border text-[11px] space-y-1 ${
-                            tf.required && mappedIdx < 0
-                              ? 'border-[var(--status-warning)] bg-[var(--status-warning-bg)]/40'
-                              : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]'
-                          }`}
-                        >
-                          <div className="font-semibold flex items-center justify-between gap-1">
-                            <span>
-                              {isFa ? tf.labelFa : tf.labelEn}
-                              {tf.required ? ' *' : ''}
-                            </span>
-                            {mappedIdx >= 0 && (
-                              <span className="text-[10px] text-[var(--status-success)]">✓</span>
-                            )}
-                          </div>
-                          <select
-                            value={mappedIdx}
-                            onChange={(e) => handleMappingChange(tf.key, Number(e.target.value))}
-                            className="w-full h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
-                          >
-                            <option value={-1}>
-                              {isFa ? '-- بدون نگاشت (نادیده گرفتن) --' : '-- Unmapped (Ignore) --'}
-                            </option>
-                            {inspection.fileColumns.map((fc) => (
-                              <option key={fc.index} value={fc.index}>
-                                {isFa ? `ستون ${fc.index + 1}` : `Col ${fc.index + 1}`}: {fc.header}
-                                {fc.samples[0] ? ` (${fc.samples[0].slice(0, 22)})` : ''}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Parser Incomplete Rows Notice during Preview */}
-              {(preview.parseRejectedRows?.length || 0) > 0 && (
-                <div className="p-3.5 rounded-xl border border-[var(--status-danger)]/50 bg-[var(--status-danger-bg)]/50 space-y-1.5 text-xs">
-                  <div className="font-bold text-[var(--status-danger)] flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                    <span>
-                      {isFa
-                        ? `${preview.parseRejectedRows!.length.toLocaleString('fa-IR')} ردیف در فایل دارای مقدار بودند اما به دلیل خالی بودن فیلدهای کلیدی هنگام خواندن رد شدند.`
-                        : `${preview.parseRejectedRows!.length} non-empty row(s) missed required identifier fields during parsing.`}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[var(--text-secondary)]">
-                    {isFa
-                      ? 'می‌توانید نگاشت ستون‌ها را در بالا اصلاح کنید؛ همچنین پس از ثبت فایل، این ردیف‌ها با دلیل دقیق در بخش «لاگ ورود» نمایش داده می‌شوند تا در صورت نیاز آن‌ها را ویرایش و اضافه کنید.'
-                      : 'You can adjust column mappings above, or review and fix them in the Import Log right after committing.'}
-                  </p>
-                </div>
-              )}
-
-              {/* Duplicate Warning */}
-              {preview.duplicateRecordsCount > 0 && (
-                <div className="p-3.5 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-2.5 text-xs">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-[var(--status-warning)] shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <div className="font-bold text-[var(--status-warning)]">
-                        {isFa
-                          ? `${preview.duplicateRecordsCount.toLocaleString('fa-IR')} رکورد تکراری شناسایی شد (${(preview.duplicateDbCount ?? preview.duplicateRecordsCount).toLocaleString('fa-IR')} مشابه دیتابیس، ${(preview.duplicateInFileCount ?? 0).toLocaleString('fa-IR')} تکراری درون همین فایل).`
-                          : `${preview.duplicateRecordsCount} duplicate record(s) found (${preview.duplicateDbCount ?? preview.duplicateRecordsCount} in DB, ${preview.duplicateInFileCount ?? 0} within file).`}
-                      </div>
-                      {preview.duplicateSamples.length > 0 && (
-                        <div className="text-[11px] text-[var(--text-secondary)] tabular-nums" dir="ltr">
-                          {preview.duplicateSamples.join(' | ')}
-                        </div>
-                      )}
-                      <div className="text-[11px] text-[var(--text-primary)]">
-                        {isFa
-                          ? 'لطفاً نحوه برخورد با رکوردهای تکراری را انتخاب کنید (در صورت انتخاب «رد کردن»، جزئیات دقیق آن‌ها در لاگ پایین ثبت شده و قابل تصمیم‌گیری مجدد خواهد بود):'
-                          : 'Choose how to handle duplicates (skipped items appear in the Import Log for review and recovery):'}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3 ps-6">
-                    <label className="inline-flex items-center gap-1.5 font-semibold cursor-pointer">
-                      <input
-                        type="radio"
-                        name="dupPolicy"
-                        checked={duplicatePolicy === 'replace'}
-                        onChange={() => setDuplicatePolicy('replace')}
-                      />
-                      <span>{isFa ? 'جایگزینی با اطلاعات جدید فایل' : 'Replace existing records'}</span>
-                    </label>
-                    <label className="inline-flex items-center gap-1.5 font-semibold cursor-pointer">
-                      <input
-                        type="radio"
-                        name="dupPolicy"
-                        checked={duplicatePolicy === 'skip'}
-                        onChange={() => setDuplicatePolicy('skip')}
-                      />
-                      <span>{isFa ? 'رد کردن و ثبت در لاگ برای تصمیم‌گیری' : 'Skip & Log for Review'}</span>
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* Pre-Import Editable Rows Review Table */}
-              {editedRows.length > 0 && activeFieldDefs.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="font-bold text-[var(--text-primary)]">
-                      {isFa
-                        ? 'فرم بررسی، ویرایش و تایید ستون‌های داده‌ها پیش از ثبت'
-                        : 'Pre-Import Row Review & Editing Table'}
-                    </span>
-                    <span className="text-[11px] text-[var(--text-muted)]">
-                      {isFa
-                        ? `نمایش ${Math.min(editedRows.length, 30).toLocaleString('fa-IR')} از ${editedRows.length.toLocaleString('fa-IR')} ردیف (قابل ویرایش مستقیم)`
-                        : `Showing first ${Math.min(editedRows.length, 30)} of ${editedRows.length} rows (editable)`}
-                    </span>
-                  </div>
-
-                  <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
-                    <StickyTableWrapper maxHeightClass="max-h-80">
-                      <table className="w-full text-[11px]">
-                        <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                        <tr>
-                          <th className="py-2 px-2">#</th>
-                          {activeFieldDefs.map((tf) => (
-                            <th key={tf.key} className="py-2 px-2 whitespace-nowrap font-semibold">
-                              {isFa ? tf.labelFa : tf.labelEn}
-                            </th>
-                          ))}
-                          <th className="py-2 px-2">{isFa ? 'حذف' : 'Remove'}</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--border-subtle)]">
-                        {editedRows.slice(0, 30).map((row, rIdx) => (
-                          <tr key={rIdx} className="hover:bg-[var(--bg-subtle)]/40">
-                            <td className="py-1.5 px-2 tabular-nums text-[var(--text-muted)]">
-                              {rIdx + 1}
-                            </td>
-                            {activeFieldDefs.map((tf) => {
-                              const rawVal = row[tf.key];
-                              const strVal = rawVal === null || rawVal === undefined ? '' : String(rawVal);
-                              return (
-                                <td key={tf.key} className="py-1 px-1.5 min-w-[110px]">
-                                  <input
-                                    type={tf.isNumeric ? 'number' : 'text'}
-                                    step={tf.isNumeric ? 'any' : undefined}
-                                    value={strVal}
-                                    onChange={(e) => handleCellEdit(rIdx, tf.key, e.target.value, tf.isNumeric)}
-                                    className="w-full h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                                  />
-                                </td>
-                              );
-                            })}
-                            <td className="py-1 px-2">
-                              <button
-                                type="button"
-                                onClick={() => handleRemovePreviewRow(rIdx)}
-                                className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
-                                title={isFa ? 'حذف ردیف از ورود' : 'Remove row'}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      </table>
-                    </StickyTableWrapper>
-                  </div>
-                </div>
-              )}
-
-              {/* Operational Form Parsed Documents Preview */}
-              {preview.isOperational && editedRows.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="font-bold text-[var(--text-primary)]">
-                      {isFa
-                        ? `پیش‌نمایش اسناد استخراج‌شده برای بخش «${getScopeDisplayLabel(preview.scope, true)}»`
-                        : `Extracted Documents for "${getScopeDisplayLabel(preview.scope, false)}"`}
-                    </span>
-                    <span className="text-[11px] text-[var(--text-muted)]">
-                      {isFa
-                        ? `نمایش ${Math.min(editedRows.length, 20).toLocaleString('fa-IR')} از ${editedRows.length.toLocaleString('fa-IR')} سند`
-                        : `Showing ${Math.min(editedRows.length, 20)} of ${editedRows.length} documents`}
-                    </span>
-                  </div>
-                  <div className="divide-y divide-[var(--border-subtle)] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-72 overflow-y-auto">
-                    {editedRows.slice(0, 20).map((row, idx) => {
-                      const sum = summarizeOperationalRow(preview.scope, row, isFa, prefs.calendar);
-                      return (
-                        <div key={idx} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-                          <div className="min-w-0">
-                            <div className="font-bold text-[var(--text-primary)] truncate">
-                              {idx + 1}. {sum.primary}
-                            </div>
-                            <div className="text-[11px] text-[var(--text-secondary)] truncate">{sum.secondary}</div>
-                          </div>
-                          {sum.badge && (
-                            <span className="px-2 py-0.5 rounded-md bg-[var(--bg-subtle)] text-[11px] font-medium text-[var(--text-primary)] shrink-0">
-                              {sum.badge}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Explicit Confirmation Checkbox & Commit Button */}
-              <div className="pt-2 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
-                <label className="inline-flex items-center gap-2 text-xs font-medium cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={rowsConfirmed}
-                    onChange={(e) => setRowsConfirmed(e.target.checked)}
-                    className="rounded border-[var(--border-strong)]"
-                  />
-                  <span>
-                    {preview.isOperational
-                      ? isFa
-                        ? 'تایید می‌کنم اسناد شناسایی‌شده در بخش مربوطه ثبت شده و با جداول در راه، کلی و جزئیات ارتباط داده شوند.'
-                        : 'I confirm importing these forms into their section with automatic cross-linking to Transit, General, and Detailed tables.'
-                      : isFa
-                        ? 'تایید می‌کنم ستون‌ها و مقادیر پیش‌نمایش بررسی شده و در ستون‌های صحیح قرار دارند.'
-                        : 'I confirm that column mappings and values above have been reviewed and are accurate.'}
-                  </span>
-                </label>
-
-                <button
-                  type="button"
-                  disabled={importing || (editedRows.length === 0 && (preview.parseRejectedRows?.length || 0) === 0) || !rowsConfirmed}
-                  onClick={handleCommitImport}
-                  className="h-9 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
-                >
-                  {importing
-                    ? isFa ? 'در حال ثبت...' : 'Importing...'
-                    : isFa ? 'تأیید و ثبت اطلاعات در نرم‌افزار' : 'Confirm & Import Data'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {importResult && (
-            <div className="p-3.5 rounded-xl border border-[var(--status-success)] bg-[var(--status-success-bg)]/50 text-xs flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-[var(--status-success)] shrink-0" />
-                <span className="font-semibold tabular-nums">
-                  {isFa
-                    ? `نتیجه ثبت (${getScopeDisplayLabel(importResult.scope, true)}): ${importResult.imported.toLocaleString('fa-IR')} جدید · ${importResult.replaced.toLocaleString('fa-IR')} جایگزین‌شده · ${importResult.skipped.toLocaleString('fa-IR')} رد شده`
-                    : `Import completed (${getScopeDisplayLabel(importResult.scope, false)}): ${importResult.imported} imported · ${importResult.replaced} replaced · ${importResult.skipped} skipped`}
-                </span>
-              </div>
-              {((importResult.linkedGeneral || 0) + (importResult.linkedDetailed || 0) + (importResult.linkedTransit || 0) > 0) && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--accent-primary)] tabular-nums">
-                  <Link2 className="w-3.5 h-3.5" />
-                  {isFa
-                    ? `ارتباط خودکار: کلی ${importResult.linkedGeneral || 0} · جزئیات ${importResult.linkedDetailed || 0} · در راه ${importResult.linkedTransit || 0}`
-                    : `Cross-Linked: G ${importResult.linkedGeneral || 0} · D ${importResult.linkedDetailed || 0} · T ${importResult.linkedTransit || 0}`}
-                </span>
-              )}
             </div>
           )}
 

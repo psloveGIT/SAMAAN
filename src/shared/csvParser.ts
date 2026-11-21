@@ -1,3 +1,4 @@
+import { extractChemicalDatesFromTexts } from './chemicalDates.ts';
 import { normalizeDigits, parseFlexibleDateToIso } from './jalali.ts';
 import { inferItemClassification, normalizeCountingUnitToFa, normalizeTransitStatus } from './normalizers.ts';
 import type {
@@ -61,7 +62,7 @@ export const DETAILED_IMPORT_COLUMNS: ImportColumnDef[] = [
   { key: 'itemNo', labelFa: 'شماره آیتم', labelEn: 'Item No.', required: true },
   { key: 'generalDescription', labelFa: 'شرح کلی', labelEn: 'General Description' },
   { key: 'description', labelFa: 'شرح', labelEn: 'Description', required: true },
-  { key: 'size', labelFa: 'سایز', labelEn: 'Size' },
+  { key: 'size', labelFa: 'اندازه', labelEn: 'Size' },
   { key: 'itemCode', labelFa: 'کد کالا', labelEn: 'Item Code' },
   { key: 'itemCategory', labelFa: 'دسته‌بندی تخصصی قلم', labelEn: 'Item Classification' },
   { key: 'chemicalType', labelFa: 'نوع ماده شیمیایی', labelEn: 'Chemical Type' },
@@ -73,40 +74,41 @@ export const DETAILED_IMPORT_COLUMNS: ImportColumnDef[] = [
   { key: 'surplus', labelFa: 'اضافی', labelEn: 'Surplus', isNumeric: true },
   { key: 'damagedQty', labelFa: 'آسیب دیده', labelEn: 'Damaged Qty', isNumeric: true },
   { key: 'mtoRef', labelFa: 'MTO', labelEn: 'MTO' },
-  { key: 'repNo', labelFa: 'شماره REP', labelEn: 'REP No.' },
-  { key: 'repStatus', labelFa: 'وضعیت REP', labelEn: 'REP Status' },
-  { key: 'repDescription', labelFa: 'توضیحات REP', labelEn: 'REP Description' },
+  { key: 'repNo', labelFa: 'شماره جایگزینی', labelEn: 'Substitution No.' },
+  { key: 'repStatus', labelFa: 'وضعیت جایگزینی', labelEn: 'Substitution Status' },
+  { key: 'repReprocured', labelFa: 'تأمین مجدد جایگزین شده', labelEn: 'Reprocured Replacement' },
+  { key: 'repDescription', labelFa: 'توضیحات جایگزینی', labelEn: 'Substitution Description' },
   { key: 'countingUnit', labelFa: 'واحد شمارش', labelEn: 'Counting Unit' },
   { key: 'island', labelFa: 'جزیره', labelEn: 'Island' },
   { key: 'system', labelFa: 'سیستم', labelEn: 'System' },
   { key: 'subSystem', labelFa: 'ساب سیستم', labelEn: 'Sub-System' },
   { key: 'unit', labelFa: 'واحد', labelEn: 'Unit' },
-  { key: 'opiNo', labelFa: 'شماره OPI', labelEn: 'OPI No.' },
-  { key: 'opiDate', labelFa: 'تاریخ OPI', labelEn: 'OPI Date', isDate: true },
-  { key: 'merNo', labelFa: 'شماره MER', labelEn: 'MER No.' },
-  { key: 'merStatus', labelFa: 'وضعیت MER', labelEn: 'MER Status' },
-  { key: 'notes', labelFa: 'توضیحات', labelEn: 'Notes' },
+  { key: 'opiNo', labelFa: 'شماره دعوتنامه', labelEn: 'Invitation No.' },
+  { key: 'opiDate', labelFa: 'تاریخ دعوتنامه', labelEn: 'Invitation Date', isDate: true },
+  { key: 'merNo', labelFa: 'شماره کسری/مغایرت', labelEn: 'Discrepancy/Shortage No.' },
+  { key: 'merStatus', labelFa: 'وضعیت کسری/مغایرت', labelEn: 'Discrepancy/Shortage Status' },
+  { key: 'notes', labelFa: 'توضیحات کسری/مغایرت', labelEn: 'Discrepancy/Shortage Notes' },
   { key: 'materialBalanceNo', labelFa: 'شماره بالانس متریال', labelEn: 'Material Balance No.' },
-  { key: 'balanceStatus', labelFa: 'وضعیت بالانس', labelEn: 'Balance Status' },
+  { key: 'balanceStatus', labelFa: 'وضعیت بالانس متریال', labelEn: 'Material Balance Status' },
   { key: 'storageLocation', labelFa: 'محل نگهداری', labelEn: 'Storage Location' },
-  { key: 'gcvReceiptNo', labelFa: 'شماره رسید', labelEn: 'Receipt No.' },
+  { key: 'gcvReceiptNo', labelFa: 'شماره رسید مصرف', labelEn: 'Consumption Receipt No.' },
   { key: 'receiver', labelFa: 'تحویل گیرنده', labelEn: 'Receiver' },
-  { key: 'gcvDeliveredQty', labelFa: 'مقدار تحویل شده GCV', labelEn: 'GCV Delivered Qty', isNumeric: true },
-  { key: 'mivContractorNo', labelFa: 'شماره MIV پیمانکار', labelEn: 'MIV Contractor No.' },
-  { key: 'mivContractorDate', labelFa: 'تاریخ MIV پیمانکار', labelEn: 'MIV Contractor Date', isDate: true },
-  { key: 'mivContractorQty', labelFa: 'مقدار MIV پیمانکار', labelEn: 'MIV Contractor Qty', isNumeric: true },
-  { key: 'smrContractorNo', labelFa: 'شماره SMR پیمانکار', labelEn: 'SMR Contractor No.' },
-  { key: 'smrContractorDate', labelFa: 'تاریخ SMR پیمانکار', labelEn: 'SMR Contractor Date', isDate: true },
-  { key: 'smrContractorQty', labelFa: 'مقدار SMR پیمانکار', labelEn: 'SMR Contractor Qty', isNumeric: true },
-  { key: 'smrContractorNote', labelFa: 'توضیحات SMR پیمانکار', labelEn: 'SMR Contractor Note' },
-  { key: 'smrMapnaNo', labelFa: 'شماره SMR مپنا', labelEn: 'SMR MAPNA No.' },
-  { key: 'smrMapnaDate', labelFa: 'تاریخ SMR مپنا', labelEn: 'SMR MAPNA Date', isDate: true },
-  { key: 'smrMapnaQty', labelFa: 'مقدار SMR مپنا', labelEn: 'SMR MAPNA Qty', isNumeric: true },
-  { key: 'smrMapnaNote', labelFa: 'توضیحات SMR مپنا', labelEn: 'SMR MAPNA Note' },
-  { key: 'mivMapnaNo', labelFa: 'شماره MIV مپنا', labelEn: 'MIV MAPNA No.' },
-  { key: 'mivMapnaDate', labelFa: 'تاریخ MIV مپنا', labelEn: 'MIV MAPNA Date', isDate: true },
-  { key: 'mivMapnaQty', labelFa: 'مقدار MIV مپنا', labelEn: 'MIV MAPNA Qty', isNumeric: true },
-  { key: 'stocktakeInfo', labelFa: 'انبار گردانی', labelEn: 'Stocktake Info' },
+  { key: 'gcvDeliveredQty', labelFa: 'تعداد رسید مصرف', labelEn: 'Consumption Receipt Qty', isNumeric: true },
+  { key: 'mivContractorNo', labelFa: 'شماره حواله', labelEn: 'MIV Issue No.' },
+  { key: 'mivContractorDate', labelFa: 'تاریخ حواله', labelEn: 'MIV Issue Date', isDate: true },
+  { key: 'mivContractorQty', labelFa: 'مجموع تعداد تحویل شده با حواله', labelEn: 'Total MIV Issued Qty', isNumeric: true },
+  { key: 'mivReceiver', labelFa: 'تحویل گیرنده (حواله)', labelEn: 'MIV Receiver' },
+  { key: 'smrContractorNo', labelFa: 'شماره برگشتی به انبار پیمانکار', labelEn: 'Return to Contractor WH No.' },
+  { key: 'smrContractorDate', labelFa: 'تاریخ برگشتی (پیمانکار)', labelEn: 'Contractor Return Date', isDate: true },
+  { key: 'smrContractorQty', labelFa: 'مجموع تعداد برگشتی (پیمانکار)', labelEn: 'Total Contractor Returned Qty', isNumeric: true },
+  { key: 'smrContractorNote', labelFa: 'توضیحات برگشتی (پیمانکار)', labelEn: 'Contractor Return Note' },
+  { key: 'smrMapnaNo', labelFa: 'شماره برگشتی به انبار کارفرما', labelEn: 'Return to Employer WH No.' },
+  { key: 'smrMapnaDate', labelFa: 'تاریخ برگشتی (کارفرما)', labelEn: 'Employer Return Date', isDate: true },
+  { key: 'smrMapnaQty', labelFa: 'مجموع تعداد برگشتی (کارفرما)', labelEn: 'Total Employer Returned Qty', isNumeric: true },
+  { key: 'smrMapnaNote', labelFa: 'توضیحات برگشتی (کارفرما)', labelEn: 'Employer Return Note' },
+  { key: 'smrDeliverer', labelFa: 'تحویل آورنده', labelEn: 'Returned By' },
+  { key: 'stocktakeStatus', labelFa: 'وضعیت انبارگردانی', labelEn: 'Stocktake Status' },
+  { key: 'stocktakeDate', labelFa: 'تاریخ آخرین انبارگردانی', labelEn: 'Last Stocktake Date', isDate: true },
 ];
 
 export const TRANSIT_IMPORT_COLUMNS: ImportColumnDef[] = [
@@ -481,75 +483,129 @@ function getAutoDetailedMapping(combinedCols: string[]): Record<string, number> 
   const hasRahkaran = combinedCols.some((h) => h.includes('کد راهکاران'));
   const offset = hasRahkaran ? 0 : -1;
 
-  return {
-    rowNo: findCol(combinedCols, ['ردیف', 'row no'], 0),
-    arrivalDate: findCol(combinedCols, ['تاریخ ورود', 'arrival date'], 1),
-    supplier: findCol(combinedCols, ['تامین کننده', 'تأمین کننده', 'supplier'], 2),
-    origin: findCol(combinedCols, ['مبدا', 'مبدأ', 'origin'], 3),
-    shipmentNo: findCol(combinedCols, ['شماره محموله', 'شماره پکینگ لیست', 'shipment no', 'packing list'], 4),
-    packageNo: findCol(combinedCols, ['شماره نگله', 'package no'], 5),
-    itemNo: findCol(combinedCols, ['شماره آیتم', 'item no'], 6),
-    generalDescription: findCol(combinedCols, ['شرح کلی', 'general description'], 7),
-    description: findCol(combinedCols, ['شرح کالا', 'شرح', 'description'], {
-      fallbackIndex: 8,
+  const defs: Array<{
+    key: string;
+    candidates?: string[];
+    fallback: number;
+    excludeSubstrings?: string[];
+  }> = [
+    { key: 'rowNo', candidates: ['ردیف', 'row no'], fallback: 0 },
+    { key: 'arrivalDate', candidates: ['تاریخ ورود', 'arrival date'], fallback: 1 },
+    { key: 'supplier', candidates: ['تامین کننده', 'تأمین کننده', 'supplier'], fallback: 2 },
+    { key: 'origin', candidates: ['مبدا', 'مبدأ', 'origin'], fallback: 3 },
+    { key: 'shipmentNo', candidates: ['شماره محموله', 'شماره پکینگ لیست', 'shipment no', 'packing list'], fallback: 4 },
+    { key: 'packageNo', candidates: ['شماره نگله', 'package no'], fallback: 5 },
+    { key: 'itemNo', candidates: ['شماره آیتم', 'item no'], fallback: 6 },
+    { key: 'generalDescription', candidates: ['شرح کلی', 'general description'], fallback: 7 },
+    {
+      key: 'description',
+      candidates: ['شرح کالا', 'شرح', 'description'],
+      fallback: 8,
       excludeSubstrings: ['شرح کلی', 'general description', 'توضیحات'],
-    }),
-    size: findCol(combinedCols, ['سایز', 'size'], 9),
-    itemCode: findCol(combinedCols, ['کد کالا', 'item code'], 10),
-    itemCategory: findCol(combinedCols, ['دسته بندی تخصصی', 'نوع قلم', 'item classification', 'item category'], -1),
-    chemicalType: findCol(combinedCols, ['نوع ماده شیمیایی', 'ماده شیمیایی', 'chemical type'], -1),
-    productionDate: findCol(combinedCols, ['تاریخ تولید', 'production date'], -1),
-    expirationDate: findCol(combinedCols, ['تاریخ انقضا', 'تاریخ انقضاء', 'expiration date', 'expiry'], -1),
-    packingQty: findCol(combinedCols, ['مقدار پکینگ', 'packing qty'], 12 + offset),
-    actualQty: findCol(combinedCols, ['مقدار واقعی', 'actual qty'], 13 + offset),
-    shortage: findCol(combinedCols, ['کسری', 'مقدار کسری', 'shortage'], -1),
-    surplus: findCol(combinedCols, ['اضافی', 'مقدار اضافی', 'surplus'], -1),
-    damagedQty: findCol(combinedCols, ['آسیب دیده', 'damaged qty'], -1),
-    mtoRef: findCol(combinedCols, ['mto'], -1),
-    repNo: findCol(combinedCols, ['شماره rep', 'rep no'], 16 + offset),
-    repStatus: findCol(combinedCols, ['وضعیت rep', 'rep status'], 17 + offset),
-    repDescription: findCol(combinedCols, ['توضیحات rep', 'rep description'], 18 + offset),
-    countingUnit: findCol(combinedCols, ['واحد شمارش', 'counting unit'], 19 + offset),
-    island: findCol(combinedCols, ['جزیره', 'island'], 20 + offset),
-    system: findCol(combinedCols, ['سیستم', 'system'], { fallbackIndex: 21 + offset, excludeSubstrings: ['ساب', 'sub'] }),
-    subSystem: findCol(combinedCols, ['ساب سیستم', 'sub-system', 'subsystem'], 22 + offset),
-    unit: findCol(combinedCols, ['واحد', 'unit'], {
-      fallbackIndex: 23 + offset,
-      excludeSubstrings: ['شمارش', 'counting'],
-    }),
-    opiNo: findCol(combinedCols, ['شماره opi', 'opi no'], 24 + offset),
-    opiDate: findCol(combinedCols, ['تاریخ opi', 'opi date'], 25 + offset),
-    merNo: findCol(combinedCols, ['شماره mer', 'mer no'], 26 + offset),
-    merStatus: findCol(combinedCols, ['وضعیت mer', 'mer status'], 27 + offset),
-    notes: findCol(combinedCols, ['توضیحات', 'notes'], {
-      fallbackIndex: 28 + offset,
-      excludeSubstrings: ['rep', 'smr'],
-    }),
-    balanceStatus: findCol(combinedCols, ['وضعیت بالانس', 'balance status'], 29 + offset),
-    storageLocation: findCol(combinedCols, ['محل نگهداری', 'storage location'], 30 + offset),
-    gcvReceiptNo: findCol(combinedCols, ['شماره رسید', 'gcv', 'receipt no'], 31 + offset),
-    receiver: findCol(combinedCols, ['تحویل گیرنده', 'receiver'], 32 + offset),
-    gcvDeliveredQty: findCol(combinedCols, ['مقدار تحویل شده gcv', 'مقدار تحویل شده', 'gcv delivered'], 33 + offset),
-    mivContractorNo: findCol(combinedCols, ['شماره miv پیمانکار', 'miv پیمانکار', 'شماره miv'], {
-      fallbackIndex: 35 + offset,
+    },
+    { key: 'size', candidates: ['اندازه', 'سایز', 'size'], fallback: 9 },
+    { key: 'itemCode', candidates: ['کد کالا', 'item code'], fallback: 10 },
+    { key: 'itemCategory', candidates: ['دسته بندی تخصصی', 'نوع قلم', 'item classification', 'item category'], fallback: -1 },
+    { key: 'chemicalType', candidates: ['نوع ماده شیمیایی', 'ماده شیمیایی', 'chemical type'], fallback: -1 },
+    {
+      key: 'productionDate',
+      candidates: ['تاریخ تولید', 'production date', 'mfg date'],
+      fallback: -1,
+      excludeSubstrings: ['انبارگردانی', 'انبار گردانی', 'stocktake', 'ورود', 'arrival', 'انقضا', 'exp', 'دعوتنامه', 'opi', 'حواله', 'miv', 'برگشت', 'smr'],
+    },
+    {
+      key: 'expirationDate',
+      candidates: ['تاریخ انقضا', 'تاریخ انقضاء', 'expiration date', 'expiry date'],
+      fallback: -1,
+      excludeSubstrings: ['انبارگردانی', 'انبار گردانی', 'stocktake', 'ورود', 'arrival', 'تولید', 'production', 'mfg'],
+    },
+    { key: 'packingQty', candidates: ['مقدار پکینگ', 'packing qty'], fallback: 12 + offset },
+    { key: 'actualQty', candidates: ['مقدار واقعی', 'actual qty'], fallback: 13 + offset },
+    { key: 'shortage', candidates: ['کسری', 'مقدار کسری', 'shortage'], fallback: -1, excludeSubstrings: ['شماره', 'وضعیت', 'توضیحات', 'mer'] },
+    { key: 'surplus', candidates: ['اضافی', 'مقدار اضافی', 'surplus'], fallback: -1 },
+    { key: 'damagedQty', candidates: ['آسیب دیده', 'damaged qty'], fallback: -1 },
+    { key: 'mtoRef', candidates: ['mto'], fallback: -1 },
+    { key: 'repNo', candidates: ['شماره جایگزینی', 'شماره rep', 'rep no', 'substitution no'], fallback: 16 + offset },
+    { key: 'repStatus', candidates: ['وضعیت جایگزینی', 'وضعیت rep', 'rep status', 'substitution status'], fallback: 17 + offset },
+    { key: 'repReprocured', candidates: ['تامین مجدد جایگزین شده', 'تأمین مجدد جایگزین شده', 'reprocured'], fallback: -1 },
+    { key: 'repDescription', candidates: ['توضیحات جایگزینی', 'توضیحات rep', 'rep description', 'substitution description'], fallback: 18 + offset },
+    { key: 'countingUnit', candidates: ['واحد شمارش', 'counting unit'], fallback: 19 + offset },
+    { key: 'island', candidates: ['جزیره', 'island'], fallback: 20 + offset },
+    { key: 'system', candidates: ['سیستم', 'system'], fallback: 21 + offset, excludeSubstrings: ['ساب', 'sub'] },
+    { key: 'subSystem', candidates: ['ساب سیستم', 'sub-system', 'subsystem'], fallback: 22 + offset },
+    { key: 'unit', candidates: ['واحد', 'unit'], fallback: 23 + offset, excludeSubstrings: ['شمارش', 'counting'] },
+    { key: 'opiNo', candidates: ['شماره دعوتنامه', 'شماره opi', 'opi no', 'invitation no'], fallback: 24 + offset },
+    { key: 'opiDate', candidates: ['تاریخ دعوتنامه', 'تاریخ opi', 'opi date', 'invitation date'], fallback: 25 + offset },
+    { key: 'merNo', candidates: ['شماره کسری/مغایرت', 'شماره mer', 'mer no', 'discrepancy'], fallback: 26 + offset },
+    { key: 'merStatus', candidates: ['وضعیت کسری/مغایرت', 'وضعیت mer', 'mer status'], fallback: 27 + offset },
+    {
+      key: 'notes',
+      candidates: ['توضیحات کسری/مغایرت', 'توضیحات', 'notes'],
+      fallback: 28 + offset,
+      excludeSubstrings: ['rep', 'جایگزینی', 'smr', 'برگشتی'],
+    },
+    { key: 'balanceStatus', candidates: ['وضعیت بالانس', 'balance status'], fallback: 29 + offset },
+    { key: 'storageLocation', candidates: ['محل نگهداری', 'storage location'], fallback: 30 + offset },
+    { key: 'gcvReceiptNo', candidates: ['شماره رسید مصرف', 'شماره رسید', 'gcv', 'receipt no'], fallback: 31 + offset },
+    { key: 'receiver', candidates: ['تحویل گیرنده', 'receiver'], fallback: 32 + offset, excludeSubstrings: ['حواله', 'miv'] },
+    { key: 'gcvDeliveredQty', candidates: ['تعداد رسید مصرف', 'مقدار تحویل شده gcv', 'مقدار تحویل شده', 'gcv delivered'], fallback: 33 + offset },
+    {
+      key: 'mivContractorNo',
+      candidates: ['شماره حواله', 'شماره miv پیمانکار', 'miv پیمانکار', 'شماره miv'],
+      fallback: 35 + offset,
       excludeSubstrings: ['مپنا', 'mapna'],
-    }),
-    mivContractorDate: 36 + offset,
-    mivContractorQty: 37 + offset,
-    smrContractorNo: 39 + offset,
-    smrContractorDate: 40 + offset,
-    smrContractorQty: 41 + offset,
-    smrContractorNote: 42 + offset,
-    materialBalanceNo: findCol(combinedCols, ['شماره بالانس متریال', 'material balance no'], 43 + offset),
-    smrMapnaNo: 44 + offset,
-    smrMapnaDate: 45 + offset,
-    smrMapnaQty: 46 + offset,
-    smrMapnaNote: 47 + offset,
-    mivMapnaNo: 48 + offset,
-    mivMapnaDate: 49 + offset,
-    mivMapnaQty: 50 + offset,
-    stocktakeInfo: findCol(combinedCols, ['انبار گردانی', 'انبارگردانی', 'stocktake'], 51 + offset),
-  };
+    },
+    { key: 'mivContractorDate', candidates: ['تاریخ حواله', 'تاریخ miv'], fallback: 36 + offset },
+    { key: 'mivContractorQty', candidates: ['مجموع تعداد تحویل شده با حواله', 'مقدار miv'], fallback: 37 + offset },
+    { key: 'mivReceiver', candidates: ['تحویل گیرنده (حواله)', 'تحویل گیرنده حواله', 'miv receiver'], fallback: -1 },
+    { key: 'smrContractorNo', candidates: ['شماره برگشتی به انبار پیمانکار', 'شماره smr پیمانکار'], fallback: 39 + offset },
+    { key: 'smrContractorDate', candidates: ['تاریخ برگشتی به انبار پیمانکار', 'تاریخ smr پیمانکار', 'تاریخ برگشتی'], fallback: 40 + offset },
+    { key: 'smrContractorQty', candidates: ['تعداد برگشتی به انبار پیمانکار', 'مقدار smr پیمانکار', 'مجموع تعداد برگشتی'], fallback: 41 + offset },
+    { key: 'smrContractorNote', candidates: ['توضیحات برگشتی به انبار پیمانکار', 'توضیحات smr پیمانکار'], fallback: 42 + offset },
+    { key: 'materialBalanceNo', candidates: ['شماره بالانس متریال', 'material balance no'], fallback: 43 + offset },
+    { key: 'smrMapnaNo', candidates: ['شماره برگشتی به انبار کارفرما', 'شماره smr مپنا'], fallback: 44 + offset },
+    { key: 'smrMapnaDate', candidates: ['تاریخ برگشتی به انبار کارفرما', 'تاریخ smr مپنا'], fallback: 45 + offset },
+    { key: 'smrMapnaQty', candidates: ['تعداد برگشتی به انبار کارفرما', 'مقدار smr مپنا'], fallback: 46 + offset },
+    { key: 'smrMapnaNote', candidates: ['توضیحات برگشتی به انبار کارفرما', 'توضیحات smr مپنا'], fallback: 47 + offset },
+    { key: 'smrDeliverer', candidates: ['تحویل آورنده', 'returned by', 'smr deliverer'], fallback: -1 },
+    { key: 'mivMapnaNo', candidates: ['شماره miv مپنا', 'miv مپنا'], fallback: 48 + offset },
+    { key: 'mivMapnaDate', candidates: ['تاریخ miv مپنا'], fallback: 49 + offset },
+    { key: 'mivMapnaQty', candidates: ['مقدار miv مپنا'], fallback: 50 + offset },
+    { key: 'stocktakeStatus', candidates: ['وضعیت انبارگردانی', 'وضعیت انبار گردانی', 'stocktake status'], fallback: -1 },
+    { key: 'stocktakeDate', candidates: ['تاریخ آخرین انبارگردانی', 'تاریخ انبارگردانی', 'تاریخ انبار گردانی', 'last stocktake date', 'stocktake date'], fallback: -1 },
+    {
+      key: 'stocktakeInfo',
+      candidates: ['انبار گردانی', 'انبارگردانی', 'stocktake'],
+      fallback: 51 + offset,
+      excludeSubstrings: ['وضعیت', 'status', 'تاریخ', 'date'],
+    },
+  ];
+
+  const mapped: Record<string, number> = {};
+  const claimed = new Set<number>();
+  for (const d of defs) {
+    const idx = d.candidates
+      ? findCol(combinedCols, d.candidates, {
+          fallbackIndex: -1,
+          excludeSubstrings: d.excludeSubstrings,
+        })
+      : -1;
+    mapped[d.key] = idx;
+    if (idx >= 0) claimed.add(idx);
+  }
+
+  // Only fall back to legacy fixed column positions on full-width (>=20 non-empty header cols) spreadsheets and never steal a matched header
+  const nonEmptyHeaderCount = combinedCols.filter((h) => normalizeHeaderText(h) !== '').length;
+  const allowPositionalFallback = nonEmptyHeaderCount >= 20;
+  if (allowPositionalFallback) {
+    for (const d of defs) {
+      if (mapped[d.key] === -1 && d.fallback >= 0 && d.fallback < combinedCols.length && !claimed.has(d.fallback)) {
+        mapped[d.key] = d.fallback;
+        claimed.add(d.fallback);
+      }
+    }
+  }
+  return mapped;
 }
 
 function getAutoTransitMapping(combinedCols: string[]): Record<string, number> {
@@ -790,6 +846,7 @@ export function parseDetailedCsv(
   const idxMto = col('mtoRef');
   const idxRepNo = col('repNo');
   const idxRepStatus = col('repStatus');
+  const idxRepReprocured = col('repReprocured');
   const idxRepDesc = col('repDescription');
   const idxCountingUnit = col('countingUnit');
   const idxIsland = col('island');
@@ -809,6 +866,7 @@ export function parseDetailedCsv(
   const idxMivConNo = col('mivContractorNo');
   const idxMivConDate = col('mivContractorDate');
   const idxMivConQty = col('mivContractorQty');
+  const idxMivReceiver = col('mivReceiver');
   const idxSmrConNo = col('smrContractorNo');
   const idxSmrConDate = col('smrContractorDate');
   const idxSmrConQty = col('smrContractorQty');
@@ -818,9 +876,12 @@ export function parseDetailedCsv(
   const idxSmrMapDate = col('smrMapnaDate');
   const idxSmrMapQty = col('smrMapnaQty');
   const idxSmrMapNote = col('smrMapnaNote');
+  const idxSmrDeliverer = col('smrDeliverer');
   const idxMivMapNo = col('mivMapnaNo');
   const idxMivMapDate = col('mivMapnaDate');
   const idxMivMapQty = col('mivMapnaQty');
+  const idxStocktakeStatus = col('stocktakeStatus');
+  const idxStocktakeDate = col('stocktakeDate');
   const idxStocktake = col('stocktakeInfo');
 
   const now = new Date().toISOString();
@@ -863,6 +924,20 @@ export function parseDetailedCsv(
       }
     }
 
+    let productionDateVal = idxProductionDate >= 0 ? parseFlexibleDateToIso(line[idxProductionDate] || '', assumedCalendar) : '';
+    let expirationDateVal = idxExpirationDate >= 0 ? parseFlexibleDateToIso(line[idxExpirationDate] || '', assumedCalendar) : '';
+    const stocktakeInfoVal = idxStocktake >= 0 ? cleanStr(line[idxStocktake]) : '';
+    const stocktakeStatusVal = idxStocktakeStatus >= 0 ? cleanStr(line[idxStocktakeStatus]) : '';
+    const stocktakeDateVal = idxStocktakeDate >= 0 ? parseFlexibleDateToIso(line[idxStocktakeDate] || '', assumedCalendar) : '';
+    if (itemCategory === 'chemicals' && (!productionDateVal || !expirationDateVal)) {
+      const extracted = extractChemicalDatesFromTexts(
+        [notesVal, description, generalDescription],
+        assumedCalendar,
+      );
+      if (!productionDateVal && extracted.productionDate) productionDateVal = extracted.productionDate;
+      if (!expirationDateVal && extracted.expirationDate) expirationDateVal = extracted.expirationDate;
+    }
+
     const record: Omit<DetailedEntry, 'id'> & { shortage?: number | null; surplus?: number | null } = {
       rowNo: idxRowNo >= 0 ? normalizeDigits(cleanStr(line[idxRowNo])) : '',
       arrivalDate: idxArrivalDate >= 0 ? parseFlexibleDateToIso(line[idxArrivalDate] || '', assumedCalendar) : '',
@@ -877,14 +952,15 @@ export function parseDetailedCsv(
       itemCode: idxItemCode >= 0 ? cleanStr(line[idxItemCode]) : '',
       itemCategory,
       chemicalType,
-      productionDate: idxProductionDate >= 0 ? parseFlexibleDateToIso(line[idxProductionDate] || '', assumedCalendar) : '',
-      expirationDate: idxExpirationDate >= 0 ? parseFlexibleDateToIso(line[idxExpirationDate] || '', assumedCalendar) : '',
+      productionDate: productionDateVal,
+      expirationDate: expirationDateVal,
       packingQty: packingQtyVal,
       actualQty: actualQtyVal,
       damagedQty: idxDamagedQty >= 0 ? parseNum(line[idxDamagedQty]) : null,
       mtoRef: idxMto >= 0 ? cleanStr(line[idxMto]) : '',
       repNo: idxRepNo >= 0 ? cleanStr(line[idxRepNo]) : '',
       repStatus: idxRepStatus >= 0 ? cleanStr(line[idxRepStatus]) : '',
+      repReprocured: idxRepReprocured >= 0 ? cleanStr(line[idxRepReprocured]) : '',
       repDescription: idxRepDesc >= 0 ? cleanStr(line[idxRepDesc]) : '',
       countingUnit: idxCountingUnit >= 0 ? normalizeCountingUnitToFa(cleanStr(line[idxCountingUnit])) : '',
       island: idxIsland >= 0 ? cleanStr(line[idxIsland]) : '',
@@ -905,6 +981,7 @@ export function parseDetailedCsv(
       mivContractorNo: idxMivConNo >= 0 ? cleanStr(line[idxMivConNo]) : '',
       mivContractorDate: idxMivConDate >= 0 ? parseFlexibleDateToIso(line[idxMivConDate] || '', assumedCalendar) : '',
       mivContractorQty: idxMivConQty >= 0 ? parseNum(line[idxMivConQty]) : null,
+      mivReceiver: idxMivReceiver >= 0 ? cleanStr(line[idxMivReceiver]) : '',
       smrContractorNo: idxSmrConNo >= 0 ? cleanStr(line[idxSmrConNo]) : '',
       smrContractorDate: idxSmrConDate >= 0 ? parseFlexibleDateToIso(line[idxSmrConDate] || '', assumedCalendar) : '',
       smrContractorQty: idxSmrConQty >= 0 ? parseNum(line[idxSmrConQty]) : null,
@@ -913,10 +990,13 @@ export function parseDetailedCsv(
       smrMapnaDate: idxSmrMapDate >= 0 ? parseFlexibleDateToIso(line[idxSmrMapDate] || '', assumedCalendar) : '',
       smrMapnaQty: idxSmrMapQty >= 0 ? parseNum(line[idxSmrMapQty]) : null,
       smrMapnaNote: idxSmrMapNote >= 0 ? cleanStr(line[idxSmrMapNote]) : '',
+      smrDeliverer: idxSmrDeliverer >= 0 ? cleanStr(line[idxSmrDeliverer]) : '',
       mivMapnaNo: idxMivMapNo >= 0 ? cleanStr(line[idxMivMapNo]) : '',
       mivMapnaDate: idxMivMapDate >= 0 ? parseFlexibleDateToIso(line[idxMivMapDate] || '', assumedCalendar) : '',
       mivMapnaQty: idxMivMapQty >= 0 ? parseNum(line[idxMivMapQty]) : null,
-      stocktakeInfo: idxStocktake >= 0 ? cleanStr(line[idxStocktake]) : '',
+      stocktakeInfo: stocktakeInfoVal,
+      ...(stocktakeStatusVal ? { stocktakeStatus: stocktakeStatusVal } : {}),
+      ...(stocktakeDateVal ? { stocktakeDate: stocktakeDateVal } : {}),
       shortageBackfills: [],
       ...(idxShortage >= 0 && parsedShortageVal !== null ? { shortage: parsedShortageVal } : {}),
       ...(idxSurplus >= 0 && parsedSurplusVal !== null ? { surplus: parsedSurplusVal } : {}),

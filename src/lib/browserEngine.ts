@@ -1,3 +1,4 @@
+import { extractChemicalDatesFromTexts } from '../shared/chemicalDates.ts';
 import {
   detectCsvScope,
   inspectMatrixColumns,
@@ -2236,6 +2237,13 @@ async function handleStaticApiRequestInner<T>(
       : { itemCategory: rawDet.itemCategory, chemicalType: '' };
     const resolvedItemCategory = rawDet.itemCategory || (rawChemType ? 'chemicals' : inferredCls.itemCategory);
     const resolvedChemType = rawChemType || (resolvedItemCategory === 'chemicals' ? inferredCls.chemicalType : '');
+    let resolvedProdDate = normKey(rawDet.productionDate);
+    let resolvedExpDate = normKey(rawDet.expirationDate);
+    if (resolvedItemCategory === 'chemicals' && (!resolvedProdDate || !resolvedExpDate)) {
+      const extDates = extractChemicalDatesFromTexts([cleanNotes, cleanDescription, resolvedGeneralDesc], 'jalali');
+      if (!resolvedProdDate && extDates.productionDate) resolvedProdDate = extDates.productionDate;
+      if (!resolvedExpDate && extDates.expirationDate) resolvedExpDate = extDates.expirationDate;
+    }
 
     const created: DetailedEntry = {
       id: makeId(),
@@ -2256,6 +2264,7 @@ async function handleStaticApiRequestInner<T>(
       mtoRef: normKey(rawDet.mtoRef),
       repNo: normKey(rawDet.repNo),
       repStatus: normKey(rawDet.repStatus),
+      repReprocured: normKey(rawDet.repReprocured),
       repDescription: normKey(rawDet.repDescription),
       countingUnit: normalizeCountingUnitToFa(rawDet.countingUnit),
       island: normKey(rawDet.island) || shared?.island || '',
@@ -2276,6 +2285,7 @@ async function handleStaticApiRequestInner<T>(
       mivContractorNo: normKey(rawDet.mivContractorNo),
       mivContractorDate: normKey(rawDet.mivContractorDate),
       mivContractorQty: rawDet.mivContractorQty ?? null,
+      mivReceiver: normKey(rawDet.mivReceiver),
       smrContractorNo: normKey(rawDet.smrContractorNo),
       smrContractorDate: normKey(rawDet.smrContractorDate),
       smrContractorQty: rawDet.smrContractorQty ?? null,
@@ -2284,6 +2294,7 @@ async function handleStaticApiRequestInner<T>(
       smrMapnaDate: normKey(rawDet.smrMapnaDate),
       smrMapnaQty: rawDet.smrMapnaQty ?? null,
       smrMapnaNote: normKey(rawDet.smrMapnaNote),
+      smrDeliverer: normKey(rawDet.smrDeliverer),
       mivMapnaNo: normKey(rawDet.mivMapnaNo),
       mivMapnaDate: normKey(rawDet.mivMapnaDate),
       mivMapnaQty: rawDet.mivMapnaQty ?? null,
@@ -2292,8 +2303,8 @@ async function handleStaticApiRequestInner<T>(
       stocktakeDate: normKey(rawDet.stocktakeDate),
       itemCategory: resolvedItemCategory,
       chemicalType: resolvedChemType,
-      productionDate: normKey(rawDet.productionDate),
-      expirationDate: normKey(rawDet.expirationDate),
+      productionDate: resolvedProdDate,
+      expirationDate: resolvedExpDate,
       ...(typeof rawDet.itemImage === 'string' && rawDet.itemImage.startsWith('data:image/')
         ? {
             itemImage: rawDet.itemImage,
@@ -2363,7 +2374,8 @@ async function handleStaticApiRequestInner<T>(
     const stringFields: (keyof DetailedEntry)[] = [
       'arrivalDate', 'supplier', 'origin', 'island', 'system', 'subSystem', 'unit',
       'countingUnit', 'storageLocation', 'receiver', 'notes', 'itemCategory',
-      'chemicalType', 'productionDate', 'expirationDate', 'merStatus', 'repStatus', 'balanceStatus',
+      'chemicalType', 'productionDate', 'expirationDate', 'merStatus', 'repStatus', 'repReprocured',
+      'balanceStatus', 'mivReceiver', 'smrDeliverer',
     ];
     for (const k of stringFields) {
       if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
@@ -4224,26 +4236,32 @@ async function handleStaticApiRequestInner<T>(
 
     const now = new Date().toISOString();
     const cleanNotes = normKey(String(raw.notes || ''));
+    const cleanReceiver = normKey(raw.receiver);
+    const cleanDeliveredBy = normKey(raw.deliveredBy);
     for (const line of lineItems) {
       const d = db.detailed.find((x) => x.id === line.detailedId)!;
       if (docType === 'miv_contractor') {
         d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
         d.mivContractorDate = cleanDate || d.mivContractorDate;
         d.mivContractorQty = roundQty(toNum(d.mivContractorQty) + line.qty);
+        if (cleanReceiver) d.mivReceiver = appendUniqueRef(d.mivReceiver || '', cleanReceiver);
       } else if (docType === 'smr_contractor') {
         d.smrContractorNo = appendUniqueRef(d.smrContractorNo, cleanNo);
         d.smrContractorDate = cleanDate || d.smrContractorDate;
         d.smrContractorQty = roundQty(toNum(d.smrContractorQty) + line.qty);
         if (cleanNotes) d.smrContractorNote = cleanNotes;
+        if (cleanDeliveredBy) d.smrDeliverer = appendUniqueRef(d.smrDeliverer || '', cleanDeliveredBy);
       } else if (docType === 'smr_mapna') {
         d.smrMapnaNo = appendUniqueRef(d.smrMapnaNo, cleanNo);
         d.smrMapnaDate = cleanDate || d.smrMapnaDate;
         d.smrMapnaQty = roundQty(toNum(d.smrMapnaQty) + line.qty);
         if (cleanNotes) d.smrMapnaNote = cleanNotes;
+        if (cleanDeliveredBy) d.smrDeliverer = appendUniqueRef(d.smrDeliverer || '', cleanDeliveredBy);
       } else if (docType === 'miv_mapna') {
         d.mivMapnaNo = appendUniqueRef(d.mivMapnaNo, cleanNo);
         d.mivMapnaDate = cleanDate || d.mivMapnaDate;
         d.mivMapnaQty = roundQty(toNum(d.mivMapnaQty) + line.qty);
+        if (cleanReceiver) d.mivReceiver = appendUniqueRef(d.mivReceiver || '', cleanReceiver);
       }
       d.updatedAt = now;
     }
@@ -4269,7 +4287,8 @@ async function handleStaticApiRequestInner<T>(
       qcInspector: normKey(raw.qcInspector),
       installerRep: normKey(raw.installerRep),
       requester: normKey(raw.requester),
-      receiver: normKey(raw.receiver),
+      receiver: cleanReceiver,
+      deliveredBy: cleanDeliveredBy,
       notes: cleanNotes,
       items: lineItems,
       createdAt: now,
@@ -4387,9 +4406,11 @@ async function handleStaticApiRequestInner<T>(
 
     const now = new Date().toISOString();
     const otherDocs = db.mivDocuments.filter((doc) => doc.id !== existing.id);
+    const affectedDetailedIds = new Set<string>();
     for (const oldLine of existing.items) {
       const d = db.detailed.find((x) => x.id === oldLine.detailedId);
       if (!d) continue;
+      affectedDetailedIds.add(d.id);
       if (existing.docType === 'miv_contractor') {
         d.mivContractorQty = Math.max(0, roundQty(toNum(d.mivContractorQty) - oldLine.qty));
         d.mivContractorNo = removeRefToken(d.mivContractorNo, existing.docNo);
@@ -4419,8 +4440,11 @@ async function handleStaticApiRequestInner<T>(
     }
 
     const cleanNotes = normKey(raw.notes ?? existing.notes);
+    const nextReceiver = raw.receiver !== undefined ? normKey(raw.receiver) : normKey(existing.receiver);
+    const nextDeliveredBy = raw.deliveredBy !== undefined ? normKey(raw.deliveredBy) : normKey(existing.deliveredBy);
     for (const line of nextLines) {
       const d = db.detailed.find((x) => x.id === line.detailedId)!;
+      affectedDetailedIds.add(d.id);
       if (nextDocType === 'miv_contractor') {
         d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
         d.mivContractorDate = cleanDate || d.mivContractorDate;
@@ -4462,9 +4486,37 @@ async function handleStaticApiRequestInner<T>(
     if (raw.qcInspector !== undefined) existing.qcInspector = normKey(raw.qcInspector);
     if (raw.installerRep !== undefined) existing.installerRep = normKey(raw.installerRep);
     if (raw.requester !== undefined) existing.requester = normKey(raw.requester);
-    if (raw.receiver !== undefined) existing.receiver = normKey(raw.receiver);
+    existing.receiver = nextReceiver;
+    existing.deliveredBy = nextDeliveredBy;
     existing.notes = cleanNotes;
     existing.items = nextLines;
+
+    for (const detId of affectedDetailedIds) {
+      const d = db.detailed.find((x) => x.id === detId);
+      if (!d) continue;
+      if (existing.docType.startsWith('miv') || nextDocType.startsWith('miv')) {
+        const mivReceivers = Array.from(
+          new Set(
+            db.mivDocuments
+              .filter((doc) => (doc.docType === 'miv_contractor' || doc.docType === 'miv_mapna') && doc.items.some((it) => it.detailedId === detId))
+              .map((doc) => normKey(doc.receiver))
+              .filter(Boolean),
+          ),
+        );
+        d.mivReceiver = mivReceivers.join(' , ');
+      }
+      if (existing.docType.startsWith('smr') || nextDocType.startsWith('smr')) {
+        const smrDeliverers = Array.from(
+          new Set(
+            db.mivDocuments
+              .filter((doc) => (doc.docType === 'smr_contractor' || doc.docType === 'smr_mapna') && doc.items.some((it) => it.detailedId === detId))
+              .map((doc) => normKey(doc.deliveredBy))
+              .filter(Boolean),
+          ),
+        );
+        d.smrDeliverer = smrDeliverers.join(' , ');
+      }
+    }
 
     addAudit(
       db,
@@ -4520,6 +4572,27 @@ async function handleStaticApiRequestInner<T>(
         const rem = db.mivDocuments.find((doc) => doc.docType === 'miv_mapna' && doc.items.some((it) => it.detailedId === d.id));
         if (d.mivMapnaQty === 0 && !rem) d.mivMapnaDate = '';
         else if (rem && d.mivMapnaDate === removed.date) d.mivMapnaDate = rem.date;
+      }
+      if (removed.docType === 'miv_contractor' || removed.docType === 'miv_mapna') {
+        const remReceivers = Array.from(
+          new Set(
+            db.mivDocuments
+              .filter((doc) => (doc.docType === 'miv_contractor' || doc.docType === 'miv_mapna') && doc.items.some((it) => it.detailedId === d.id))
+              .map((doc) => normKey(doc.receiver))
+              .filter(Boolean),
+          ),
+        );
+        d.mivReceiver = remReceivers.join(' , ');
+      } else if (removed.docType === 'smr_contractor' || removed.docType === 'smr_mapna') {
+        const remDeliverers = Array.from(
+          new Set(
+            db.mivDocuments
+              .filter((doc) => (doc.docType === 'smr_contractor' || doc.docType === 'smr_mapna') && doc.items.some((it) => it.detailedId === d.id))
+              .map((doc) => normKey(doc.deliveredBy))
+              .filter(Boolean),
+          ),
+        );
+        d.smrDeliverer = remDeliverers.join(' , ');
       }
       d.updatedAt = now;
     }
@@ -4610,6 +4683,13 @@ async function handleStaticApiRequestInner<T>(
       createdBy: u.fullName || u.username,
     };
     db.substitutions.unshift(record);
+    d.repNo = appendUniqueRef(d.repNo, cleanNo);
+    if (record.status === 'approved') d.repStatus = 'تأیید شده';
+    else if (record.status === 'executed') d.repStatus = 'اجرا شده';
+    else if (!d.repStatus) d.repStatus = 'در انتظار تأیید';
+    if (record.reprocureBy) d.repReprocured = record.reprocureBy;
+    if (record.substituteDescription) d.repDescription = record.substituteDescription;
+    d.updatedAt = record.createdAt;
     addAudit(db, sanitizeUser(u), 'CREATE_SUBSTITUTION', 'substitution', cleanNo, `ثبت فرم جایگزینی شماره ${cleanNo}`);
     await saveActiveDb();
     return { record } as T;
@@ -4685,6 +4765,17 @@ async function handleStaticApiRequestInner<T>(
     if (raw.supplierSignatory !== undefined) rec.supplierSignatory = normKey(raw.supplierSignatory);
     if (raw.status) rec.status = raw.status;
     if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+
+    const linkedDet = db.detailed.find((x) => x.id === rec.detailedId);
+    if (linkedDet) {
+      linkedDet.repNo = appendUniqueRef(linkedDet.repNo, rec.docNo);
+      if (rec.status === 'approved') linkedDet.repStatus = 'تأیید شده';
+      else if (rec.status === 'executed') linkedDet.repStatus = 'اجرا شده';
+      else linkedDet.repStatus = 'در انتظار تأیید';
+      if (rec.reprocureBy) linkedDet.repReprocured = rec.reprocureBy;
+      if (rec.substituteDescription) linkedDet.repDescription = rec.substituteDescription;
+      linkedDet.updatedAt = new Date().toISOString();
+    }
 
     addAudit(db, sanitizeUser(u), 'UPDATE_SUBSTITUTION', 'substitution', rec.docNo, `ویرایش فرم جایگزینی شماره ${rec.docNo}`);
     await saveActiveDb();
@@ -5710,6 +5801,16 @@ async function handleStaticApiRequestInner<T>(
           : { itemCategory: r.itemCategory, chemicalType: '' };
         const resolvedItemCategory = r.itemCategory || (rawChem ? 'chemicals' : inferredCls.itemCategory);
         const resolvedChemicalType = rawChem || (resolvedItemCategory === 'chemicals' ? inferredCls.chemicalType : '');
+        let resolvedProdDate = normKey(r.productionDate);
+        let resolvedExpDate = normKey(r.expirationDate);
+        if (resolvedItemCategory === 'chemicals' && (!resolvedProdDate || !resolvedExpDate)) {
+          const extDates = extractChemicalDatesFromTexts(
+            [r.notes, r.description, genDesc],
+            cal,
+          );
+          if (!resolvedProdDate && extDates.productionDate) resolvedProdDate = extDates.productionDate;
+          if (!resolvedExpDate && extDates.expirationDate) resolvedExpDate = extDates.expirationDate;
+        }
         const {
           shortage: _impShortage,
           surplus: _impSurplus,
@@ -5744,6 +5845,8 @@ async function handleStaticApiRequestInner<T>(
             generalDescription: genDesc,
             itemCategory: resolvedItemCategory,
             chemicalType: resolvedChemicalType,
+            productionDate: resolvedProdDate,
+            expirationDate: resolvedExpDate,
             id: existing.id,
             rowNo: existing.rowNo,
             shortageBackfills: existing.shortageBackfills || [],
@@ -5761,6 +5864,8 @@ async function handleStaticApiRequestInner<T>(
           generalDescription: genDesc,
           itemCategory: resolvedItemCategory,
           chemicalType: resolvedChemicalType,
+          productionDate: resolvedProdDate,
+          expirationDate: resolvedExpDate,
           shortageBackfills: r.shortageBackfills || [],
           createdAt: r.createdAt || now,
           updatedAt: now,

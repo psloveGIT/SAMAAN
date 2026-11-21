@@ -8,6 +8,7 @@ import type {
   FilterFieldOption,
   FilterOperator,
 } from '../shared/customFilters.ts';
+import { getTranslations } from '../shared/i18n.ts';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 
 interface MultiPackingAndFieldFilterProps {
@@ -113,6 +114,18 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
     if (op === 'gte') return '>=';
     if (op === 'lte') return '<=';
     return 'Is not empty';
+  };
+
+  const t = getTranslations(prefs.language);
+
+  const formatFilterValue = (field: string, value: string) => {
+    if (field === 'itemCategory') {
+      if (!value || value === 'standard') return t.itemCategories.standard;
+      if (value === 'special_tools') return t.itemCategories.special_tools;
+      if (value === 'chemicals') return t.itemCategories.chemicals;
+      if (value === 'spare_parts') return t.itemCategories.spare_parts;
+    }
+    return value;
   };
 
   const fieldLabel = (key: string) => {
@@ -289,7 +302,9 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
                 <span className="font-semibold text-[var(--text-primary)]">{fieldLabel(f.field)}</span>
                 <span className="text-[var(--text-muted)]">{opLabel(f.op)}</span>
                 {f.op !== 'not_empty' && (
-                  <span className="font-semibold text-[var(--accent-primary)] bidi-plaintext">{f.value}</span>
+                  <span className="font-semibold text-[var(--accent-primary)] bidi-plaintext">
+                    {formatFilterValue(f.field, f.value)}
+                  </span>
                 )}
                 <button
                   type="button"
@@ -329,7 +344,16 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
             </label>
             <select
               value={draftField}
-              onChange={(e) => setDraftField(e.target.value)}
+              onChange={(e) => {
+                const nextField = e.target.value;
+                setDraftField(nextField);
+                if (nextField === 'itemCategory') {
+                  setDraftOp('equals');
+                  setDraftVal('standard');
+                } else if (draftField === 'itemCategory') {
+                  setDraftVal('');
+                }
+              }}
               className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
             >
               {fields.map((f) => (
@@ -363,19 +387,32 @@ export const MultiPackingAndFieldFilter: React.FC<MultiPackingAndFieldFilterProp
               <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
                 {isFa ? 'مقدار' : 'Value'}
               </label>
-              <input
-                type="text"
-                value={draftVal}
-                onChange={(e) => setDraftVal(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addCustomFilter();
-                  }
-                }}
-                placeholder={isFa ? 'مقدار فیلتر را وارد کنید...' : 'Enter filter value...'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
+              {draftField === 'itemCategory' ? (
+                <select
+                  value={draftVal || 'standard'}
+                  onChange={(e) => setDraftVal(e.target.value)}
+                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                >
+                  <option value="standard">{t.itemCategories.standard}</option>
+                  <option value="special_tools">{t.itemCategories.special_tools}</option>
+                  <option value="chemicals">{t.itemCategories.chemicals}</option>
+                  <option value="spare_parts">{t.itemCategories.spare_parts}</option>
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={draftVal}
+                  onChange={(e) => setDraftVal(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addCustomFilter();
+                    }
+                  }}
+                  placeholder={isFa ? 'مقدار فیلتر را وارد کنید...' : 'Enter filter value...'}
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                />
+              )}
             </div>
           )}
 

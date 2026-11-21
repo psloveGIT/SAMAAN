@@ -102,7 +102,8 @@ export async function apiRequest<T>(
   url: string,
   options: RequestInit = {},
 ): Promise<T> {
-  if (staticFallbackActive) {
+  const isAiRoute = url.startsWith('/api/ai/');
+  if (staticFallbackActive && !isAiRoute) {
     return runFallback<T>(url, options);
   }
 
@@ -137,6 +138,11 @@ export async function apiRequest<T>(
     data = text ? JSON.parse(text) : null;
   } catch {
     return runFallback<T>(url, options);
+  }
+
+  // Server returned valid JSON — ensure fallback flag is cleared
+  if (staticFallbackActive) {
+    staticFallbackActive = false;
   }
 
   if (!res.ok) {

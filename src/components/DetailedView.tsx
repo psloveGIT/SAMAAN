@@ -563,27 +563,146 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     );
   }, [allFilteredIds, selectedRows, data]);
 
-  // Default visible columns (RTL): rowNo, shipmentNo, packageNo, itemNo, description, size, packingQty, countingUnit, subSystem, storageLocation, mapnaInventory, contractorInventory
-  // All remaining columns stay hidden until user activates "نمایش ستون‌های اضافی"
+  type DetailedGroupId =
+    | 'base'
+    | 'packing'
+    | 'specs'
+    | 'quantities'
+    | 'usage'
+    | 'opening'
+    | 'substitution'
+    | 'balance'
+    | 'gcv'
+    | 'miv'
+    | 'smr'
+    | 'stocktake'
+    | 'classification';
+
+  const groupMeta = useMemo<
+    Record<DetailedGroupId, { labelFa: string; labelEn: string; bandClass: string; subHeadClass: string }>
+  >(
+    () => ({
+      base: {
+        labelFa: 'پایه',
+        labelEn: 'Base',
+        bandClass: 'border-t-2 border-t-slate-400 bg-slate-500/8 text-slate-700 dark:text-slate-300',
+        subHeadClass: 'bg-slate-500/[0.04]',
+      },
+      packing: {
+        labelFa: 'اطلاعات پکینگ لیست',
+        labelEn: 'Packing List Info',
+        bandClass: 'border-t-2 border-t-teal-600 bg-teal-500/10 text-teal-800 dark:text-teal-300',
+        subHeadClass: 'bg-teal-500/[0.04]',
+      },
+      specs: {
+        labelFa: 'مشخصات تجهیزات',
+        labelEn: 'Equipment Specs',
+        bandClass: 'border-t-2 border-t-sky-600 bg-sky-500/10 text-sky-800 dark:text-sky-300',
+        subHeadClass: 'bg-sky-500/[0.04]',
+      },
+      quantities: {
+        labelFa: 'تعداد تجهیزات',
+        labelEn: 'Quantities & Stock',
+        bandClass: 'border-t-2 border-t-emerald-600 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300',
+        subHeadClass: 'bg-emerald-500/[0.04]',
+      },
+      usage: {
+        labelFa: 'محل مصرف',
+        labelEn: 'Usage Location',
+        bandClass: 'border-t-2 border-t-indigo-500 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300',
+        subHeadClass: 'bg-indigo-500/[0.04]',
+      },
+      opening: {
+        labelFa: 'وضعیت بازگشایی',
+        labelEn: 'Opening & Discrepancy',
+        bandClass: 'border-t-2 border-t-amber-600 bg-amber-500/10 text-amber-800 dark:text-amber-300',
+        subHeadClass: 'bg-amber-500/[0.04]',
+      },
+      substitution: {
+        labelFa: 'جایگزینی تجهیزات',
+        labelEn: 'Substitution',
+        bandClass: 'border-t-2 border-t-purple-600 bg-purple-500/10 text-purple-800 dark:text-purple-300',
+        subHeadClass: 'bg-purple-500/[0.04]',
+      },
+      balance: {
+        labelFa: 'بالانس متریال',
+        labelEn: 'Material Balance',
+        bandClass: 'border-t-2 border-t-cyan-600 bg-cyan-500/10 text-cyan-800 dark:text-cyan-300',
+        subHeadClass: 'bg-cyan-500/[0.04]',
+      },
+      gcv: {
+        labelFa: 'رسید مصرف',
+        labelEn: 'Consumption Receipt',
+        bandClass: 'border-t-2 border-t-lime-600 bg-lime-500/10 text-lime-800 dark:text-lime-300',
+        subHeadClass: 'bg-lime-500/[0.04]',
+      },
+      miv: {
+        labelFa: 'حواله متریال',
+        labelEn: 'Material Issue (MIV)',
+        bandClass: 'border-t-2 border-t-blue-600 bg-blue-500/10 text-blue-800 dark:text-blue-300',
+        subHeadClass: 'bg-blue-500/[0.04]',
+      },
+      smr: {
+        labelFa: 'برگشت متریال',
+        labelEn: 'Material Return (SMR)',
+        bandClass: 'border-t-2 border-t-rose-600 bg-rose-500/10 text-rose-800 dark:text-rose-300',
+        subHeadClass: 'bg-rose-500/[0.04]',
+      },
+      stocktake: {
+        labelFa: 'انبارگردانی',
+        labelEn: 'Stocktake',
+        bandClass: 'border-t-2 border-t-orange-600 bg-orange-500/10 text-orange-800 dark:text-orange-300',
+        subHeadClass: 'bg-orange-500/[0.04]',
+      },
+      classification: {
+        labelFa: 'دسته‌بندی تخصصی',
+        labelEn: 'Specialized Class',
+        bandClass: 'border-t-2 border-t-fuchsia-600 bg-fuchsia-500/10 text-fuchsia-800 dark:text-fuchsia-300',
+        subHeadClass: 'bg-fuchsia-500/[0.04]',
+      },
+    }),
+    [],
+  );
+
+  // Ordered strictly in semantic operational groups; extra columns stay hidden until user enables "نمایش ستون‌های اضافی"
   const columns = useMemo(
     () => [
-      { key: 'rowNo', header: t.headers.rowNo, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.rowNo },
-      { key: 'shipmentNo', header: t.headers.shipmentNo, isLtr: true, get: (r: DetailedComputed) => r.shipmentNo },
-      { key: 'packageNo', header: t.headers.packageNo, isLtr: true, get: (r: DetailedComputed) => r.packageNo },
-      { key: 'itemNo', header: t.headers.itemNo, isLtr: true, get: (r: DetailedComputed) => r.itemNo },
-      { key: 'description', header: t.headers.description, get: (r: DetailedComputed) => r.description },
-      { key: 'size', header: t.headers.size, isLtr: true, get: (r: DetailedComputed) => r.size },
-      { key: 'packingQty', header: t.headers.packingQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.packingQty },
+      // 1. پایه
+      { key: 'rowNo', group: 'base' as DetailedGroupId, header: t.headers.rowNo, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.rowNo },
+      { key: 'arrivalDate', group: 'base' as DetailedGroupId, header: t.headers.arrivalDate, isDate: true, isLtr: true, get: (r: DetailedComputed) => r.arrivalDate },
+
+      // 2. اطلاعات پکینگ لیست
+      { key: 'shipmentNo', group: 'packing' as DetailedGroupId, header: t.headers.shipmentNo, isLtr: true, get: (r: DetailedComputed) => r.shipmentNo },
+      { key: 'packageNo', group: 'packing' as DetailedGroupId, header: t.headers.packageNo, isLtr: true, get: (r: DetailedComputed) => r.packageNo },
+      { key: 'itemNo', group: 'packing' as DetailedGroupId, header: t.headers.itemNo, isLtr: true, get: (r: DetailedComputed) => r.itemNo },
+
+      // 3. مشخصات تجهیزات
+      { key: 'generalDescription', group: 'specs' as DetailedGroupId, header: t.headers.generalDescription, hideInTable: true, get: (r: DetailedComputed) => r.generalDescription },
+      { key: 'description', group: 'specs' as DetailedGroupId, header: t.headers.description, get: (r: DetailedComputed) => r.description },
+      { key: 'size', group: 'specs' as DetailedGroupId, header: t.headers.size, isLtr: true, get: (r: DetailedComputed) => r.size },
+      { key: 'itemCode', group: 'specs' as DetailedGroupId, header: t.headers.itemCode, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.itemCode },
+      { key: 'storageLocation', group: 'specs' as DetailedGroupId, header: t.headers.storageLocation, get: (r: DetailedComputed) => r.storageLocation },
+      { key: 'receiver', group: 'specs' as DetailedGroupId, header: t.headers.receiver, hideInTable: true, get: (r: DetailedComputed) => r.receiver },
+      { key: 'supplier', group: 'specs' as DetailedGroupId, header: t.headers.supplier, hideInTable: true, get: (r: DetailedComputed) => r.supplier },
+      { key: 'origin', group: 'specs' as DetailedGroupId, header: t.headers.origin, hideInTable: true, get: (r: DetailedComputed) => r.origin },
+      { key: 'mtoRef', group: 'specs' as DetailedGroupId, header: t.headers.mtoRef, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mtoRef },
+
+      // 4. تعداد تجهیزات
+      { key: 'packingQty', group: 'quantities' as DetailedGroupId, header: t.headers.packingQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.packingQty },
+      { key: 'actualQty', group: 'quantities' as DetailedGroupId, header: t.headers.actualQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.actualQty },
+      { key: 'shortage', group: 'quantities' as DetailedGroupId, header: t.headers.shortage, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.shortage > 0 ? r.shortage : null) },
+      { key: 'surplus', group: 'quantities' as DetailedGroupId, header: t.headers.surplus, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.surplus > 0 ? r.surplus : null) },
+      { key: 'damagedQty', group: 'quantities' as DetailedGroupId, header: t.headers.damagedQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.damagedQty },
       {
         key: 'countingUnit',
+        group: 'quantities' as DetailedGroupId,
         header: t.headers.countingUnit,
         isLtr: !isFa,
         get: (r: DetailedComputed) => formatCountingUnit(r.countingUnit, prefs.language),
       },
-      { key: 'subSystem', header: t.headers.subSystem, get: (r: DetailedComputed) => r.subSystem },
-      { key: 'storageLocation', header: t.headers.storageLocation, get: (r: DetailedComputed) => r.storageLocation },
       {
         key: 'mapnaInventory',
+        group: 'quantities' as DetailedGroupId,
         header: t.headers.mapnaInventory,
         isNum: true,
         isLtr: true,
@@ -591,62 +710,71 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       },
       {
         key: 'contractorInventory',
+        group: 'quantities' as DetailedGroupId,
         header: t.headers.contractorInventory,
         isNum: true,
         isLtr: true,
         get: (r: DetailedComputed) => (r.opiPending ? null : r.contractorInventory),
       },
-      { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.arrivalDate },
-      { key: 'generalDescription', header: t.headers.generalDescription, hideInTable: true, get: (r: DetailedComputed) => r.generalDescription },
-      { key: 'itemCode', header: t.headers.itemCode, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.itemCode },
-      { key: 'mtoRef', header: t.headers.mtoRef, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mtoRef },
-      { key: 'actualQty', header: t.headers.actualQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.actualQty },
-      { key: 'shortage', header: t.headers.shortage, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.shortage > 0 ? r.shortage : null) },
-      { key: 'surplus', header: t.headers.surplus, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => (r.surplus > 0 ? r.surplus : null) },
-      { key: 'damagedQty', header: t.headers.damagedQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.damagedQty },
-      { key: 'repNo', header: t.headers.repNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.repNo },
-      { key: 'repStatus', header: t.headers.repStatus, hideInTable: true, get: (r: DetailedComputed) => r.repStatus },
-      { key: 'repDescription', header: t.headers.repDescription, hideInTable: true, get: (r: DetailedComputed) => r.repDescription },
-      { key: 'supplier', header: t.headers.supplier, hideInTable: true, get: (r: DetailedComputed) => r.supplier },
-      { key: 'origin', header: t.headers.origin, hideInTable: true, get: (r: DetailedComputed) => r.origin },
-      { key: 'island', header: t.headers.island, hideInTable: true, get: (r: DetailedComputed) => r.island },
-      { key: 'system', header: t.headers.system, hideInTable: true, get: (r: DetailedComputed) => r.system },
-      { key: 'unit', header: t.headers.unit, hideInTable: true, get: (r: DetailedComputed) => r.unit },
-      { key: 'opiNo', header: t.headers.opiNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiNo },
-      { key: 'opiDate', header: t.headers.opiDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiDate },
-      { key: 'merNo', header: t.headers.merNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.merNo },
-      { key: 'merStatus', header: t.headers.merStatus, hideInTable: true, get: (r: DetailedComputed) => r.merStatus },
-      { key: 'gcvReceiptNo', header: t.headers.gcvReceiptNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvReceiptNo },
-      { key: 'receiver', header: t.headers.receiver, hideInTable: true, get: (r: DetailedComputed) => r.receiver },
-      { key: 'gcvDeliveredQty', header: t.headers.gcvDeliveredQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvDeliveredQty },
-      { key: 'mivContractorNo', header: t.headers.mivContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorNo },
-      { key: 'mivContractorDate', header: t.headers.mivContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorDate },
-      { key: 'mivContractorQty', header: t.headers.mivContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorQty },
-      { key: 'smrContractorNo', header: t.headers.smrContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorNo },
-      { key: 'smrContractorDate', header: t.headers.smrContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorDate },
-      { key: 'smrContractorQty', header: t.headers.smrContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorQty },
-      { key: 'materialBalanceNo', header: t.headers.materialBalanceNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.materialBalanceNo },
-      { key: 'balanceStatus', header: t.headers.balanceStatus, hideInTable: true, get: (r: DetailedComputed) => r.balanceStatus },
-      { key: 'smrMapnaNo', header: t.headers.smrMapnaNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaNo },
-      { key: 'smrMapnaDate', header: t.headers.smrMapnaDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaDate },
-      { key: 'smrMapnaQty', header: t.headers.smrMapnaQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaQty },
-      { key: 'mivMapnaNo', header: t.headers.mivMapnaNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivMapnaNo },
-      { key: 'mivMapnaDate', header: t.headers.mivMapnaDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivMapnaDate },
-      { key: 'mivMapnaQty', header: t.headers.mivMapnaQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivMapnaQty },
-      { key: 'stocktakeStatus', header: t.headers.stocktakeStatus, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeStatus || '' },
-      { key: 'stocktakeDate', header: t.headers.stocktakeDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeDate || '' },
-      { key: 'stocktakeInfo', header: t.headers.stocktakeInfo, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeInfo },
+
+      // 5. محل مصرف
+      { key: 'island', group: 'usage' as DetailedGroupId, header: t.headers.island, hideInTable: true, get: (r: DetailedComputed) => r.island },
+      { key: 'system', group: 'usage' as DetailedGroupId, header: t.headers.system, hideInTable: true, get: (r: DetailedComputed) => r.system },
+      { key: 'subSystem', group: 'usage' as DetailedGroupId, header: t.headers.subSystem, get: (r: DetailedComputed) => r.subSystem },
+      { key: 'unit', group: 'usage' as DetailedGroupId, header: t.headers.unit, hideInTable: true, get: (r: DetailedComputed) => r.unit },
+
+      // 6. وضعیت بازگشایی
+      { key: 'opiNo', group: 'opening' as DetailedGroupId, header: t.headers.opiNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiNo },
+      { key: 'opiDate', group: 'opening' as DetailedGroupId, header: t.headers.opiDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiDate },
+      { key: 'merNo', group: 'opening' as DetailedGroupId, header: t.headers.merNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.merNo },
+      { key: 'merStatus', group: 'opening' as DetailedGroupId, header: t.headers.merStatus, hideInTable: true, get: (r: DetailedComputed) => r.merStatus },
+      { key: 'notes', group: 'opening' as DetailedGroupId, header: t.headers.merNotes, hideInTable: true, get: (r: DetailedComputed) => r.notes },
+
+      // 7. جایگزینی تجهیزات
+      { key: 'repNo', group: 'substitution' as DetailedGroupId, header: t.headers.repNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.repNo },
+      { key: 'repStatus', group: 'substitution' as DetailedGroupId, header: t.headers.repStatus, hideInTable: true, get: (r: DetailedComputed) => r.repStatus },
+      { key: 'repReprocured', group: 'substitution' as DetailedGroupId, header: t.headers.repReprocured, hideInTable: true, get: (r: DetailedComputed) => r.repReprocured || '' },
+      { key: 'repDescription', group: 'substitution' as DetailedGroupId, header: t.headers.repDescription, hideInTable: true, get: (r: DetailedComputed) => r.repDescription },
+
+      // 8. بالانس متریال
+      { key: 'materialBalanceNo', group: 'balance' as DetailedGroupId, header: t.headers.materialBalanceNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.materialBalanceNo },
+      { key: 'balanceStatus', group: 'balance' as DetailedGroupId, header: t.headers.balanceStatus, hideInTable: true, get: (r: DetailedComputed) => r.balanceStatus },
+
+      // 9. رسید مصرف
+      { key: 'gcvReceiptNo', group: 'gcv' as DetailedGroupId, header: t.headers.gcvReceiptNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvReceiptNo },
+      { key: 'gcvDeliveredQty', group: 'gcv' as DetailedGroupId, header: t.headers.gcvDeliveredQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.gcvDeliveredQty },
+
+      // 10. حواله متریال
+      { key: 'mivContractorNo', group: 'miv' as DetailedGroupId, header: t.headers.mivContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorNo },
+      { key: 'mivContractorDate', group: 'miv' as DetailedGroupId, header: t.headers.mivContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorDate },
+      { key: 'mivContractorQty', group: 'miv' as DetailedGroupId, header: t.headers.mivContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mivContractorQty },
+      { key: 'mivReceiver', group: 'miv' as DetailedGroupId, header: t.headers.mivReceiver, hideInTable: true, get: (r: DetailedComputed) => r.mivReceiver || '' },
+
+      // 11. برگشت متریال
+      { key: 'smrContractorNo', group: 'smr' as DetailedGroupId, header: t.headers.smrContractorNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorNo },
+      { key: 'smrContractorDate', group: 'smr' as DetailedGroupId, header: t.headers.smrContractorDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorDate },
+      { key: 'smrContractorQty', group: 'smr' as DetailedGroupId, header: t.headers.smrContractorQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrContractorQty },
+      { key: 'smrMapnaNo', group: 'smr' as DetailedGroupId, header: t.headers.smrMapnaNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaNo },
+      { key: 'smrMapnaDate', group: 'smr' as DetailedGroupId, header: t.headers.smrMapnaDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaDate },
+      { key: 'smrMapnaQty', group: 'smr' as DetailedGroupId, header: t.headers.smrMapnaQty, isNum: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.smrMapnaQty },
+      { key: 'smrDeliverer', group: 'smr' as DetailedGroupId, header: t.headers.smrDeliverer, hideInTable: true, get: (r: DetailedComputed) => r.smrDeliverer || '' },
+
+      // 12. انبارگردانی
+      { key: 'stocktakeStatus', group: 'stocktake' as DetailedGroupId, header: t.headers.stocktakeStatus, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeStatus || '' },
+      { key: 'stocktakeDate', group: 'stocktake' as DetailedGroupId, header: t.headers.stocktakeDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.stocktakeDate || '' },
+
+      // 13. دسته‌بندی تخصصی
       {
         key: 'itemCategory',
+        group: 'classification' as DetailedGroupId,
         header: t.headers.itemCategory,
         hideInTable: true,
         get: (r: DetailedComputed) =>
           r.itemCategory ? t.itemCategories[r.itemCategory] : t.itemCategories.standard,
       },
-      { key: 'chemicalType', header: t.headers.chemicalType, hideInTable: true, get: (r: DetailedComputed) => r.chemicalType || '' },
-      { key: 'productionDate', header: t.headers.productionDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.productionDate || '' },
-      { key: 'expirationDate', header: t.headers.expirationDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.expirationDate || '' },
-      { key: 'notes', header: t.headers.notes, hideInTable: true, get: (r: DetailedComputed) => r.notes },
+      { key: 'chemicalType', group: 'classification' as DetailedGroupId, header: t.headers.chemicalType, hideInTable: true, get: (r: DetailedComputed) => r.chemicalType || '' },
+      { key: 'productionDate', group: 'classification' as DetailedGroupId, header: t.headers.productionDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.productionDate || '' },
+      { key: 'expirationDate', group: 'classification' as DetailedGroupId, header: t.headers.expirationDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.expirationDate || '' },
     ],
     [t, isFa, prefs.language],
   );
@@ -655,6 +783,20 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const visibleColumns = useMemo(() => {
     return showExtraCols ? columns : columns.filter((col) => !col.hideInTable);
   }, [columns, showExtraCols]);
+
+  // Compute contiguous 2-tier group header segments matching visibleColumns
+  const visibleColumnGroups = useMemo(() => {
+    const segments: Array<{ group: DetailedGroupId; colSpan: number }> = [];
+    for (const col of visibleColumns) {
+      const last = segments[segments.length - 1];
+      if (last && last.group === col.group) {
+        last.colSpan += 1;
+      } else {
+        segments.push({ group: col.group, colSpan: 1 });
+      }
+    }
+    return segments;
+  }, [visibleColumns]);
 
   const openEditModal = async (row: DetailedComputed) => {
     setEditingId(row.id);
@@ -1447,7 +1589,15 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               const colDef = columns.find((c) => c.key === key);
               const previewText = vals
                 .slice(0, 2)
-                .map((v) => (v === EMPTY_CELL_TOKEN ? (isFa ? '(خالی)' : '(Blank)') : v))
+                .map((v) => {
+                  if (key === 'itemCategory') {
+                    if (v === EMPTY_CELL_TOKEN || v === '' || v === 'standard') return t.itemCategories.standard;
+                    if (v === 'special_tools') return t.itemCategories.special_tools;
+                    if (v === 'chemicals') return t.itemCategories.chemicals;
+                    if (v === 'spare_parts') return t.itemCategories.spare_parts;
+                  }
+                  return v === EMPTY_CELL_TOKEN ? (isFa ? '(خالی)' : '(Blank)') : v;
+                })
                 .join('، ');
               return (
                 <span
@@ -1674,8 +1824,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
         <StickyTableWrapper>
           <table className="w-full text-xs">
             <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-              <tr>
-                <th className="py-2.5 px-3 w-9">
+              {/* Row 1: Semantic Color-Coded Column Group Bands */}
+              <tr className="border-b border-[var(--border-subtle)]/80">
+                <th rowSpan={2} className="py-2 px-3 w-9 align-middle border-e border-[var(--border-subtle)]/60">
                   <input
                     type="checkbox"
                     checked={
@@ -1687,50 +1838,79 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     aria-label={t.controls.selectAllPage}
                   />
                 </th>
-                <th className="py-2.5 px-2 text-center font-semibold whitespace-nowrap w-12">
+                <th
+                  rowSpan={2}
+                  className="py-2 px-2 text-center font-semibold whitespace-nowrap w-12 align-middle border-e border-[var(--border-subtle)]/60"
+                >
                   {isFa ? 'تصویر' : 'Photo'}
                 </th>
-                {visibleColumns.map((col) => (
-                  <th
-                    key={col.key}
-                    className={`py-2.5 px-3 font-semibold whitespace-nowrap ${
-                      col.isNum ? 'text-end' : 'text-start'
-                    }`}
-                  >
-                    <ExcelColumnFilter
-                      scope="detailed"
-                      colKey={col.key}
-                      label={col.header}
-                      calendar={prefs.calendar}
-                      lang={prefs.language}
-                      isNum={col.isNum}
-                      activeValues={colFilters[col.key]}
-                      sortDir={sortBy === col.key ? (sortDir || null) : null}
-                      refreshSignal={refreshSignal}
-                      onSortChange={(k, dir) => {
-                        setSortBy(dir ? k : '');
-                        setSortDir(dir || '');
-                        setPage(1);
-                      }}
-                      onApplyFilter={(k, vals) => {
-                        setColFilters((prev) => {
-                          const next = { ...prev };
-                          if (vals === undefined) delete next[k];
-                          else next[k] = vals;
-                          return next;
-                        });
-                        clearSelection();
-                        setPage(1);
-                      }}
-                    />
-                  </th>
-                ))}
-                <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
+                {visibleColumnGroups.map((seg, segIdx) => {
+                  const meta = groupMeta[seg.group];
+                  return (
+                    <th
+                      key={`${seg.group}-${segIdx}`}
+                      colSpan={seg.colSpan}
+                      className={`py-1.5 px-2.5 text-center text-[11px] font-bold tracking-tight whitespace-nowrap border-x border-[var(--border-subtle)]/60 ${meta.bandClass}`}
+                    >
+                      {isFa ? meta.labelFa : meta.labelEn}
+                    </th>
+                  );
+                })}
+                <th
+                  rowSpan={2}
+                  className="py-2 px-3 text-start font-semibold whitespace-nowrap align-middle border-s border-[var(--border-subtle)]/60"
+                >
                   {isFa ? 'وضعیت / دسته‌بندی' : 'Status / Class'}
                 </th>
-                <th className="py-2.5 px-3 text-end font-semibold whitespace-nowrap">
+                <th
+                  rowSpan={2}
+                  className="py-2 px-3 text-end font-semibold whitespace-nowrap align-middle border-s border-[var(--border-subtle)]/60"
+                >
                   {isFa ? 'عملیات' : 'Actions'}
                 </th>
+              </tr>
+
+              {/* Row 2: Individual Column Headers with Excel Filters */}
+              <tr className="border-b border-[var(--border-subtle)]">
+                {visibleColumns.map((col, colIdx) => {
+                  const meta = groupMeta[col.group];
+                  const isGroupStart = colIdx === 0 || visibleColumns[colIdx - 1].group !== col.group;
+                  return (
+                    <th
+                      key={col.key}
+                      className={`py-2 px-2.5 font-semibold whitespace-nowrap ${meta.subHeadClass} ${
+                        col.isNum ? 'text-end' : 'text-start'
+                      } ${isGroupStart ? 'border-s border-[var(--border-subtle)]/60' : ''}`}
+                    >
+                      <ExcelColumnFilter
+                        scope="detailed"
+                        colKey={col.key}
+                        label={col.header}
+                        calendar={prefs.calendar}
+                        lang={prefs.language}
+                        isNum={col.isNum}
+                        activeValues={colFilters[col.key]}
+                        sortDir={sortBy === col.key ? (sortDir || null) : null}
+                        refreshSignal={refreshSignal}
+                        onSortChange={(k, dir) => {
+                          setSortBy(dir ? k : '');
+                          setSortDir(dir || '');
+                          setPage(1);
+                        }}
+                        onApplyFilter={(k, vals) => {
+                          setColFilters((prev) => {
+                            const next = { ...prev };
+                            if (vals === undefined) delete next[k];
+                            else next[k] = vals;
+                            return next;
+                          });
+                          clearSelection();
+                          setPage(1);
+                        }}
+                      />
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -2113,24 +2293,28 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               {(
                 [
                   {
-                    title: isFa ? 'مشخصات پایه و کدینگ کالا' : 'Primary Equipment & Coding',
-                    keys: ['rowNo', 'shipmentNo', 'packageNo', 'itemNo', 'description', 'generalDescription', 'size', 'itemCode', 'mtoRef', 'arrivalDate'],
+                    title: isFa ? 'پایه و اطلاعات پکینگ لیست' : 'Base & Packing List Info',
+                    keys: ['rowNo', 'arrivalDate', 'shipmentNo', 'packageNo', 'itemNo'],
                   },
                   {
-                    title: isFa ? 'موقعیت فنی، تامین و نگهداری' : 'Location, Supply & Origin',
-                    keys: ['supplier', 'origin', 'island', 'system', 'subSystem', 'unit', 'storageLocation', 'receiver'],
+                    title: isFa ? 'مشخصات تجهیزات و محل مصرف' : 'Equipment Specs & Usage Location',
+                    keys: ['generalDescription', 'description', 'size', 'itemCode', 'storageLocation', 'receiver', 'supplier', 'origin', 'mtoRef', 'island', 'system', 'subSystem', 'unit'],
                   },
                   {
-                    title: isFa ? 'مقادیر، بازرسی OPI، مغایرت MER و جایگزینی REP' : 'Quantities, OPI Inspection, MER & REP',
-                    keys: ['packingQty', 'countingUnit', 'actualQty', 'shortage', 'surplus', 'damagedQty', 'opiNo', 'opiDate', 'merNo', 'merStatus', 'repNo', 'repStatus', 'repDescription'],
+                    title: isFa ? 'تعداد تجهیزات و موجودی انبار' : 'Quantities & Warehouse Stock',
+                    keys: ['packingQty', 'actualQty', 'shortage', 'surplus', 'damagedQty', 'countingUnit', 'mapnaInventory', 'contractorInventory'],
                   },
                   {
-                    title: isFa ? 'موجودی انبار، رسید GCV، حواله MIV و برگشت SMR' : 'Inventory, GCV, MIV & SMR',
-                    keys: ['gcvReceiptNo', 'gcvDeliveredQty', 'mapnaInventory', 'mivContractorNo', 'mivContractorDate', 'mivContractorQty', 'contractorInventory', 'smrContractorNo', 'smrContractorDate', 'smrContractorQty', 'smrMapnaNo', 'smrMapnaDate', 'smrMapnaQty', 'mivMapnaNo', 'mivMapnaDate', 'mivMapnaQty'],
+                    title: isFa ? 'وضعیت بازگشایی و جایگزینی تجهیزات' : 'Opening, Discrepancy & Substitution',
+                    keys: ['opiNo', 'opiDate', 'merNo', 'merStatus', 'notes', 'repNo', 'repStatus', 'repReprocured', 'repDescription'],
                   },
                   {
-                    title: isFa ? 'دسته‌بندی تخصصی، بالانس، انبارگردانی و یادداشت' : 'Specialized Class, Balance, Stocktake & Notes',
-                    keys: ['itemCategory', 'chemicalType', 'productionDate', 'expirationDate', 'materialBalanceNo', 'balanceStatus', 'stocktakeStatus', 'stocktakeDate', 'stocktakeInfo', 'notes'],
+                    title: isFa ? 'بالانس متریال، رسید مصرف، حواله و برگشت متریال' : 'Balance, Consumption Receipt, MIV & SMR',
+                    keys: ['materialBalanceNo', 'balanceStatus', 'gcvReceiptNo', 'gcvDeliveredQty', 'mivContractorNo', 'mivContractorDate', 'mivContractorQty', 'mivReceiver', 'smrContractorNo', 'smrContractorDate', 'smrContractorQty', 'smrMapnaNo', 'smrMapnaDate', 'smrMapnaQty', 'smrDeliverer'],
+                  },
+                  {
+                    title: isFa ? 'انبارگردانی و دسته‌بندی تخصصی' : 'Stocktake & Specialized Class',
+                    keys: ['stocktakeStatus', 'stocktakeDate', 'itemCategory', 'chemicalType', 'productionDate', 'expirationDate'],
                   },
                 ] as const
               ).map((group) => (
@@ -2863,9 +3047,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
                     <span>{t.headers.opiNo}: {draft.opiNo || '-'}</span>
-                    <span>{t.headers.actualQty}: {draft.actualQty ?? (isFa ? 'در انتظار OPI' : 'Pending OPI')}</span>
+                    <span>{t.headers.actualQty}: {draft.actualQty ?? (isFa ? 'در انتظار بازگشایی' : 'Pending Opening')}</span>
+                    <span>{t.headers.repReprocured}: {draft.repReprocured || '-'}</span>
                     <span>{t.headers.gcvReceiptNo}: {draft.gcvReceiptNo || '-'}</span>
                     <span>{t.headers.mivContractorNo}: {draft.mivContractorNo || '-'}</span>
+                    {draft.mivReceiver ? <span>{t.headers.mivReceiver} ({isFa ? 'حواله' : 'MIV'}): {draft.mivReceiver}</span> : null}
+                    {draft.smrDeliverer ? <span>{t.headers.smrDeliverer}: {draft.smrDeliverer}</span> : null}
                     <span>{t.headers.materialBalanceNo}: {draft.materialBalanceNo || '-'}</span>
                     <span>{t.headers.stocktakeStatus}: {draft.stocktakeStatus || '-'}</span>
                   </div>

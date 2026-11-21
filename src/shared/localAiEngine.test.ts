@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   answerLocalWarehouseQuestion,
   classifyItemLocally,
+  extractEntitySubjectFromQuestion,
   runLocalWarehouseAnalysis,
   type LocalWarehouseDbSlice,
 } from './localAiEngine.ts';
@@ -313,4 +314,16 @@ test('answerLocalWarehouseQuestion accurately answers "موجودی Pipe 8\"" wi
   assert.ok(pipe16Ans.answer.includes('یافت نشد'), 'Should honestly state Pipe 16" was not found');
   assert.ok(pipe16Ans.answer.includes('PL-PIPE-88') || pipe16Ans.answer.includes('PL-PIPE-44'), 'Should offer closest Pipe suggestions');
 });
+
+test('answerLocalWarehouseQuestion handles broad Persian summary, packing, transit, and net/gross weight prompt without false item search', () => {
+  const db = buildFixtureDb();
+  const prompt = 'خلاصه تعداد پکینگ‌ها، ردیف‌های ثبتی، محموله‌های در راه و وزن خالص/ناخالص کل انبار را گزارش بده.';
+  assert.equal(extractEntitySubjectFromQuestion(prompt), '', 'Summary prompt must not extract bogus entity tokens');
+
+  const ans = answerLocalWarehouseQuestion(db, prompt, 'fa');
+  assert.ok(!ans.answer.includes('یافت نشد'), 'Must NOT return item-not-found error');
+  assert.ok(ans.answer.includes('پکینگ') || ans.answer.includes('وزن'), 'Should return warehouse overview with packings & weights');
+  assert.ok(ans.answer.includes('۲') || ans.answer.includes('2.5') || ans.answer.includes('۲.۵'), 'Should include net/gross weights');
+});
+
 

@@ -1,3 +1,4 @@
+import { extractChemicalDatesFromTexts } from './chemicalDates.ts';
 import {
   detectCsvScope,
   makeId,
@@ -446,19 +447,20 @@ function normalizeHintToScope(hint?: string): ExtendedImportScope | null {
   return null;
 }
 
-/**
- * Automatically detects whether a spreadsheet matrix / structured JSON records belong to
- * one of the 3 core tables or one of the 11 operational/custom form collections.
- */
-export function detectExtendedScope(
+export interface ScoredScopeResult {
+  scores: Record<ExtendedImportScope, number>;
+  sheetScope: ExtendedImportScope | null;
+  coreDetected: ExtendedImportScope | null;
+  hintScope: ExtendedImportScope | null;
+}
+
+export function scoreExtendedScopes(
   matrix: string[][],
   sheetName?: string,
   sectionHint?: string,
   structuredRecords?: Record<string, unknown>[],
-): ExtendedImportScope | null {
-  // 1. Explicit sectionHint (e.g., from multi-section JSON keys)
+): ScoredScopeResult {
   const hintScope = normalizeHintToScope(sectionHint);
-  if (hintScope) return hintScope;
 
   // Build normalized header/key corpus from structured JSON keys OR first 6 rows of matrix
   const keyTokens: string[] = [];
@@ -495,6 +497,10 @@ export function detectExtendedScope(
     customFormSubmissions: 0,
   };
 
+  if (hintScope) {
+    scores[hintScope] += 15;
+  }
+
   if (sheetScope) {
     // Give strong prior weight to explicit sheet name (unless headers contradict strongly)
     scores[sheetScope] += 7;
@@ -521,8 +527,8 @@ export function detectExtendedScope(
   addIf('detailed', ['مقدار پکینگ', 'packingqty', 'packing qty'], 3);
   addIf('detailed', ['شماره بالانس متریال', 'materialbalanceno', 'material balance'], 4);
   addIf('detailed', ['شرح کلی', 'generaldescription', 'general description'], 2);
-  addIf('detailed', ['شماره miv پیمانکار', 'mivcontractorno'], 4);
-  addIf('detailed', ['شماره smr مپنا', 'smrmapnano'], 4);
+  addIf('detailed', ['شماره miv پیمانکار', 'mivcontractorno', 'شماره حواله'], 4);
+  addIf('detailed', ['شماره smr مپنا', 'smrmapnano', 'شماره برگشتی به انبار کارفرما'], 4);
 
   addIf('transit', ['شماره رلیزنت', 'releasenetno', 'release net'], 4);
   addIf('transit', ['شماره علی الحساب', 'interimno', 'interim no'], 4);
@@ -557,7 +563,7 @@ export function detectExtendedScope(
   addIf('opiMinutes', ['شماره صورتجلسه opi', 'شماره صورتجلسه گشایش', 'opi minutes'], 6);
 
   // --- 4. OSDR / MER Reports (گزارش مغایرت، کسری و آسیب‌دیدگی) ---
-  addIf('osdrReports', ['reportno', 'شماره گزارش مغایرت', 'شماره mer', 'شماره گزارش mer', 'شماره osdr'], 5);
+  addIf('osdrReports', ['reportno', 'شماره گزارش مغایرت', 'شماره mer', 'شماره گزارش mer', 'شماره osdr', 'شماره کسری مغایرت'], 5);
   addIf('osdrReports', ['discrepancytype', 'نوع مغایرت'], 6);
   addIf('osdrReports', ['discrepancyqty', 'مقدار مغایرت', 'تعداد مغایرت'], 6);
   addIf('osdrReports', ['opiminutesno', 'شماره صورتجلسه opi مرتبط'], 4);
@@ -608,7 +614,7 @@ export function detectExtendedScope(
 
   // --- 9B. Stocktake (انبارگردانی اقلام) ---
   addIf('stocktake', ['stocktakestatus', 'وضعیت انبارگردانی', 'نتیجه انبارگردانی'], 6);
-  addIf('stocktake', ['stocktakedate', 'تاریخ انبارگردانی'], 6);
+  addIf('stocktake', ['stocktakedate', 'تاریخ انبارگردانی', 'تاریخ آخرین انبارگردانی'], 6);
   addIf('stocktake', ['stocktakeinfo', 'شرح انبارگردانی', 'اطلاعات انبارگردانی'], 4);
 
   // --- 10. Custom Employer Forms (فرم‌های اختصاصی ثبت‌شده کارفرما) ---
@@ -621,6 +627,27 @@ export function detectExtendedScope(
   if (scores.detailed >= 10 && !sheetScope) {
     scores.detailed += 4;
   }
+
+  return { scores, sheetScope, coreDetected, hintScope };
+}
+
+/**
+ * Automatically detects whether a spreadsheet matrix / structured JSON records belong to
+ * one of the 3 core tables or one of the 11 operational/custom form collections.
+ */
+export function detectExtendedScope(
+  matrix: string[][],
+  sheetName?: string,
+  sectionHint?: string,
+  structuredRecords?: Record<string, unknown>[],
+): ExtendedImportScope | null {
+  const { scores, sheetScope, coreDetected, hintScope } = scoreExtendedScopes(
+    matrix,
+    sheetName,
+    sectionHint,
+    structuredRecords,
+  );
+  if (hintScope) return hintScope;
 
   let bestScope: ExtendedImportScope | null = null;
   let bestScore = 0;
@@ -2744,6 +2771,19 @@ export interface AutoWorkbookSheetInput {
   structuredRecords?: Record<string, unknown>[];
   sectionHint?: string;
   forcedScope?: ExtendedImportScope;
+  columnMapping?: Record<string, number>;
+}
+
+export interface DetectedScopeCandidate {
+  scope: ExtendedImportScope;
+  isOperational: boolean;
+  score: number;
+  confidence: 'high' | 'medium' | 'low';
+  isPrimary: boolean;
+  rowCount: number;
+  duplicateDbCount: number;
+  estimatedLinks: OperationalLinkCounts;
+  warnings: string[];
 }
 
 export interface AutoWorkbookPreviewSection {
@@ -2754,6 +2794,7 @@ export interface AutoWorkbookPreviewSection {
   duplicateDbCount: number;
   estimatedLinks: OperationalLinkCounts;
   warnings: string[];
+  candidates?: DetectedScopeCandidate[];
 }
 
 export interface AutoWorkbookCommitSection {
@@ -2851,6 +2892,17 @@ function parseCoreStructuredDetailed(
     const inferred = !rawCat ? inferItemClassification(description, notesVal, genDesc) : { itemCategory: rawCat, chemicalType: '' };
     const itemCategory = rawCat || (rawChem ? 'chemicals' : inferred.itemCategory);
     const chemicalType = rawChem || (itemCategory === 'chemicals' ? inferred.chemicalType : '');
+    let productionDate = dateField(r, ['productionDate', 'تاریخ تولید'], cal);
+    let expirationDate = dateField(r, ['expirationDate', 'تاریخ انقضا', 'تاریخ انقضاء'], cal);
+    const stocktakeInfo = strField(r, ['stocktakeInfo', 'انبارگردانی']);
+    if (itemCategory === 'chemicals' && (!productionDate || !expirationDate)) {
+      const extracted = extractChemicalDatesFromTexts(
+        [notesVal, description, genDesc],
+        cal,
+      );
+      if (!productionDate && extracted.productionDate) productionDate = extracted.productionDate;
+      if (!expirationDate && extracted.expirationDate) expirationDate = extracted.expirationDate;
+    }
     out.push({
       rowNo: strField(r, ['rowNo', 'ردیف']),
       arrivalDate: dateField(r, ['arrivalDate', 'تاریخ ورود'], cal),
@@ -2861,52 +2913,55 @@ function parseCoreStructuredDetailed(
       itemNo: strField(r, ['itemNo', 'شماره آیتم']),
       generalDescription: genDesc,
       description,
-      size: strField(r, ['size', 'سایز']),
+      size: strField(r, ['size', 'اندازه', 'سایز']),
       itemCode: strField(r, ['itemCode', 'کد کالا']),
       itemCategory,
       chemicalType,
-      productionDate: dateField(r, ['productionDate', 'تاریخ تولید'], cal),
-      expirationDate: dateField(r, ['expirationDate', 'تاریخ انقضا'], cal),
+      productionDate,
+      expirationDate,
       packingQty: numField(r, ['packingQty', 'مقدار پکینگ']),
       actualQty: numField(r, ['actualQty', 'مقدار واقعی']),
       damagedQty: numField(r, ['damagedQty', 'آسیب دیده']),
       mtoRef: strField(r, ['mtoRef', 'mto']),
-      repNo: strField(r, ['repNo', 'شماره rep']),
-      repStatus: strField(r, ['repStatus', 'وضعیت rep']),
-      repDescription: strField(r, ['repDescription', 'توضیحات rep']),
+      repNo: strField(r, ['repNo', 'شماره جایگزینی', 'شماره rep']),
+      repStatus: strField(r, ['repStatus', 'وضعیت جایگزینی', 'وضعیت rep']),
+      repReprocured: strField(r, ['repReprocured', 'تأمین مجدد جایگزین شده', 'تامین مجدد جایگزین شده']),
+      repDescription: strField(r, ['repDescription', 'توضیحات جایگزینی', 'توضیحات rep']),
       countingUnit: normalizeCountingUnitToFa(strField(r, ['countingUnit', 'واحد شمارش'])),
       island: strField(r, ['island', 'جزیره']),
       system: strField(r, ['system', 'سیستم']),
       subSystem: strField(r, ['subSystem', 'ساب سیستم']),
       unit: strField(r, ['unit', 'واحد']),
-      opiNo: strField(r, ['opiNo', 'شماره opi']),
-      opiDate: dateField(r, ['opiDate', 'تاریخ opi'], cal),
-      merNo: strField(r, ['merNo', 'شماره mer']),
-      merStatus: strField(r, ['merStatus', 'وضعیت mer']),
+      opiNo: strField(r, ['opiNo', 'شماره دعوتنامه', 'شماره opi']),
+      opiDate: dateField(r, ['opiDate', 'تاریخ دعوتنامه', 'تاریخ opi'], cal),
+      merNo: strField(r, ['merNo', 'شماره کسری/مغایرت', 'شماره mer']),
+      merStatus: strField(r, ['merStatus', 'وضعیت کسری/مغایرت', 'وضعیت mer']),
       notes: notesVal,
       materialBalanceNo: strField(r, ['materialBalanceNo', 'شماره بالانس متریال']),
       balanceStatus: strField(r, ['balanceStatus', 'وضعیت بالانس']),
       storageLocation: strField(r, ['storageLocation', 'محل نگهداری']),
-      gcvReceiptNo: strField(r, ['gcvReceiptNo', 'شماره رسید']),
+      gcvReceiptNo: strField(r, ['gcvReceiptNo', 'شماره رسید مصرف', 'شماره رسید']),
       receiver: strField(r, ['receiver', 'تحویل گیرنده']),
-      gcvDeliveredQty: numField(r, ['gcvDeliveredQty', 'مقدار تحویل شده gcv']),
-      mivContractorNo: strField(r, ['mivContractorNo']),
-      mivContractorDate: dateField(r, ['mivContractorDate'], cal),
-      mivContractorQty: numField(r, ['mivContractorQty']),
-      smrContractorNo: strField(r, ['smrContractorNo']),
+      gcvDeliveredQty: numField(r, ['gcvDeliveredQty', 'تعداد رسید مصرف', 'مقدار تحویل شده gcv']),
+      mivContractorNo: strField(r, ['mivContractorNo', 'شماره حواله']),
+      mivContractorDate: dateField(r, ['mivContractorDate', 'تاریخ حواله'], cal),
+      mivContractorQty: numField(r, ['mivContractorQty', 'مجموع تعداد تحویل شده با حواله']),
+      mivReceiver: strField(r, ['mivReceiver', 'تحویل گیرنده حواله']),
+      smrContractorNo: strField(r, ['smrContractorNo', 'شماره برگشتی به انبار پیمانکار']),
       smrContractorDate: dateField(r, ['smrContractorDate'], cal),
       smrContractorQty: numField(r, ['smrContractorQty']),
       smrContractorNote: strField(r, ['smrContractorNote']),
-      smrMapnaNo: strField(r, ['smrMapnaNo']),
+      smrMapnaNo: strField(r, ['smrMapnaNo', 'شماره برگشتی به انبار کارفرما']),
       smrMapnaDate: dateField(r, ['smrMapnaDate'], cal),
       smrMapnaQty: numField(r, ['smrMapnaQty']),
       smrMapnaNote: strField(r, ['smrMapnaNote']),
+      smrDeliverer: strField(r, ['smrDeliverer', 'تحویل آورنده']),
       mivMapnaNo: strField(r, ['mivMapnaNo']),
       mivMapnaDate: dateField(r, ['mivMapnaDate'], cal),
       mivMapnaQty: numField(r, ['mivMapnaQty']),
-      stocktakeInfo: strField(r, ['stocktakeInfo', 'انبارگردانی']),
+      stocktakeInfo,
       stocktakeStatus: strField(r, ['stocktakeStatus', 'وضعیت انبارگردانی']),
-      stocktakeDate: dateField(r, ['stocktakeDate', 'تاریخ انبارگردانی'], cal),
+      stocktakeDate: dateField(r, ['stocktakeDate', 'تاریخ آخرین انبارگردانی', 'تاریخ انبارگردانی'], cal),
       shortageBackfills: [],
       createdAt: now,
       updatedAt: now,
@@ -2958,6 +3013,165 @@ function parseCoreStructuredTransit(
   return out;
 }
 
+function evaluateSingleScopeForSheet(params: {
+  db: ImportableDatabase;
+  sheet: AutoWorkbookSheetInput;
+  scope: ExtendedImportScope;
+  assumedCalendar: CalendarMode;
+  actorName: string;
+}): {
+  isOperational: boolean;
+  rowCount: number;
+  duplicateDbCount: number;
+  estimatedLinks: OperationalLinkCounts;
+  warnings: string[];
+} {
+  const { db, sheet: s, scope, assumedCalendar, actorName } = params;
+  if (isOperationalScope(scope)) {
+    const prev = previewOperationalFormImport({
+      db,
+      scope,
+      matrix: s.matrix,
+      structuredRecords: s.structuredRecords,
+      sheetName: s.name,
+      assumedCalendar,
+      actorName,
+    });
+    return {
+      isOperational: true,
+      rowCount: prev.totalRows,
+      duplicateDbCount: prev.duplicateDbCount,
+      estimatedLinks: prev.estimatedLinks,
+      warnings: prev.warnings,
+    };
+  }
+
+  if (scope === 'general') {
+    const rows = s.structuredRecords?.length
+      ? parseCoreStructuredGeneral(s.structuredRecords, assumedCalendar, actorName)
+      : parseGeneralCsv(s.matrix || [], assumedCalendar, actorName, s.columnMapping).rows;
+    const dbKeys = new Set(db.general.map((g) => buildGeneralDupKey(g)).filter(Boolean));
+    const dupCount = rows.filter((r) => {
+      const k = buildGeneralDupKey(r);
+      return Boolean(k && dbKeys.has(k));
+    }).length;
+    return {
+      isOperational: false,
+      rowCount: rows.length,
+      duplicateDbCount: dupCount,
+      estimatedLinks: { general: 0, detailed: 0, transit: 0 },
+      warnings: [],
+    };
+  }
+
+  if (scope === 'detailed') {
+    const rows = s.structuredRecords?.length
+      ? parseCoreStructuredDetailed(s.structuredRecords, assumedCalendar, actorName)
+      : parseDetailedCsv(s.matrix || [], assumedCalendar, actorName, s.columnMapping).rows;
+    const dbKeys = new Set(db.detailed.map((d) => buildDetailedDupKey(d)).filter(Boolean));
+    const dupCount = rows.filter((r) => {
+      const k = buildDetailedDupKey(r);
+      return Boolean(k && dbKeys.has(k));
+    }).length;
+    return {
+      isOperational: false,
+      rowCount: rows.length,
+      duplicateDbCount: dupCount,
+      estimatedLinks: { general: 0, detailed: 0, transit: 0 },
+      warnings: [],
+    };
+  }
+
+  const rows = s.structuredRecords?.length
+    ? parseCoreStructuredTransit(s.structuredRecords, assumedCalendar, actorName)
+    : parseTransitCsv(s.matrix || [], assumedCalendar, actorName, s.columnMapping).rows;
+  const dbKeys = new Set(db.transit.map((t) => buildTransitDupKey(t)).filter(Boolean));
+  const dupCount = rows.filter((r) => {
+    const k = buildTransitDupKey(r);
+    return Boolean(k && dbKeys.has(k));
+  }).length;
+  return {
+    isOperational: false,
+    rowCount: rows.length,
+    duplicateDbCount: dupCount,
+    estimatedLinks: { general: 0, detailed: 0, transit: 0 },
+    warnings: [],
+  };
+}
+
+/**
+ * Detects ALL candidate target sections that have matching columns & real rows inside a single sheet.
+ * Enables a single sheet (e.g., Detailed + Stocktake + OPI/MER/MIV/GCV) to be mapped to one or
+ * multiple user-confirmed sections of the software.
+ */
+export function detectCandidateScopesForSheet(params: {
+  db: ImportableDatabase;
+  sheet: AutoWorkbookSheetInput;
+  assumedCalendar: CalendarMode;
+  actorName: string;
+}): DetectedScopeCandidate[] {
+  const { db, sheet: s, assumedCalendar, actorName } = params;
+  const { scores, sheetScope, coreDetected, hintScope } = scoreExtendedScopes(
+    s.matrix || [],
+    s.name,
+    s.sectionHint,
+    s.structuredRecords,
+  );
+
+  const primaryScope =
+    s.forcedScope ||
+    detectExtendedScope(s.matrix || [], s.name, s.sectionHint, s.structuredRecords);
+
+  const candidateScopes = new Set<ExtendedImportScope>();
+  if (primaryScope) candidateScopes.add(primaryScope);
+  if (hintScope) candidateScopes.add(hintScope);
+  if (sheetScope) candidateScopes.add(sheetScope);
+  if (coreDetected) candidateScopes.add(coreDetected);
+
+  // Include all other scopes with meaningful header signal (score >= 4) so multi-section sheets are surfaced
+  for (const sc of ALL_EXTENDED_SCOPES) {
+    if (scores[sc] >= 4) {
+      candidateScopes.add(sc);
+    }
+  }
+
+  const evaluated: DetectedScopeCandidate[] = [];
+  for (const sc of candidateScopes) {
+    const res = evaluateSingleScopeForSheet({
+      db,
+      sheet: s,
+      scope: sc,
+      assumedCalendar,
+      actorName,
+    });
+    const isPrimary = sc === primaryScope;
+    // Keep non-primary candidates only when they genuinely extract >= 1 record from the sheet
+    if (!isPrimary && res.rowCount === 0) continue;
+    const scoreVal = scores[sc] || (isPrimary ? 4 : 0);
+    const confidence: 'high' | 'medium' | 'low' =
+      scoreVal >= 8 || isPrimary ? 'high' : scoreVal >= 5 ? 'medium' : 'low';
+    evaluated.push({
+      scope: sc,
+      isOperational: res.isOperational,
+      score: scoreVal,
+      confidence,
+      isPrimary,
+      rowCount: res.rowCount,
+      duplicateDbCount: res.duplicateDbCount,
+      estimatedLinks: res.estimatedLinks,
+      warnings: res.warnings,
+    });
+  }
+
+  evaluated.sort((a, b) => {
+    if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+    if (b.score !== a.score) return b.score - a.score;
+    return EXTENDED_SCOPE_META[a.scope].order - EXTENDED_SCOPE_META[b.scope].order;
+  });
+
+  return evaluated;
+}
+
 export function previewAutoWorkbook(params: {
   db: ImportableDatabase;
   sheets: AutoWorkbookSheetInput[];
@@ -2968,11 +3182,15 @@ export function previewAutoWorkbook(params: {
   const results: AutoWorkbookPreviewSection[] = [];
 
   for (const s of sheets) {
-    const scope =
-      s.forcedScope ||
-      detectExtendedScope(s.matrix || [], s.name, s.sectionHint, s.structuredRecords);
+    const candidates = detectCandidateScopesForSheet({
+      db,
+      sheet: s,
+      assumedCalendar,
+      actorName,
+    });
+    const primary = candidates[0] || null;
 
-    if (!scope) {
+    if (!primary) {
       results.push({
         sheetName: s.name,
         scope: null,
@@ -2981,94 +3199,26 @@ export function previewAutoWorkbook(params: {
         duplicateDbCount: 0,
         estimatedLinks: { general: 0, detailed: 0, transit: 0 },
         warnings: ['نوع این شیت به صورت خودکار تشخیص داده نشد؛ می‌توانید بخش مقصد آن را دستی انتخاب کنید.'],
+        candidates: [],
       });
       continue;
     }
 
-    if (isOperationalScope(scope)) {
-      const prev = previewOperationalFormImport({
-        db,
-        scope,
-        matrix: s.matrix,
-        structuredRecords: s.structuredRecords,
-        sheetName: s.name,
-        assumedCalendar,
-        actorName,
-      });
-      results.push({
-        sheetName: s.name,
-        scope,
-        isOperational: true,
-        rowCount: prev.totalRows,
-        duplicateDbCount: prev.duplicateDbCount,
-        estimatedLinks: prev.estimatedLinks,
-        warnings: prev.warnings,
-      });
-      continue;
-    }
-
-    // Core table preview counts
-    if (scope === 'general') {
-      const rows = s.structuredRecords?.length
-        ? parseCoreStructuredGeneral(s.structuredRecords, assumedCalendar, actorName)
-        : parseGeneralCsv(s.matrix || [], assumedCalendar, actorName).rows;
-      const dbKeys = new Set(db.general.map((g) => buildGeneralDupKey(g)).filter(Boolean));
-      const dupCount = rows.filter((r) => {
-        const k = buildGeneralDupKey(r);
-        return Boolean(k && dbKeys.has(k));
-      }).length;
-      results.push({
-        sheetName: s.name,
-        scope: 'general',
-        isOperational: false,
-        rowCount: rows.length,
-        duplicateDbCount: dupCount,
-        estimatedLinks: { general: 0, detailed: 0, transit: 0 },
-        warnings: [],
-      });
-    } else if (scope === 'detailed') {
-      const rows = s.structuredRecords?.length
-        ? parseCoreStructuredDetailed(s.structuredRecords, assumedCalendar, actorName)
-        : parseDetailedCsv(s.matrix || [], assumedCalendar, actorName).rows;
-      const dbKeys = new Set(db.detailed.map((d) => buildDetailedDupKey(d)).filter(Boolean));
-      const dupCount = rows.filter((r) => {
-        const k = buildDetailedDupKey(r);
-        return Boolean(k && dbKeys.has(k));
-      }).length;
-      results.push({
-        sheetName: s.name,
-        scope: 'detailed',
-        isOperational: false,
-        rowCount: rows.length,
-        duplicateDbCount: dupCount,
-        estimatedLinks: { general: 0, detailed: 0, transit: 0 },
-        warnings: [],
-      });
-    } else {
-      const rows = s.structuredRecords?.length
-        ? parseCoreStructuredTransit(s.structuredRecords, assumedCalendar, actorName)
-        : parseTransitCsv(s.matrix || [], assumedCalendar, actorName).rows;
-      const dbKeys = new Set(db.transit.map((t) => buildTransitDupKey(t)).filter(Boolean));
-      const dupCount = rows.filter((r) => {
-        const k = buildTransitDupKey(r);
-        return Boolean(k && dbKeys.has(k));
-      }).length;
-      results.push({
-        sheetName: s.name,
-        scope: 'transit',
-        isOperational: false,
-        rowCount: rows.length,
-        duplicateDbCount: dupCount,
-        estimatedLinks: { general: 0, detailed: 0, transit: 0 },
-        warnings: [],
-      });
-    }
+    results.push({
+      sheetName: s.name,
+      scope: primary.scope,
+      isOperational: primary.isOperational,
+      rowCount: primary.rowCount,
+      duplicateDbCount: primary.duplicateDbCount,
+      estimatedLinks: primary.estimatedLinks,
+      warnings: primary.warnings,
+      candidates,
+    });
   }
 
-  // Sort detected sheets by dependency order
   results.sort((a, b) => {
-    const oa = a.scope ? EXTENDED_SCOPE_META[a.scope].order : 99;
-    const ob = b.scope ? EXTENDED_SCOPE_META[b.scope].order : 99;
+    const oa = a.scope ? EXTENDED_SCOPE_META[a.scope].order : 999;
+    const ob = b.scope ? EXTENDED_SCOPE_META[b.scope].order : 999;
     return oa - ob;
   });
 
@@ -3140,7 +3290,7 @@ export function commitAutoWorkbook(params: {
     if (scope === 'transit') {
       const rows = input.structuredRecords?.length
         ? parseCoreStructuredTransit(input.structuredRecords, assumedCalendar, actorName)
-        : parseTransitCsv(input.matrix || [], assumedCalendar, actorName).rows;
+        : parseTransitCsv(input.matrix || [], assumedCalendar, actorName, input.columnMapping).rows;
       const dbByKey = new Map<string, TransitEntry>();
       for (const t of db.transit) {
         const k = buildTransitDupKey(t);
@@ -3195,7 +3345,7 @@ export function commitAutoWorkbook(params: {
     } else if (scope === 'general') {
       const rows = input.structuredRecords?.length
         ? parseCoreStructuredGeneral(input.structuredRecords, assumedCalendar, actorName)
-        : parseGeneralCsv(input.matrix || [], assumedCalendar, actorName).rows;
+        : parseGeneralCsv(input.matrix || [], assumedCalendar, actorName, input.columnMapping).rows;
       const dbByKey = new Map<string, GeneralEntry>();
       for (const g of db.general) {
         const k = buildGeneralDupKey(g);
@@ -3238,7 +3388,7 @@ export function commitAutoWorkbook(params: {
     } else if (scope === 'detailed') {
       const rows = input.structuredRecords?.length
         ? parseCoreStructuredDetailed(input.structuredRecords, assumedCalendar, actorName)
-        : parseDetailedCsv(input.matrix || [], assumedCalendar, actorName).rows;
+        : parseDetailedCsv(input.matrix || [], assumedCalendar, actorName, input.columnMapping).rows;
       const dbByKey = new Map<string, DetailedEntry>();
       for (const d of db.detailed) {
         const k = buildDetailedDupKey(d);

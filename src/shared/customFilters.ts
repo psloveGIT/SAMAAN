@@ -52,7 +52,7 @@ export const DETAILED_FILTER_FIELDS: FilterFieldOption[] = [
   { key: 'itemNo', labelFa: 'شماره آیتم', labelEn: 'Item No.' },
   { key: 'generalDescription', labelFa: 'شرح کلی', labelEn: 'General Description' },
   { key: 'description', labelFa: 'شرح کالا', labelEn: 'Description' },
-  { key: 'size', labelFa: 'سایز', labelEn: 'Size' },
+  { key: 'size', labelFa: 'اندازه', labelEn: 'Size' },
   { key: 'itemCode', labelFa: 'کد کالا', labelEn: 'Item Code' },
   { key: 'mtoRef', labelFa: 'MTO', labelEn: 'MTO' },
   { key: 'supplier', labelFa: 'تامین کننده', labelEn: 'Supplier' },
@@ -66,22 +66,25 @@ export const DETAILED_FILTER_FIELDS: FilterFieldOption[] = [
   { key: 'actualQty', labelFa: 'مقدار واقعی', labelEn: 'Actual Qty', isNumeric: true },
   { key: 'shortage', labelFa: 'کسری', labelEn: 'Shortage', isNumeric: true },
   { key: 'damagedQty', labelFa: 'آسیب دیده', labelEn: 'Damaged Qty', isNumeric: true },
-  { key: 'mapnaInventory', labelFa: 'موجودی مپنا', labelEn: 'MAPNA Stock', isNumeric: true },
+  { key: 'mapnaInventory', labelFa: 'موجودی انبار اصلی', labelEn: 'Main Warehouse Stock', isNumeric: true },
   { key: 'contractorInventory', labelFa: 'موجودی پیمانکار', labelEn: 'Contractor Stock', isNumeric: true },
   { key: 'storageLocation', labelFa: 'محل نگهداری', labelEn: 'Storage Location' },
-  { key: 'opiNo', labelFa: 'شماره OPI', labelEn: 'OPI No.' },
-  { key: 'merNo', labelFa: 'شماره MER', labelEn: 'MER No.' },
-  { key: 'merStatus', labelFa: 'وضعیت MER', labelEn: 'MER Status' },
-  { key: 'repNo', labelFa: 'شماره REP', labelEn: 'REP No.' },
-  { key: 'repStatus', labelFa: 'وضعیت REP', labelEn: 'REP Status' },
+  { key: 'opiNo', labelFa: 'شماره دعوتنامه', labelEn: 'Invitation No.' },
+  { key: 'merNo', labelFa: 'شماره کسری/مغایرت', labelEn: 'Discrepancy/Shortage No.' },
+  { key: 'merStatus', labelFa: 'وضعیت کسری/مغایرت', labelEn: 'Discrepancy/Shortage Status' },
+  { key: 'repNo', labelFa: 'شماره جایگزینی', labelEn: 'Substitution No.' },
+  { key: 'repStatus', labelFa: 'وضعیت جایگزینی', labelEn: 'Substitution Status' },
+  { key: 'repReprocured', labelFa: 'تأمین مجدد جایگزین شده', labelEn: 'Reprocured Replacement' },
   { key: 'itemCategory', labelFa: 'دسته‌بندی تخصصی قلم', labelEn: 'Item Classification' },
   { key: 'chemicalType', labelFa: 'نوع ماده شیمیایی', labelEn: 'Chemical Type' },
   { key: 'productionDate', labelFa: 'تاریخ تولید', labelEn: 'Production Date' },
   { key: 'expirationDate', labelFa: 'تاریخ انقضاء', labelEn: 'Expiration Date' },
-  { key: 'gcvReceiptNo', labelFa: 'شماره رسید', labelEn: 'Receipt No.' },
-  { key: 'mivContractorNo', labelFa: 'شماره MIV', labelEn: 'MIV No.' },
+  { key: 'gcvReceiptNo', labelFa: 'شماره رسید مصرف', labelEn: 'Consumption Receipt No.' },
+  { key: 'mivContractorNo', labelFa: 'شماره حواله', labelEn: 'MIV Issue No.' },
+  { key: 'mivReceiver', labelFa: 'تحویل گیرنده (حواله)', labelEn: 'MIV Receiver' },
+  { key: 'smrDeliverer', labelFa: 'تحویل آورنده (برگشتی)', labelEn: 'Returned By' },
   { key: 'materialBalanceNo', labelFa: 'شماره بالانس متریال', labelEn: 'Material Balance No.' },
-  { key: 'balanceStatus', labelFa: 'وضعیت بالانس', labelEn: 'Balance Status' },
+  { key: 'balanceStatus', labelFa: 'وضعیت بالانس متریال', labelEn: 'Material Balance Status' },
   { key: 'stocktakeStatus', labelFa: 'وضعیت انبارگردانی', labelEn: 'Stocktake Status' },
   { key: 'receiver', labelFa: 'تحویل گیرنده', labelEn: 'Receiver' },
 ];
@@ -152,11 +155,29 @@ export function matchesMultiPacking(
   return selectedPackings.some((p) => normalizeDigits(p).trim().toLowerCase() === val);
 }
 
+function normalizeItemCategoryToken(val: string): string {
+  const s = val.replace(/\u200c/g, ' ').replace(/ي/g, 'ی').replace(/ك/g, 'ک').trim().toLowerCase();
+  if (!s || s === 'standard' || s.includes('عادی') || s.includes('استاندارد')) return 'standard';
+  if (s === 'special_tools' || s.includes('ابزار') || s.includes('tool')) return 'special_tools';
+  if (s === 'chemicals' || s.includes('شیمی') || s.includes('chemical')) return 'chemicals';
+  if (s === 'spare_parts' || s.includes('یدک') || s.includes('spare')) return 'spare_parts';
+  return s;
+}
+
 function evaluateSingleFilter(record: Record<string, unknown>, f: CustomFieldFilter): boolean {
   const rawVal = record[f.field];
   const strVal = rawVal === null || rawVal === undefined ? '' : String(rawVal).trim();
   const normVal = normalizeDigits(strVal).toLowerCase();
   const normTarget = normalizeDigits(f.value).toLowerCase().trim();
+
+  if (f.field === 'itemCategory') {
+    const recCat = normalizeItemCategoryToken(strVal);
+    if (f.op === 'not_empty') return true;
+    const targetCat = normalizeItemCategoryToken(f.value);
+    if (f.op === 'equals' || f.op === 'contains') return recCat === targetCat;
+    if (f.op === 'not_equals') return recCat !== targetCat;
+    return true;
+  }
 
   if (f.op === 'not_empty') {
     return Boolean(strVal);

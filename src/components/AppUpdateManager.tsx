@@ -134,6 +134,7 @@ export const AppUpdateManager: React.FC = () => {
         immediate: true,
         onNeedRefresh() {
           setSwNeedRefresh(true);
+          void checkForUpdates(true);
         },
         onRegisteredSW(_swUrl, reg) {
           if (reg) {
@@ -146,7 +147,7 @@ export const AppUpdateManager: React.FC = () => {
     } catch {
       // Safe fallback in dev or non-SW environments
     }
-  }, []);
+  }, [checkForUpdates]);
 
   // Poll for remote updates quietly while running & on window focus/visibility restore
   useEffect(() => {
