@@ -533,6 +533,8 @@ export interface SiteEntryMinutesRecord {
   driverName?: string;
   vehicleNo?: string;
   waybillNo?: string;
+  weighbridgeWeight?: number | null;
+  employerEntryMinutesNo?: string;
   items?: SiteEntryLineItem[];
   warehouseKeeper?: string; // انباردار / پیمانکار
   contractorManager?: string; // مدیر پروژه / سرپرست کارگاه پیمانکار
@@ -643,6 +645,7 @@ export interface SubstitutionRecord {
   reason: string;
   supplierNotes?: string;
   reprocureBy?: string;
+  reprocured?: string;
   costBorneBy?: string;
   approvedBy?: string;
   mapnaRep?: string;

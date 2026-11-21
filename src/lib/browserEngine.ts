@@ -51,6 +51,13 @@ import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
 import { getLocalVersionPayload } from '../shared/appVersion.ts';
 import { analyzeImportDelta, hasRecordMeaningfulChanges } from '../shared/importDelta.ts';
 import {
+  applyCategoryDelete,
+  applyCategoryRename,
+  computeCategoryCounts,
+  registerCategoryTokens,
+  sanitizeCategoryStore,
+} from '../shared/categoryCascade.ts';
+import {
   commitAutoWorkbook,
   commitOperationalFormImport,
   detectExtendedScope,
@@ -232,18 +239,126 @@ function createEmptyDb(): StaticDatabase {
 const cachedDbs = new Map<string, StaticDatabase>();
 let cachedProjects: ProjectInfo[] | null = null;
 let cachedEmployers: EmployerProfile[] | null = null;
+let idbUnavailable = false;
 
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
+function openDb(): Promise<IDBDatabase | null> {
+  if (idbUnavailable || typeof indexedDB === 'undefined') {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (db: IDBDatabase | null, markUnavailable = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (markUnavailable) idbUnavailable = true;
+      resolve(db);
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    const timer = setTimeout(() => {
+      finish(null, true);
+    }, 3500);
+    try {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        try {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        } catch {
+          // Ignore upgrade error
+        }
+      };
+      req.onblocked = () => finish(null, false);
+      req.onsuccess = () => finish(req.result, false);
+      req.onerror = () => finish(null, true);
+    } catch {
+      finish(null, true);
+    }
+  });
+}
+
+function idbGet<T>(idb: IDBDatabase | null, key: string): Promise<T | null> {
+  if (!idb) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (val: T | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        idb.close();
+      } catch {
+        // ignore
+      }
+      resolve(val);
+    };
+    const timer = setTimeout(() => finish(null), 3000);
+    try {
+      const tx = idb.transaction(STORE_NAME, 'readonly');
+      const req = tx.objectStore(STORE_NAME).get(key);
+      req.onsuccess = () => finish((req.result as T) ?? null);
+      req.onerror = () => finish(null);
+      tx.onabort = () => finish(null);
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+function idbPut(idb: IDBDatabase | null, key: string, value: unknown): Promise<void> {
+  if (!idb) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        idb.close();
+      } catch {
+        // ignore
+      }
+      resolve();
+    };
+    const timer = setTimeout(finish, 3500);
+    try {
+      const tx = idb.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).put(value, key);
+      tx.oncomplete = finish;
+      tx.onerror = finish;
+      tx.onabort = finish;
+    } catch {
+      finish();
+    }
+  });
+}
+
+function idbDelete(idb: IDBDatabase | null, key: string): Promise<void> {
+  if (!idb) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        idb.close();
+      } catch {
+        // ignore
+      }
+      resolve();
+    };
+    const timer = setTimeout(finish, 3000);
+    try {
+      const tx = idb.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(key);
+      tx.oncomplete = finish;
+      tx.onerror = finish;
+      tx.onabort = finish;
+    } catch {
+      finish();
+    }
   });
 }
 
@@ -254,13 +369,7 @@ function projectRecordKey(projectId: string): string {
 async function getProjects(): Promise<ProjectInfo[]> {
   if (cachedProjects) return cachedProjects;
   const idb = await openDb();
-  const loaded = await new Promise<ProjectInfo[] | null>((resolve, reject) => {
-    const tx = idb.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get(PROJECTS_REGISTRY_KEY);
-    req.onsuccess = () => resolve((req.result as ProjectInfo[]) || null);
-    req.onerror = () => reject(req.error);
-  });
-  idb.close();
+  const loaded = await idbGet<ProjectInfo[]>(idb, PROJECTS_REGISTRY_KEY);
   if (Array.isArray(loaded) && loaded.length > 0) {
     cachedProjects = loaded.map((p) => ({
       ...p,
@@ -294,25 +403,13 @@ async function getProjects(): Promise<ProjectInfo[]> {
 async function saveProjects(list: ProjectInfo[]): Promise<void> {
   cachedProjects = list;
   const idb = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = idb.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(list, PROJECTS_REGISTRY_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  idb.close();
+  await idbPut(idb, PROJECTS_REGISTRY_KEY, list);
 }
 
 async function getEmployers(): Promise<EmployerProfile[]> {
   if (cachedEmployers) return cachedEmployers;
   const idb = await openDb();
-  const loaded = await new Promise<EmployerProfile[] | null>((resolve, reject) => {
-    const tx = idb.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get(EMPLOYERS_REGISTRY_KEY);
-    req.onsuccess = () => resolve((req.result as EmployerProfile[]) || null);
-    req.onerror = () => reject(req.error);
-  });
-  idb.close();
+  const loaded = await idbGet<EmployerProfile[]>(idb, EMPLOYERS_REGISTRY_KEY);
   if (Array.isArray(loaded)) {
     cachedEmployers = loaded
       .map(sanitizeEmployerProfile)
@@ -326,13 +423,7 @@ async function getEmployers(): Promise<EmployerProfile[]> {
 async function saveEmployers(list: EmployerProfile[]): Promise<void> {
   cachedEmployers = list;
   const idb = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = idb.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(list, EMPLOYERS_REGISTRY_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  idb.close();
+  await idbPut(idb, EMPLOYERS_REGISTRY_KEY, list);
 }
 
 async function resolveProjectId(rawId?: string): Promise<string> {
@@ -368,13 +459,7 @@ async function getDb(projectId = DEFAULT_PROJECT_ID): Promise<StaticDatabase> {
   if (existing) return existing;
   const idb = await openDb();
   const key = projectRecordKey(projectId);
-  const loaded = await new Promise<Partial<StaticDatabase> | null>((resolve, reject) => {
-    const tx = idb.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get(key);
-    req.onsuccess = () => resolve((req.result as Partial<StaticDatabase>) || null);
-    req.onerror = () => reject(req.error);
-  });
-  idb.close();
+  const loaded = await idbGet<Partial<StaticDatabase>>(idb, key);
   const empty = createEmptyDb();
   const mergedCats: CategoryStore = loaded
     ? {
@@ -420,26 +505,47 @@ async function getDb(projectId = DEFAULT_PROJECT_ID): Promise<StaticDatabase> {
 async function saveDb(db: StaticDatabase, projectId = DEFAULT_PROJECT_ID): Promise<void> {
   cachedDbs.set(projectId, db);
   const idb = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = idb.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(db, projectRecordKey(projectId));
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  idb.close();
+  await idbPut(idb, projectRecordKey(projectId), db);
 }
 
 async function deleteProjectDb(projectId: string): Promise<void> {
   if (projectId === DEFAULT_PROJECT_ID) return;
   cachedDbs.delete(projectId);
   const idb = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = idb.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(projectRecordKey(projectId));
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  idb.close();
+  await idbDelete(idb, projectRecordKey(projectId));
+}
+
+export async function syncOfflineSessionUser(
+  user: UserAccount | null,
+  projectId = DEFAULT_PROJECT_ID,
+): Promise<void> {
+  if (!user) return;
+  try {
+    const resolved = await resolveProjectId(projectId);
+    const db = await getDb(resolved);
+    let existing = db.users.find(
+      (u) => u.id === user.id || u.username.toLowerCase() === user.username.toLowerCase(),
+    );
+    if (!existing) {
+      existing = {
+        ...user,
+        active: true,
+        passwordHash: '',
+        preferences: user.preferences || { ...DEFAULT_PREFERENCES },
+        createdAt: user.createdAt || new Date().toISOString(),
+      };
+      db.users.push(existing);
+    } else {
+      existing.fullName = user.fullName;
+      existing.role = user.role;
+      existing.active = true;
+      if (user.preferences) existing.preferences = { ...existing.preferences, ...user.preferences };
+    }
+    db.currentUserId = existing.id;
+    await saveDb(db, resolved);
+  } catch {
+    // Best-effort offline session sync
+  }
 }
 
 async function hashBrowserPassword(password: string, existingSalt?: string): Promise<string> {
@@ -499,17 +605,7 @@ function removeRefToken(existing: string, token: string): string {
 }
 
 function registerCategoryValue(db: StaticDatabase, group: CategoryGroupKey, rawVal: string | undefined | null) {
-  const val = normKey(rawVal);
-  if (!val || val === '-' || val === '—') return;
-  if (group === 'transitStatus' && val === 'پایان') return;
-  const arr = db.categories[group];
-  if (!arr) return;
-  if (!arr.includes(val)) {
-    arr.push(val);
-    if (group !== 'transitStatus') {
-      arr.sort((a, b) => a.localeCompare(b, 'fa'));
-    }
-  }
+  registerCategoryTokens(db.categories, group, rawVal);
 }
 
 function rebuildCategories(db: StaticDatabase) {
@@ -548,7 +644,7 @@ function rebuildCategories(db: StaticDatabase) {
     registerCategoryValue(db, 'carrierContractor', t.carrierContractor);
     registerCategoryValue(db, 'transitStatus', t.overallStatus);
   }
-  db.categories.transitStatus = getTransitStatusOptions(db.categories.transitStatus);
+  sanitizeCategoryStore(db.categories);
 }
 
 function addAudit(
@@ -5163,35 +5259,8 @@ async function handleStaticApiRequestInner<T>(
   // ---------------- CATEGORIES ----------------
   if (pathname === '/api/categories' && method === 'GET') {
     requireAuth();
-    const counts: Record<CategoryGroupKey, Record<string, number>> = {
-      island: {}, system: {}, subSystem: {}, unit: {}, supplier: {},
-      dispatchLocation: {}, origin: {}, storageLocation: {}, carrierContractor: {},
-      countingUnit: {}, packageType: {}, generalDescription: {}, stocktakeStatus: {},
-      transitStatus: {}, receiver: {}, merStatus: {}, repStatus: {}, balanceStatus: {}, chemicalType: {},
-    };
-    const bump = (group: CategoryGroupKey, v: string | undefined | null) => {
-      const k = normKey(v);
-      if (k) counts[group][k] = (counts[group][k] || 0) + 1;
-    };
-    for (const g of db.general) {
-      bump('island', g.island); bump('system', g.system); bump('subSystem', g.subSystem);
-      bump('unit', g.unit); bump('supplier', g.supplier); bump('dispatchLocation', g.dispatchLocation);
-      bump('packageType', g.packageType);
-    }
-    for (const d of db.detailed) {
-      bump('island', d.island); bump('system', d.system); bump('subSystem', d.subSystem);
-      bump('unit', d.unit); bump('supplier', d.supplier); bump('origin', d.origin);
-      bump('storageLocation', d.storageLocation); bump('countingUnit', d.countingUnit);
-      bump('generalDescription', d.generalDescription); bump('stocktakeStatus', d.stocktakeStatus);
-      bump('receiver', d.receiver); bump('merStatus', d.merStatus); bump('repStatus', d.repStatus);
-      bump('balanceStatus', d.balanceStatus); bump('chemicalType', d.chemicalType);
-    }
-    for (const t of db.transit) {
-      bump('system', t.system); bump('subSystem', t.subSystem); bump('unit', t.unit);
-      bump('supplier', t.supplier); bump('dispatchLocation', t.dispatchLocation);
-      bump('carrierContractor', t.carrierContractor); bump('transitStatus', t.overallStatus);
-    }
-    db.categories.transitStatus = getTransitStatusOptions(db.categories.transitStatus);
+    sanitizeCategoryStore(db.categories);
+    const counts = computeCategoryCounts(db);
     return { categories: db.categories, counts } as T;
   }
 
@@ -5220,53 +5289,8 @@ async function handleStaticApiRequestInner<T>(
     if (group === 'transitStatus' && (DEFAULT_TRANSIT_STATUSES as readonly string[]).includes(from)) {
       throw new StaticEngineError(errMsg('سه وضعیت اصلی در راه قابل تغییر نام نیستند.', 'The 3 core In-Transit statuses cannot be renamed.'), 400);
     }
-    let updatedCount = 0;
-    for (const g of db.general) {
-      if (group === 'island' && g.island === from) { g.island = to; updatedCount += 1; }
-      if (group === 'system' && g.system === from) { g.system = to; updatedCount += 1; }
-      if (group === 'subSystem' && g.subSystem === from) { g.subSystem = to; updatedCount += 1; }
-      if (group === 'unit' && g.unit === from) { g.unit = to; updatedCount += 1; }
-      if (group === 'supplier' && g.supplier === from) { g.supplier = to; updatedCount += 1; }
-      if (group === 'dispatchLocation' && g.dispatchLocation === from) { g.dispatchLocation = to; updatedCount += 1; }
-      if (group === 'packageType' && g.packageType === from) { g.packageType = to; updatedCount += 1; }
-    }
-    for (const d of db.detailed) {
-      if (group === 'island' && d.island === from) { d.island = to; updatedCount += 1; }
-      if (group === 'system' && d.system === from) { d.system = to; updatedCount += 1; }
-      if (group === 'subSystem' && d.subSystem === from) { d.subSystem = to; updatedCount += 1; }
-      if (group === 'unit' && d.unit === from) { d.unit = to; updatedCount += 1; }
-      if (group === 'supplier' && d.supplier === from) { d.supplier = to; updatedCount += 1; }
-      if (group === 'origin' && d.origin === from) { d.origin = to; updatedCount += 1; }
-      if (group === 'storageLocation' && d.storageLocation === from) { d.storageLocation = to; updatedCount += 1; }
-      if (group === 'countingUnit' && d.countingUnit === from) { d.countingUnit = to; updatedCount += 1; }
-      if (group === 'generalDescription' && d.generalDescription === from) { d.generalDescription = to; updatedCount += 1; }
-      if (group === 'stocktakeStatus' && d.stocktakeStatus === from) { d.stocktakeStatus = to; updatedCount += 1; }
-      if (group === 'receiver' && d.receiver === from) { d.receiver = to; updatedCount += 1; }
-      if (group === 'merStatus' && d.merStatus === from) { d.merStatus = to; updatedCount += 1; }
-      if (group === 'repStatus' && d.repStatus === from) { d.repStatus = to; updatedCount += 1; }
-      if (group === 'balanceStatus' && d.balanceStatus === from) { d.balanceStatus = to; updatedCount += 1; }
-      if (group === 'chemicalType' && d.chemicalType === from) { d.chemicalType = to; updatedCount += 1; }
-    }
-    for (const t of db.transit) {
-      if (group === 'system' && t.system === from) { t.system = to; updatedCount += 1; }
-      if (group === 'subSystem' && t.subSystem === from) { t.subSystem = to; updatedCount += 1; }
-      if (group === 'unit' && t.unit === from) { t.unit = to; updatedCount += 1; }
-      if (group === 'supplier' && t.supplier === from) { t.supplier = to; updatedCount += 1; }
-      if (group === 'dispatchLocation' && t.dispatchLocation === from) { t.dispatchLocation = to; updatedCount += 1; }
-      if (group === 'carrierContractor' && t.carrierContractor === from) { t.carrierContractor = to; updatedCount += 1; }
-      if (group === 'transitStatus' && t.overallStatus === from) { t.overallStatus = to; updatedCount += 1; }
-    }
-    if (group === 'countingUnit') {
-      for (const m of db.materialEstimates) {
-        if (m.countingUnit === from) { m.countingUnit = to; updatedCount += 1; }
-      }
-      for (const s of db.substitutions) {
-        if (s.countingUnit === from) { s.countingUnit = to; updatedCount += 1; }
-      }
-    }
-    db.categories[group] = db.categories[group].filter((v) => v !== from);
-    registerCategoryValue(db, group, to);
-    addAudit(db, sanitizeUser(u), 'RENAME_MERGE_CATEGORY', 'category', `${group}:${from}->${to}`, `تغییر نام/ادغام «${from}» به «${to}»`);
+    const updatedCount = applyCategoryRename(db, group, from, to);
+    addAudit(db, sanitizeUser(u), 'RENAME_MERGE_CATEGORY', 'category', `${group}:${from}->${to}`, `تغییر نام/ادغام «${from}» به «${to}» (${updatedCount} رکورد به‌روزرسانی شد)`);
     await saveActiveDb();
     return { categories: db.categories, updatedCount } as T;
   }
@@ -5278,10 +5302,10 @@ async function handleStaticApiRequestInner<T>(
     if (group === 'transitStatus' && (DEFAULT_TRANSIT_STATUSES as readonly string[]).includes(val)) {
       throw new StaticEngineError(errMsg('سه وضعیت اصلی در راه قابل حذف نیستند.', 'The 3 core In-Transit statuses cannot be deleted.'), 400);
     }
-    db.categories[group] = db.categories[group].filter((v) => v !== val);
-    addAudit(db, sanitizeUser(u), 'DELETE_CATEGORY', 'category', `${group}:${val}`, `حذف «${val}»`);
+    const updatedCount = applyCategoryDelete(db, group, val);
+    addAudit(db, sanitizeUser(u), 'DELETE_CATEGORY', 'category', `${group}:${val}`, `حذف «${val}» (${updatedCount} رکورد به‌روزرسانی شد)`);
     await saveActiveDb();
-    return { categories: db.categories } as T;
+    return { categories: db.categories, updatedCount } as T;
   }
 
   // ---------------- ANALYTICS ----------------
@@ -5490,6 +5514,7 @@ async function handleStaticApiRequestInner<T>(
     const u = requireAuth(['admin', 'operator']);
     const csvText = String(body.csvText || '');
     const rawMatrix = body.matrix as string[][] | undefined;
+    const formulaMap = body.formulaMap as Record<string, string> | undefined;
     const structuredRecords = Array.isArray(body.structuredRecords)
       ? (body.structuredRecords as Record<string, unknown>[])
       : undefined;
@@ -5503,11 +5528,14 @@ async function handleStaticApiRequestInner<T>(
       (matrix.length > 0 ? detectCsvScope(matrix) : null) ||
       'general';
 
+    const PREVIEW_ROW_CAP = 100;
+
     if (isOperationalScope(detectedExtended)) {
       const opPrev = previewOperationalFormImport({
         db,
         scope: detectedExtended,
         matrix,
+        formulaMap,
         structuredRecords,
         sheetName,
         assumedCalendar: cal,
@@ -5527,7 +5555,8 @@ async function handleStaticApiRequestInner<T>(
         estimatedLinks: opPrev.estimatedLinks,
         warnings: opPrev.warnings,
         sample: opPrev.sample,
-        parsedRows: opPrev.parsedRecords,
+        parsedRows: opPrev.parsedRecords.slice(0, PREVIEW_ROW_CAP),
+        parsedRowsTruncated: opPrev.parsedRecords.length > PREVIEW_ROW_CAP,
         deltaSummary: opPrev.deltaSummary,
       } as T;
     }
@@ -5599,7 +5628,8 @@ async function handleStaticApiRequestInner<T>(
           changedFieldsSample: deltaAnalysis.changedFieldsSample,
         },
         sample: parsed.rows.slice(0, 5),
-        parsedRows: parsed.rows,
+        parsedRows: parsed.rows.slice(0, PREVIEW_ROW_CAP),
+        parsedRowsTruncated: parsed.rows.length > PREVIEW_ROW_CAP,
         columnInspection: { ...columnInspection, mapping: activeMapping },
       } as T;
     }
@@ -5635,7 +5665,8 @@ async function handleStaticApiRequestInner<T>(
           changedFieldsSample: deltaAnalysis.changedFieldsSample,
         },
         sample: parsed.rows.slice(0, 5),
-        parsedRows: parsed.rows,
+        parsedRows: parsed.rows.slice(0, PREVIEW_ROW_CAP),
+        parsedRowsTruncated: parsed.rows.length > PREVIEW_ROW_CAP,
         columnInspection: { ...columnInspection, mapping: activeMapping },
       } as T;
     }
@@ -5669,7 +5700,8 @@ async function handleStaticApiRequestInner<T>(
         changedFieldsSample: deltaAnalysis.changedFieldsSample,
       },
       sample: parsed.rows.slice(0, 5),
-      parsedRows: parsed.rows,
+      parsedRows: parsed.rows.slice(0, PREVIEW_ROW_CAP),
+      parsedRowsTruncated: parsed.rows.length > PREVIEW_ROW_CAP,
       columnInspection: { ...columnInspection, mapping: activeMapping },
     } as T;
   }
@@ -5678,6 +5710,7 @@ async function handleStaticApiRequestInner<T>(
     const u = requireAuth(['admin', 'operator']);
     const csvText = String(body.csvText || '');
     const rawMatrix = body.matrix as string[][] | undefined;
+    const formulaMap = body.formulaMap as Record<string, string> | undefined;
     const structuredRecords = Array.isArray(body.structuredRecords)
       ? (body.structuredRecords as Record<string, unknown>[])
       : undefined;
@@ -5705,6 +5738,7 @@ async function handleStaticApiRequestInner<T>(
         db,
         scope: resolvedExtended,
         matrix,
+        formulaMap,
         structuredRecords: hasEdited ? editedRows : structuredRecords,
         sheetName,
         assumedCalendar: cal,
@@ -5806,7 +5840,7 @@ async function handleStaticApiRequestInner<T>(
               sourceRowIndex: idx + 1,
               reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
               reasonFa: existingDb
-                ? `رکورد با کلید «${labelKey}» قبلاً در دیتابیس (ردیف ${existingDb.rowNo || '-'}) ثبت شده است و با تنظیم «رد کردن تکراری‌ها» وارد نشد.`
+                ? `رکورد با کلید «${labelKey}» قبلاً در پایگاه داده (ردیف ${existingDb.rowNo || '-'}) ثبت شده است و با تنظیم «رد کردن تکراری‌ها» وارد نشد.`
                 : `رکورد با کلید «${labelKey}» بیش از یک بار درون همین فایل تکرار شده و نسخه تکراری آن رد شد.`,
               reasonEn: existingDb
                 ? `Key "${labelKey}" already exists in database (Row ${existingDb.rowNo || '-'}) and was skipped.`
@@ -5884,9 +5918,7 @@ async function handleStaticApiRequestInner<T>(
         const existingDb = k ? dbByKey.get(k) : undefined;
         const existingBatch = !existingDb && k ? batchByKey.get(k) : undefined;
         const existing = existingDb || existingBatch;
-        const genDesc = r.generalDescription
-          ? formatGeneralDescriptionCase(r.generalDescription)
-          : inferGeneralDescription(r.description);
+        const genDesc = r.generalDescription || '';
         const rawChem = normKey(r.chemicalType);
         const inferredCls = !r.itemCategory
           ? inferItemClassification(r.description, r.notes, genDesc)
@@ -5918,7 +5950,7 @@ async function handleStaticApiRequestInner<T>(
               sourceRowIndex: idx + 1,
               reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
               reasonFa: existingDb
-                ? `قلم با کلید «${labelKey}» قبلاً در دیتابیس (ردیف ${existingDb.rowNo || '-'}) وجود دارد و با سیاست «رد کردن تکراری‌ها» ثبت نشد.`
+                ? `قلم با کلید «${labelKey}» قبلاً در پایگاه داده (ردیف ${existingDb.rowNo || '-'}) وجود دارد و با سیاست «رد کردن تکراری‌ها» ثبت نشد.`
                 : `قلم با کلید «${labelKey}» در همین فایل تکرار شده است و نسخه تکراری آن رد شد.`,
               reasonEn: existingDb
                 ? `Item "${labelKey}" already exists in database (Row ${existingDb.rowNo || '-'}) and was skipped.`
@@ -6039,7 +6071,7 @@ async function handleStaticApiRequestInner<T>(
               sourceRowIndex: idx + 1,
               reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
               reasonFa: existingDb
-                ? `محموله در راه با کلید «${labelKey}» قبلاً در دیتابیس ثبت شده و رد شد.`
+                ? `محموله در راه با کلید «${labelKey}» قبلاً در پایگاه داده ثبت شده و رد شد.`
                 : `محموله با کلید «${labelKey}» در همین فایل تکرار شده و نسخه تکراری آن رد شد.`,
               reasonEn: existingDb
                 ? `In-transit key "${labelKey}" already exists in database and was skipped.`
@@ -6427,14 +6459,18 @@ async function handleStaticApiRequestInner<T>(
     const upperConfirm = normConfirm.toUpperCase();
     const isFullWipe = wipeAll || selected.length === allKeys.length;
     const validConfirm = isFullWipe
-      ? normConfirm === 'حذف کل دیتابیس' || upperConfirm === 'DELETE ALL'
-      : normConfirm === 'حذف اطلاعات' || upperConfirm === 'DELETE' || normConfirm === 'حذف کل دیتابیس' || upperConfirm === 'DELETE ALL';
+      ? normConfirm === 'حذف کل پایگاه داده' || normConfirm === 'حذف کل دیتابیس' || upperConfirm === 'DELETE ALL'
+      : normConfirm === 'حذف اطلاعات' ||
+        upperConfirm === 'DELETE' ||
+        normConfirm === 'حذف کل پایگاه داده' ||
+        normConfirm === 'حذف کل دیتابیس' ||
+        upperConfirm === 'DELETE ALL';
 
     if (!validConfirm) {
       throw new StaticEngineError(
         errMsg(
           isFullWipe
-            ? 'عبارت امنیتی اشتباه است. برای حذف کل دیتابیس باید «حذف کل دیتابیس» یا «DELETE ALL» را تایپ کنید.'
+            ? 'عبارت امنیتی اشتباه است. برای حذف کل پایگاه داده باید «حذف کل پایگاه داده» یا «DELETE ALL» را تایپ کنید.'
             : 'عبارت امنیتی اشتباه است. برای تایید حذف باید «حذف اطلاعات» یا «DELETE» را تایپ کنید.',
           isFullWipe
             ? 'Invalid confirmation phrase. Type "DELETE ALL" to wipe all sections.'
@@ -6544,7 +6580,7 @@ async function handleStaticApiRequestInner<T>(
       isFullWipe ? 'PURGE_ALL_DATABASE' : 'PURGE_DATABASE_SECTIONS',
       'backup',
       selected.join(','),
-      `پاکسازی امنیتی دیتابیس توسط مدیر کل (${selected.length} بخش، مجموع ${totalDeleted} رکورد حذف شد): ${selected.join('، ')}`,
+      `پاکسازی امنیتی پایگاه داده توسط مدیر کل (${selected.length} بخش، مجموع ${totalDeleted} رکورد حذف شد): ${selected.join('، ')}`,
     );
     await saveActiveDb();
 

@@ -1261,7 +1261,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                   }`}
                 >
                   <FileUp className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'فرم‌های آپلودی شرکتی (Excel / Word / PDF)' : 'Uploaded Company Forms'}</span>
+                  <span>{isFa ? 'فرم‌های آپلودی شرکتی' : 'Uploaded Company Forms'}</span>
                   {uploadedForms.length > 0 && (
                     <span className="px-1.5 py-0.5 rounded bg-black/15 text-[10px] font-mono">
                       {uploadedForms.length}
@@ -1370,8 +1370,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                       }
                       className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
                     >
-                      <option value="portrait">{isFa ? 'عمودی (Portrait)' : 'Portrait'}</option>
-                      <option value="landscape">{isFa ? 'افقی (Landscape)' : 'Landscape'}</option>
+                      <option value="portrait">{isFa ? 'عمودی' : 'Portrait'}</option>
+                      <option value="landscape">{isFa ? 'افقی' : 'Landscape'}</option>
                     </select>
                   </div>
                 </div>
@@ -1430,7 +1430,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                   </div>
                   <div>
                     <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'شماره بازنگری (Revision)' : 'Revision'}
+                      {isFa ? 'شماره بازنگری' : 'Revision'}
                     </label>
                     <input
                       type="text"
@@ -1686,10 +1686,10 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                   <span className="text-[11px] font-normal text-[var(--text-muted)]">
                     {resolvedFormDesign.orientation === 'landscape'
                       ? isFa
-                        ? 'افقی (Landscape)'
+                        ? 'افقی'
                         : 'Landscape'
                       : isFa
-                        ? 'عمودی (Portrait)'
+                        ? 'عمودی'
                         : 'Portrait'}
                   </span>
                 </div>
@@ -1788,8 +1788,24 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5" />
                     <span>{uf.titleFa}</span>
-                    <span className="text-[10px] opacity-80 uppercase font-mono">
-                      [{uf.fileType}]
+                    <span className="text-[10px] opacity-80">
+                      (
+                      {uf.fileType === 'excel'
+                        ? isFa
+                          ? 'جدول'
+                          : 'Sheet'
+                        : uf.fileType === 'word'
+                          ? isFa
+                            ? 'سند'
+                            : 'Doc'
+                          : uf.fileType === 'pdf'
+                            ? isFa
+                              ? 'پی‌دی‌اف'
+                              : 'PDF'
+                            : isFa
+                              ? 'تصویر'
+                              : 'Image'}
+                      )
                     </span>
                   </button>
                 ))}
@@ -1801,7 +1817,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                         ? 'در حال پردازش...'
                         : 'Parsing...'
                       : isFa
-                        ? 'آپلود فرم شرکت (Word / Excel / PDF / تصویر)'
+                        ? 'آپلود فرم شرکتی (فایل جدول، سند، پی‌دی‌اف یا تصویر)'
                         : 'Upload Company Form'}
                   </span>
                   <input
@@ -1831,8 +1847,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                 </div>
                 <p className="text-xs text-[var(--text-muted)] max-w-xl mx-auto leading-relaxed">
                   {isFa
-                    ? 'فایل‌های آماده و کددار شرکت را با فرمت Excel (.xlsx)، Word (.docx)، PDF یا تصویر وارد کنید. سامانه به‌صورت هوشمند فرمول‌های اکسل، بخش عملیاتی متناظر و اتصال داده‌ها به یک یا چند بخش مختلف را شناسایی می‌کند.'
-                    : 'Upload official coded Excel, Word, PDF, or Image forms. The system detects formulas, matching operational section, and multi-source bindings.'}
+                    ? 'فایل‌های آماده و کددار شرکت را با قالب‌های جدولی، اسناد متنی، پی‌دی‌اف یا تصویر وارد کنید. سامانه به‌صورت هوشمند فرمول‌های داخلی، بخش عملیاتی متناظر و اتصال داده‌ها به یک یا چند بخش مختلف را شناسایی می‌کند.'
+                    : 'Upload official coded spreadsheet, document, PDF, or image forms. The system detects formulas, matching operational section, and multi-source bindings.'}
                 </p>
               </div>
             ) : (
@@ -1974,7 +1990,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     {activeUploadedForm.fileType === 'excel' && activeExcelSheetMeta && (
                       <div className="sm:col-span-2">
                         <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                          {isFa ? 'شیت فعال اکسل' : 'Active Worksheet'}
+                          {isFa ? 'برگه فعال فرم' : 'Active Worksheet'}
                         </label>
                         <select
                           value={activeUploadedForm.sheetName || activeExcelSheetMeta.activeSheetName}
@@ -2114,8 +2130,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                           <Sparkles className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
                           <span>
                             {isFa
-                              ? `فرمول‌های شناسایی‌شده در فایل اکسل (${activeUploadedForm.detectedFormulas?.length} سلول):`
-                              : `Detected Excel Formulas (${activeUploadedForm.detectedFormulas?.length} cells):`}
+                              ? `فرمول‌های شناسایی‌شده در قالب فرم (${activeUploadedForm.detectedFormulas?.length} سلول):`
+                              : `Detected Form Formulas (${activeUploadedForm.detectedFormulas?.length} cells):`}
                           </span>
                         </span>
                       </div>
@@ -2284,8 +2300,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                         />
                         <span>
                           {isFa
-                            ? 'تغییر اندازه خودکار ارتفاع سطر متناسب با متن (مانند اکسل)'
-                            : 'Auto-fit row height to content (Excel AutoFit)'}
+                            ? 'تغییر اندازه خودکار ارتفاع سطر متناسب با متن'
+                            : 'Auto-fit row height to content'}
                         </span>
                       </label>
                       <label className="flex items-center gap-1.5 text-[11px] cursor-pointer text-[var(--text-secondary)]">
@@ -2349,8 +2365,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                       {(activeUploadedForm.detectedTokens || []).length === 0 ? (
                         <div className="text-[10.5px] text-[var(--text-muted)]">
                           {isFa
-                            ? 'در این فایل متغیر {{...}} یافت نشد. اگر داخل ورد یا اکسل متغیرهایی مثل {{packingListNo}} یا {{شماره پکینگ}} بگذارید، به‌صورت خودکار پر می‌شوند.'
-                            : 'No {{tokens}} detected in file. Use tokens like {{packingListNo}} inside Excel/Word for auto-fill.'}
+                            ? 'در این فایل متغیر {{...}} یافت نشد. اگر داخل فایل فرم متغیرهایی مثل {{packingListNo}} یا {{شماره پکینگ}} بگذارید، به‌صورت خودکار پر می‌شوند.'
+                            : 'No {{tokens}} detected in file. Use tokens like {{packingListNo}} inside your form template for auto-fill.'}
                         </div>
                       ) : (
                         <div className="space-y-1.5 max-h-40 overflow-y-auto pe-1">
@@ -2408,7 +2424,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-[11px] font-bold text-[var(--text-primary)]">
-                          {isFa ? 'تزریق خودکار ردیف اقلام در جدول اکسل:' : 'Excel Table Row Injection:'}
+                          {isFa ? 'تزریق خودکار ردیف اقلام در جدول فرم:' : 'Dynamic Table Row Injection:'}
                         </span>
                         <div className="flex items-center gap-2">
                           <label className="text-[10.5px] text-[var(--text-secondary)]">

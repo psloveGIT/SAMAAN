@@ -2233,13 +2233,15 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         )}
                         {row.itemCategory === 'chemicals' && (() => {
                           const hasChemStock = row.mapnaInventory > 0 || row.contractorInventory > 0;
-                          const isExpiredChem = hasChemStock && chemDays !== null && chemDays < 0;
+                          const isExpiredChem = chemDays !== null && chemDays < 0;
                           const isNearExpiryChem = hasChemStock && chemDays !== null && chemDays >= 0 && chemDays <= 30;
                           return (
                             <span
                               className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${
                                 isExpiredChem
-                                  ? 'text-rose-600 dark:text-rose-400'
+                                  ? hasChemStock
+                                    ? 'text-rose-600 dark:text-rose-400'
+                                    : 'text-[var(--text-muted)]'
                                   : isNearExpiryChem
                                     ? 'text-amber-700 dark:text-amber-400'
                                     : 'text-[var(--accent-primary)]'
@@ -2248,7 +2250,9 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                               <span
                                 className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                                   isExpiredChem
-                                    ? 'bg-rose-600'
+                                    ? hasChemStock
+                                      ? 'bg-rose-600'
+                                      : 'bg-[var(--text-muted)]'
                                     : isNearExpiryChem
                                       ? 'bg-amber-500'
                                       : 'bg-[var(--accent-primary)]'

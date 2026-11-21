@@ -112,22 +112,30 @@ const UploadedFormA4SheetInner: React.FC<UploadedFormA4SheetProps> = ({
     }
   }, [form.fileDataBase64, form.fileType, form.mimeType]);
 
-  // Build merge lookup maps using shifted effectiveMerges so footer merges remain aligned
+  // Build merge lookup maps using effectiveMerges (including cloned horizontal merges on injected rows)
   const excelMergeMaps = useMemo(() => {
     const startMap = new Map<string, { rowSpan: number; colSpan: number }>();
     const coveredSet = new Set<string>();
     if (!excelResult) return { startMap, coveredSet };
 
     const mergesToUse = excelResult.effectiveMerges || excelResult.model.merges;
+    const rowCount = excelResult.displayRows.length;
+    const colCount = excelResult.model.colWidthsPx.length;
     for (const m of mergesToUse) {
-      if (excelResult.injectedRowIndices.has(m.s.r)) continue;
-      startMap.set(`${m.s.r}:${m.s.c}`, {
-        rowSpan: m.e.r - m.s.r + 1,
-        colSpan: m.e.c - m.s.c + 1,
+      const sr = Math.max(0, m.s.r);
+      const sc = Math.max(0, m.s.c);
+      const er = Math.min(rowCount - 1, m.e.r);
+      const ec = Math.min(colCount - 1, m.e.c);
+      if (er < sr || ec < sc) continue;
+      if (coveredSet.has(`${sr}:${sc}`)) continue;
+
+      startMap.set(`${sr}:${sc}`, {
+        rowSpan: er - sr + 1,
+        colSpan: ec - sc + 1,
       });
-      for (let r = m.s.r; r <= m.e.r; r += 1) {
-        for (let c = m.s.c; c <= m.e.c; c += 1) {
-          if (r !== m.s.r || c !== m.s.c) {
+      for (let r = sr; r <= er; r += 1) {
+        for (let c = sc; c <= ec; c += 1) {
+          if (r !== sr || c !== sc) {
             coveredSet.add(`${r}:${c}`);
           }
         }
@@ -136,12 +144,12 @@ const UploadedFormA4SheetInner: React.FC<UploadedFormA4SheetProps> = ({
     return { startMap, coveredSet };
   }, [excelResult]);
 
-  // Compute proportional percentage column widths when fitToPageWidth is enabled so table-fixed never crushes wide columns
+  // Compute true proportional percentage column widths (preserving narrow micro-grid columns down to 12px)
   const colWidthPercentages = useMemo(() => {
     if (!excelResult) return [] as number[];
     const widths = excelResult.model.colWidthsPx;
-    const total = widths.reduce((sum, w) => sum + Math.max(36, w || 70), 0) || 1;
-    return widths.map((w) => Number(((Math.max(36, w || 70) / total) * 100).toFixed(3)));
+    const total = widths.reduce((sum, w) => sum + Math.max(12, w || 48), 0) || 1;
+    return widths.map((w) => Number(((Math.max(12, w || 48) / total) * 100).toFixed(4)));
   }, [excelResult]);
 
   const scaleFactor = ps.fitToPageWidth ? 1 : (ps.scalePercent || 100) / 100;
@@ -167,7 +175,7 @@ const UploadedFormA4SheetInner: React.FC<UploadedFormA4SheetProps> = ({
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
-              {isFa ? 'عمودی (Portrait)' : 'Portrait'}
+              {isFa ? 'عمودی' : 'Portrait'}
             </button>
             <button
               type="button"
@@ -179,7 +187,7 @@ const UploadedFormA4SheetInner: React.FC<UploadedFormA4SheetProps> = ({
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
-              {isFa ? 'افقی (Landscape)' : 'Landscape'}
+              {isFa ? 'افقی' : 'Landscape'}
             </button>
           </div>
         </div>
@@ -256,21 +264,23 @@ const UploadedFormA4SheetInner: React.FC<UploadedFormA4SheetProps> = ({
               </colgroup>
               <tbody>
                 {excelResult.displayRows.map((rowArr, rIdx) => {
-                  const rowHeight = excelResult.rowHeightsPx[rIdx] || ps.minRowHeightPx;
                   const isInjected = excelResult.injectedRowIndices.has(rIdx);
+                  const minH = ps.autoRowHeight
+                    ? Math.max(18, ps.minRowHeightPx || 22)
+                    : excelResult.rowHeightsPx[rIdx] || ps.minRowHeightPx;
                   return (
                     <tr
                       key={rIdx}
                       style={{
-                        height: ps.autoRowHeight ? `${rowHeight}px` : `${ps.minRowHeightPx}px`,
+                        height: ps.autoRowHeight ? 'auto' : `${minH}px`,
                       }}
                     >
                       {rowArr.map((cellText, cIdx) => {
                         const key = `${rIdx}:${cIdx}`;
-                        if (!isInjected && excelMergeMaps.coveredSet.has(key)) {
+                        if (excelMergeMaps.coveredSet.has(key)) {
                           return null;
                         }
-                        const span = !isInjected ? excelMergeMaps.startMap.get(key) : undefined;
+                        const span = excelMergeMaps.startMap.get(key);
                         const trimmed = (cellText || '').trim();
                         const isNumeric = /^[\d.,/\-\s:%]+$/.test(trimmed) && trimmed !== '';
                         return (
@@ -280,15 +290,27 @@ const UploadedFormA4SheetInner: React.FC<UploadedFormA4SheetProps> = ({
                             colSpan={span?.colSpan}
                             style={{
                               border: ps.showGridlines ? '1px solid #334155' : 'none',
-                              minHeight: `${rowHeight}px`,
-                              overflowWrap: 'anywhere',
+                              overflowWrap: 'break-word',
                               wordBreak: 'break-word',
+                              verticalAlign: 'middle',
                             }}
-                            className={`px-1.5 py-1 align-middle whitespace-pre-wrap leading-snug ${
+                            className={`px-1.5 py-1 whitespace-pre-wrap leading-[1.45] ${
                               isNumeric ? 'text-center font-mono' : 'text-right'
                             } ${rIdx === 0 ? 'font-bold bg-slate-100' : isInjected ? 'bg-white' : ''}`}
                           >
-                            {cellText}
+                            <div
+                              style={{
+                                minHeight: `${minH}px`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: isNumeric ? 'center' : 'flex-start',
+                                whiteSpace: 'pre-wrap',
+                                overflowWrap: 'break-word',
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              {cellText}
+                            </div>
                           </td>
                         );
                       })}

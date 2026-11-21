@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Edit3, Lock, Plus, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
@@ -6,6 +6,7 @@ import { formatDisplayNumber } from '../shared/jalali.ts';
 import { DEFAULT_TRANSIT_STATUSES } from '../shared/normalizers.ts';
 import type { CategoryGroupKey, CategoryStore } from '../shared/types.ts';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface CategoriesPayload {
   categories: CategoryStore;
@@ -96,8 +97,8 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
       notify(
         'success',
         isFa
-          ? `تغییر نام/ادغام انجام شد (${formatDisplayNumber(res.updatedCount, 'fa')} رکورد به‌روزرسانی شد).`
-          : `Renamed/merged (${res.updatedCount} records updated).`,
+          ? `تغییر نام/ادغام انجام شد (${formatDisplayNumber(res.updatedCount, 'fa')} رکورد در جداول به‌روزرسانی شد).`
+          : `Renamed/merged (${res.updatedCount} records updated across tables).`,
       );
       setRenameTarget(null);
       setRenameValue('');
@@ -110,10 +111,23 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
 
   const handleDelete = async (val: string) => {
     try {
-      await apiRequest(`/api/categories/${activeGroup}?value=${encodeURIComponent(val)}`, {
-        method: 'DELETE',
-      });
-      notify('success', isFa ? 'مقدار حذف شد.' : 'Removed.');
+      const res = await apiRequest<{ updatedCount?: number }>(
+        `/api/categories/${activeGroup}?value=${encodeURIComponent(val)}`,
+        {
+          method: 'DELETE',
+        },
+      );
+      const count = res?.updatedCount || 0;
+      notify(
+        'success',
+        isFa
+          ? count > 0
+            ? `مقدار حذف شد و از ${formatDisplayNumber(count, 'fa')} رکورد در جداول پاک‌سازی گردید.`
+            : 'مقدار حذف شد.'
+          : count > 0
+            ? `Removed and cleared from ${count} records across tables.`
+            : 'Removed.',
+      );
       onCategoriesUpdated();
       loadCategories();
     } catch (err) {
@@ -121,9 +135,20 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
     }
   };
 
-  const currentValues = (data?.categories[activeGroup] || []).filter((v) =>
-    v.toLowerCase().includes(filterText.trim().toLowerCase()),
-  );
+  const currentValues = useMemo(() => {
+    const q = filterText.trim().toLowerCase();
+    return (data?.categories[activeGroup] || []).filter((v) =>
+      !q ? true : v.toLowerCase().includes(q),
+    );
+  }, [data, activeGroup, filterText]);
+
+  const pagination = useClientPagination(currentValues, 25);
+
+  useEffect(() => {
+    pagination.setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGroup, filterText]);
+
   const currentCounts = data?.counts[activeGroup] || {};
   const isProtectedTransitDefault = (val: string) =>
     activeGroup === 'transitStatus' && (DEFAULT_TRANSIT_STATUSES as readonly string[]).includes(val);
@@ -191,55 +216,72 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
           )}
         </div>
 
-        <div className="divide-y divide-[var(--border-subtle)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
-          {currentValues.length === 0 ? (
-            <div className="p-8 text-center text-xs text-[var(--text-muted)]">{t.controls.noData}</div>
-          ) : (
-            currentValues.map((val) => {
-              const locked = isProtectedTransitDefault(val);
-              return (
-                <div
-                  key={val}
-                  className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-[var(--bg-subtle)]/50"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className="font-semibold">{val}</span>
-                    {locked && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-subtle)] text-[10px] text-[var(--text-muted)]">
-                        <Lock className="w-2.5 h-2.5" />
-                        <span>{isFa ? 'پیش‌فرض سیستمی' : 'System Default'}</span>
-                      </span>
-                    )}
-                    {(currentCounts[val] || 0) > 0 && (
-                      <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
-                        ({formatDisplayNumber(currentCounts[val], prefs.language)} {isFa ? 'رکورد' : 'records'})
-                      </span>
-                    )}
-                  </div>
-                  {canEdit && !locked && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => { setRenameTarget(val); setRenameValue(val); }}
-                        title={isFa ? 'تغییر نام یا ادغام' : 'Rename / Merge'}
-                        className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
-                      {isAdmin && (
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(val)}
-                          className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+        <div className="border border-[var(--border-subtle)] rounded-xl overflow-hidden">
+          <div className="divide-y divide-[var(--border-subtle)]">
+            {pagination.pageItems.length === 0 ? (
+              <div className="p-8 text-center text-xs text-[var(--text-muted)]">{t.controls.noData}</div>
+            ) : (
+              pagination.pageItems.map((val) => {
+                const locked = isProtectedTransitDefault(val);
+                return (
+                  <div
+                    key={val}
+                    className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-[var(--bg-subtle)]/50"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="font-semibold break-words bidi-plaintext">{val}</span>
+                      {locked && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-subtle)] text-[10px] text-[var(--text-muted)] shrink-0">
+                          <Lock className="w-2.5 h-2.5" />
+                          <span>{isFa ? 'پیش‌فرض سیستمی' : 'System Default'}</span>
+                        </span>
+                      )}
+                      {(currentCounts[val] || 0) > 0 && (
+                        <span className="text-[11px] text-[var(--text-muted)] tabular-nums shrink-0">
+                          ({formatDisplayNumber(currentCounts[val], prefs.language)} {isFa ? 'رکورد' : 'records'})
+                        </span>
                       )}
                     </div>
-                  )}
-                </div>
-              );
-            })
+                    {canEdit && !locked && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => { setRenameTarget(val); setRenameValue(val); }}
+                          title={isFa ? 'تغییر نام یا ادغام' : 'Rename / Merge'}
+                          aria-label={isFa ? `تغییر نام ${val}` : `Rename ${val}`}
+                          className="p-1.5 rounded-md hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(val)}
+                            title={isFa ? 'حذف از دسته‌بندی و جداول' : 'Delete from categories and tables'}
+                            aria-label={isFa ? `حذف ${val}` : `Delete ${val}`}
+                            className="p-1.5 rounded-md hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {currentValues.length > 0 && (
+            <TablePaginationBar
+              page={pagination.page}
+              totalPages={pagination.totalPages}
+              total={pagination.total}
+              pageSize={pagination.pageSize}
+              onPageChange={pagination.setPage}
+              onPageSizeChange={pagination.setPageSize}
+              lang={prefs.language}
+            />
           )}
         </div>
       </div>
@@ -258,8 +300,8 @@ export const CategoryManagerView: React.FC<CategoryManagerViewProps> = ({
             </div>
             <p className="text-xs text-[var(--text-secondary)]">
               {isFa
-                ? `تمامی رکوردهای دارای «${renameTarget}» به مقدار جدید منتقل می‌شوند.`
-                : `All records using "${renameTarget}" will be updated to the new name.`}
+                ? `تمامی رکوردهای دارای «${renameTarget}» در تمام جداول به مقدار جدید منتقل می‌شوند.`
+                : `All records using "${renameTarget}" across all tables will be updated to the new name.`}
             </p>
             <form onSubmit={handleRename} className="space-y-3">
               <input

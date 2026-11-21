@@ -168,7 +168,7 @@ export const ItemImageDropzone: React.FC<ItemImageDropzoneProps> = ({
               </div>
               <p className="text-[11px] text-[var(--text-muted)]">
                 {isFa
-                  ? 'برای جایگزینی، تصویر جدیدی را همینجا بکشید و رها کنید (Drag & Drop) یا از دکمه زیر انتخاب نمایید.'
+                  ? 'برای جایگزینی، تصویر جدیدی را همینجا بکشید و رها کنید یا از دکمه زیر انتخاب نمایید.'
                   : 'Drag & drop a new image here to replace it, or use the buttons below.'}
               </p>
               <div className="flex flex-wrap items-center gap-2">
@@ -211,7 +211,7 @@ export const ItemImageDropzone: React.FC<ItemImageDropzoneProps> = ({
                     ? 'تصویر را اینجا رها کنید...'
                     : 'Drop image here...'
                   : isFa
-                    ? 'تصویر تجهیز را بکشید و اینجا رها کنید (Drag & Drop) یا کلیک کنید'
+                    ? 'تصویر تجهیز را بکشید و اینجا رها کنید یا کلیک کنید'
                     : 'Drag & drop an equipment photo here, or click to browse'}
               </div>
               <div className="text-[11px] text-[var(--text-muted)]">

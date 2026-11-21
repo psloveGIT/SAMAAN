@@ -46,9 +46,17 @@ import {
   Trash2,
   Truck,
   Undo2,
+  Wifi,
+  WifiOff,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
+import {
+  getNetworkModeState,
+  setManualOfflineMode,
+  subscribeNetworkMode,
+  type NetworkModeState,
+} from '../lib/api.ts';
 import { APP_VERSION } from '../shared/appVersion.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
@@ -92,6 +100,7 @@ interface LayoutProps {
   onOpenNewPacking: () => void;
   onOpenAiAssistant?: () => void;
   onOpenShortcuts?: () => void;
+  onNetworkModeChanged?: () => void;
   children: React.ReactNode;
 }
 
@@ -101,6 +110,7 @@ export const Layout: React.FC<LayoutProps> = ({
   onOpenNewPacking,
   onOpenAiAssistant,
   onOpenShortcuts,
+  onNetworkModeChanged,
   children,
 }) => {
   const {
@@ -119,6 +129,8 @@ export const Layout: React.FC<LayoutProps> = ({
     historyBusy,
     performUndo,
     performRedo,
+    refreshAuth,
+    notify,
     logout,
     formatDate,
   } = useApp();
@@ -133,6 +145,11 @@ export const Layout: React.FC<LayoutProps> = ({
     targetVersion: string;
   }>({ hasPendingUpdate: false, targetVersion: APP_VERSION });
   const historyMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const [networkState, setNetworkState] = React.useState<NetworkModeState>(() => getNetworkModeState());
+
+  React.useEffect(() => {
+    return subscribeNetworkMode(setNetworkState);
+  }, []);
 
   React.useEffect(() => {
     const onUpdateStatus = (e: Event) => {
@@ -551,20 +568,20 @@ export const Layout: React.FC<LayoutProps> = ({
 
         {/* Compact Scandinavian Utility Dock & User Profile */}
         <div className={`${sidebarCollapsed ? 'lg:p-2.5 p-3.5' : 'p-3.5'} border-t border-[var(--border-subtle)] space-y-2.5 shrink-0 bg-[var(--bg-surface)]`}>
-          {/* Sleek Compact 5-Icon Quick Controls Dock */}
+          {/* Sleek Compact 6-Icon Quick Controls Dock */}
           <div
             className={`grid gap-1 p-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/80 ${
-              sidebarCollapsed ? 'lg:grid-cols-1 grid-cols-5' : 'grid-cols-5'
+              sidebarCollapsed ? 'lg:grid-cols-1 grid-cols-6' : 'grid-cols-6'
             }`}
           >
             <button
               type="button"
               onClick={() => setLanguage(prefs.language === 'fa' ? 'en' : 'fa')}
               title={`${t.controls.language}: ${prefs.language === 'fa' ? 'تغییر به English' : 'Switch to فارسی'}`}
-              className="h-8 rounded-lg text-[11px] font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)] flex items-center justify-center gap-1 transition-colors"
+              className="h-8 rounded-lg text-[11px] font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)] flex items-center justify-center gap-0.5 transition-colors"
             >
               <Globe className="w-3.5 h-3.5 shrink-0" />
-              <span className={`text-[10px] font-bold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+              <span className={`text-[9.5px] font-bold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
                 {prefs.language === 'fa' ? 'EN' : 'فا'}
               </span>
             </button>
@@ -625,6 +642,66 @@ export const Layout: React.FC<LayoutProps> = ({
               }`}
             >
               <SpellCheck2 className="w-3.5 h-3.5 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              data-testid="sidebar-network-mode-toggle-btn"
+              onClick={async () => {
+                const nextOffline = !networkState.isOffline;
+                setManualOfflineMode(nextOffline);
+                if (!nextOffline && !navigator.onLine) {
+                  notify(
+                    'warning',
+                    isFa
+                      ? 'اتصال شبکه برقرار نیست؛ برنامه در حالت آفلاین باقی می‌ماند.'
+                      : 'No network connection detected; staying in offline mode.',
+                  );
+                } else {
+                  notify(
+                    'info',
+                    nextOffline
+                      ? isFa
+                        ? 'حالت آفلاین فعال شد — داده‌ها به‌صورت محلی ذخیره می‌شوند.'
+                        : 'Offline mode enabled — changes are stored locally.'
+                      : isFa
+                        ? 'حالت آنلاین فعال شد.'
+                        : 'Online mode enabled.',
+                  );
+                }
+                await refreshAuth();
+                onNetworkModeChanged?.();
+              }}
+              title={
+                networkState.isOffline
+                  ? isFa
+                    ? 'وضعیت: آفلاین (برای تغییر به حالت آنلاین کلیک کنید)'
+                    : 'Status: Offline (click to switch to Online)'
+                  : isFa
+                    ? 'وضعیت: آنلاین (برای تغییر به حالت آفلاین کلیک کنید)'
+                    : 'Status: Online (click to switch to Offline)'
+              }
+              aria-label={
+                networkState.isOffline
+                  ? isFa
+                    ? 'حالت آفلاین — تغییر به آنلاین'
+                    : 'Offline mode — switch to online'
+                  : isFa
+                    ? 'حالت آنلاین — تغییر به آفلاین'
+                    : 'Online mode — switch to offline'
+              }
+              aria-pressed={networkState.isOffline}
+              className={`h-8 rounded-lg flex items-center justify-center transition-colors ${
+                networkState.isOffline
+                  ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] hover:opacity-90'
+                  : 'bg-[var(--status-success-bg)] text-[var(--status-success)] hover:opacity-90'
+              }`}
+            >
+              {networkState.isOffline ? (
+                <WifiOff className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <Wifi className="w-3.5 h-3.5 shrink-0" />
+              )}
             </button>
           </div>
 
@@ -760,7 +837,7 @@ export const Layout: React.FC<LayoutProps> = ({
                     onClick={() => {
                       void performUndo();
                     }}
-                    aria-label={isFa ? 'بازگردانی (Undo)' : 'Undo'}
+                    aria-label={isFa ? 'بازگردانی' : 'Undo'}
                     title={
                       historyStatus.canUndo
                         ? isFa
@@ -784,7 +861,7 @@ export const Layout: React.FC<LayoutProps> = ({
                     onClick={() => {
                       void performRedo();
                     }}
-                    aria-label={isFa ? 'انجام مجدد (Redo)' : 'Redo'}
+                    aria-label={isFa ? 'انجام مجدد' : 'Redo'}
                     title={
                       historyStatus.canRedo
                         ? isFa

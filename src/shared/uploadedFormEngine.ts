@@ -268,7 +268,7 @@ export function replaceTokensInText(
 const EXCEL_MODEL_CACHE_MAX = 14;
 const excelModelCache = new Map<string, ParsedExcelModel>();
 
-function makeExcelCacheKey(base64: string, sheetName?: string, maxRows = 120, maxCols = 28): string {
+function makeExcelCacheKey(base64: string, sheetName?: string, maxRows = 160, maxCols = 64): string {
   const len = base64.length;
   const head = base64.slice(0, 64);
   const mid = len > 200 ? base64.slice(Math.floor(len / 2), Math.floor(len / 2) + 32) : '';
@@ -317,8 +317,8 @@ function inferFormulaSuggestedFieldKey(formula: string, adjacentLabel: string): 
 export function parseExcelSheetModel(
   base64: string,
   requestedSheetName?: string,
-  maxRows = 120,
-  maxCols = 28,
+  maxRows = 160,
+  maxCols = 64,
 ): ParsedExcelModel {
   const cacheKey = makeExcelCacheKey(base64, requestedSheetName, maxRows, maxCols);
   const cached = excelModelCache.get(cacheKey);
@@ -388,11 +388,11 @@ export function parseExcelSheetModel(
     rawRows.push(rowArr);
   }
 
-  const merges: ParsedExcelMerge[] = Array.isArray(ws['!merges'])
+  const rawMerges: ParsedExcelMerge[] = Array.isArray(ws['!merges'])
     ? ws['!merges'].filter((m) => m.s.r <= rowUpper && m.s.c <= colUpper)
     : [];
 
-  for (const m of merges) {
+  for (const m of rawMerges) {
     lastNonEmptyRow = Math.max(lastNonEmptyRow, Math.min(m.e.r, rowUpper));
     lastNonEmptyCol = Math.max(lastNonEmptyCol, Math.min(m.e.c, colUpper));
   }
@@ -401,12 +401,19 @@ export function parseExcelSheetModel(
   const finalColsCount = Math.max(1, lastNonEmptyCol + 1);
   const trimmedRows = rawRows.slice(0, finalRowsCount).map((row) => row.slice(0, finalColsCount));
 
-  // Resolve adjacent labels & suggested SAMAAN field keys for detected Excel formulas
+  // Clamp merges strictly to the trimmed sheet bounds so table rendering never breaks
+  const merges: ParsedExcelMerge[] = rawMerges
+    .map((m) => ({
+      s: { r: Math.max(0, m.s.r), c: Math.max(0, m.s.c) },
+      e: { r: Math.min(finalRowsCount - 1, m.e.r), c: Math.min(finalColsCount - 1, m.e.c) },
+    }))
+    .filter((m) => m.e.r >= m.s.r && m.e.c >= m.s.c);
+
+  // Resolve adjacent labels & suggested SAMAAN field keys for detected formulas
   const detectedFormulas: UploadedFormFormulaDetection[] = rawFormulaCells.map(({ r, c, cellRef, formula }) => {
     const above = r > 0 ? (trimmedRows[r - 1]?.[c] || '').trim() : '';
     const left = c > 0 ? (trimmedRows[r]?.[c - 1] || '').trim() : '';
     const right = c + 1 < finalColsCount ? (trimmedRows[r]?.[c + 1] || '').trim() : '';
-    // Also check nearest non-empty header above in the same column
     let headerAbove = above;
     if (!headerAbove) {
       for (let rr = r - 1; rr >= Math.max(0, r - 6); rr -= 1) {
@@ -436,11 +443,11 @@ export function parseExcelSheetModel(
     const meta = colsMeta[c];
     let widthPx = 0;
     if (meta && typeof meta.wpx === 'number' && meta.wpx > 0) {
-      widthPx = meta.wpx;
+      widthPx = Math.round(meta.wpx);
     } else if (meta && typeof meta.wch === 'number' && meta.wch > 0) {
-      widthPx = Math.round(meta.wch * 7.6 + 10);
+      widthPx = Math.round(meta.wch * 7.4 + 6);
     } else {
-      let maxLen = 8;
+      let maxLen = 0;
       for (let r = 0; r < finalRowsCount; r += 1) {
         const len = (trimmedRows[r]?.[c] || '').length;
         const isMergedWide = merges.some(
@@ -448,9 +455,10 @@ export function parseExcelSheetModel(
         );
         if (!isMergedWide && len > maxLen) maxLen = Math.min(len, 38);
       }
-      widthPx = Math.round(Math.min(260, Math.max(58, maxLen * 7.5 + 16)));
+      widthPx = maxLen > 0 ? Math.round(Math.min(260, Math.max(36, maxLen * 7.2 + 12))) : 48;
     }
-    colWidthsPx.push(Math.max(42, Math.min(360, widthPx)));
+    // Preserve narrow micro-grid columns (down to 12px) instead of inflating them and crushing wide columns
+    colWidthsPx.push(Math.max(12, Math.min(420, widthPx)));
   }
 
   const rowsMeta = Array.isArray(ws['!rows']) ? ws['!rows'] : [];
@@ -1273,6 +1281,15 @@ export function buildRenderedExcelGrid(
       oldRowToNewRow.set(i, i);
     }
 
+    // Capture template-row horizontal merges so every injected line row keeps exact column alignment
+    const templateRowHorizontalMerges = model.merges.filter(
+      (m) => m.s.r === startRow && m.e.r === startRow && m.e.c > m.s.c,
+    );
+    const resolveAnchorCol = (cIdx: number): number => {
+      const m = templateRowHorizontalMerges.find((mg) => cIdx >= mg.s.c && cIdx <= mg.e.c);
+      return m ? m.s.c : cIdx;
+    };
+
     const populatedRows = lineRows.map((line) => {
       const mergedMap = { ...headerTokens, ...line };
       const rowArr = templateRow.map((cell) =>
@@ -1282,7 +1299,8 @@ export function buildRenderedExcelGrid(
         if (b.colIndex >= 0 && b.colIndex < colCount) {
           const val = mergedMap[b.fieldKey];
           if (val !== undefined) {
-            rowArr[b.colIndex] = val;
+            const targetCol = resolveAnchorCol(b.colIndex);
+            rowArr[targetCol] = val;
           }
         }
       }
@@ -1302,13 +1320,12 @@ export function buildRenderedExcelGrid(
       injectedRowIndices.add(before.length + i);
     }
 
-    // Re-map template merges so header & footer merges never break after row injection
+    // Re-map template merges so header, injected rows, and footer merges all stay aligned
     effectiveMerges = [];
     for (const m of model.merges) {
       const newStartR = oldRowToNewRow.get(m.s.r);
       const newEndR = oldRowToNewRow.get(m.e.r);
       if (newStartR !== undefined && newEndR !== undefined && newEndR >= newStartR) {
-        // Ensure no injected row falls inside this merge
         let overlapsInjected = false;
         for (let rr = newStartR; rr <= newEndR; rr += 1) {
           if (injectedRowIndices.has(rr)) {
@@ -1324,14 +1341,26 @@ export function buildRenderedExcelGrid(
         }
       }
     }
+
+    // Clone template-row horizontal merges onto every injected data row
+    if (templateRowHorizontalMerges.length > 0) {
+      for (let i = 0; i < populatedRows.length; i += 1) {
+        const targetRow = before.length + i;
+        for (const m of templateRowHorizontalMerges) {
+          effectiveMerges.push({
+            s: { r: targetRow, c: m.s.c },
+            e: { r: targetRow, c: m.e.c },
+          });
+        }
+      }
+    }
   } else {
     finalRows = replacedBaseRows;
   }
 
-  // Compute span map for merges on final rows
+  // Compute span map for merges on final rows (including injected rows)
   const rowHeightsPx = finalRows.map((row, rIdx) => {
     const colSpans = row.map((_, cIdx) => {
-      if (injectedRowIndices.has(rIdx)) return 1;
       const m = effectiveMerges.find((mg) => mg.s.r === rIdx && mg.s.c === cIdx);
       return m ? m.e.c - m.s.c + 1 : 1;
     });

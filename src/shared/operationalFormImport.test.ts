@@ -841,6 +841,281 @@ test('Delta sync skips unchanged operational documents and updates only modified
   assert.equal(db.siteEntryMinutes?.find((x) => x.minutesNo === 'SE-DELTA-1')?.notes, 'نسخه ویرایش شده');
 });
 
+test('Rule 1-7 extraction: Site Entry grouped, dual OPI Invitation+Minutes, GCV Rahkaran, MIV/SMR formula splitting, Substitutions stacked, Material Balance BMR', () => {
+  const db = makeEmptyDb();
+
+  // Rule 1: General sheet with Site Entry minutes grouped + weighbridgeWeight
+  const generalSheet = [
+    [
+      'شماره صورتجلسه ورود به سایت',
+      'شماره صورتجلسه ورود کارفرما',
+      'تاریخ ورود',
+      'شماره پکینگ لیست',
+      'شماره نگله',
+      'تامین کننده',
+      'محل ارسال',
+      'شرح کالا',
+      'شماره بارنامه',
+      'شماره خودرو',
+      'وزن باسکول',
+      'نام راننده',
+    ],
+    [
+      'SE-901',
+      'EMP-SE-01',
+      '1404/05/10',
+      'PL-2026-01',
+      'PKG-01',
+      'MAPNA Turbine',
+      'Karaj',
+      'Valve Box 1',
+      'WB-101',
+      '11-A-222',
+      '1450',
+      'Reza',
+    ],
+    [
+      'SE-901',
+      'EMP-SE-01',
+      '1404/05/10',
+      'PL-2026-01',
+      'PKG-02',
+      'MAPNA Turbine',
+      'Karaj',
+      'Valve Box 2',
+      'WB-101',
+      '11-A-222',
+      '1450',
+      'Reza',
+    ],
+  ];
+  const seRes = commitOperationalFormImport({
+    db,
+    scope: 'siteEntryMinutes',
+    matrix: generalSheet,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(seRes.imported, 1);
+  assert.equal(db.siteEntryMinutes!.length, 1);
+  assert.equal(db.siteEntryMinutes![0].minutesNo, 'SE-901');
+  assert.equal(db.siteEntryMinutes![0].employerEntryMinutesNo, 'EMP-SE-01');
+  assert.equal(db.siteEntryMinutes![0].weighbridgeWeight, 1450);
+  assert.equal(db.siteEntryMinutes![0].items?.length, 2);
+
+  // Rules 2, 3, 4, 5, 6, 7 from a single Detailed sheet with formulas!
+  const detailedHeaders = [
+    'شماره محموله',
+    'شماره نگله',
+    'ردیف قلم',
+    'شرح کلی',
+    'شرح کالا',
+    'کد کالا',
+    'سایز',
+    'واحد شمارش',
+    'مقدار پکینگ',
+    'مقدار واقعی',
+    'شماره دعوتنامه',
+    'تاریخ دعوتنامه',
+    'شماره کسری/مغایرت',
+    'شماره رسید مصرف',
+    'تعداد رسید مصرف',
+    'تحویل گیرنده',
+    'شماره حواله انبار کارفرما',
+    'تاریخ حواله انبار کارفرما',
+    'مقدار حواله انبار کارفرما',
+    'شماره حواله انبار پیمانکار',
+    'تاریخ حواله انبار پیمانکار',
+    'مقدار حواله انبار پیمانکار',
+    'شماره برگشتی به انبار پیمانکار',
+    'تاریخ برگشتی به انبار پیمانکار',
+    'مقدار برگشتی به انبار پیمانکار',
+    'شماره جایگزینی',
+    'وضعیت جایگزینی',
+    'تأمین مجدد جایگزین شده',
+    'توضیحات جایگزینی',
+    'موازنه مواد',
+    'وضعیت موازنه',
+  ];
+  const detailedRow1 = [
+    'PL-2026-01',
+    'PKG-01',
+    '1',
+    'Exact Raw General Desc',
+    'Gate Valve 8 Inch Class 600',
+    'VLV-08-600',
+    '8"',
+    'عدد',
+    '10',
+    '10',
+    'OPI-700',
+    '1404/05/12',
+    'MER-700',
+    'GCV-301\nGCV-302',
+    '5',
+    'Unit 1 Ops',
+    'MIV-E1\nMIV-E2',
+    '1404/05/15\n1404/05/16',
+    '7',
+    'MIV-C1\nMIV-C2\nMIV-C3',
+    '1404/05/17\n1404/05/18\n1404/05/19',
+    '10',
+    'SMR-C1\nSMR-C2',
+    '1404/05/20\n1404/05/21',
+    '3',
+    'REP-501\nREP-502',
+    'بسته\nباز',
+    'بله\nخیر',
+    'First sub note\nSecond sub note',
+    'BMR-88',
+    'تایید شده',
+  ];
+  const detailedMatrix = [detailedHeaders, detailedRow1];
+  // Formulas: row index 1 (0-based in cleaned matrix)
+  // col 14 = تعداد رسید مصرف (=2+3), col 18 = مقدار حواله کارفرما (=3+4),
+  // col 21 = مقدار حواله پیمانکار (=2+3+5), col 24 = مقدار برگشتی پیمانکار (=1+2)
+  const formulaMap: Record<string, string> = {
+    '1:14': '=2+3',
+    '1:18': '=3+4',
+    '1:21': '=2+3+5',
+    '1:24': '=1+2',
+  };
+
+  // Rule 2: Shared OPI columns produce BOTH OPI Invitation AND OPI Minutes
+  const invRes = commitOperationalFormImport({
+    db,
+    scope: 'opiInvitations',
+    matrix: detailedMatrix,
+    formulaMap,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  const minRes = commitOperationalFormImport({
+    db,
+    scope: 'opiMinutes',
+    matrix: detailedMatrix,
+    formulaMap,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(invRes.imported, 1);
+  assert.equal(minRes.imported, 1);
+  assert.equal(db.opiInvitations![0].invitationNo, 'OPI-700');
+  assert.equal(db.opiMinutes![0].minutesNo, 'OPI-700');
+  assert.equal(db.opiMinutes![0].merNo, 'MER-700');
+
+  // Rule 3: GCV split via formula =2+3 into GCV-301 (qty 2) and GCV-302 (qty 3)
+  const gcvRes = commitOperationalFormImport({
+    db,
+    scope: 'gcvDocuments',
+    matrix: detailedMatrix,
+    formulaMap,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(gcvRes.imported, 2);
+  assert.equal(db.gcvDocuments!.find((d) => d.receiptNo === 'GCV-301')?.items[0].qty, 2);
+  assert.equal(db.gcvDocuments!.find((d) => d.receiptNo === 'GCV-302')?.items[0].qty, 3);
+
+  // Rules 4 & 5: MIV Employer (=3+4), MIV Contractor (=2+3+5), SMR Contractor (=1+2)
+  const mivRes = commitOperationalFormImport({
+    db,
+    scope: 'mivDocuments',
+    matrix: detailedMatrix,
+    formulaMap,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(mivRes.imported, 7); // 2 employer MIV + 3 contractor MIV + 2 contractor SMR
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'MIV-E1')?.docType, 'miv_mapna');
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'MIV-E1')?.items[0].qty, 3);
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'MIV-E2')?.items[0].qty, 4);
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'MIV-C1')?.docType, 'miv_contractor');
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'MIV-C1')?.items[0].qty, 2);
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'MIV-C2')?.items[0].qty, 3);
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'MIV-C3')?.items[0].qty, 5);
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'SMR-C1')?.docType, 'smr_contractor');
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'SMR-C1')?.items[0].qty, 1);
+  assert.equal(db.mivDocuments!.find((d) => d.docNo === 'SMR-C2')?.items[0].qty, 2);
+
+  // Rule 6: Substitutions stacked multi-line with Open/Closed + reprocured
+  const subRes = commitOperationalFormImport({
+    db,
+    scope: 'substitutions',
+    matrix: detailedMatrix,
+    formulaMap,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(subRes.imported, 2);
+  const rep501 = db.substitutions!.find((s) => s.docNo === 'REP-501');
+  const rep502 = db.substitutions!.find((s) => s.docNo === 'REP-502');
+  assert.equal(rep501?.status, 'executed');
+  assert.equal(rep501?.reprocured, 'بله');
+  assert.equal(rep502?.status, 'pending');
+  assert.equal(rep502?.reprocured, 'خیر');
+
+  // Rule 7: Material Balance (BMR) updates detailed.materialBalanceNo & balanceStatus
+  db.detailed.push({
+    id: 'det-bmr-1',
+    entryDate: '2025-08-01',
+    shipmentNo: 'PL-2026-01',
+    packageNo: 'PKG-01',
+    itemNo: '1',
+    generalDescription: 'Exact Raw General Desc',
+    description: 'Gate Valve 8 Inch Class 600',
+    itemCode: 'VLV-08-600',
+    size: '8"',
+    countingUnit: 'عدد',
+    packingQty: 10,
+    actualQty: 10,
+    mapnaInventory: 10,
+    contractorInventory: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  } as any);
+  const bmrRes = commitOperationalFormImport({
+    db,
+    scope: 'materialBalance',
+    matrix: detailedMatrix,
+    formulaMap,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(bmrRes.imported, 1);
+  assert.equal(db.detailed[0].materialBalanceNo, 'BMR-88');
+  assert.equal(db.detailed[0].balanceStatus, 'تایید شده');
+});
+
+test('previewAutoWorkbook scans 5,000 detailed rows quickly without blocking (< 1500ms)', () => {
+  const db = makeEmptyDb();
+  const header = ['شماره محموله', 'شماره نگله', 'ردیف قلم', 'شرح کلی', 'شرح کالا', 'کد کالا', 'مقدار پکینگ', 'مقدار واقعی'];
+  const matrix: string[][] = [header];
+  for (let i = 1; i <= 5000; i++) {
+    matrix.push(['PL-2026-01', `PKG-${i % 50}`, String(i), 'Raw Desc', `Pipe Fitting ${i}`, `PF-${i}`, '10', '10']);
+  }
+  const t0 = performance.now();
+  const prev = previewAutoWorkbook({
+    db,
+    sheets: [{ name: 'Detailed', matrix }],
+    assumedCalendar: 'jalali',
+    actorName: 'admin',
+  });
+  const elapsedMs = performance.now() - t0;
+  assert.equal(prev.detectedSheets.length, 1);
+  assert.equal(prev.detectedSheets[0].scope, 'detailed');
+  assert.equal(prev.detectedSheets[0].rowCount, 5000);
+  assert.ok(elapsedMs < 1500, `Expected 5,000-row scan under 1500ms, took ${elapsedMs.toFixed(1)}ms`);
+});
+
+
 
 
 

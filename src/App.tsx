@@ -1,15 +1,36 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, RotateCcw, X } from 'lucide-react';
 import { AiAssistantDrawer } from './components/AiAssistantDrawer.tsx';
 import { AppUpdateManager } from './components/AppUpdateManager.tsx';
 import { AuthGate } from './components/AuthGate.tsx';
+import { BackupView } from './components/BackupView.tsx';
+import { BalanceView } from './components/BalanceView.tsx';
+import { CategoryManagerView } from './components/CategoryManagerView.tsx';
+import { CustomFormsRunnerView } from './components/CustomFormsRunnerView.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
+import { DatabasePurgeView } from './components/DatabasePurgeView.tsx';
+import { DetailedView } from './components/DetailedView.tsx';
+import { EmployersStudioView } from './components/EmployersStudioView.tsx';
+import { GcvView } from './components/GcvView.tsx';
+import { GeneralView } from './components/GeneralView.tsx';
+import { GlobalSearchView } from './components/GlobalSearchView.tsx';
 import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
-import { OfflineIndicator } from './components/OfflineIndicator.tsx';
+import { MaterialEstimationView } from './components/MaterialEstimationView.tsx';
+import { MivView } from './components/MivView.tsx';
+import { OpiMinutesView } from './components/OpiMinutesView.tsx';
+import { OpiView } from './components/OpiView.tsx';
 import { PackingWizardModal } from './components/PackingWizardModal.tsx';
 import { ShortcutsSettingsModal } from './components/ShortcutsSettingsModal.tsx';
+import { SiteEntryMinutesView } from './components/SiteEntryMinutesView.tsx';
+import { SmrView } from './components/SmrView.tsx';
 import { SpellCheckAssistant } from './components/SpellCheckAssistant.tsx';
+import { StocktakeView } from './components/StocktakeView.tsx';
+import { StorageLabelView } from './components/StorageLabelView.tsx';
+import { SubstitutionView } from './components/SubstitutionView.tsx';
+import { TransitView } from './components/TransitView.tsx';
+import { TrashView } from './components/TrashView.tsx';
+import { UsersAuditView } from './components/UsersAuditView.tsx';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { apiRequest } from './lib/api.ts';
 import type { CategoryStore, TransitEntry } from './shared/types.ts';
@@ -20,28 +41,83 @@ import {
   matchesShortcutEvent,
 } from './shared/shortcuts.ts';
 
-const BackupView = lazy(() => import('./components/BackupView.tsx').then((m) => ({ default: m.BackupView })));
-const BalanceView = lazy(() => import('./components/BalanceView.tsx').then((m) => ({ default: m.BalanceView })));
-const CategoryManagerView = lazy(() => import('./components/CategoryManagerView.tsx').then((m) => ({ default: m.CategoryManagerView })));
-const CustomFormsRunnerView = lazy(() => import('./components/CustomFormsRunnerView.tsx').then((m) => ({ default: m.CustomFormsRunnerView })));
-const DatabasePurgeView = lazy(() => import('./components/DatabasePurgeView.tsx').then((m) => ({ default: m.DatabasePurgeView })));
-const DetailedView = lazy(() => import('./components/DetailedView.tsx').then((m) => ({ default: m.DetailedView })));
-const EmployersStudioView = lazy(() => import('./components/EmployersStudioView.tsx').then((m) => ({ default: m.EmployersStudioView })));
-const GcvView = lazy(() => import('./components/GcvView.tsx').then((m) => ({ default: m.GcvView })));
-const GeneralView = lazy(() => import('./components/GeneralView.tsx').then((m) => ({ default: m.GeneralView })));
-const GlobalSearchView = lazy(() => import('./components/GlobalSearchView.tsx').then((m) => ({ default: m.GlobalSearchView })));
-const MaterialEstimationView = lazy(() => import('./components/MaterialEstimationView.tsx').then((m) => ({ default: m.MaterialEstimationView })));
-const MivView = lazy(() => import('./components/MivView.tsx').then((m) => ({ default: m.MivView })));
-const OpiMinutesView = lazy(() => import('./components/OpiMinutesView.tsx').then((m) => ({ default: m.OpiMinutesView })));
-const OpiView = lazy(() => import('./components/OpiView.tsx').then((m) => ({ default: m.OpiView })));
-const SiteEntryMinutesView = lazy(() => import('./components/SiteEntryMinutesView.tsx').then((m) => ({ default: m.SiteEntryMinutesView })));
-const SmrView = lazy(() => import('./components/SmrView.tsx').then((m) => ({ default: m.SmrView })));
-const StocktakeView = lazy(() => import('./components/StocktakeView.tsx').then((m) => ({ default: m.StocktakeView })));
-const StorageLabelView = lazy(() => import('./components/StorageLabelView.tsx').then((m) => ({ default: m.StorageLabelView })));
-const SubstitutionView = lazy(() => import('./components/SubstitutionView.tsx').then((m) => ({ default: m.SubstitutionView })));
-const TransitView = lazy(() => import('./components/TransitView.tsx').then((m) => ({ default: m.TransitView })));
-const TrashView = lazy(() => import('./components/TrashView.tsx').then((m) => ({ default: m.TrashView })));
-const UsersAuditView = lazy(() => import('./components/UsersAuditView.tsx').then((m) => ({ default: m.UsersAuditView })));
+interface ErrorBoundaryProps {
+  resetKey?: string;
+  isFa?: boolean;
+  onResetToDashboard?: () => void;
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string;
+}
+
+class AppErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, errorMessage: '' };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return {
+      hasError: true,
+      errorMessage: error?.message || 'Unexpected rendering error',
+    };
+  }
+
+  componentDidUpdate(prevProps: ErrorBoundaryProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, errorMessage: '' });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const isFa = this.props.isFa !== false;
+      return (
+        <div className="my-8 mx-auto max-w-lg rounded-2xl border border-[var(--status-danger)]/40 bg-[var(--bg-surface)] p-6 text-center space-y-4 shadow-sm">
+          <div className="w-11 h-11 mx-auto rounded-full bg-[var(--status-danger-bg)] text-[var(--status-danger)] flex items-center justify-center">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <div className="space-y-1.5">
+            <h3 className="text-sm font-bold text-[var(--text-primary)]">
+              {isFa ? 'خطا در نمایش این بخش' : 'Error rendering this section'}
+            </h3>
+            <p className="text-xs text-[var(--text-secondary)]">
+              {isFa
+                ? 'در بارگذاری این صفحه خطای غیرمنتظره‌ای رخ داد. می‌توانید دوباره تلاش کنید یا به داشبورد بازگردید.'
+                : 'An unexpected error occurred while rendering this view. You can retry or return to the dashboard.'}
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => this.setState({ hasError: false, errorMessage: '' })}
+              className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{isFa ? 'تلاش مجدد' : 'Try Again'}</span>
+            </button>
+            {this.props.onResetToDashboard && (
+              <button
+                type="button"
+                onClick={() => {
+                  this.setState({ hasError: false, errorMessage: '' });
+                  this.props.onResetToDashboard?.();
+                }}
+                className="h-9 px-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-xs font-medium text-[var(--text-primary)]"
+              >
+                {isFa ? 'بازگشت به داشبورد' : 'Return to Dashboard'}
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const EMPTY_CATEGORIES: CategoryStore = {
   island: [],
@@ -131,25 +207,6 @@ const SamaanWorkspace: React.FC = () => {
     }
   }, [user, activeTab]);
 
-  useEffect(() => {
-    if (!user) return;
-    const prefetch = () => {
-      void import('./components/GeneralView.tsx');
-      void import('./components/DetailedView.tsx');
-      void import('./components/TransitView.tsx');
-    };
-    const w = window as Window & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-      cancelIdleCallback?: (id: number) => void;
-    };
-    if (typeof w.requestIdleCallback === 'function') {
-      const id = w.requestIdleCallback(prefetch, { timeout: 1500 });
-      return () => w.cancelIdleCallback?.(id);
-    }
-    const timer = window.setTimeout(prefetch, 400);
-    return () => window.clearTimeout(timer);
-  }, [user]);
-
   const openNewPacking = (packingNo = '') => {
     setTransitPrefill(null);
     setPrefillPackingNo(packingNo);
@@ -176,7 +233,7 @@ const SamaanWorkspace: React.FC = () => {
     setActiveTab('detailed');
   };
 
-  // Global Excel-style customizable keyboard shortcuts handler
+  // Global customizable keyboard shortcuts handler
   useEffect(() => {
     if (!user) return;
     const canEditUser = user.role === 'admin' || user.role === 'operator';
@@ -243,7 +300,6 @@ const SamaanWorkspace: React.FC = () => {
             });
             const notHandled = window.dispatchEvent(ev);
             if (notHandled) {
-              // Auto-submit the topmost visible modal form if present
               const forms = Array.from(document.querySelectorAll('form'));
               const topForm = forms[forms.length - 1];
               if (topForm && typeof topForm.requestSubmit === 'function') {
@@ -285,8 +341,8 @@ const SamaanWorkspace: React.FC = () => {
               notify(
                 'info',
                 isFa
-                  ? 'خروجی اکسل در این صفحه فعال نیست یا از دکمه خروجی بالای جدول استفاده کنید.'
-                  : 'Excel export shortcut is available on data table views.',
+                  ? 'خروجی جدول در این صفحه فعال نیست یا از دکمه خروجی بالای جدول استفاده کنید.'
+                  : 'Table export shortcut is available on data table views.',
               );
             }
             return;
@@ -398,135 +454,134 @@ const SamaanWorkspace: React.FC = () => {
           onOpenNewPacking={() => openNewPacking('')}
           onOpenAiAssistant={() => setAiDrawerOpen(true)}
           onOpenShortcuts={() => setShortcutsModalOpen(true)}
+          onNetworkModeChanged={bumpRefresh}
         >
-          <Suspense
-            fallback={
-              <div className="py-16 text-center text-xs text-[var(--text-muted)]">
-                {t.controls.loading}
-              </div>
-            }
+          <AppErrorBoundary
+            resetKey={`${activeTab}:${activeProjectId}:${refreshSignal}`}
+            isFa={prefs.language === 'fa'}
+            onResetToDashboard={() => setActiveTab('dashboard')}
           >
-          {activeTab === 'dashboard' && (
-            <DashboardView
-              refreshSignal={refreshSignal}
-              onNavigate={setActiveTab}
-              onOpenNewPacking={() => openNewPacking('')}
-              onInspectDetailedShipment={(pk) => jumpToDetailed(pk)}
-            />
-          )}
+            {activeTab === 'dashboard' && (
+              <DashboardView
+                refreshSignal={refreshSignal}
+                onNavigate={setActiveTab}
+                onOpenNewPacking={() => openNewPacking('')}
+                onInspectDetailedShipment={(pk) => jumpToDetailed(pk)}
+              />
+            )}
 
-          {activeTab === 'siteEntry' && (
-            <SiteEntryMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'siteEntry' && (
+              <SiteEntryMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'general' && (
-            <GeneralView
-              categories={categories}
-              refreshSignal={refreshSignal}
-              onDataChanged={bumpRefresh}
-              onOpenNewPacking={openNewPacking}
-              onOpenLinkedDetailed={jumpToDetailed}
-            />
-          )}
+            {activeTab === 'general' && (
+              <GeneralView
+                categories={categories}
+                refreshSignal={refreshSignal}
+                onDataChanged={bumpRefresh}
+                onOpenNewPacking={openNewPacking}
+                onOpenLinkedDetailed={jumpToDetailed}
+              />
+            )}
 
-          {activeTab === 'detailed' && (
-            <DetailedView
-              categories={categories}
-              refreshSignal={refreshSignal}
-              initialShipmentFilter={detailedShipmentFilter}
-              initialPackageFilter={detailedPackageFilter}
-              autoOpenToken={detailedAutoOpenToken}
-              onConsumeAutoOpen={() => setDetailedAutoOpenToken(0)}
-              onDataChanged={bumpRefresh}
-            />
-          )}
+            {activeTab === 'detailed' && (
+              <DetailedView
+                categories={categories}
+                refreshSignal={refreshSignal}
+                initialShipmentFilter={detailedShipmentFilter}
+                initialPackageFilter={detailedPackageFilter}
+                autoOpenToken={detailedAutoOpenToken}
+                onConsumeAutoOpen={() => setDetailedAutoOpenToken(0)}
+                onDataChanged={bumpRefresh}
+              />
+            )}
 
-          {activeTab === 'transit' && (
-            <TransitView
-              categories={categories}
-              refreshSignal={refreshSignal}
-              onDataChanged={bumpRefresh}
-              onConvertToGeneral={openFromTransit}
-            />
-          )}
+            {activeTab === 'transit' && (
+              <TransitView
+                categories={categories}
+                refreshSignal={refreshSignal}
+                onDataChanged={bumpRefresh}
+                onConvertToGeneral={openFromTransit}
+              />
+            )}
 
-          {activeTab === 'opi' && (
-            <OpiView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'opi' && (
+              <OpiView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'opiMinutes' && (
-            <OpiMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'opiMinutes' && (
+              <OpiMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'gcv' && (
-            <GcvView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'gcv' && (
+              <GcvView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'miv' && (
-            <MivView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'miv' && (
+              <MivView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'smr' && (
-            <SmrView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'smr' && (
+              <SmrView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'substitution' && (
-            <SubstitutionView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'substitution' && (
+              <SubstitutionView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'materialEstimation' && (
-            <MaterialEstimationView
-              categories={categories}
-              refreshSignal={refreshSignal}
-              onDataChanged={bumpRefresh}
-            />
-          )}
+            {activeTab === 'materialEstimation' && (
+              <MaterialEstimationView
+                categories={categories}
+                refreshSignal={refreshSignal}
+                onDataChanged={bumpRefresh}
+              />
+            )}
 
-          {activeTab === 'balance' && (
-            <BalanceView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'balance' && (
+              <BalanceView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'stocktake' && (
-            <StocktakeView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'stocktake' && (
+              <StocktakeView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'storageLabel' && (
-            <StorageLabelView refreshSignal={refreshSignal} />
-          )}
+            {activeTab === 'storageLabel' && (
+              <StorageLabelView refreshSignal={refreshSignal} />
+            )}
 
-          {activeTab === 'customForms' && (
-            <CustomFormsRunnerView
-              refreshSignal={refreshSignal}
-              onDataChanged={bumpRefresh}
-              onOpenEmployerStudio={() => setActiveTab('employers')}
-            />
-          )}
+            {activeTab === 'customForms' && (
+              <CustomFormsRunnerView
+                refreshSignal={refreshSignal}
+                onDataChanged={bumpRefresh}
+                onOpenEmployerStudio={() => setActiveTab('employers')}
+              />
+            )}
 
-          {activeTab === 'employers' && <EmployersStudioView />}
+            {activeTab === 'employers' && <EmployersStudioView />}
 
-          {activeTab === 'search' && (
-            <GlobalSearchView refreshSignal={refreshSignal} onJumpToDetailed={jumpToDetailed} />
-          )}
+            {activeTab === 'search' && (
+              <GlobalSearchView refreshSignal={refreshSignal} onJumpToDetailed={jumpToDetailed} />
+            )}
 
-          {activeTab === 'categories' && (
-            <CategoryManagerView
-              refreshSignal={refreshSignal}
-              onCategoriesUpdated={bumpRefresh}
-            />
-          )}
+            {activeTab === 'categories' && (
+              <CategoryManagerView
+                refreshSignal={refreshSignal}
+                onCategoriesUpdated={bumpRefresh}
+              />
+            )}
 
-          {activeTab === 'trash' && (
-            <TrashView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-          )}
+            {activeTab === 'trash' && (
+              <TrashView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
+            )}
 
-          {activeTab === 'usersAudit' && <UsersAuditView refreshSignal={refreshSignal} />}
+            {activeTab === 'usersAudit' && <UsersAuditView refreshSignal={refreshSignal} />}
 
-          {activeTab === 'backup' && <BackupView onRestored={bumpRefresh} />}
+            {activeTab === 'backup' && <BackupView onRestored={bumpRefresh} />}
 
-          {activeTab === 'databasePurge' && (
-            <DatabasePurgeView refreshSignal={refreshSignal} onPurged={bumpRefresh} />
-          )}
-          </Suspense>
+            {activeTab === 'databasePurge' && (
+              <DatabasePurgeView refreshSignal={refreshSignal} onPurged={bumpRefresh} />
+            )}
+          </AppErrorBoundary>
 
           <PackingWizardModal
             open={packingModalOpen}
@@ -569,15 +624,16 @@ const SamaanWorkspace: React.FC = () => {
       )}
       <SpellCheckAssistant />
       <AppUpdateManager />
-      <OfflineIndicator />
     </>
   );
 };
 
 export default function App() {
   return (
-    <AppProvider>
-      <SamaanWorkspace />
-    </AppProvider>
+    <AppErrorBoundary isFa={true}>
+      <AppProvider>
+        <SamaanWorkspace />
+      </AppProvider>
+    </AppErrorBoundary>
   );
 }

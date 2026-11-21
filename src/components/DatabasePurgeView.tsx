@@ -43,7 +43,7 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
   {
     key: 'general',
     group: 'inventory',
-    labelFa: 'ثبت کلی تجهیزات (جنرال)',
+    labelFa: 'ثبت کلی تجهیزات',
     labelEn: 'General Equipment & Packing Status',
     descFa: 'فهرست پکینگ لیست‌ها، نگله‌ها، ابعاد، وزن و وضعیت بسته‌شدن پکینگ‌ها',
     descEn: 'Packing lists, packages, weights, dimensions, and closure status',
@@ -51,15 +51,15 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
   {
     key: 'detailed',
     group: 'inventory',
-    labelFa: 'ثبت جزئیات تجهیزات (دیتیل)',
+    labelFa: 'ثبت جزئیات تجهیزات',
     labelEn: 'Detailed Equipment Items',
-    descFa: 'اقلام، کد کالا، مقادیر واقعی/کسری/آسیب، وضعیت MER/REP و موجودی',
+    descFa: 'اقلام، کد کالا، مقادیر واقعی/کسری/آسیب، وضعیت کسری/مغایرت، جایگزینی و موجودی',
     descEn: 'Line items, item codes, actual/shortage/damaged qty, MER/REP & stock',
   },
   {
     key: 'transit',
     group: 'inventory',
-    labelFa: 'تجهیزات در راه (Transit)',
+    labelFa: 'تجهیزات در راه',
     labelEn: 'In-Transit Equipment',
     descFa: 'محموله‌های در مسیر، بارنامه‌ها، علی‌الحساب و وضعیت ارسال',
     descEn: 'Shipments in transit, waybills, interim notes, and status',
@@ -83,7 +83,7 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
   {
     key: 'opiMinutes',
     group: 'operations',
-    labelFa: 'صورتجلسه گشایش و بازرسی (OPI)',
+    labelFa: 'صورتجلسه گشایش و بازرسی بسته‌ها',
     labelEn: 'OPI Inspection Minutes',
     descFa: 'نتایج صورتجلسه‌های بازرسی و تطبیق اقلام',
     descEn: 'Recorded opening & package inspection minutes',
@@ -91,7 +91,7 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
   {
     key: 'osdrReports',
     group: 'operations',
-    labelFa: 'گزارش مغایرت، کسری و آسیب‌دیدگی (MER)',
+    labelFa: 'گزارش مغایرت، کسری و آسیب‌دیدگی',
     labelEn: 'Discrepancy / MER Reports',
     descFa: 'گزارش‌های کسری، اضافی و آسیب‌دیدگی اقلام بازرسی‌شده',
     descEn: 'Shortage, surplus, and damaged equipment reports',
@@ -99,7 +99,7 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
   {
     key: 'gcvDocuments',
     group: 'operations',
-    labelFa: 'رسید مصرف مستقیم کالا (GCV)',
+    labelFa: 'رسید مصرف مستقیم کالا',
     labelEn: 'Direct Consumption Receipts (GCV)',
     descFa: 'اسناد رسید مستقیم تحویل به مصرف‌کنندگان',
     descEn: 'Direct material consumption receipts',
@@ -107,7 +107,7 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
   {
     key: 'mivDocuments',
     group: 'operations',
-    labelFa: 'حواله انبار و فرم ارجاع (MIV / SMR)',
+    labelFa: 'حواله انبار و فرم ارجاع',
     labelEn: 'Warehouse Issue & Return (MIV / SMR)',
     descFa: 'درخواست‌ها و حواله‌های خروج و ارجاع کالا بین انبار و پیمانکار',
     descEn: 'Material issue vouchers and return notes',
@@ -123,7 +123,7 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
   {
     key: 'materialEstimates',
     group: 'operations',
-    labelFa: 'برآورد تجهیزات (MTO)',
+    labelFa: 'برآورد تجهیزات',
     labelEn: 'Equipment Estimation (MTO)',
     descFa: 'فهرست برآورد مهندسی و مقادیر هدف متریال',
     descEn: 'Engineering MTO estimates and target quantities',
@@ -163,7 +163,7 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
   {
     key: 'auditLogs',
     group: 'system',
-    labelFa: 'تاریخچه ثبت وقایع (Audit Log)',
+    labelFa: 'تاریخچه ثبت وقایع',
     labelEn: 'Audit Logs',
     descFa: 'گزارش تاریخچه فعالیت کاربران در پروژه (این عملیات مجدداً ثبت می‌شود)',
     descEn: 'Historical action log (a new audit entry is recorded for this purge)',
@@ -232,11 +232,11 @@ export const DatabasePurgeView: React.FC<DatabasePurgeViewProps> = ({
           <Lock className="w-6 h-6" />
         </div>
         <h3 className="text-base font-bold text-[var(--text-primary)]">
-          {isFa ? 'دسترسی محدود — ویژه مدیر کل (Admin)' : 'Restricted Access — Admin Only'}
+          {isFa ? 'دسترسی محدود — ویژه مدیر کل' : 'Restricted Access — Admin Only'}
         </h3>
         <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
           {isFa
-            ? 'صفحه حذف و پاکسازی دیتابیس تنها برای حساب کاربری با نقش مدیر کل قابل مشاهده و اجرا است.'
+            ? 'صفحه حذف و پاکسازی پایگاه داده تنها برای حساب کاربری با نقش مدیر کل قابل مشاهده و اجرا است.'
             : 'Database purge and reset operations are strictly restricted to Administrator accounts.'}
         </p>
       </div>
@@ -273,7 +273,7 @@ export const DatabasePurgeView: React.FC<DatabasePurgeViewProps> = ({
   const isFullWipeTarget =
     pendingMode === 'all' || pendingSections.length === SECTION_DESCRIPTORS.length;
 
-  const expectedPhraseFa = isFullWipeTarget ? 'حذف کل دیتابیس' : 'حذف اطلاعات';
+  const expectedPhraseFa = isFullWipeTarget ? 'حذف کل پایگاه داده' : 'حذف اطلاعات';
   const expectedPhraseEn = isFullWipeTarget ? 'DELETE ALL' : 'DELETE';
 
   const normalizedTyped = typedPhrase
@@ -283,9 +283,12 @@ export const DatabasePurgeView: React.FC<DatabasePurgeViewProps> = ({
     .replace(/\s+/g, ' ')
     .trim();
   const isPhraseValid = isFullWipeTarget
-    ? normalizedTyped === 'حذف کل دیتابیس' || normalizedTyped.toUpperCase() === 'DELETE ALL'
+    ? normalizedTyped === 'حذف کل پایگاه داده' ||
+      normalizedTyped === 'حذف کل دیتابیس' ||
+      normalizedTyped.toUpperCase() === 'DELETE ALL'
     : normalizedTyped === 'حذف اطلاعات' ||
       normalizedTyped.toUpperCase() === 'DELETE' ||
+      normalizedTyped === 'حذف کل پایگاه داده' ||
       normalizedTyped === 'حذف کل دیتابیس' ||
       normalizedTyped.toUpperCase() === 'DELETE ALL';
 
@@ -385,7 +388,7 @@ export const DatabasePurgeView: React.FC<DatabasePurgeViewProps> = ({
               <ShieldAlert className="w-5 h-5 text-[var(--status-danger)] shrink-0" />
               <span>
                 {isFa
-                  ? 'مدیریت امنیتی و حذف دیتابیس بخش‌های پروژه'
+                  ? 'مدیریت امنیتی و حذف پایگاه داده بخش‌های پروژه'
                   : 'Secure Database Purge & Section Reset'}
               </span>
             </h3>
@@ -445,7 +448,7 @@ export const DatabasePurgeView: React.FC<DatabasePurgeViewProps> = ({
               className="h-9 px-4 rounded-lg bg-[var(--status-danger)] hover:opacity-90 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0"
             >
               <Database className="w-3.5 h-3.5" />
-              <span>{isFa ? 'حذف کل دیتابیس پروژه' : 'Wipe Entire Project DB'}</span>
+              <span>{isFa ? 'حذف کل پایگاه داده پروژه' : 'Wipe Entire Project DB'}</span>
             </button>
           </div>
         </div>
@@ -570,7 +573,7 @@ export const DatabasePurgeView: React.FC<DatabasePurgeViewProps> = ({
                 <div>
                   <h4 className="text-sm font-bold text-[var(--status-danger)]">
                     {isFa
-                      ? 'تایید امنیتی: آیا مطمئن هستید که می‌خواهید دیتابیس حذف شود؟'
+                      ? 'تایید امنیتی: آیا مطمئن هستید که می‌خواهید پایگاه داده حذف شود؟'
                       : 'Security Confirmation: Are you sure you want to delete this database data?'}
                   </h4>
                   <p className="text-xs text-[var(--text-secondary)] mt-1">
@@ -645,7 +648,7 @@ export const DatabasePurgeView: React.FC<DatabasePurgeViewProps> = ({
                 />
                 <span>
                   {isFa
-                    ? 'بله، مطمئن هستم که می‌خواهم اطلاعات انتخاب‌شده به‌طور کامل از دیتابیس حذف شوند.'
+                    ? 'بله، مطمئن هستم که می‌خواهم اطلاعات انتخاب‌شده به‌طور کامل از پایگاه داده حذف شوند.'
                     : 'Yes, I confirm that I want to permanently delete the selected database sections.'}
                 </span>
               </label>

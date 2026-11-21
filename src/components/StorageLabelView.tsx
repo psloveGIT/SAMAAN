@@ -778,7 +778,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="space-y-1">
             <label className="text-[11px] font-medium text-[var(--text-secondary)]">
-              {isFa ? 'نام انبار (Warehouse)' : 'Warehouse'}
+              {isFa ? 'نام انبار' : 'Warehouse'}
             </label>
             <input
               type="text"
@@ -791,7 +791,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
 
           <div className="space-y-1">
             <label className="text-[11px] font-medium text-[var(--text-secondary)]">
-              {isFa ? 'شماره قرقره (Drum number)' : 'Drum number'}
+              {isFa ? 'شماره قرقره' : 'Drum number'}
             </label>
             <input
               type="text"

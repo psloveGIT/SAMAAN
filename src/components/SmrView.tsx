@@ -971,7 +971,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره فرم (SMR No.)' : 'SMR No.'} *
+                {isFa ? 'شماره فرم ارجاع' : 'SMR No.'} *
               </label>
               <input
                 type="text"
@@ -987,7 +987,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
             </div>
 
             <JalaliDateInput
-              label={`${isFa ? 'تاریخ فرم (SMR Date)' : 'SMR Date'} *`}
+              label={`${isFa ? 'تاریخ فرم ارجاع' : 'SMR Date'} *`}
               value={date}
               onChange={setDate}
             />

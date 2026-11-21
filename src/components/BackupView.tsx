@@ -90,6 +90,7 @@ interface PreviewResponse {
   warnings?: string[];
   sample: Record<string, unknown>[];
   parsedRows?: Record<string, unknown>[];
+  parsedRowsTruncated?: boolean;
   columnInspection?: ColumnInspectionPayload;
   deltaSummary?: ImportDeltaSummary;
 }
@@ -199,6 +200,12 @@ function summarizeOperationalRow(
         primary: s('mtoCode') || s('itemCode') || '-',
         secondary: `${s('description')} (${s('size') || '-'})`,
         badge: `${s('estimatedQty')} ${s('countingUnit')}`,
+      };
+    case 'materialBalance':
+      return {
+        primary: s('bmrNo') || '-',
+        secondary: `${s('shipmentNo') || '-'} · ${s('description') || '-'}`,
+        badge: s('status') || (itemsLen > 0 ? (isFa ? `${itemsLen} قلم` : `${itemsLen} items`) : undefined),
       };
     case 'periodicInspections':
       return {
@@ -322,7 +329,7 @@ function quickFixFieldsForRejectedScope(scope: 'general' | 'detailed' | 'transit
 function reasonBadgeText(code: ImportRejectionReasonCode, isFa: boolean): string {
   switch (code) {
     case 'duplicate_db':
-      return isFa ? 'تکراری در دیتابیس' : 'Duplicate in DB';
+      return isFa ? 'تکراری در پایگاه داده' : 'Duplicate in DB';
     case 'duplicate_in_file':
       return isFa ? 'تکراری درون فایل' : 'Duplicate in File';
     case 'missing_required':
@@ -350,6 +357,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [checkedSheets, setCheckedSheets] = useState<string[]>([]);
   const [sheetsMap, setSheetsMap] = useState<Record<string, string[][]>>({});
+  const [sheetFormulasMap, setSheetFormulasMap] = useState<Record<string, Record<string, string>>>({});
   const [structuredSheetsMap, setStructuredSheetsMap] = useState<Record<string, StructuredSheetPayload>>({});
   const [assumedCalendar, setAssumedCalendar] = useState<'jalali' | 'gregorian'>('jalali');
   const [duplicatePolicy, setDuplicatePolicy] = useState<'delta' | 'replace' | 'skip'>('delta');
@@ -369,6 +377,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const [taskPreviews, setTaskPreviews] = useState<Record<string, PreviewResponse>>({});
   const [taskMappings, setTaskMappings] = useState<Record<string, Record<string, number>>>({});
   const [taskEditedRows, setTaskEditedRows] = useState<Record<string, Record<string, unknown>[]>>({});
+  const [dirtyEditedTasks, setDirtyEditedTasks] = useState<Record<string, boolean>>({});
   const [mappingExpanded, setMappingExpanded] = useState(true);
   const [rowsConfirmed, setRowsConfirmed] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -452,6 +461,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       explicitMapping?: Record<string, number>,
     ) => {
       const matrix = sheetsMap[sheetNameParam] || [];
+      const formulaMap = sheetFormulasMap[sheetNameParam];
       const structPayload = structuredSheetsMap[sheetNameParam];
       const hasStruct = Boolean(structPayload?.records && structPayload.records.length > 0);
       if (matrix.length === 0 && !hasStruct) return;
@@ -461,6 +471,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           method: 'POST',
           body: JSON.stringify({
             matrix,
+            ...(formulaMap && Object.keys(formulaMap).length > 0 ? { formulaMap } : {}),
             ...(hasStruct ? { structuredRecords: structPayload!.records, sectionHint: structPayload!.sectionHint } : {}),
             sheetName: sheetNameParam,
             scope: scopeVal,
@@ -479,13 +490,14 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           ...prev,
           [taskKey]: res.parsedRows || res.sample || [],
         }));
+        setDirtyEditedTasks((prev) => ({ ...prev, [taskKey]: false }));
       } catch (err) {
         if (err instanceof ApiError) notify('error', err.message);
       } finally {
         setLoadingTaskKey((cur) => (cur === taskKey ? null : cur));
       }
     },
-    [notify, sheetsMap, structuredSheetsMap],
+    [notify, sheetsMap, sheetFormulasMap, structuredSheetsMap],
   );
 
   // Step 0 -> Step 1: Parse file and ONLY ask user which sheet(s) to import (NEVER auto-preview/import Sheet 1!)
@@ -501,6 +513,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setTaskPreviews({});
     setTaskMappings({});
     setTaskEditedRows({});
+    setDirtyEditedTasks({});
     setRowsConfirmed(false);
     setCurrentFileFingerprint('');
     setPreviousUploadMatch(null);
@@ -520,6 +533,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       setFileName(parsed.fileName);
       setSheetNames(parsed.sheetNames);
       setSheetsMap(parsed.sheets);
+      setSheetFormulasMap(parsed.sheetFormulas || {});
       setStructuredSheetsMap(nextStructMap);
       // Single-sheet files (e.g. CSV) pre-check that 1 sheet for convenience; multi-sheet workbooks ask the user explicitly!
       setCheckedSheets(parsed.sheetNames.length === 1 ? [parsed.sheetNames[0]] : []);
@@ -556,6 +570,9 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       const payloadSheets = sheetsToAnalyze.map((nm) => ({
         name: nm,
         matrix: sheetsMap[nm] || [],
+        ...(sheetFormulasMap[nm] && Object.keys(sheetFormulasMap[nm]).length > 0
+          ? { formulaMap: sheetFormulasMap[nm] }
+          : {}),
         ...(structuredSheetsMap[nm]?.records?.length
           ? {
               structuredRecords: structuredSheetsMap[nm].records,
@@ -676,6 +693,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
 
   const handleCellEdit = (rowIndex: number, key: string, value: string, isNumeric?: boolean) => {
     if (!activeTaskKey) return;
+    if (taskPreviews[activeTaskKey]?.parsedRowsTruncated) return;
+    setDirtyEditedTasks((prev) => ({ ...prev, [activeTaskKey]: true }));
     setTaskEditedRows((prev) => {
       const current = prev[activeTaskKey] || [];
       return {
@@ -694,6 +713,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
 
   const handleRemovePreviewRow = (rowIndex: number) => {
     if (!activeTaskKey) return;
+    if (taskPreviews[activeTaskKey]?.parsedRowsTruncated) return;
+    setDirtyEditedTasks((prev) => ({ ...prev, [activeTaskKey]: true }));
     setTaskEditedRows((prev) => ({
       ...prev,
       [activeTaskKey]: (prev[activeTaskKey] || []).filter((_, i) => i !== rowIndex),
@@ -750,16 +771,23 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
 
       for (const task of confirmedTasks) {
         const matrix = sheetsMap[task.sheetName] || [];
+        const formulaMap = sheetFormulasMap[task.sheetName];
         const structPayload = structuredSheetsMap[task.sheetName];
         const hasStruct = Boolean(structPayload?.records?.length);
         const isOp = isOperationalScope(task.scope);
         const customMap = taskMappings[task.taskKey];
         const edited = taskEditedRows[task.taskKey];
+        const shouldSendEdited =
+          !isOp &&
+          Boolean(dirtyEditedTasks[task.taskKey]) &&
+          !taskPreviews[task.taskKey]?.parsedRowsTruncated &&
+          Boolean(edited && edited.length > 0);
 
         const res = await apiRequest<CommitResponse>('/api/import/commit', {
           method: 'POST',
           body: JSON.stringify({
             matrix,
+            ...(formulaMap && Object.keys(formulaMap).length > 0 ? { formulaMap } : {}),
             ...(hasStruct ? { structuredRecords: structPayload!.records, sectionHint: structPayload!.sectionHint } : {}),
             sheetName: task.sheetName,
             scope: task.scope,
@@ -767,7 +795,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
             duplicateRecordPolicy: duplicatePolicy,
             includeParserRejections: !isOp,
             ...(!isOp && customMap ? { columnMapping: customMap } : {}),
-            ...(!isOp && edited && edited.length > 0 ? { editedRows: edited } : {}),
+            ...(shouldSendEdited ? { editedRows: edited } : {}),
           }),
         });
 
@@ -923,8 +951,8 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
         notify(
           'success',
           mode === 'replace'
-            ? isFa ? 'رکورد در دیتابیس با مقادیر جدید جایگزین شد.' : 'Existing DB record replaced.'
-            : isFa ? 'رکورد با موفقیت به دیتابیس اضافه شد.' : 'Record added to database.',
+            ? isFa ? 'رکورد در پایگاه داده با مقادیر جدید جایگزین شد.' : 'Existing DB record replaced.'
+            : isFa ? 'رکورد با موفقیت به پایگاه داده اضافه شد.' : 'Record added to database.',
         );
         triggerAutoSnapshot(`Recovery Import (${rec.scope})`);
         onRestored();
@@ -1008,7 +1036,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const handleDismissRejected = (id?: string) => {
     if (!id) {
       setPendingRejected([]);
-      notify('info', isFa ? 'رکوردهای رد شده نادیده گرفته شدند و به دیتابیس اضافه نشدند.' : 'Rejected records dismissed.');
+      notify('info', isFa ? 'رکوردهای رد شده نادیده گرفته شدند و به پایگاه داده اضافه نشدند.' : 'Rejected records dismissed.');
       return;
     }
     setPendingRejected((prev) => prev.filter((item) => item.id !== id));
@@ -1660,7 +1688,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                             <Sparkles className="w-4 h-4 shrink-0 text-sky-600 dark:text-sky-400" />
                             <span>
                               {isFa
-                                ? 'گزارش مقایسه هوشمند تغییرات فایل با دیتابیس فعلی'
+                                ? 'گزارش مقایسه هوشمند تغییرات فایل با پایگاه داده فعلی'
                                 : 'Smart Delta Analysis vs. Current Database'}
                             </span>
                           </span>
@@ -1783,7 +1811,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                         <AlertTriangle className="w-4 h-4 shrink-0" />
                         <span>
                           {isFa
-                            ? `${activePreview.duplicateRecordsCount.toLocaleString('fa-IR')} رکورد تکراری شناسایی شد (${(activePreview.duplicateDbCount ?? activePreview.duplicateRecordsCount).toLocaleString('fa-IR')} در دیتابیس، ${(activePreview.duplicateInFileCount ?? 0).toLocaleString('fa-IR')} درون فایل).`
+                            ? `${activePreview.duplicateRecordsCount.toLocaleString('fa-IR')} رکورد تکراری شناسایی شد (${(activePreview.duplicateDbCount ?? activePreview.duplicateRecordsCount).toLocaleString('fa-IR')} در پایگاه داده، ${(activePreview.duplicateInFileCount ?? 0).toLocaleString('fa-IR')} درون فایل).`
                             : `${activePreview.duplicateRecordsCount} duplicate record(s) found.`}
                         </span>
                       </div>
@@ -1800,12 +1828,18 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                         <span className="font-bold text-[var(--text-primary)]">
-                          {isFa ? 'پیش‌نمایش داده‌ها (قابل ویرایش پیش از ثبت)' : 'Pre-Import Row Preview (Editable)'}
+                          {activePreview.parsedRowsTruncated
+                            ? isFa
+                              ? 'پیش‌نمایش نمونه داده‌ها (تمام ردیف‌های فایل هنگام ثبت اعمال می‌شوند)'
+                              : 'Sample Row Preview (all file rows will be imported on commit)'
+                            : isFa
+                              ? 'پیش‌نمایش داده‌ها (قابل ویرایش پیش از ثبت)'
+                              : 'Pre-Import Row Preview (Editable)'}
                         </span>
                         <span className="text-[11px] text-[var(--text-muted)]">
                           {isFa
-                            ? `نمایش ${Math.min(activeEditedRows.length, 25).toLocaleString('fa-IR')} از ${activeEditedRows.length.toLocaleString('fa-IR')} ردیف`
-                            : `Showing ${Math.min(activeEditedRows.length, 25)} of ${activeEditedRows.length} rows`}
+                            ? `نمایش ${Math.min(activeEditedRows.length, 25).toLocaleString('fa-IR')} از ${(activePreview.totalRows || activeEditedRows.length).toLocaleString('fa-IR')} ردیف`
+                            : `Showing ${Math.min(activeEditedRows.length, 25)} of ${activePreview.totalRows || activeEditedRows.length} rows`}
                         </span>
                       </div>
 
@@ -1820,7 +1854,9 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                                     {isFa ? tf.labelFa : tf.labelEn}
                                   </th>
                                 ))}
-                                <th className="py-2 px-2">{isFa ? 'حذف' : 'Remove'}</th>
+                                {!activePreview.parsedRowsTruncated && (
+                                  <th className="py-2 px-2">{isFa ? 'حذف' : 'Remove'}</th>
+                                )}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -1836,22 +1872,25 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                                           type={tf.isNumeric ? 'number' : 'text'}
                                           step={tf.isNumeric ? 'any' : undefined}
                                           value={strVal}
+                                          readOnly={Boolean(activePreview.parsedRowsTruncated)}
                                           onChange={(e) => handleCellEdit(rIdx, tf.key, e.target.value, tf.isNumeric)}
                                           className="w-full h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                                         />
                                       </td>
                                     );
                                   })}
-                                  <td className="py-1 px-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRemovePreviewRow(rIdx)}
-                                      className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
-                                      title={isFa ? 'حذف ردیف از ورود' : 'Remove row'}
+                                  {!activePreview.parsedRowsTruncated && (
+                                    <td className="py-1 px-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemovePreviewRow(rIdx)}
+                                        className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                                        title={isFa ? 'حذف ردیف از ورود' : 'Remove row'}
                                     >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </td>
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </td>
+                                  )}
                                 </tr>
                               ))}
                             </tbody>
@@ -2043,13 +2082,13 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     <AlertTriangle className="w-4 h-4 shrink-0" />
                     <span>
                       {isFa
-                        ? `${pendingRejected.length.toLocaleString('fa-IR')} رکورد از فایل به دلایل زیر به دیتابیس اضافه نشدند`
+                        ? `${pendingRejected.length.toLocaleString('fa-IR')} رکورد از فایل به دلایل زیر به پایگاه داده اضافه نشدند`
                         : `${pendingRejected.length} record(s) from the uploaded file were rejected`}
                     </span>
                   </div>
                   <p className="text-xs text-[var(--text-primary)] font-medium">
                     {isFa
-                      ? 'با این داده‌های رد شده چه کار کنیم؟ می‌توانید دلیل هر ردیف را ببینید، فیلدهای آن را ویرایش کنید، به عنوان رکورد جدید به دیتابیس اضافه کنید، جایگزین کنید یا صرف‌نظر نمایید:'
+                      ? 'با این داده‌های رد شده چه کار کنیم؟ می‌توانید دلیل هر ردیف را ببینید، فیلدهای آن را ویرایش کنید، به عنوان رکورد جدید به پایگاه داده اضافه کنید، جایگزین کنید یا صرف‌نظر نمایید:'
                       : 'What should be done with these rejected records? Inspect each reason below, edit fields if needed, force-add to database, replace existing rows, or dismiss:'}
                   </p>
                 </div>
@@ -2064,7 +2103,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                     >
                       <RefreshCw className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
                       <span>
-                        {isFa ? 'جایگزینی موارد تکراری در دیتابیس' : 'Replace Duplicate DB Rows'}
+                        {isFa ? 'جایگزینی موارد تکراری در پایگاه داده' : 'Replace Duplicate DB Rows'}
                       </span>
                     </button>
                   )}
@@ -2076,7 +2115,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                   >
                     <PlusCircle className="w-3.5 h-3.5" />
                     <span>
-                      {isFa ? 'افزودن همه به عنوان رکورد جدید به دیتابیس' : 'Force-Add All to Database'}
+                      {isFa ? 'افزودن همه به عنوان رکورد جدید به پایگاه داده' : 'Force-Add All to Database'}
                     </span>
                   </button>
                   <button
@@ -2134,7 +2173,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                               className="h-7 px-2.5 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)] text-[11px] font-semibold flex items-center gap-1 disabled:opacity-50 transition-colors"
                             >
                               <PlusCircle className="w-3 h-3" />
-                              <span>{isFa ? 'افزودن به دیتابیس' : 'Add to DB'}</span>
+                              <span>{isFa ? 'افزودن به پایگاه داده' : 'Add to DB'}</span>
                             </button>
                           )}
                           <button
@@ -2152,7 +2191,7 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
                       {rec.existingSummary && (
                         <div className="text-[11px] text-[var(--text-secondary)] bg-[var(--bg-canvas)] px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)]">
                           <span className="font-semibold">
-                            {isFa ? 'رکورد مشابه موجود در دیتابیس: ' : 'Matching DB record: '}
+                            {isFa ? 'رکورد مشابه موجود در پایگاه داده: ' : 'Matching DB record: '}
                           </span>
                           <span className="bidi-plaintext">{rec.existingSummary}</span>
                         </div>

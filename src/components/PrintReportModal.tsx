@@ -293,7 +293,7 @@ export function PrintReportModal<T>({
                       : 'border-[var(--border-subtle)] text-[var(--text-secondary)]'
                   }`}
                 >
-                  {isFa ? 'افقی (Landscape)' : 'Landscape'}
+                  {isFa ? 'افقی' : 'Landscape'}
                 </button>
                 <button
                   type="button"
@@ -304,7 +304,7 @@ export function PrintReportModal<T>({
                       : 'border-[var(--border-subtle)] text-[var(--text-secondary)]'
                   }`}
                 >
-                  {isFa ? 'عمودی (Portrait)' : 'Portrait'}
+                  {isFa ? 'عمودی' : 'Portrait'}
                 </button>
               </div>
             </div>

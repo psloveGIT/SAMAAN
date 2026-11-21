@@ -11,22 +11,24 @@ export interface ParsedSpreadsheetFile {
   fileName: string;
   sheetNames: string[];
   sheets: Record<string, string[][]>;
+  sheetFormulas?: Record<string, Record<string, string>>;
   structuredSheets?: Record<string, StructuredSheetPayload>;
   defaultSheet: string;
 }
 
 const KNOWN_JSON_SECTION_KEYS: Array<{ key: string; sheetLabel: string; hint: string }> = [
-  { key: 'transit', sheetLabel: 'در راه (Transit)', hint: 'transit' },
-  { key: 'general', sheetLabel: 'ثبت کلی (General)', hint: 'general' },
-  { key: 'detailed', sheetLabel: 'ثبت جزئیات (Detailed)', hint: 'detailed' },
+  { key: 'transit', sheetLabel: 'در راه', hint: 'transit' },
+  { key: 'general', sheetLabel: 'ثبت کلی', hint: 'general' },
+  { key: 'detailed', sheetLabel: 'ثبت جزئیات', hint: 'detailed' },
   { key: 'siteEntryMinutes', sheetLabel: 'صورتجلسه ورود کالا', hint: 'siteEntryMinutes' },
-  { key: 'opiInvitations', sheetLabel: 'دعوتنامه OPI', hint: 'opiInvitations' },
-  { key: 'opiMinutes', sheetLabel: 'صورتجلسه OPI', hint: 'opiMinutes' },
-  { key: 'osdrReports', sheetLabel: 'گزارش مغایرت MER', hint: 'osdrReports' },
-  { key: 'gcvDocuments', sheetLabel: 'رسید مصرف مستقیم GCV', hint: 'gcvDocuments' },
-  { key: 'mivDocuments', sheetLabel: 'حواله و ارجاع MIV/SMR', hint: 'mivDocuments' },
+  { key: 'opiInvitations', sheetLabel: 'دعوتنامه بازرسی', hint: 'opiInvitations' },
+  { key: 'opiMinutes', sheetLabel: 'صورتجلسه گشایش و بازرسی', hint: 'opiMinutes' },
+  { key: 'osdrReports', sheetLabel: 'گزارش کسری و مغایرت', hint: 'osdrReports' },
+  { key: 'gcvDocuments', sheetLabel: 'رسید مصرف مستقیم کالا', hint: 'gcvDocuments' },
+  { key: 'mivDocuments', sheetLabel: 'حواله انبار و فرم ارجاع', hint: 'mivDocuments' },
   { key: 'substitutions', sheetLabel: 'فرم جایگزینی تجهیزات', hint: 'substitutions' },
-  { key: 'materialEstimates', sheetLabel: 'برآورد تجهیزات MTO', hint: 'materialEstimates' },
+  { key: 'materialEstimates', sheetLabel: 'برآورد تجهیزات', hint: 'materialEstimates' },
+  { key: 'materialBalance', sheetLabel: 'گزارش موازنه و کنترل مصرف مواد', hint: 'materialBalance' },
   { key: 'periodicInspections', sheetLabel: 'بازدید ادواری انبار', hint: 'periodicInspections' },
   { key: 'stocktake', sheetLabel: 'انبارگردانی', hint: 'stocktake' },
   { key: 'customFormSubmissions', sheetLabel: 'فرم‌های اختصاصی کارفرما', hint: 'customFormSubmissions' },
@@ -70,8 +72,50 @@ export function jsonRecordsToMatrix(records: Record<string, unknown>[]): string[
 }
 
 /**
+ * Extracts a sparse map of formula strings (e.g. "=2+3+5" or "=SUM(2,3,5)") indexed by
+ * `${cleanedRowIdx}:${colIdx}` aligned with the non-empty cleaned matrix rows.
+ */
+function extractSheetFormulas(
+  ws: XLSX.WorkSheet,
+  aoa: unknown[][],
+): { cleaned: string[][]; formulas: Record<string, string> } {
+  const cleaned: string[][] = [];
+  const formulas: Record<string, string> = {};
+  const ref = ws['!ref'];
+  const range = ref ? XLSX.utils.decode_range(ref) : null;
+  const startRow = range ? range.s.r : 0;
+  const startCol = range ? range.s.c : 0;
+
+  for (let rawRowIdx = 0; rawRowIdx < aoa.length; rawRowIdx++) {
+    const rawRow = aoa[rawRowIdx];
+    const strRow = Array.isArray(rawRow) ? rawRow.map(cellToString) : [];
+    if (!strRow.some((c) => c !== '')) continue;
+
+    const cleanedRowIdx = cleaned.length;
+    cleaned.push(strRow);
+
+    if (range) {
+      const sheetR = startRow + rawRowIdx;
+      for (let colIdx = 0; colIdx < strRow.length; colIdx++) {
+        const sheetC = startCol + colIdx;
+        const addr = XLSX.utils.encode_cell({ r: sheetR, c: sheetC });
+        const cell = ws[addr] as XLSX.CellObject | undefined;
+        if (cell && typeof cell.f === 'string' && cell.f.trim()) {
+          const fStr = cell.f.trim();
+          if (fStr.includes('+') || /sum\s*\(/i.test(fStr)) {
+            formulas[`${cleanedRowIdx}:${colIdx}`] = fStr.startsWith('=') ? fStr : `=${fStr}`;
+          }
+        }
+      }
+    }
+  }
+
+  return { cleaned, formulas };
+}
+
+/**
  * Parses Excel (.xlsx, .xls, .ods), CSV, TSV, or JSON (single array or multi-section object) files
- * into clean string[][] matrices plus structured JSON records when available.
+ * into clean string[][] matrices plus structured JSON records and cell formulas when available.
  */
 export async function parseSpreadsheetFile(file: File): Promise<ParsedSpreadsheetFile> {
   const name = file.name || 'data';
@@ -180,19 +224,26 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedSpreadshee
   }
 
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true, cellFormula: true });
   const sheets: Record<string, string[][]> = {};
-  for (const sheetName of workbook.SheetNames) {
+  const sheetFormulas: Record<string, Record<string, string>> = {};
+
+  for (let i = 0; i < workbook.SheetNames.length; i++) {
+    const sheetName = workbook.SheetNames[i];
     const ws = workbook.Sheets[sheetName];
     const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, {
       header: 1,
       raw: false,
       defval: '',
     });
-    const cleaned = aoa
-      .map((row) => (Array.isArray(row) ? row.map(cellToString) : []))
-      .filter((row) => row.some((c) => c !== ''));
+    const { cleaned, formulas } = extractSheetFormulas(ws, aoa);
     sheets[sheetName] = cleaned;
+    if (Object.keys(formulas).length > 0) {
+      sheetFormulas[sheetName] = formulas;
+    }
+    if (i < workbook.SheetNames.length - 1) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
   }
 
   const defaultSheet = workbook.SheetNames[0] || 'Sheet1';
@@ -200,6 +251,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedSpreadshee
     fileName: name,
     sheetNames: workbook.SheetNames,
     sheets,
+    sheetFormulas: Object.keys(sheetFormulas).length > 0 ? sheetFormulas : undefined,
     defaultSheet,
   };
 }

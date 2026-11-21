@@ -544,33 +544,43 @@ function getAutoDetailedMapping(combinedCols: string[]): Record<string, number> 
       fallback: 28 + offset,
       excludeSubstrings: ['rep', 'جایگزینی', 'smr', 'برگشتی'],
     },
-    { key: 'balanceStatus', candidates: ['وضعیت بالانس', 'balance status'], fallback: 29 + offset },
+    { key: 'balanceStatus', candidates: ['وضعیت بالانس', 'وضعیت موازنه', 'وضعیت کنترل مصرف', 'balance status', 'bmr status'], fallback: 29 + offset },
     { key: 'storageLocation', candidates: ['محل نگهداری', 'storage location'], fallback: 30 + offset },
     { key: 'gcvReceiptNo', candidates: ['شماره رسید مصرف', 'شماره رسید', 'gcv', 'receipt no'], fallback: 31 + offset },
     { key: 'receiver', candidates: ['تحویل گیرنده', 'receiver'], fallback: 32 + offset, excludeSubstrings: ['حواله', 'miv'] },
     { key: 'gcvDeliveredQty', candidates: ['تعداد رسید مصرف', 'مقدار تحویل شده gcv', 'مقدار تحویل شده', 'gcv delivered'], fallback: 33 + offset },
     {
       key: 'mivContractorNo',
-      candidates: ['شماره حواله', 'شماره miv پیمانکار', 'miv پیمانکار', 'شماره miv'],
+      candidates: ['شماره حواله انبار پیمانکار', 'شماره حواله پیمانکار', 'شماره حواله', 'شماره miv پیمانکار', 'miv پیمانکار', 'شماره miv'],
       fallback: 35 + offset,
-      excludeSubstrings: ['مپنا', 'mapna'],
+      excludeSubstrings: ['مپنا', 'mapna', 'کارفرما', 'employer'],
     },
-    { key: 'mivContractorDate', candidates: ['تاریخ حواله', 'تاریخ miv'], fallback: 36 + offset },
-    { key: 'mivContractorQty', candidates: ['مجموع تعداد تحویل شده با حواله', 'مقدار miv'], fallback: 37 + offset },
+    {
+      key: 'mivContractorDate',
+      candidates: ['تاریخ حواله انبار پیمانکار', 'تاریخ حواله پیمانکار', 'تاریخ حواله', 'تاریخ miv پیمانکار', 'تاریخ miv'],
+      fallback: 36 + offset,
+      excludeSubstrings: ['مپنا', 'mapna', 'کارفرما', 'employer'],
+    },
+    {
+      key: 'mivContractorQty',
+      candidates: ['مقدار حواله انبار پیمانکار', 'تعداد حواله انبار پیمانکار', 'مجموع تعداد تحویل شده با حواله', 'مقدار miv پیمانکار', 'مقدار miv'],
+      fallback: 37 + offset,
+      excludeSubstrings: ['مپنا', 'mapna', 'کارفرما', 'employer'],
+    },
     { key: 'mivReceiver', candidates: ['تحویل گیرنده (حواله)', 'تحویل گیرنده حواله', 'miv receiver'], fallback: -1 },
     { key: 'smrContractorNo', candidates: ['شماره برگشتی به انبار پیمانکار', 'شماره smr پیمانکار'], fallback: 39 + offset },
-    { key: 'smrContractorDate', candidates: ['تاریخ برگشتی به انبار پیمانکار', 'تاریخ smr پیمانکار', 'تاریخ برگشتی'], fallback: 40 + offset },
-    { key: 'smrContractorQty', candidates: ['تعداد برگشتی به انبار پیمانکار', 'مقدار smr پیمانکار', 'مجموع تعداد برگشتی'], fallback: 41 + offset },
+    { key: 'smrContractorDate', candidates: ['تاریخ برگشتی به انبار پیمانکار', 'تاریخ smr پیمانکار', 'تاریخ برگشتی'], fallback: 40 + offset, excludeSubstrings: ['مپنا', 'mapna', 'کارفرما', 'employer'] },
+    { key: 'smrContractorQty', candidates: ['مقدار برگشتی به انبار پیمانکار', 'تعداد برگشتی به انبار پیمانکار', 'مقدار smr پیمانکار', 'مجموع تعداد برگشتی'], fallback: 41 + offset, excludeSubstrings: ['مپنا', 'mapna', 'کارفرما', 'employer'] },
     { key: 'smrContractorNote', candidates: ['توضیحات برگشتی به انبار پیمانکار', 'توضیحات smr پیمانکار'], fallback: 42 + offset },
-    { key: 'materialBalanceNo', candidates: ['شماره بالانس متریال', 'material balance no'], fallback: 43 + offset },
+    { key: 'materialBalanceNo', candidates: ['شماره بالانس متریال', 'شماره بالانس', 'شماره موازنه', 'موازنه مواد', 'گزارش موازنه', 'شماره گزارش موازنه', 'material balance no', 'bmr no'], fallback: 43 + offset },
     { key: 'smrMapnaNo', candidates: ['شماره برگشتی به انبار کارفرما', 'شماره smr مپنا'], fallback: 44 + offset },
     { key: 'smrMapnaDate', candidates: ['تاریخ برگشتی به انبار کارفرما', 'تاریخ smr مپنا'], fallback: 45 + offset },
-    { key: 'smrMapnaQty', candidates: ['تعداد برگشتی به انبار کارفرما', 'مقدار smr مپنا'], fallback: 46 + offset },
+    { key: 'smrMapnaQty', candidates: ['مقدار برگشتی به انبار کارفرما', 'تعداد برگشتی به انبار کارفرما', 'مقدار smr مپنا'], fallback: 46 + offset },
     { key: 'smrMapnaNote', candidates: ['توضیحات برگشتی به انبار کارفرما', 'توضیحات smr مپنا'], fallback: 47 + offset },
     { key: 'smrDeliverer', candidates: ['تحویل آورنده', 'returned by', 'smr deliverer'], fallback: -1 },
-    { key: 'mivMapnaNo', candidates: ['شماره miv مپنا', 'miv مپنا'], fallback: 48 + offset },
-    { key: 'mivMapnaDate', candidates: ['تاریخ miv مپنا'], fallback: 49 + offset },
-    { key: 'mivMapnaQty', candidates: ['مقدار miv مپنا'], fallback: 50 + offset },
+    { key: 'mivMapnaNo', candidates: ['شماره حواله انبار کارفرما', 'شماره حواله کارفرما', 'شماره miv مپنا', 'miv مپنا'], fallback: 48 + offset },
+    { key: 'mivMapnaDate', candidates: ['تاریخ حواله انبار کارفرما', 'تاریخ حواله کارفرما', 'تاریخ miv مپنا'], fallback: 49 + offset },
+    { key: 'mivMapnaQty', candidates: ['مقدار حواله انبار کارفرما', 'تعداد حواله انبار کارفرما', 'مقدار miv مپنا'], fallback: 50 + offset },
     { key: 'stocktakeStatus', candidates: ['وضعیت انبارگردانی', 'وضعیت انبار گردانی', 'stocktake status'], fallback: -1 },
     { key: 'stocktakeDate', candidates: ['تاریخ آخرین انبارگردانی', 'تاریخ انبارگردانی', 'تاریخ انبار گردانی', 'last stocktake date', 'stocktake date'], fallback: -1 },
     {
@@ -594,9 +604,9 @@ function getAutoDetailedMapping(combinedCols: string[]): Record<string, number> 
     if (idx >= 0) claimed.add(idx);
   }
 
-  // Only fall back to legacy fixed column positions on full-width (>=20 non-empty header cols) spreadsheets and never steal a matched header
+  // Only fall back to legacy fixed column positions on full-width (>=45 non-empty header cols) spreadsheets and never steal a matched header
   const nonEmptyHeaderCount = combinedCols.filter((h) => normalizeHeaderText(h) !== '').length;
-  const allowPositionalFallback = nonEmptyHeaderCount >= 20;
+  const allowPositionalFallback = nonEmptyHeaderCount >= 45;
   if (allowPositionalFallback) {
     for (const d of defs) {
       if (mapped[d.key] === -1 && d.fallback >= 0 && d.fallback < combinedCols.length && !claimed.has(d.fallback)) {

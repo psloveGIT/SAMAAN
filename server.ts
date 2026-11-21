@@ -63,6 +63,12 @@ import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
 import { getLocalVersionPayload } from './src/shared/appVersion.ts';
 import { analyzeImportDelta, hasRecordMeaningfulChanges } from './src/shared/importDelta.ts';
 import {
+  applyCategoryDelete,
+  applyCategoryRename,
+  computeCategoryCounts,
+  sanitizeCategoryStore,
+} from './src/shared/categoryCascade.ts';
+import {
   commitAutoWorkbook,
   commitOperationalFormImport,
   detectExtendedScope,
@@ -5382,71 +5388,8 @@ async function startServer() {
 
   // ---------------- CATEGORIES ----------------
   app.get('/api/categories', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
-    const counts: Record<CategoryGroupKey, Record<string, number>> = {
-      island: {},
-      system: {},
-      subSystem: {},
-      unit: {},
-      supplier: {},
-      dispatchLocation: {},
-      origin: {},
-      storageLocation: {},
-      carrierContractor: {},
-      countingUnit: {},
-      packageType: {},
-      generalDescription: {},
-      stocktakeStatus: {},
-      transitStatus: {},
-      receiver: {},
-      merStatus: {},
-      repStatus: {},
-      balanceStatus: {},
-      chemicalType: {},
-    };
-
-    const bump = (group: CategoryGroupKey, v: string | undefined | null) => {
-      const k = normKey(v);
-      if (!k) return;
-      counts[group][k] = (counts[group][k] || 0) + 1;
-    };
-
-    for (const g of store.db.general) {
-      bump('island', g.island);
-      bump('system', g.system);
-      bump('subSystem', g.subSystem);
-      bump('unit', g.unit);
-      bump('supplier', g.supplier);
-      bump('dispatchLocation', g.dispatchLocation);
-      bump('packageType', g.packageType);
-    }
-    for (const d of store.db.detailed) {
-      bump('island', d.island);
-      bump('system', d.system);
-      bump('subSystem', d.subSystem);
-      bump('unit', d.unit);
-      bump('supplier', d.supplier);
-      bump('origin', d.origin);
-      bump('storageLocation', d.storageLocation);
-      bump('countingUnit', d.countingUnit);
-      bump('generalDescription', d.generalDescription);
-      bump('stocktakeStatus', d.stocktakeStatus);
-      bump('receiver', d.receiver);
-      bump('merStatus', d.merStatus);
-      bump('repStatus', d.repStatus);
-      bump('balanceStatus', d.balanceStatus);
-      bump('chemicalType', d.chemicalType);
-    }
-    for (const t of store.db.transit) {
-      bump('system', t.system);
-      bump('subSystem', t.subSystem);
-      bump('unit', t.unit);
-      bump('supplier', t.supplier);
-      bump('dispatchLocation', t.dispatchLocation);
-      bump('carrierContractor', t.carrierContractor);
-      bump('transitStatus', t.overallStatus);
-    }
-
-    store.db.categories.transitStatus = getTransitStatusOptions(store.db.categories.transitStatus);
+    sanitizeCategoryStore(store.db.categories);
+    const counts = computeCategoryCounts(store.db);
     res.json({ categories: store.db.categories, counts });
   });
 
@@ -5501,53 +5444,8 @@ async function startServer() {
       return;
     }
 
-    let updatedCount = 0;
-    for (const g of store.db.general) {
-      if (group === 'island' && g.island === from) { g.island = to; updatedCount += 1; }
-      if (group === 'system' && g.system === from) { g.system = to; updatedCount += 1; }
-      if (group === 'subSystem' && g.subSystem === from) { g.subSystem = to; updatedCount += 1; }
-      if (group === 'unit' && g.unit === from) { g.unit = to; updatedCount += 1; }
-      if (group === 'supplier' && g.supplier === from) { g.supplier = to; updatedCount += 1; }
-      if (group === 'dispatchLocation' && g.dispatchLocation === from) { g.dispatchLocation = to; updatedCount += 1; }
-      if (group === 'packageType' && g.packageType === from) { g.packageType = to; updatedCount += 1; }
-    }
-    for (const d of store.db.detailed) {
-      if (group === 'island' && d.island === from) { d.island = to; updatedCount += 1; }
-      if (group === 'system' && d.system === from) { d.system = to; updatedCount += 1; }
-      if (group === 'subSystem' && d.subSystem === from) { d.subSystem = to; updatedCount += 1; }
-      if (group === 'unit' && d.unit === from) { d.unit = to; updatedCount += 1; }
-      if (group === 'supplier' && d.supplier === from) { d.supplier = to; updatedCount += 1; }
-      if (group === 'origin' && d.origin === from) { d.origin = to; updatedCount += 1; }
-      if (group === 'storageLocation' && d.storageLocation === from) { d.storageLocation = to; updatedCount += 1; }
-      if (group === 'countingUnit' && d.countingUnit === from) { d.countingUnit = to; updatedCount += 1; }
-      if (group === 'generalDescription' && d.generalDescription === from) { d.generalDescription = to; updatedCount += 1; }
-      if (group === 'stocktakeStatus' && d.stocktakeStatus === from) { d.stocktakeStatus = to; updatedCount += 1; }
-      if (group === 'receiver' && d.receiver === from) { d.receiver = to; updatedCount += 1; }
-      if (group === 'merStatus' && d.merStatus === from) { d.merStatus = to; updatedCount += 1; }
-      if (group === 'repStatus' && d.repStatus === from) { d.repStatus = to; updatedCount += 1; }
-      if (group === 'balanceStatus' && d.balanceStatus === from) { d.balanceStatus = to; updatedCount += 1; }
-      if (group === 'chemicalType' && d.chemicalType === from) { d.chemicalType = to; updatedCount += 1; }
-    }
-    for (const t of store.db.transit) {
-      if (group === 'system' && t.system === from) { t.system = to; updatedCount += 1; }
-      if (group === 'subSystem' && t.subSystem === from) { t.subSystem = to; updatedCount += 1; }
-      if (group === 'unit' && t.unit === from) { t.unit = to; updatedCount += 1; }
-      if (group === 'supplier' && t.supplier === from) { t.supplier = to; updatedCount += 1; }
-      if (group === 'dispatchLocation' && t.dispatchLocation === from) { t.dispatchLocation = to; updatedCount += 1; }
-      if (group === 'carrierContractor' && t.carrierContractor === from) { t.carrierContractor = to; updatedCount += 1; }
-      if (group === 'transitStatus' && t.overallStatus === from) { t.overallStatus = to; updatedCount += 1; }
-    }
-    if (group === 'countingUnit') {
-      for (const m of store.db.materialEstimates) {
-        if (m.countingUnit === from) { m.countingUnit = to; updatedCount += 1; }
-      }
-      for (const s of store.db.substitutions) {
-        if (s.countingUnit === from) { s.countingUnit = to; updatedCount += 1; }
-      }
-    }
-
-    store.db.categories[group] = store.db.categories[group].filter((v) => v !== from);
-    store.registerCategoryValue(group, to);
+    const updatedCount = applyCategoryRename(store.db, group, from, to);
+    store.rebuildIndexes(false);
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'RENAME_MERGE_CATEGORY',
@@ -5576,23 +5474,17 @@ async function startServer() {
       });
       return;
     }
-    const beforeCatsDel = JSON.parse(JSON.stringify(store.db.categories));
-    store.db.categories[group] = store.db.categories[group].filter((v) => v !== value);
-    store.history.push({
-      labelFa: `حذف دسته‌بندی «${value}»`,
-      labelEn: `Delete Category "${value}"`,
-      user: req.currentUser!.fullName || req.currentUser!.username,
-      changes: [{ scope: 'categories', before: beforeCatsDel, after: JSON.parse(JSON.stringify(store.db.categories)) }],
-    });
+    const updatedCount = applyCategoryDelete(store.db, group, value);
+    store.rebuildIndexes(false);
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_CATEGORY',
       scope: 'category',
       targetId: `${group}:${value}`,
-      summary: `حذف مقدار «${value}» از فهرست ${group}`,
+      summary: `حذف مقدار «${value}» از فهرست ${group} (${updatedCount} رکورد به‌روزرسانی شد)`,
     });
     store.saveImmediate();
-    res.json({ categories: store.db.categories });
+    res.json({ categories: store.db.categories, updatedCount });
   });
 
   // ---------------- ANALYTICS DASHBOARD ----------------
@@ -5811,6 +5703,7 @@ async function startServer() {
     const {
       csvText,
       matrix: rawMatrix,
+      formulaMap,
       structuredRecords,
       sheetName,
       sectionHint,
@@ -5820,6 +5713,7 @@ async function startServer() {
     } = req.body as {
       csvText?: string;
       matrix?: string[][];
+      formulaMap?: Record<string, string>;
       structuredRecords?: Record<string, unknown>[];
       sheetName?: string;
       sectionHint?: string;
@@ -5844,12 +5738,15 @@ async function startServer() {
       (matrix.length > 0 ? detectCsvScope(matrix) : null) ||
       'general';
 
+    const PREVIEW_ROW_CAP = 100;
+
     if (isOperationalScope(detectedExtended)) {
       const actorName = req.currentUser!.fullName || req.currentUser!.username;
       const opPrev = previewOperationalFormImport({
         db: store.db,
         scope: detectedExtended,
         matrix,
+        formulaMap,
         structuredRecords,
         sheetName,
         assumedCalendar: cal,
@@ -5869,7 +5766,8 @@ async function startServer() {
         estimatedLinks: opPrev.estimatedLinks,
         warnings: opPrev.warnings,
         sample: opPrev.sample,
-        parsedRows: opPrev.parsedRecords,
+        parsedRows: opPrev.parsedRecords.slice(0, PREVIEW_ROW_CAP),
+        parsedRowsTruncated: opPrev.parsedRecords.length > PREVIEW_ROW_CAP,
         deltaSummary: opPrev.deltaSummary,
       });
       return;
@@ -5941,7 +5839,8 @@ async function startServer() {
           changedFieldsSample: deltaAnalysis.changedFieldsSample,
         },
         sample: parsed.rows.slice(0, 5),
-        parsedRows: parsed.rows,
+        parsedRows: parsed.rows.slice(0, PREVIEW_ROW_CAP),
+        parsedRowsTruncated: parsed.rows.length > PREVIEW_ROW_CAP,
         columnInspection: { ...columnInspection, mapping: activeMapping },
       });
       return;
@@ -5978,7 +5877,8 @@ async function startServer() {
           changedFieldsSample: deltaAnalysis.changedFieldsSample,
         },
         sample: parsed.rows.slice(0, 5),
-        parsedRows: parsed.rows,
+        parsedRows: parsed.rows.slice(0, PREVIEW_ROW_CAP),
+        parsedRowsTruncated: parsed.rows.length > PREVIEW_ROW_CAP,
         columnInspection: { ...columnInspection, mapping: activeMapping },
       });
       return;
@@ -6014,7 +5914,8 @@ async function startServer() {
         changedFieldsSample: deltaAnalysis.changedFieldsSample,
       },
       sample: parsed.rows.slice(0, 5),
-      parsedRows: parsed.rows,
+      parsedRows: parsed.rows.slice(0, PREVIEW_ROW_CAP),
+      parsedRowsTruncated: parsed.rows.length > PREVIEW_ROW_CAP,
       columnInspection: { ...columnInspection, mapping: activeMapping },
     });
   });
@@ -6023,6 +5924,7 @@ async function startServer() {
     const {
       csvText,
       matrix: rawMatrix,
+      formulaMap,
       structuredRecords,
       sheetName,
       sectionHint,
@@ -6036,6 +5938,7 @@ async function startServer() {
     } = req.body as {
       csvText?: string;
       matrix?: string[][];
+      formulaMap?: Record<string, string>;
       structuredRecords?: Record<string, unknown>[];
       sheetName?: string;
       sectionHint?: string;
@@ -6077,6 +5980,7 @@ async function startServer() {
         db: store.db,
         scope: resolvedExtended,
         matrix,
+        formulaMap,
         structuredRecords: hasEdited ? editedRows : structuredRecords,
         sheetName,
         assumedCalendar: cal,
@@ -6179,7 +6083,7 @@ async function startServer() {
               sourceRowIndex: idx + 1,
               reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
               reasonFa: existingDb
-                ? `رکورد با کلید «${labelKey}» قبلاً در دیتابیس (ردیف ${existingDb.rowNo || '-'}) ثبت شده است و با تنظیم «رد کردن تکراری‌ها» وارد نشد.`
+                ? `رکورد با کلید «${labelKey}» قبلاً در پایگاه داده (ردیف ${existingDb.rowNo || '-'}) ثبت شده است و با تنظیم «رد کردن تکراری‌ها» وارد نشد.`
                 : `رکورد با کلید «${labelKey}» بیش از یک بار درون همین فایل تکرار شده و نسخه تکراری آن رد شد.`,
               reasonEn: existingDb
                 ? `Key "${labelKey}" already exists in database (Row ${existingDb.rowNo || '-'}) and was skipped.`
@@ -6265,9 +6169,7 @@ async function startServer() {
         const existingDb = k ? dbByKey.get(k) : undefined;
         const existingBatch = !existingDb && k ? batchByKey.get(k) : undefined;
         const existing = existingDb || existingBatch;
-        const genDesc = r.generalDescription
-          ? formatGeneralDescriptionCase(r.generalDescription)
-          : inferGeneralDescription(r.description);
+        const genDesc = r.generalDescription || '';
         const rawChem = normKey(r.chemicalType);
         const inferredCls = !r.itemCategory
           ? inferItemClassification(r.description, r.notes, genDesc)
@@ -6299,7 +6201,7 @@ async function startServer() {
               sourceRowIndex: idx + 1,
               reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
               reasonFa: existingDb
-                ? `قلم با کلید «${labelKey}» قبلاً در دیتابیس (ردیف ${existingDb.rowNo || '-'}) وجود دارد و با سیاست «رد کردن تکراری‌ها» ثبت نشد.`
+                ? `قلم با کلید «${labelKey}» قبلاً در پایگاه داده (ردیف ${existingDb.rowNo || '-'}) وجود دارد و با سیاست «رد کردن تکراری‌ها» ثبت نشد.`
                 : `قلم با کلید «${labelKey}» در همین فایل تکرار شده است و نسخه تکراری آن رد شد.`,
               reasonEn: existingDb
                 ? `Item "${labelKey}" already exists in database (Row ${existingDb.rowNo || '-'}) and was skipped.`
@@ -6425,7 +6327,7 @@ async function startServer() {
               sourceRowIndex: idx + 1,
               reasonCode: existingDb ? 'duplicate_db' : 'duplicate_in_file',
               reasonFa: existingDb
-                ? `محموله در راه با کلید «${labelKey}» قبلاً در دیتابیس ثبت شده و رد شد.`
+                ? `محموله در راه با کلید «${labelKey}» قبلاً در پایگاه داده ثبت شده و رد شد.`
                 : `محموله با کلید «${labelKey}» در همین فایل تکرار شده و نسخه تکراری آن رد شد.`,
               reasonEn: existingDb
                 ? `In-transit key "${labelKey}" already exists in database and was skipped.`
@@ -7532,15 +7434,19 @@ CRITICAL OPERATING RULES:
     const upperConfirm = normConfirm.toUpperCase();
     const isFullWipe = Boolean(wipeAll) || selected.length === allKeys.length;
     const validConfirm = isFullWipe
-      ? normConfirm === 'حذف کل دیتابیس' || upperConfirm === 'DELETE ALL'
-      : normConfirm === 'حذف اطلاعات' || upperConfirm === 'DELETE' || normConfirm === 'حذف کل دیتابیس' || upperConfirm === 'DELETE ALL';
+      ? normConfirm === 'حذف کل پایگاه داده' || normConfirm === 'حذف کل دیتابیس' || upperConfirm === 'DELETE ALL'
+      : normConfirm === 'حذف اطلاعات' ||
+        upperConfirm === 'DELETE' ||
+        normConfirm === 'حذف کل پایگاه داده' ||
+        normConfirm === 'حذف کل دیتابیس' ||
+        upperConfirm === 'DELETE ALL';
 
     if (!validConfirm) {
       res.status(400).json({
         error: errMsg(
           req,
           isFullWipe
-            ? 'عبارت امنیتی اشتباه است. برای حذف کل دیتابیس باید «حذف کل دیتابیس» یا «DELETE ALL» را تایپ کنید.'
+            ? 'عبارت امنیتی اشتباه است. برای حذف کل پایگاه داده باید «حذف کل پایگاه داده» یا «DELETE ALL» را تایپ کنید.'
             : 'عبارت امنیتی اشتباه است. برای تایید حذف باید «حذف اطلاعات» یا «DELETE» را تایپ کنید.',
           isFullWipe
             ? 'Invalid confirmation phrase. Type "DELETE ALL" to wipe all sections.'
@@ -7648,7 +7554,7 @@ CRITICAL OPERATING RULES:
       action: isFullWipe ? 'PURGE_ALL_DATABASE' : 'PURGE_DATABASE_SECTIONS',
       scope: 'backup',
       targetId: selected.join(','),
-      summary: `پاکسازی امنیتی دیتابیس توسط مدیر کل (${selected.length} بخش، مجموع ${totalDeleted} رکورد حذف شد): ${selected.join('، ')}`,
+      summary: `پاکسازی امنیتی پایگاه داده توسط مدیر کل (${selected.length} بخش، مجموع ${totalDeleted} رکورد حذف شد): ${selected.join('، ')}`,
     });
     store.saveImmediate();
 

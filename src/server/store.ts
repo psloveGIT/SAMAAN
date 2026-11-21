@@ -42,6 +42,7 @@ import {
   normalizeTransitStatus,
 } from '../shared/normalizers.ts';
 import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../shared/sorting.ts';
+import { registerCategoryTokens, sanitizeCategoryStore } from '../shared/categoryCascade.ts';
 import { WarehouseHistoryManager, type HistoryStatus } from '../shared/undoHistory.ts';
 import type { StoredUser } from './auth.ts';
 
@@ -334,21 +335,11 @@ export class SamaanStore {
         });
       }
     }
-    this.db.categories.transitStatus = getTransitStatusOptions(this.db.categories.transitStatus);
+    sanitizeCategoryStore(this.db.categories);
   }
 
   public registerCategoryValue(group: CategoryGroupKey, rawVal: string | undefined | null): void {
-    const val = normKey(rawVal);
-    if (!val || val === '-' || val === '—') return;
-    if (group === 'transitStatus' && val === 'پایان') return;
-    const arr = this.db.categories[group];
-    if (!arr) return;
-    if (!arr.includes(val)) {
-      arr.push(val);
-      if (group !== 'transitStatus') {
-        arr.sort((a, b) => a.localeCompare(b, 'fa'));
-      }
-    }
+    registerCategoryTokens(this.db.categories, group, rawVal);
   }
 
   public registerCategoriesFromFields(fields: Partial<Record<CategoryGroupKey, string>>): void {

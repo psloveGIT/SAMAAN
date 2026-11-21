@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { apiRequest, getActiveProjectId, setActiveProjectId as persistActiveProjectId } from '../lib/api.ts';
+import { syncOfflineSessionUser } from '../lib/browserEngine.ts';
 import { saveSnapshotToIndexedDb } from '../lib/indexedDbBackup.ts';
 import { resolveEmployerProfile } from '../shared/employers.ts';
 import type { ResolvedEmployerProfile } from '../shared/employers.ts';
@@ -206,17 +207,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         apiRequest<{ employers: EmployerProfile[] }>('/api/employers').catch(() => null),
         apiRequest<{ needsSetup: boolean; user: UserAccount | null }>('/api/auth/status'),
       ]);
+      const resolvedProject = projRes?.activeProjectId || getActiveProjectId() || 'default';
       if (projRes) {
         setProjects(projRes.projects || []);
-        const resolved = projRes.activeProjectId || 'default';
-        persistActiveProjectId(resolved);
-        setActiveProjectIdState(resolved);
+        persistActiveProjectId(resolvedProject);
+        setActiveProjectIdState(resolvedProject);
       }
       if (empRes) {
         setEmployers(empRes.employers || []);
       }
       setNeedsSetup(data.needsSetup);
       setUser(data.user);
+      if (data.user) {
+        void syncOfflineSessionUser(data.user, resolvedProject);
+      }
       if (data.user?.preferences) {
         const stored = localStorage.getItem(PREFS_STORAGE_KEY);
         if (!stored) {

@@ -13,10 +13,95 @@ export class ApiError extends Error {
   }
 }
 
+export interface NetworkModeState {
+  isOffline: boolean;
+  manualOffline: boolean;
+  browserOnline: boolean;
+  staticFallback: boolean;
+}
+
+const MANUAL_OFFLINE_KEY = 'samaan_manual_offline_v1';
+
+function readStoredManualOffline(): boolean {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(MANUAL_OFFLINE_KEY) === '1';
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return false;
+}
+
+let manualOfflineMode = readStoredManualOffline();
 let staticFallbackActive = false;
+const networkListeners = new Set<(state: NetworkModeState) => void>();
+
+function isBrowserOnline(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  return navigator.onLine !== false;
+}
+
+export function getNetworkModeState(): NetworkModeState {
+  const browserOnline = isBrowserOnline();
+  const isOffline = manualOfflineMode || !browserOnline || staticFallbackActive;
+  return {
+    isOffline,
+    manualOffline: manualOfflineMode,
+    browserOnline,
+    staticFallback: staticFallbackActive,
+  };
+}
+
+function emitNetworkModeState(): void {
+  const state = getNetworkModeState();
+  for (const listener of networkListeners) {
+    try {
+      listener(state);
+    } catch {
+      // Ignore listener errors
+    }
+  }
+}
+
+export function subscribeNetworkMode(listener: (state: NetworkModeState) => void): () => void {
+  networkListeners.add(listener);
+  return () => {
+    networkListeners.delete(listener);
+  };
+}
+
+export function setManualOfflineMode(offline: boolean): NetworkModeState {
+  manualOfflineMode = Boolean(offline);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(MANUAL_OFFLINE_KEY, manualOfflineMode ? '1' : '0');
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  if (!manualOfflineMode) {
+    // Allow immediate attempt to reconnect to server
+    staticFallbackActive = false;
+  }
+  emitNetworkModeState();
+  return getNetworkModeState();
+}
 
 export function isStaticFallbackMode(): boolean {
-  return staticFallbackActive;
+  return manualOfflineMode || !isBrowserOnline() || staticFallbackActive;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    if (!manualOfflineMode) {
+      staticFallbackActive = false;
+    }
+    emitNetworkModeState();
+  });
+  window.addEventListener('offline', () => {
+    emitNetworkModeState();
+  });
 }
 
 const ACTIVE_PROJECT_KEY = 'samaan_active_project_v1';
@@ -75,8 +160,11 @@ function notifyIfMutated(url: string, options: RequestInit): void {
   window.dispatchEvent(new CustomEvent('samaan:mutation-done', { detail: { url, method } }));
 }
 
-async function runFallback<T>(url: string, options: RequestInit): Promise<T> {
-  staticFallbackActive = true;
+async function runFallback<T>(url: string, options: RequestInit, markFallback = true): Promise<T> {
+  if (markFallback && !staticFallbackActive) {
+    staticFallbackActive = true;
+    emitNetworkModeState();
+  }
   const lang = getActiveLang();
   const projectId = getActiveProjectId();
   try {
@@ -98,13 +186,32 @@ async function runFallback<T>(url: string, options: RequestInit): Promise<T> {
   }
 }
 
+function getTimeoutMs(url: string): number {
+  if (
+    url.startsWith('/api/import/') ||
+    url.startsWith('/api/backup/') ||
+    url.startsWith('/api/ai/') ||
+    url.startsWith('/api/database/')
+  ) {
+    return 25000;
+  }
+  return 4500;
+}
+
 export async function apiRequest<T>(
   url: string,
   options: RequestInit = {},
 ): Promise<T> {
   const isAiRoute = url.startsWith('/api/ai/');
+  const browserOnline = isBrowserOnline();
+
+  // Immediate offline bypass — never hang waiting on fetch when offline or manual offline is enabled
+  if (manualOfflineMode || !browserOnline) {
+    return runFallback<T>(url, options, false);
+  }
+
   if (staticFallbackActive && !isAiRoute) {
-    return runFallback<T>(url, options);
+    return runFallback<T>(url, options, false);
   }
 
   const headers: Record<string, string> = {
@@ -115,21 +222,28 @@ export async function apiRequest<T>(
   };
 
   let res: Response;
+  const controller = typeof AbortController !== 'undefined' && !options.signal ? new AbortController() : null;
+  const timeoutMs = getTimeoutMs(url);
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
   try {
     res = await fetch(url, {
       ...options,
       headers,
       credentials: 'same-origin',
+      signal: options.signal || controller?.signal,
     });
   } catch {
-    // No reachable backend server (e.g. GitHub Pages static host)
-    return runFallback<T>(url, options);
+    if (timer) clearTimeout(timer);
+    // No reachable backend server or timed out — fall back immediately to local engine
+    return runFallback<T>(url, options, true);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
-    // GitHub Pages returns HTML 404 for /api/* routes
-    return runFallback<T>(url, options);
+    return runFallback<T>(url, options, true);
   }
 
   const text = await res.text();
@@ -137,12 +251,13 @@ export async function apiRequest<T>(
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    return runFallback<T>(url, options);
+    return runFallback<T>(url, options, true);
   }
 
   // Server returned valid JSON — ensure fallback flag is cleared
   if (staticFallbackActive) {
     staticFallbackActive = false;
+    emitNetworkModeState();
   }
 
   if (!res.ok) {

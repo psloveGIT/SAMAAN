@@ -593,10 +593,10 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const docTypeLabel = useCallback(
     (type: MivDocType) => {
       if (type === 'miv_contractor') {
-        return isFa ? 'حواله مصرف از انبار پیمانکار (MIV)' : 'MIV Issue (Contractor Warehouse)';
+        return isFa ? 'حواله مصرف از انبار پیمانکار' : 'MIV Issue (Contractor Warehouse)';
       }
       return isFa
-        ? `حواله تحویل از انبار ${activeEmployer.isConfigured ? activeEmployer.shortName : 'کارفرما / اصلی'} (MIV)`
+        ? `حواله تحویل از انبار ${activeEmployer.isConfigured ? activeEmployer.shortName : 'کارفرما / اصلی'}`
         : 'MIV Issue (Main/Employer Warehouse)';
     },
     [isFa, activeEmployer.isConfigured, activeEmployer.shortName],

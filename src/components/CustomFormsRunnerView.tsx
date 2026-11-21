@@ -241,7 +241,7 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
           boundContextData.headerTokens,
           boundContextData.lineRows,
         );
-        notify('success', isFa ? 'فایل اکسل پرشده آماده و دانلود شد.' : 'Filled Excel downloaded.');
+        notify('success', isFa ? 'فایل فرم پرشده آماده و دانلود شد.' : 'Filled spreadsheet form downloaded.');
       } else if (
         effectiveUploadedForm.fileType === 'word' &&
         effectiveUploadedForm.fileName.toLowerCase().endsWith('.docx')
@@ -438,8 +438,8 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
         </h3>
         <p className="text-xs text-[var(--text-muted)] max-w-xl mx-auto leading-relaxed">
           {isFa
-            ? 'از بخش «مدیریت کارفرمایان و فرم‌های شرکتی»، فرم‌های آماده شرکت خود را با فرمت Excel (.xlsx)، Word (.docx)، PDF یا تصویر وارد کنید تا اطلاعات سامانه به‌صورت خودکار در آن‌ها قرار گرفته و با تنظیمات A4 چاپ یا دانلود شوند.'
-            : 'Open Employer & Forms Studio to upload coded Excel, Word, PDF, or Image forms for this plant.'}
+            ? 'از بخش «مدیریت کارفرمایان و فرم‌های شرکتی»، فرم‌های آماده شرکت خود را با قالب‌های جدولی، اسناد متنی، پی‌دی‌اف یا تصویر وارد کنید تا اطلاعات سامانه به‌صورت خودکار در آن‌ها قرار گرفته و با تنظیمات A4 چاپ یا دانلود شوند.'
+            : 'Open Employer & Forms Studio to upload coded spreadsheet, document, PDF, or image forms for this plant.'}
         </p>
         <button
           type="button"
@@ -547,13 +547,13 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
               <span>
                 {effectiveUploadedForm.fileType === 'excel'
                   ? isFa
-                    ? 'دانلود Excel پرشده'
-                    : 'Download Filled XLSX'
+                    ? 'دانلود فایل فرم پرشده'
+                    : 'Download Filled Form'
                   : effectiveUploadedForm.fileType === 'word' &&
                       effectiveUploadedForm.fileName.toLowerCase().endsWith('.docx')
                     ? isFa
-                      ? 'دانلود Word پرشده'
-                      : 'Download Filled DOCX'
+                      ? 'دانلود سند پرشده'
+                      : 'Download Filled Document'
                     : isFa
                       ? 'دانلود فایل فرم'
                       : 'Download File'}
@@ -589,10 +589,10 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
                 }}
                 className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
               >
-                <option value="general">{isFa ? 'ثبت کلی تجهیزات (Packing Lists)' : 'General Equipment'}</option>
-                <option value="siteEntry">{isFa ? 'صورتجلسات ورود کالا (Site Entry)' : 'Site Entry Minutes'}</option>
-                <option value="detailed">{isFa ? 'ثبت جزئیات تجهیزات (Detailed)' : 'Detailed Equipment'}</option>
-                <option value="transit">{isFa ? 'تجهیزات در راه (Transit)' : 'In-Transit'}</option>
+                <option value="general">{isFa ? 'ثبت کلی تجهیزات' : 'General Equipment'}</option>
+                <option value="siteEntry">{isFa ? 'صورتجلسات ورود کالا' : 'Site Entry Minutes'}</option>
+                <option value="detailed">{isFa ? 'ثبت جزئیات تجهیزات' : 'Detailed Equipment'}</option>
+                <option value="transit">{isFa ? 'تجهیزات در راه' : 'In-Transit'}</option>
                 <option value="manual">{isFa ? 'تکمیل دستی متغیرها' : 'Manual Entry'}</option>
               </select>
             </div>
