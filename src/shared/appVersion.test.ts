@@ -150,7 +150,7 @@ test('APP_CHANGELOG spans from v1.0.0 through current APP_VERSION and matches pu
   assert.equal(APP_CHANGELOG[APP_CHANGELOG.length - 1].version, '1.0.0');
   assert.ok(APP_CHANGELOG.length >= 10, 'Changelog should cover complete version milestones from 1.0.0');
 
-  // Reopening from 2.7.0 must show both 2.9.0 and 2.8.0 changes!
+  // Reopening from 2.7.0 must show all releases since 2.7.0 up to current APP_VERSION
   const reopen = evaluateAppUpdateState({
     currentBuildId: APP_BUILD_ID,
     currentVersion: APP_VERSION,
@@ -159,10 +159,11 @@ test('APP_CHANGELOG spans from v1.0.0 through current APP_VERSION and matches pu
   });
   assert.equal(reopen.mode, 'reopen_whats_new');
   assert.equal(reopen.shouldShowFloatingToast, true);
-  assert.deepEqual(
-    reopen.releases.map((r) => r.version),
-    ['2.9.0', '2.8.0'],
-  );
+  const versionsSince270 = reopen.releases.map((r) => r.version);
+  assert.equal(versionsSince270[0], APP_VERSION);
+  assert.ok(versionsSince270.includes('2.9.0'));
+  assert.ok(versionsSince270.includes('2.8.0'));
+  assert.ok(!versionsSince270.includes('2.7.0'));
 
   // public/app-version.json must match APP_VERSION & APP_BUILD_ID identically
   const pubJson = JSON.parse(fs.readFileSync('public/app-version.json', 'utf8'));

@@ -1,31 +1,38 @@
 {
-  "version": "2.9.0",
-  "buildId": "2026.05.24-1",
-  "releasedAt": "2026-05-24",
+  "version": "2.9.1",
+  "buildId": "2026.05.25-1",
+  "releasedAt": "2026-05-25",
   "latestRelease": {
-    "version": "2.9.0",
-    "buildId": "2026.05.24-1",
-    "releasedAt": "2026-05-24",
-    "titleFa": "تشخیص خودکار وضعیت اتصال، ارتقای دستیار هوشمند، رفع هنگ بازیابی فایل و تاریخچه کامل نسخه‌ها از نسخه 1.0.0",
-    "titleEn": "Automatic Connectivity Status, Upgraded Smart Assistant, Zero-Hang Import & Full Release History from v1.0.0",
+    "version": "2.9.1",
+    "buildId": "2026.05.25-1",
+    "releasedAt": "2026-05-25",
+    "titleFa": "رفع مشکل ثابت ماندن آیکون وضعیت اینترنت و اصلاح پنجره راهنمای نصب در مرورگر سافاری",
+    "titleEn": "Fixed Live Online/Offline Connectivity Indicator & Safari Install Guide Modal Positioning",
     "changesFa": [
-      "تبدیل وضعیت آنلاین و آفلاین در نوار پایین به نشانگر کاملاً خودکار و غیرتعاملی با تشخیص لحظه‌ای اتصال اینترنت و سرور برنامه و تغییر خودکار آیکون",
-      "ارتقای دستیار و تحلیل‌گر هوشمند انبار: اتصال آنلاین به هوش مصنوعی گوگل در سرور، عملکرد کامل و بدون خطای نشست در حالت آفلاین، و اصلاح دقیق پاسخ‌دهی پرسش مواد شیمیایی در آستانه انقضا",
-      "رفع کامل هنگ و کندی هنگام تحلیل فایل‌های حجیم در مرحله تشخیص بخش‌های مقصد پشتیبان‌گیری و بازیابی با نمونه‌برداری هوشمند و کش الگوی ستون‌ها",
-      "تضمین برابری قطعی تعداد، شماره سند و فهرست پکینگ‌های «دعوتنامه گشایش و بازرسی بسته‌ها» و «صورتجلسه گشایش و بازرسی بسته‌ها» هنگام ورود از فایل",
-      "افزایش دقت شناسایی ستون‌ها و اسناد در بازیابی فایل: پشتیبانی از حروف عربی و کشیده، تفکیک فرمول‌های جمع در حواله و برگشتی، وراثت تاریخ ورود در رسید مصرف مستقیم، و جلوگیری از ثبت وضعیت‌ها یا تاریخ به‌جای شماره سند",
-      "افزودن تاریخچه کامل تغییرات نرم‌افزار از نسخه 1.0.0 تا آخرین نسخه با قابلیت جستجو، انتخاب نسخه و مرتب‌سازی از جدیدترین یا از نسخه 1.0.0"
+      "رفع کامل مشکل ثابت ماندن آیکون وضعیت اتصال روی حالت آفلاین؛ تفکیک تشخیص اتصال زنده اینترنت و میزبان برنامه از حالت اجرای محلی، افزایش پایداری بررسی خودکار اتصال و تغییر لحظه‌ای آیکون بین آنلاین و آفلاین",
+      "اصلاح کامل موقعیت پنجره راهنمای نصب برنامه در مرورگر سافاری آیفون و آیپد با انتقال پنجره به لایه اصلی صفحه تا کل متن راهنما و دکمه «متوجه شدم» به‌صورت کامل و در مرکز صفحه نمایش داده شود"
     ],
     "changesEn": [
-      "Converted the sidebar online/offline badge into a passive, automatic connectivity indicator tracking internet state and server reachability",
-      "Upgraded Smart Warehouse Assistant with server-side Google Gemini integration online, seamless offline operation without session errors, and accurate chemical expiry responses",
-      "Eliminated multi-minute freezes during Step 1 to Step 2 workbook analysis on large files via stratified sparse-column sampling and cached schema plans",
-      "Enforced strict 1-to-1 parity between OPI Invitations and OPI Minutes (equal counts, identical numbers, and matching packing lists) on file import",
-      "Hardened operational document extraction across Rules 1–7: Arabic/Kashida normalization, formula summand splitting, GCV arrivalDate fallback, and rejection of status/date values as document numbers",
-      "Added full searchable and sortable version history from Version 1.0.0 through the latest release"
+      "Fixed connectivity status icon getting stuck in offline mode by separating live internet/host reachability from static API fallback and adding resilient automatic online/offline probing",
+      "Fixed the iOS Safari installation guide modal rendering off-screen under the blurred top header by rendering it through a document.body portal centered within the full viewport"
     ]
   },
   "changelog": [
+    {
+      "version": "2.9.1",
+      "buildId": "2026.05.25-1",
+      "releasedAt": "2026-05-25",
+      "titleFa": "رفع مشکل ثابت ماندن آیکون وضعیت اینترنت و اصلاح پنجره راهنمای نصب در مرورگر سافاری",
+      "titleEn": "Fixed Live Online/Offline Connectivity Indicator & Safari Install Guide Modal Positioning",
+      "changesFa": [
+        "رفع کامل مشکل ثابت ماندن آیکون وضعیت اتصال روی حالت آفلاین؛ تفکیک تشخیص اتصال زنده اینترنت و میزبان برنامه از حالت اجرای محلی، افزایش پایداری بررسی خودکار اتصال و تغییر لحظه‌ای آیکون بین آنلاین و آفلاین",
+        "اصلاح کامل موقعیت پنجره راهنمای نصب برنامه در مرورگر سافاری آیفون و آیپد با انتقال پنجره به لایه اصلی صفحه تا کل متن راهنما و دکمه «متوجه شدم» به‌صورت کامل و در مرکز صفحه نمایش داده شود"
+      ],
+      "changesEn": [
+        "Fixed connectivity status icon getting stuck in offline mode by separating live internet/host reachability from static API fallback and adding resilient automatic online/offline probing",
+        "Fixed the iOS Safari installation guide modal rendering off-screen under the blurred top header by rendering it through a document.body portal centered within the full viewport"
+      ]
+    },
     {
       "version": "2.9.0",
       "buildId": "2026.05.24-1",

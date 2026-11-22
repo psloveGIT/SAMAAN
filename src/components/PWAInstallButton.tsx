@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, PlusSquare, Share, Smartphone, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { usePWAInstall } from '../hooks/usePWAInstall.ts';
@@ -9,14 +10,97 @@ export const PWAInstallButton: React.FC = () => {
   const { canInstall, isIOS, isInstalled, triggerInstall } = usePWAInstall();
   const [iosModalOpen, setIosModalOpen] = useState(false);
 
+  useEffect(() => {
+    if (!iosModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIosModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [iosModalOpen]);
+
   if (isInstalled || (!canInstall && !isIOS)) {
     return null;
   }
+
+  const iosModal =
+    iosModalOpen && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ios-install-guide-title"
+            data-testid="ios-install-modal"
+            dir={isFa ? 'rtl' : 'ltr'}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 backdrop-blur-xs p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] print:hidden"
+            onClick={() => setIosModalOpen(false)}
+          >
+            <div
+              className="samaan-animate-in w-full max-w-sm max-h-[88dvh] overflow-y-auto rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-float)] space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+                    <Smartphone className="w-4 h-4" />
+                  </div>
+                  <h3
+                    id="ios-install-guide-title"
+                    className="text-sm font-bold text-[var(--text-primary)] truncate"
+                  >
+                    {isFa ? 'نصب سمان در آیفون و آیپد' : 'Install SAMAAN on iOS'}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIosModalOpen(false)}
+                  aria-label={isFa ? 'بستن' : 'Close'}
+                  className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs text-[var(--text-secondary)] leading-relaxed">
+                <div className="flex items-start gap-2.5 p-3 rounded-xl bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
+                  <Share className="w-4 h-4 text-[var(--accent-primary)] shrink-0 mt-0.5" />
+                  <span>
+                    {isFa
+                      ? '۱. در مرورگر سافاری روی دکمه اشتراک‌گذاری در نوار پایین صفحه بزنید.'
+                      : '1. Tap the Share button in the Safari bottom toolbar.'}
+                  </span>
+                </div>
+                <div className="flex items-start gap-2.5 p-3 rounded-xl bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
+                  <PlusSquare className="w-4 h-4 text-[var(--accent-primary)] shrink-0 mt-0.5" />
+                  <span>
+                    {isFa
+                      ? '۲. از فهرست بازشده گزینه «افزودن به صفحه اصلی» را انتخاب و تایید کنید.'
+                      : '2. Scroll and tap "Add to Home Screen", then confirm.'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                data-testid="ios-install-modal-ack-btn"
+                onClick={() => setIosModalOpen(false)}
+                className="w-full h-9 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold transition-colors"
+              >
+                {isFa ? 'متوجه شدم' : 'Got it'}
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
     <>
       <button
         type="button"
+        data-testid="pwa-install-btn"
         onClick={() => {
           if (canInstall) {
             void triggerInstall();
@@ -25,7 +109,7 @@ export const PWAInstallButton: React.FC = () => {
           }
         }}
         title={isFa ? 'نصب اپلیکیشن سمان روی دستگاه' : 'Install SAMAAN App'}
-        className="h-9 px-2.5 sm:px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+        className="h-9 px-2.5 sm:px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
       >
         {isIOS ? (
           <Smartphone className="w-4 h-4 text-[var(--accent-primary)]" />
@@ -35,62 +119,7 @@ export const PWAInstallButton: React.FC = () => {
         <span className="hidden sm:inline">{isFa ? 'نصب برنامه' : 'Install App'}</span>
       </button>
 
-      {iosModalOpen && (
-        <div
-          className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/50 p-4 print:hidden"
-          onClick={() => setIosModalOpen(false)}
-        >
-          <div
-            className="w-full max-w-sm rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 shadow-2xl space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center">
-                  <Smartphone className="w-4 h-4" />
-                </div>
-                <h3 className="text-sm font-bold text-[var(--text-primary)]">
-                  {isFa ? 'نصب سمان در آیفون / آیپد' : 'Install SAMAAN on iOS'}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIosModalOpen(false)}
-                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs text-[var(--text-secondary)] leading-relaxed">
-              <div className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
-                <Share className="w-4 h-4 text-[var(--accent-primary)] shrink-0 mt-0.5" />
-                <span>
-                  {isFa
-                    ? '۱. در مرورگر Safari روی دکمه اشتراک‌گذاری (Share) در نوار پایین بزنید.'
-                    : '1. Tap the Share button in the Safari bottom toolbar.'}
-                </span>
-              </div>
-              <div className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
-                <PlusSquare className="w-4 h-4 text-[var(--accent-primary)] shrink-0 mt-0.5" />
-                <span>
-                  {isFa
-                    ? '۲. گزینه Add to Home Screen را انتخاب کرده و تایید کنید.'
-                    : '2. Scroll and tap "Add to Home Screen", then confirm.'}
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setIosModalOpen(false)}
-              className="w-full h-9 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-medium"
-            >
-              {isFa ? 'متوجه شدم' : 'Got it'}
-            </button>
-          </div>
-        </div>
-      )}
+      {iosModal}
     </>
   );
 };

@@ -561,6 +561,7 @@ async function startServer() {
 
   // ---------------- HEALTH CHECK ----------------
   app.get('/api/health', (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.json({ ok: true });
   });
 
@@ -7673,7 +7674,12 @@ self.addEventListener('activate', (event) => {
         express.static(distDir, {
           setHeaders: (res, filePath) => {
             const base = path.basename(filePath);
-            if (base === 'index.html' || base === 'sw.js' || base === 'manifest.webmanifest') {
+            if (
+              base === 'index.html' ||
+              base === 'sw.js' ||
+              base === 'manifest.webmanifest' ||
+              base === 'app-version.json'
+            ) {
               res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
             }
           },

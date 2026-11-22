@@ -16,11 +16,26 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.9.0';
-export const APP_BUILD_ID = '2026.05.24-1';
-export const APP_RELEASED_AT = '2026-05-24';
+export const APP_VERSION = '2.9.1';
+export const APP_BUILD_ID = '2026.05.25-1';
+export const APP_RELEASED_AT = '2026-05-25';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.9.1',
+    buildId: '2026.05.25-1',
+    releasedAt: '2026-05-25',
+    titleFa: 'رفع مشکل ثابت ماندن آیکون وضعیت اینترنت و اصلاح پنجره راهنمای نصب در مرورگر سافاری',
+    titleEn: 'Fixed Live Online/Offline Connectivity Indicator & Safari Install Guide Modal Positioning',
+    changesFa: [
+      'رفع کامل مشکل ثابت ماندن آیکون وضعیت اتصال روی حالت آفلاین؛ تفکیک تشخیص اتصال زنده اینترنت و میزبان برنامه از حالت اجرای محلی، افزایش پایداری بررسی خودکار اتصال و تغییر لحظه‌ای آیکون بین آنلاین و آفلاین',
+      'اصلاح کامل موقعیت پنجره راهنمای نصب برنامه در مرورگر سافاری آیفون و آیپد با انتقال پنجره به لایه اصلی صفحه تا کل متن راهنما و دکمه «متوجه شدم» به‌صورت کامل و در مرکز صفحه نمایش داده شود',
+    ],
+    changesEn: [
+      'Fixed connectivity status icon getting stuck in offline mode by separating live internet/host reachability from static API fallback and adding resilient automatic online/offline probing',
+      'Fixed the iOS Safari installation guide modal rendering off-screen under the blurred top header by rendering it through a document.body portal centered within the full viewport',
+    ],
+  },
   {
     version: '2.9.0',
     buildId: '2026.05.24-1',

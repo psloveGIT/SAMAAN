@@ -147,20 +147,21 @@ export const Layout: React.FC<LayoutProps> = ({
   const historyMenuRef = React.useRef<HTMLDivElement | null>(null);
   const [networkState, setNetworkState] = React.useState<NetworkModeState>(() => getNetworkModeState());
 
-  const prevOfflineRef = React.useRef<boolean>(networkState.isOffline);
+  const prevStaticFallbackRef = React.useRef<boolean>(networkState.staticFallback);
 
   React.useEffect(() => {
+    setNetworkState(getNetworkModeState());
     return subscribeNetworkMode(setNetworkState);
   }, []);
 
   React.useEffect(() => {
-    if (prevOfflineRef.current !== networkState.isOffline) {
-      prevOfflineRef.current = networkState.isOffline;
+    if (prevStaticFallbackRef.current !== networkState.staticFallback) {
+      prevStaticFallbackRef.current = networkState.staticFallback;
       void refreshAuth().then(() => {
         onNetworkModeChanged?.();
       });
     }
-  }, [networkState.isOffline, refreshAuth, onNetworkModeChanged]);
+  }, [networkState.staticFallback, refreshAuth, onNetworkModeChanged]);
 
   React.useEffect(() => {
     const onUpdateStatus = (e: Event) => {
