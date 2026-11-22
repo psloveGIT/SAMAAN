@@ -1,31 +1,73 @@
 {
-  "version": "2.7.0",
-  "buildId": "2026.05.22-1",
-  "releasedAt": "2026-05-22",
+  "version": "2.9.0",
+  "buildId": "2026.05.24-1",
+  "releasedAt": "2026-05-24",
   "latestRelease": {
-    "version": "2.7.0",
-    "buildId": "2026.05.22-1",
-    "releasedAt": "2026-05-22",
-    "titleFa": "رفع کامل کندی عملیات انبار و فرم‌های شرکتی، همگام‌سازی هوشمند تغییرات فایل و ارتقای هشدارهای مواد شیمیایی",
-    "titleEn": "Zero-Freeze Operations & Corporate Forms Studio, Smart Delta Import Sync & Chemical Alerts Upgrade",
+    "version": "2.9.0",
+    "buildId": "2026.05.24-1",
+    "releasedAt": "2026-05-24",
+    "titleFa": "تشخیص خودکار وضعیت اتصال، ارتقای دستیار هوشمند، رفع هنگ بازیابی فایل و تاریخچه کامل نسخه‌ها از نسخه 1.0.0",
+    "titleEn": "Automatic Connectivity Status, Upgraded Smart Assistant, Zero-Hang Import & Full Release History from v1.0.0",
     "changesFa": [
-      "رفع کامل هنگ و فریز در تمام ۹ بخش «عملیات انبار» و بخش «کارفرمایان و فرم‌های شرکتی» با بارگذاری سبک، کش مدل اکسل و بهینه‌سازی رندر",
-      "اصلاح آپلود چندتایی لوگو در گالری لوگوهای کارفرما (افزودن هم‌زمان همه تصاویر انتخاب‌شده) و اعمال استاندارد فرمت شماره تلفن ایران در تمام فرم‌ها",
-      "حذف ارجاعات اکسل از تنظیمات کلیدهای میانبر و افزودن شماره‌گذاری خودکار صفحات چاپی (صفحه: # از #)",
-      "ارتقای بخش مواد شیمیایی داشبورد و جدول جزئیات: نمایش فقط اقلام دارای موجودی با تفکیک رنگی منقضی‌شده و در شرف انقضا، نوار هشدار فشرده و قابل بستن، تغییر نام «موجودی کارفرما» و دکمه‌های فیلتر سریع موجودی کارفرما و پیمانکار",
-      "ادغام مدیریت فرم‌های عملیاتی و آپلودی در یک تب واحد با تشخیص هوشمند فرمول‌های اکسل، انتخاب چندمنبعی داده‌ها، تشخیص و تأیید بخش مقصد فرم و اصلاح کامل پیش‌نمایش A4 عمودی/افقی",
-      "ارتقای بازیابی فایل: استخراج چندمقداره و چندستونه اسناد عملیاتی (حواله‌ها، برگشتی‌ها، رسیدها و صورتجلسه‌ها) و تشخیص هوشمند تغییرات هنگام بارگذاری مجدد فایل (Delta Sync)"
+      "تبدیل وضعیت آنلاین و آفلاین در نوار پایین به نشانگر کاملاً خودکار و غیرتعاملی با تشخیص لحظه‌ای اتصال اینترنت و سرور برنامه و تغییر خودکار آیکون",
+      "ارتقای دستیار و تحلیل‌گر هوشمند انبار: اتصال آنلاین به هوش مصنوعی گوگل در سرور، عملکرد کامل و بدون خطای نشست در حالت آفلاین، و اصلاح دقیق پاسخ‌دهی پرسش مواد شیمیایی در آستانه انقضا",
+      "رفع کامل هنگ و کندی هنگام تحلیل فایل‌های حجیم در مرحله تشخیص بخش‌های مقصد پشتیبان‌گیری و بازیابی با نمونه‌برداری هوشمند و کش الگوی ستون‌ها",
+      "تضمین برابری قطعی تعداد، شماره سند و فهرست پکینگ‌های «دعوتنامه گشایش و بازرسی بسته‌ها» و «صورتجلسه گشایش و بازرسی بسته‌ها» هنگام ورود از فایل",
+      "افزایش دقت شناسایی ستون‌ها و اسناد در بازیابی فایل: پشتیبانی از حروف عربی و کشیده، تفکیک فرمول‌های جمع در حواله و برگشتی، وراثت تاریخ ورود در رسید مصرف مستقیم، و جلوگیری از ثبت وضعیت‌ها یا تاریخ به‌جای شماره سند",
+      "افزودن تاریخچه کامل تغییرات نرم‌افزار از نسخه 1.0.0 تا آخرین نسخه با قابلیت جستجو، انتخاب نسخه و مرتب‌سازی از جدیدترین یا از نسخه 1.0.0"
     ],
     "changesEn": [
-      "Eliminated freeze and lag across all 9 Warehouse Operations views and the Employers & Corporate Forms Studio via compact queries, Excel model caching, and deferred rendering",
-      "Fixed multi-select logo upload in Client Gallery and enforced Iranian phone number formatting across all phone inputs",
-      "Removed legacy spreadsheet references from Keyboard Shortcuts settings and added automatic print page numbering (Page: # of #)",
-      "Upgraded Chemical Expiration alerts in Dashboard and Detailed view: in-stock only, distinct expired vs. near-expiry colors, compact dismissible alert bar, Employer Stock rename, and quick stock filter buttons",
-      "Unified Built-in & Uploaded Corporate Forms studio tab with Excel formula detection, multi-source data binding, target operational section confirmation, and crisp Portrait/Landscape A4 preview",
-      "Upgraded Backup & Restore import with multi-value & multi-column operational document extraction and Smart Re-Upload Delta Sync"
+      "Converted the sidebar online/offline badge into a passive, automatic connectivity indicator tracking internet state and server reachability",
+      "Upgraded Smart Warehouse Assistant with server-side Google Gemini integration online, seamless offline operation without session errors, and accurate chemical expiry responses",
+      "Eliminated multi-minute freezes during Step 1 to Step 2 workbook analysis on large files via stratified sparse-column sampling and cached schema plans",
+      "Enforced strict 1-to-1 parity between OPI Invitations and OPI Minutes (equal counts, identical numbers, and matching packing lists) on file import",
+      "Hardened operational document extraction across Rules 1–7: Arabic/Kashida normalization, formula summand splitting, GCV arrivalDate fallback, and rejection of status/date values as document numbers",
+      "Added full searchable and sortable version history from Version 1.0.0 through the latest release"
     ]
   },
   "changelog": [
+    {
+      "version": "2.9.0",
+      "buildId": "2026.05.24-1",
+      "releasedAt": "2026-05-24",
+      "titleFa": "تشخیص خودکار وضعیت اتصال، ارتقای دستیار هوشمند، رفع هنگ بازیابی فایل و تاریخچه کامل نسخه‌ها از نسخه 1.0.0",
+      "titleEn": "Automatic Connectivity Status, Upgraded Smart Assistant, Zero-Hang Import & Full Release History from v1.0.0",
+      "changesFa": [
+        "تبدیل وضعیت آنلاین و آفلاین در نوار پایین به نشانگر کاملاً خودکار و غیرتعاملی با تشخیص لحظه‌ای اتصال اینترنت و سرور برنامه و تغییر خودکار آیکون",
+        "ارتقای دستیار و تحلیل‌گر هوشمند انبار: اتصال آنلاین به هوش مصنوعی گوگل در سرور، عملکرد کامل و بدون خطای نشست در حالت آفلاین، و اصلاح دقیق پاسخ‌دهی پرسش مواد شیمیایی در آستانه انقضا",
+        "رفع کامل هنگ و کندی هنگام تحلیل فایل‌های حجیم در مرحله تشخیص بخش‌های مقصد پشتیبان‌گیری و بازیابی با نمونه‌برداری هوشمند و کش الگوی ستون‌ها",
+        "تضمین برابری قطعی تعداد، شماره سند و فهرست پکینگ‌های «دعوتنامه گشایش و بازرسی بسته‌ها» و «صورتجلسه گشایش و بازرسی بسته‌ها» هنگام ورود از فایل",
+        "افزایش دقت شناسایی ستون‌ها و اسناد در بازیابی فایل: پشتیبانی از حروف عربی و کشیده، تفکیک فرمول‌های جمع در حواله و برگشتی، وراثت تاریخ ورود در رسید مصرف مستقیم، و جلوگیری از ثبت وضعیت‌ها یا تاریخ به‌جای شماره سند",
+        "افزودن تاریخچه کامل تغییرات نرم‌افزار از نسخه 1.0.0 تا آخرین نسخه با قابلیت جستجو، انتخاب نسخه و مرتب‌سازی از جدیدترین یا از نسخه 1.0.0"
+      ],
+      "changesEn": [
+        "Converted the sidebar online/offline badge into a passive, automatic connectivity indicator tracking internet state and server reachability",
+        "Upgraded Smart Warehouse Assistant with server-side Google Gemini integration online, seamless offline operation without session errors, and accurate chemical expiry responses",
+        "Eliminated multi-minute freezes during Step 1 to Step 2 workbook analysis on large files via stratified sparse-column sampling and cached schema plans",
+        "Enforced strict 1-to-1 parity between OPI Invitations and OPI Minutes (equal counts, identical numbers, and matching packing lists) on file import",
+        "Hardened operational document extraction across Rules 1–7: Arabic/Kashida normalization, formula summand splitting, GCV arrivalDate fallback, and rejection of status/date values as document numbers",
+        "Added full searchable and sortable version history from Version 1.0.0 through the latest release"
+      ]
+    },
+    {
+      "version": "2.8.0",
+      "buildId": "2026.05.23-1",
+      "releasedAt": "2026-05-23",
+      "titleFa": "پایداری کامل حالت آفلاین، صفحه‌بندی و همگام‌سازی دسته‌بندی‌ها و یکدست‌سازی زبان فارسی",
+      "titleEn": "Rock-Solid Offline Stability, Paginated Cascading Categories & Clean Persian UI",
+      "changesFa": [
+        "رفع کامل هنگ، صفحه سفید و توقف روی «در حال بارگذاری» در حالت آفلاین برای بخش‌های جایگزینی تجهیزات، گزارش موازنه و کنترل مصرف مواد، برچسب انبارش کالا، سطل بازیافت، کاربران و ثبت وقایع، و حذف و پاکسازی پایگاه داده",
+        "همگام‌سازی خودکار تغییرات بخش دسته‌بندی‌ها با تمام جداول مرتبط نرم‌افزار، افزودن انتخاب تعداد ردیف در صفحه و تفکیک خودکار مقادیر چندخطی درون یک سلول به دسته‌های جداگانه",
+        "جایگزینی عبارت «پایگاه داده» به‌جای «دیتابیس» در منو، حذف معادل‌های انگلیسی زائد از برچسب‌های فارسی، و حذف نوار اعلان مزاحم حالت آفلاین",
+        "نمایش وضعیت منقضی در ستون «وضعیت / دسته‌بندی» جدول جزئیات برای مواد شیمیایی ناموجود منقضی‌شده بدون ایجاد هشدار در نوار هشدار اقلام دارای موجودی"
+      ],
+      "changesEn": [
+        "Fixed offline mode freezes and blank screens across Substitutions, Material Balance, Storage Labels, Recycle Bin, Users & Audit, and Database Purge",
+        "Added automatic cascade updates from Categories to all linked tables, per-page pagination controls, and newline-aware multi-value category splitting during import",
+        "Standardized Persian terminology across menus and labels and removed the intrusive offline banner",
+        "Displayed expired status badge in the Detailed table for zero-stock expired chemicals without triggering in-stock warning banners"
+      ]
+    },
     {
       "version": "2.7.0",
       "buildId": "2026.05.22-1",
@@ -33,19 +75,19 @@
       "titleFa": "رفع کامل کندی عملیات انبار و فرم‌های شرکتی، همگام‌سازی هوشمند تغییرات فایل و ارتقای هشدارهای مواد شیمیایی",
       "titleEn": "Zero-Freeze Operations & Corporate Forms Studio, Smart Delta Import Sync & Chemical Alerts Upgrade",
       "changesFa": [
-        "رفع کامل هنگ و فریز در تمام ۹ بخش «عملیات انبار» و بخش «کارفرمایان و فرم‌های شرکتی» با بارگذاری سبک، کش مدل اکسل و بهینه‌سازی رندر",
-        "اصلاح آپلود چندتایی لوگو در گالری لوگوهای کارفرما (افزودن هم‌زمان همه تصاویر انتخاب‌شده) و اعمال استاندارد فرمت شماره تلفن ایران در تمام فرم‌ها",
-        "حذف ارجاعات اکسل از تنظیمات کلیدهای میانبر و افزودن شماره‌گذاری خودکار صفحات چاپی (صفحه: # از #)",
+        "رفع کامل هنگ و فریز در تمام ۹ بخش «عملیات انبار» و بخش «کارفرمایان و فرم‌های شرکتی» با بارگذاری سبک، کش مدل فرم و بهینه‌سازی رندر",
+        "اصلاح آپلود چندتایی لوگو در گالری لوگوهای کارفرما و اعمال استاندارد فرمت شماره تلفن ایران در تمام فرم‌ها",
+        "اصلاح متن تنظیمات کلیدهای میانبر و افزودن شماره‌گذاری خودکار صفحات چاپی به‌صورت «صفحه: # از #»",
         "ارتقای بخش مواد شیمیایی داشبورد و جدول جزئیات: نمایش فقط اقلام دارای موجودی با تفکیک رنگی منقضی‌شده و در شرف انقضا، نوار هشدار فشرده و قابل بستن، تغییر نام «موجودی کارفرما» و دکمه‌های فیلتر سریع موجودی کارفرما و پیمانکار",
-        "ادغام مدیریت فرم‌های عملیاتی و آپلودی در یک تب واحد با تشخیص هوشمند فرمول‌های اکسل، انتخاب چندمنبعی داده‌ها، تشخیص و تأیید بخش مقصد فرم و اصلاح کامل پیش‌نمایش A4 عمودی/افقی",
-        "ارتقای بازیابی فایل: استخراج چندمقداره و چندستونه اسناد عملیاتی (حواله‌ها، برگشتی‌ها، رسیدها و صورتجلسه‌ها) و تشخیص هوشمند تغییرات هنگام بارگذاری مجدد فایل (Delta Sync)"
+        "ادغام مدیریت فرم‌های عملیاتی و آپلودی در یک تب واحد با تشخیص هوشمند فرمول‌ها، انتخاب چندمنبعی داده‌ها، تشخیص بخش مقصد فرم و اصلاح کامل پیش‌نمایش چاپ عمودی و افقی",
+        "ارتقای بازیابی فایل: استخراج چندمقداره و چندستونه اسناد عملیاتی و تشخیص هوشمند تغییرات هنگام بارگذاری مجدد فایل"
       ],
       "changesEn": [
-        "Eliminated freeze and lag across all 9 Warehouse Operations views and the Employers & Corporate Forms Studio via compact queries, Excel model caching, and deferred rendering",
+        "Eliminated freeze and lag across all 9 Warehouse Operations views and the Employers & Corporate Forms Studio via compact queries, model caching, and deferred rendering",
         "Fixed multi-select logo upload in Client Gallery and enforced Iranian phone number formatting across all phone inputs",
-        "Removed legacy spreadsheet references from Keyboard Shortcuts settings and added automatic print page numbering (Page: # of #)",
+        "Cleaned up Keyboard Shortcuts settings copy and added automatic print page numbering (Page: # of #)",
         "Upgraded Chemical Expiration alerts in Dashboard and Detailed view: in-stock only, distinct expired vs. near-expiry colors, compact dismissible alert bar, Employer Stock rename, and quick stock filter buttons",
-        "Unified Built-in & Uploaded Corporate Forms studio tab with Excel formula detection, multi-source data binding, target operational section confirmation, and crisp Portrait/Landscape A4 preview",
+        "Unified Built-in & Uploaded Corporate Forms studio tab with formula detection, multi-source data binding, target operational section confirmation, and crisp Portrait/Landscape A4 preview",
         "Upgraded Backup & Restore import with multi-value & multi-column operational document extraction and Smart Re-Upload Delta Sync"
       ]
     },
@@ -53,24 +95,24 @@
       "version": "2.6.0",
       "buildId": "2026.05.21-1",
       "releasedAt": "2026-05-21",
-      "titleFa": "اصلاح دستیار هوشمند جمنای، بازآرایی گروه‌بندی‌شده ستون‌های جزئیات تجهیزات و استخراج خودکار تاریخ مواد شیمیایی",
-      "titleEn": "Gemini AI Assistant Fix, Grouped Detailed Table Columns & Chemical Date Auto-Extraction",
+      "titleFa": "اصلاح دستیار هوشمند، بازآرایی گروه‌بندی‌شده ستون‌های جزئیات تجهیزات و استخراج خودکار تاریخ مواد شیمیایی",
+      "titleEn": "AI Assistant Fix, Grouped Detailed Table Columns & Chemical Date Auto-Extraction",
       "changesFa": [
-        "رفع خطای دستیار هوشمند در گزارش خلاصه پکینگ‌ها، محموله‌های در راه و وزن خالص/ناخالص و اتصال مستقیم به سرویس جمنای سرور",
-        "بازآرایی کامل، نام‌گذاری فارسی شفاف و گروه‌بندی رنگی دوطبقه ستون‌های جدول ثبت جزئیات تجهیزات (حذف ستون‌های تکراری و قدیمی و افزودن «تأمین مجدد جایگزین شده»، «تحویل گیرنده حواله» و «تحویل آورنده»)",
-        "اصلاح کامل فیلتر ستون «دسته‌بندی تخصصی قلم» جهت نمایش ۱۰۰٪ فارسی در زبان فارسی و انگلیسی در زبان انگلیسی",
-        "افزودن انتخاب صریح انبار مقصد برگشت متریال (انبار کارفرما / انبار پیمانکار) و فیلد «نام تحویل آورنده» در فرم ارجاع (SMR) و ثبت خودکار «تحویل گیرنده» از حواله (MIV)",
-        "استخراج خودکار تاریخ تولید و تاریخ انقضای مواد شیمیایی (شمسی و میلادی) از متن و توضیحات هنگام ورود فایل‌های اکسل و CSV و رفع تداخل ستون انبارگردانی با تاریخ تولید",
-        "بازطراحی کامل ورود فایل در پشتیبان‌گیری به ویزارد ۳ مرحله‌ای: انتخاب دستی شیت‌ها، تشخیص و تأیید چندبخش هم‌زمان درون یک شیت و ثبت کنترل‌شده بدون تحمیل خودکار شیت اول",
+        "رفع خطای دستیار هوشمند در گزارش خلاصه پکینگ‌ها، محموله‌های در راه و وزن خالص و ناخالص",
+        "بازآرایی کامل، نام‌گذاری فارسی شفاف و گروه‌بندی رنگی دوطبقه ستون‌های جدول ثبت جزئیات تجهیزات همراه با افزودن «تأمین مجدد جایگزین شده»، «تحویل گیرنده حواله» و «تحویل آورنده»",
+        "اصلاح کامل فیلتر ستون «دسته‌بندی تخصصی قلم» جهت نمایش کاملاً یکدست فارسی در حالت فارسی و انگلیسی در حالت انگلیسی",
+        "افزودن انتخاب صریح انبار مقصد برگشت متریال و فیلد «نام تحویل آورنده» در فرم ارجاع و ثبت خودکار «تحویل گیرنده» از حواله",
+        "استخراج خودکار تاریخ تولید و تاریخ انقضای مواد شیمیایی به تقویم شمسی و میلادی از متن و توضیحات هنگام ورود فایل‌ها",
+        "بازطراحی کامل ورود فایل در پشتیبان‌گیری به ویزارد ۳ مرحله‌ای با انتخاب دستی شیت‌ها و تشخیص چندبخش هم‌زمان درون یک شیت",
         "به‌روزرسانی فوری فهرست تغییرات در اعلان بروزرسانی برنامه همزمان با شناسایی نسخه جدید"
       ],
       "changesEn": [
-        "Fixed Smart AI Assistant summary/weight/packing/transit queries and direct server-side Gemini API routing",
-        "Reorganized, renamed, and color-grouped Detailed Equipment table columns into clean 2-tier semantic headers (added Reprocured Replacement, MIV Receiver, and SMR Deliverer; removed duplicate legacy columns)",
+        "Fixed Smart AI Assistant summary, weight, packing, and transit queries with direct server-side routing",
+        "Reorganized, renamed, and color-grouped Detailed Equipment table columns into clean 2-tier semantic headers",
         "Fixed Item Classification column filter to render strictly Persian labels in Persian mode and English labels in English mode",
-        "Added explicit target warehouse selection (Employer vs. Contractor WH) and Returned By field in SMR, plus automatic Receiver sync from MIV",
-        "Automatic extraction of Persian (Jalali) and English (Gregorian) chemical production & expiration dates during Excel/CSV import, fixing stocktake-to-productionDate column overlap",
-        "Redesigned Backup & Restore file import into a 3-step guided wizard supporting explicit sheet selection and multi-section detection inside a single sheet",
+        "Added explicit target warehouse selection and Returned By field in SMR, plus automatic Receiver sync from MIV",
+        "Automatic extraction of Jalali and Gregorian chemical production & expiration dates during file import",
+        "Redesigned Backup & Restore file import into a 3-step guided wizard supporting explicit sheet selection and multi-section detection",
         "Immediate remote changelog sync when Service Worker detects a new app release"
       ]
     },
@@ -82,7 +124,7 @@
       "titleEn": "Modern Scandinavian-Industrial Visual Redesign",
       "changesFa": [
         "بازطراحی کامل پالت رنگی روشن و تیره با کنتراست خوانا، سطوح مسطح مدرن و تفکیک بصری دقیق",
-        "نوار شاخص‌های کلیدی (KPI) یکپارچه در داشبورد با خطوط جداکننده ظریف و سلسله‌مراتب تایپوگرافی شفاف",
+        "نوار شاخص‌های کلیدی یکپارچه در داشبورد با خطوط جداکننده ظریف و سلسله‌مراتب تایپوگرافی شفاف",
         "ساده‌سازی و خلوت‌سازی منوی کناری با داک فشرده تنظیمات سریع، آواتار کاربری و مسیر راهنمای صفحه در نوار بالا",
         "جایگزینی برچسب‌های شلوغ جداول با نشانگرهای نقطه‌ای مینیمال و ارتقای نمایش تصاویر اقلام تجهیزات"
       ],
@@ -100,12 +142,12 @@
       "titleFa": "تصویر اقلام تجهیزات و سامانه هوشمند اطلاع‌رسانی بروزرسانی",
       "titleEn": "Equipment Item Photos & Smart Non-Intrusive Update Center",
       "changesFa": [
-        "افزودن قابلیت اختصاص تصویر برای هر قلم در بخش ثبت جزئیات تجهیزات با پشتیبانی از کشیدن و رها کردن (Drag & Drop) و پیش‌نمایش تمام‌صفحه با کلیک روی هر ردیف",
+        "افزودن قابلیت اختصاص تصویر برای هر قلم در بخش ثبت جزئیات تجهیزات با پشتیبانی از کشیدن و رها کردن و پیش‌نمایش تمام‌صفحه",
         "افزودن سیستم اطلاع‌رسانی هوشمند بروزرسانی برنامه با نمایش فهرست تغییرات و انتخاب «بروزرسانی همین الان» یا «بعداً» بدون ایجاد مزاحمت هنگام کار",
         "تشخیص خودکار تغییرات چه در حین باز بودن برنامه و چه پس از بستن و باز کردن مجدد نرم‌افزار"
       ],
       "changesEn": [
-        "Added equipment photo attachment for Detailed items with Drag & Drop upload and click-to-preview full-screen lightbox",
+        "Added equipment photo attachment for Detailed items with Drag & Drop upload and full-screen lightbox preview",
         "Added non-intrusive app update notification with release notes and Update Now / Later choices",
         "Automatic update detection both while the app is open and upon closing and reopening"
       ]
@@ -114,19 +156,142 @@
       "version": "2.4.0",
       "buildId": "2026.05.12-1",
       "releasedAt": "2026-05-12",
-      "titleFa": "بازگردانی سراسری (Undo/Redo)، صفحه‌بندی یکپارچه و بهینه‌سازی چاپ",
+      "titleFa": "بازگردانی سراسری عملیات، صفحه‌بندی یکپارچه و بهینه‌سازی چاپ",
       "titleEn": "Universal Undo/Redo, Unified Pagination & Print Header Repetition",
       "changesFa": [
-        "پشتیبانی سراسری از دکمه‌های بازگردانی و انجام مجدد (Ctrl+Z / Ctrl+Y) در تمام بخش‌های نرم‌افزار",
+        "پشتیبانی سراسری از دکمه‌های بازگردانی و انجام مجدد در تمام بخش‌های نرم‌افزار",
         "افزودن کنترل انتخاب تعداد ردیف در صفحه و دکمه «انتخاب صفحه» به تمام جداول برنامه",
         "تکرار خودکار تیتر ستون‌ها در بالای تمامی صفحات خروجی چاپگر",
-        "بهبود نمایش دسته‌بندی تخصصی اقلام به زبان فارسی/انگلیسی خالص و بهینه‌سازی قوانین بازیابی سطل بازیافت"
+        "بهبود نمایش دسته‌بندی تخصصی اقلام و بهینه‌سازی قوانین بازیابی سطل بازیافت"
       ],
       "changesEn": [
         "Universal Undo/Redo (Ctrl+Z / Ctrl+Y) support across every section of the application",
         "Added rows-per-page selector and Select Page control across all data tables",
         "Automatic repeating table headers across all printed pages",
         "Strict language-matched specialized category labels and unified duplicate validation on Recycle Bin restore"
+      ]
+    },
+    {
+      "version": "2.3.0",
+      "buildId": "2026.05.05-1",
+      "releasedAt": "2026-05-05",
+      "titleFa": "مدیریت کارفرمایان، استودیوی فرم‌های شرکتی و برچسب انبارش کالا",
+      "titleEn": "Employers Management, Corporate Forms Studio & Warehouse Storage Labels",
+      "changesFa": [
+        "افزودن بخش «کارفرمایان و فرم‌های شرکتی» با قابلیت تعریف پروفایل کارفرما، گالری لوگوها و طراحی و آپلود قالب فرم‌های رسمی",
+        "افزودن بخش «برچسب انبارش کالا» با تولید خودکار بارکد و کد دوبعدی، چاپ دسته‌ای و نمایش مشخصات پکینگ و محل نگهداری",
+        "پشتیبانی از حالت محافظت چشم و فیلتر نور آبی در کنار حالت روشن و تیره"
+      ],
+      "changesEn": [
+        "Added Employers & Corporate Forms Studio with employer profiles, logo galleries, and custom form templates",
+        "Added Warehouse Storage Labels with QR/barcode generation, batch printing, and location metadata",
+        "Added Eye-Care warm filter alongside Light and Dark themes"
+      ]
+    },
+    {
+      "version": "2.2.0",
+      "buildId": "2026.04.26-1",
+      "releasedAt": "2026-04-26",
+      "titleFa": "مدیریت چندپروژه‌ای، کلیدهای میانبر و تصحیح املای هوشمند",
+      "titleEn": "Multi-Project Workspace, Customizable Shortcuts & Bilingual Spellcheck",
+      "changesFa": [
+        "افزودن مدیریت چندپروژه‌ای با پایگاه داده مستقل برای هر پروژه، جابه‌جایی سریع میان پروژه‌ها و تخصیص کارفرما",
+        "افزودن سامانه کلیدهای میانبر قابل شخصی‌سازی برای ناوبری، جستجو، ثبت ردیف و عملیات سریع جداول",
+        "افزودن بررسی و تصحیح هوشمند املای فارسی و انگلیسی با فرهنگ لغت تخصصی تجهیزات نیروگاهی"
+      ],
+      "changesEn": [
+        "Added multi-project workspace management with isolated databases, quick project switching, and employer binding",
+        "Added customizable keyboard shortcuts for navigation, search, record entry, and table workflows",
+        "Added smart Persian & English spellcheck with power-plant technical dictionary support"
+      ]
+    },
+    {
+      "version": "2.1.0",
+      "buildId": "2026.04.18-1",
+      "releasedAt": "2026-04-18",
+      "titleFa": "دستیار و تحلیل‌گر هوشمند انبار و جستجوی سراسری بین‌جدولی",
+      "titleEn": "Smart Warehouse AI Assistant & Cross-Table Global Search",
+      "changesFa": [
+        "افزودن دستیار و تحلیل‌گر هوشمند انبار برای پاسخ به پرسش‌های عملیاتی، تحلیل ریسک، گزارش موجودی سایزها و پرسش‌های سریع",
+        "افزودن جستجوی سراسری در تمام جداول ثبت کلی، جزئیات، تجهیزات در راه و اسناد عملیاتی",
+        "پشتیبانی از شناسایی هوشمند سایز و معادل‌سازی واحدهای فنی مانند اینچ و قطر اسمی در جستجو"
+      ],
+      "changesEn": [
+        "Introduced Smart Warehouse Assistant for operational Q&A, risk analysis, size/item lookup, and quick prompts",
+        "Added global cross-table search across General, Detailed, In-Transit, and operational documents",
+        "Added bilingual technical size equivalence (inches / DN) during warehouse item search"
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "buildId": "2026.04.10-1",
+      "releasedAt": "2026-04-10",
+      "titleFa": "مجموعه جامع عملیات انبار، برآورد تجهیزات و انبارگردانی ادواری",
+      "titleEn": "Complete 9-Module Warehouse Operations, MTO Estimates & Periodic Stocktake",
+      "changesFa": [
+        "راه‌اندازی کامل ۹ بخش عملیات انبار شامل صورتجلسه ورود به کارگاه، دعوتنامه و صورتجلسه گشایش و بازرسی بسته‌ها، گزارش کسری و مغایرت، رسید مصرف مستقیم، حواله انبار، فرم ارجاع کالا، جایگزینی تجهیزات و گزارش موازنه و کنترل مصرف مواد",
+        "اتصال خودکار و لحظه‌ای تمام اسناد عملیاتی به موجودی کارفرما و پیمانکار در جدول ثبت جزئیات تجهیزات",
+        "افزودن بخش‌های برآورد تجهیزات، انبارگردانی و بازدید ادواری انبار با خروجی چاپی رسمی"
+      ],
+      "changesEn": [
+        "Launched all 9 Warehouse Operations modules: Site Entry, OPI Invitations & Minutes, OSDR/MER, GCV, MIV, SMR, Substitutions, and Material Balance",
+        "Automatic real-time cross-linking between operational documents and Employer/Contractor stock in Detailed inventory",
+        "Added Material Estimation (MTO), Stocktake, and Periodic Warehouse Inspection modules with print-ready reports"
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "buildId": "2026.03.24-1",
+      "releasedAt": "2026-03-24",
+      "titleFa": "ردیابی محموله‌های در راه، سطل بازیافت امن و پشتیبان‌گیری و بازیابی",
+      "titleEn": "In-Transit Tracking, Safe Recycle Bin & Backup / Restore Engine",
+      "changesFa": [
+        "افزودن بخش «ثبت تجهیزات در راه» با تغییر وضعیت خودکار به «رسیده» پس از ثبت محموله در انبار",
+        "افزودن سطل بازیافت با قابلیت بازیابی امن ردیف‌های حذف‌شده و جلوگیری از ثبت تکراری",
+        "افزودن بخش پشتیبان‌گیری و بازیابی کامل با پشتیبانی از فایل‌های جدولی و اسنپ‌شات محلی"
+      ],
+      "changesEn": [
+        "Added In-Transit Equipment tracking with automatic arrival status synchronization once received on site",
+        "Added Recycle Bin with safe restore and duplicate protection",
+        "Added Backup & Restore center with spreadsheet import and local offline snapshots"
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "buildId": "2026.03.10-1",
+      "releasedAt": "2026-03-10",
+      "titleFa": "داشبورد تحلیلی جامع، دسته‌بندی‌ها، تقویم شمسی و مدیریت کاربران",
+      "titleEn": "Analytical Dashboard, Categories, Jalali/Gregorian Calendar & User Audit Logs",
+      "changesFa": [
+        "افزودن داشبورد تحلیلی با نمودارهای تفکیک جزایر، تأمین‌کنندگان، آمار کسری و آسیب‌دیدگی و پایش مواد شیمیایی",
+        "افزودن بخش مدیریت دسته‌بندی‌ها برای استانداردسازی جزیره، سیستم، واحد، محل نگهداری و واحد شمارش",
+        "افزودن پشتیبانی کامل دوزبانه فارسی و انگلیسی و جابه‌جایی تقویم شمسی و میلادی در سراسر سامانه",
+        "افزودن مدیریت کاربران، سطوح دسترسی و ثبت تاریخچه وقایع و تغییرات"
+      ],
+      "changesEn": [
+        "Added Analytical Dashboard with island/supplier breakdowns, shortage/damage metrics, and chemical monitoring",
+        "Added Categories manager for islands, systems, units, storage locations, and counting units",
+        "Added full bilingual Persian/English UI and Jalali/Gregorian calendar switching",
+        "Added role-based user accounts and full activity audit logging"
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "buildId": "2026.02.25-1",
+      "releasedAt": "2026-02-25",
+      "titleFa": "انتشار اولیه سامانه جامع مدیریت انبارهای نیروگاهی سمان",
+      "titleEn": "Initial Release of SAMAAN Power Plant Warehouse Management System",
+      "changesFa": [
+        "راه‌اندازی هسته اصلی سامانه شامل «ثبت کلی تجهیزات» و «ثبت جزئیات تجهیزات» با فیلترهای ستونی و مرتب‌سازی پیشرفته",
+        "محاسبه خودکار کسری، موجودی انبار کارفرما، موجودی انبار پیمانکار و جمع موجودی سایت بر اساس فرمول‌های انبارداری نیروگاهی",
+        "ارتباط هوشمند میان پکینگ لیست‌های ثبت کلی و اقلام ثبت جزئیات همراه با خروجی چاپی و جدولی",
+        "پشتیبانی از ذخیره‌سازی محلی و اجرای وب‌اپلیکیشن پیش‌رونده برای استفاده در محیط کارگاهی"
+      ],
+      "changesEn": [
+        "Launched core General Manifest and Detailed Equipment Inventory tables with column filtering and sorting",
+        "Automated power-plant stock formulas for shortages, Employer stock, Contractor stock, and total site stock",
+        "Automatic linking between General packing lists and Detailed equipment rows with print and export outputs",
+        "Added local offline persistence and Progressive Web App support for field operations"
       ]
     }
   ]

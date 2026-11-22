@@ -141,8 +141,9 @@ export const Layout: React.FC<LayoutProps> = ({
   const [navQuery, setNavQuery] = React.useState('');
   const [pendingUpdateInfo, setPendingUpdateInfo] = React.useState<{
     hasPendingUpdate: boolean;
+    mode: 'none' | 'live_update' | 'reopen_whats_new';
     targetVersion: string;
-  }>({ hasPendingUpdate: false, targetVersion: APP_VERSION });
+  }>({ hasPendingUpdate: false, mode: 'none', targetVersion: APP_VERSION });
   const historyMenuRef = React.useRef<HTMLDivElement | null>(null);
   const [networkState, setNetworkState] = React.useState<NetworkModeState>(() => getNetworkModeState());
 
@@ -163,9 +164,16 @@ export const Layout: React.FC<LayoutProps> = ({
 
   React.useEffect(() => {
     const onUpdateStatus = (e: Event) => {
-      const detail = (e as CustomEvent<{ hasPendingUpdate?: boolean; targetVersion?: string }>).detail;
+      const detail = (
+        e as CustomEvent<{
+          hasPendingUpdate?: boolean;
+          mode?: 'none' | 'live_update' | 'reopen_whats_new';
+          targetVersion?: string;
+        }>
+      ).detail;
       setPendingUpdateInfo({
         hasPendingUpdate: Boolean(detail?.hasPendingUpdate),
+        mode: detail?.mode || 'none',
         targetVersion: detail?.targetVersion || APP_VERSION,
       });
     };
@@ -702,9 +710,13 @@ export const Layout: React.FC<LayoutProps> = ({
               }}
               title={
                 pendingUpdateInfo.hasPendingUpdate
-                  ? isFa
-                    ? `بروزرسانی آماده است (${pendingUpdateInfo.targetVersion}) — برای مشاهده تغییرات کلیک کنید`
-                    : `Update available (v${pendingUpdateInfo.targetVersion}) — click to view changes`
+                  ? pendingUpdateInfo.mode === 'reopen_whats_new'
+                    ? isFa
+                      ? `برنامه به نسخه ${pendingUpdateInfo.targetVersion} بروزرسانی شده است — برای مشاهده تغییرات کلیک کنید`
+                      : `Updated to v${pendingUpdateInfo.targetVersion} — click to view changes`
+                    : isFa
+                      ? `بروزرسانی آماده است (${pendingUpdateInfo.targetVersion}) — برای مشاهده تغییرات کلیک کنید`
+                      : `Update available (v${pendingUpdateInfo.targetVersion}) — click to view changes`
                   : isFa
                     ? `نسخه برنامه ${APP_VERSION} — بررسی بروزرسانی و تاریخچه تغییرات`
                     : `Version ${APP_VERSION} — Check updates & changelog`
@@ -725,9 +737,13 @@ export const Layout: React.FC<LayoutProps> = ({
               </span>
               <span className={`truncate tabular-nums ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
                 {pendingUpdateInfo.hasPendingUpdate
-                  ? isFa
-                    ? `بروزرسانی آماده (${pendingUpdateInfo.targetVersion})`
-                    : `Update Ready (v${pendingUpdateInfo.targetVersion})`
+                  ? pendingUpdateInfo.mode === 'reopen_whats_new'
+                    ? isFa
+                      ? `تغییرات نسخه ${pendingUpdateInfo.targetVersion}`
+                      : `What's New (v${pendingUpdateInfo.targetVersion})`
+                    : isFa
+                      ? `بروزرسانی آماده (${pendingUpdateInfo.targetVersion})`
+                      : `Update Ready (v${pendingUpdateInfo.targetVersion})`
                   : isFa
                     ? `نسخه ${APP_VERSION}`
                     : `v${APP_VERSION}`}

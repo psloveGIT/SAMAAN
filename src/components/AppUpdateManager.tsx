@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowDownUp,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   Clock,
+  History,
   RefreshCw,
+  Search,
   Sparkles,
   X,
 } from 'lucide-react';
@@ -15,6 +18,8 @@ import {
   APP_CHANGELOG,
   APP_VERSION,
   evaluateAppUpdateState,
+  filterAndSortChangelog,
+  mergeChangelogs,
   type AppReleaseNote,
   type RemoteVersionPayload,
 } from '../shared/appVersion.ts';
@@ -104,6 +109,9 @@ export const AppUpdateManager: React.FC = () => {
   const [checkingManual, setCheckingManual] = useState(false);
   const [detailsExpanded, setDetailsExpanded] = useState(true);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyVersionFilter, setHistoryVersionFilter] = useState('all');
+  const [historySortOrder, setHistorySortOrder] = useState<'newest' | 'oldest'>('newest');
 
   const updateSwFnRef = useRef<((reloadPage?: boolean) => Promise<void>) | null>(null);
   const swRegRef = useRef<ServiceWorkerRegistration | null>(null);
@@ -251,9 +259,6 @@ export const AppUpdateManager: React.FC = () => {
   const handleDeferLater = () => {
     safeSetStorage(DEFERRED_BUILD_KEY, evaluation.targetBuildId);
     setDeferredBuildId(evaluation.targetBuildId);
-    // Keep SEEN_BUILD_KEY unchanged if reopen_whats_new was deferred?
-    // Actually if user chooses "Later" on live_update, they'll be reminded quietly on reopen
-    // or via the sidebar update pill. On reopen_whats_new, deferring hides the card for this session.
   };
 
   const handleAcknowledgeReopen = () => {
@@ -261,6 +266,13 @@ export const AppUpdateManager: React.FC = () => {
     safeRemoveStorage(DEFERRED_BUILD_KEY);
     setLastSeenBuildId(APP_BUILD_ID);
     setDeferredBuildId(null);
+  };
+
+  const closeHistoryModal = () => {
+    if (evaluation.mode === 'reopen_whats_new') {
+      handleAcknowledgeReopen();
+    }
+    setHistoryModalOpen(false);
   };
 
   const handleManualCheck = async () => {
@@ -292,22 +304,67 @@ export const AppUpdateManager: React.FC = () => {
     }
   };
 
+  const allChangelog = useMemo(
+    () => mergeChangelogs(remotePayload?.changelog, APP_CHANGELOG),
+    [remotePayload],
+  );
+
+  const visibleChangelog = useMemo(
+    () =>
+      filterAndSortChangelog(allChangelog, {
+        query: historySearch,
+        versionFilter: historyVersionFilter,
+        sortOrder: historySortOrder,
+      }),
+    [allChangelog, historySearch, historyVersionFilter, historySortOrder],
+  );
+
+  const earliestVersion = allChangelog[allChangelog.length - 1]?.version || '1.0.0';
+  const latestVersion = allChangelog[0]?.version || APP_VERSION;
+
   const renderReleaseItems = (releases: AppReleaseNote[], compact: boolean) => (
-    <div className={compact ? 'max-h-40 overflow-y-auto space-y-2.5 pe-1' : 'space-y-4'}>
+    <div className={compact ? 'max-h-40 overflow-y-auto space-y-2.5 pe-1' : 'space-y-3'}>
       {releases.map((rel) => {
         const changes = isFa ? rel.changesFa : rel.changesEn;
+        const isCurrent = rel.version === APP_VERSION;
+        const isInitial = rel.version === '1.0.0';
         return (
-          <div key={rel.buildId} className="space-y-1">
-            <div className="flex items-center justify-between gap-2 text-[11px]">
-              <span className="font-bold text-[var(--text-primary)]">
-                {isFa ? `نسخه ${rel.version}` : `Version ${rel.version}`}
-                {' · '}
-                <span className="font-medium text-[var(--text-secondary)]">
+          <div
+            key={`${rel.version}-${rel.buildId}`}
+            data-testid={`release-entry-${rel.version}`}
+            className={
+              compact
+                ? 'space-y-1'
+                : `rounded-xl border p-3.5 space-y-2 ${
+                    isCurrent
+                      ? 'border-[var(--accent-primary)]/40 bg-[var(--accent-soft)]/35'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]'
+                  }`
+            }
+          >
+            <div className="flex items-start justify-between gap-2 text-xs">
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span dir="ltr" className="font-bold text-[var(--text-primary)] tabular-nums">
+                    {isFa ? `نسخه ${rel.version}` : `v${rel.version}`}
+                  </span>
+                  {!compact && isCurrent && (
+                    <span className="text-[10px] font-semibold text-[var(--accent-primary)]">
+                      {isFa ? '• نسخه فعلی' : '• Current'}
+                    </span>
+                  )}
+                  {!compact && isInitial && (
+                    <span className="text-[10px] font-medium text-[var(--text-muted)]">
+                      {isFa ? '• انتشار اولیه' : '• Initial Release'}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] font-semibold text-[var(--text-secondary)]">
                   {isFa ? rel.titleFa : rel.titleEn}
-                </span>
-              </span>
+                </div>
+              </div>
               {rel.releasedAt && (
-                <span dir="ltr" className="text-[10px] text-[var(--text-muted)] tabular-nums shrink-0">
+                <span dir="ltr" className="text-[10px] text-[var(--text-muted)] tabular-nums shrink-0 mt-0.5">
                   {rel.releasedAt}
                 </span>
               )}
@@ -322,11 +379,6 @@ export const AppUpdateManager: React.FC = () => {
       })}
     </div>
   );
-
-  const allChangelog =
-    remotePayload?.changelog && remotePayload.changelog.length > 0
-      ? remotePayload.changelog
-      : APP_CHANGELOG;
 
   return (
     <>
@@ -385,6 +437,21 @@ export const AppUpdateManager: React.FC = () => {
               {detailsExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
             {detailsExpanded && renderReleaseItems(evaluation.releases, true)}
+            <div className="pt-1 border-t border-[var(--border-subtle)] flex justify-end">
+              <button
+                type="button"
+                data-testid="app-update-open-full-history-btn"
+                onClick={() => setHistoryModalOpen(true)}
+                className="text-[11px] font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-1"
+              >
+                <History className="w-3 h-3" />
+                <span>
+                  {isFa
+                    ? `مشاهده تمام تغییرات از نسخه ${earliestVersion}`
+                    : `View all changes since v${earliestVersion}`}
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* Non-intrusive Action Buttons */}
@@ -419,41 +486,29 @@ export const AppUpdateManager: React.FC = () => {
                 </span>
               </button>
             ) : (
-              <>
-                <button
-                  type="button"
-                  data-testid="app-update-ack-btn"
-                  onClick={handleAcknowledgeReopen}
-                  className="h-8 px-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-[var(--accent-primary)] text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'متوجه شدم' : 'Got It'}</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="app-update-now-btn"
-                  disabled={updating}
-                  onClick={() => void handleUpdateNow()}
-                  className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-60 transition-colors"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${updating ? 'animate-spin' : ''}`} />
-                  <span>{isFa ? 'بارگذاری مجدد' : 'Reload Now'}</span>
-                </button>
-              </>
+              <button
+                type="button"
+                data-testid="app-update-ack-btn"
+                onClick={handleAcknowledgeReopen}
+                className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 transition-colors"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{isFa ? 'متوجه شدم' : 'Got It'}</span>
+              </button>
             )}
           </div>
         </aside>
       )}
 
-      {/* On-Demand Full Release Notes & Manual Update Check Modal */}
+      {/* On-Demand Full Release Notes (v1.0.0 -> Latest) & Manual Update Check Modal */}
       {historyModalOpen && (
         <div
           className="fixed inset-0 z-[70] bg-slate-950/45 backdrop-blur-xs flex items-center justify-center p-4 print:hidden"
-          onClick={() => setHistoryModalOpen(false)}
+          onClick={closeHistoryModal}
         >
           <div
             data-testid="app-changelog-modal"
-            className="samaan-animate-in w-full max-w-xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-[85vh] flex flex-col shadow-[var(--shadow-float)]"
+            className="samaan-animate-in w-full max-w-2xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] max-h-[88vh] flex flex-col shadow-[var(--shadow-float)]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-5 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between gap-3">
@@ -463,16 +518,18 @@ export const AppUpdateManager: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-[var(--text-primary)]">
-                    {isFa ? 'بروزرسانی و تاریخچه تغییرات برنامه' : 'App Updates & Release Notes'}
+                    {isFa ? 'بروزرسانی و تاریخچه کامل تغییرات برنامه' : 'App Updates & Full Release History'}
                   </h3>
                   <div className="text-[11px] text-[var(--text-muted)] tabular-nums">
-                    {isFa ? `نسخه فعلی نصب‌شده: ${APP_VERSION}` : `Current Version: v${APP_VERSION}`}
+                    {isFa
+                      ? `نسخه فعلی نصب‌شده: ${APP_VERSION} · تاریخچه کامل از نسخه ${earliestVersion} تا ${latestVersion} (${allChangelog.length} نسخه)`
+                      : `Installed: v${APP_VERSION} · Complete history v${earliestVersion} → v${latestVersion} (${allChangelog.length} releases)`}
                   </div>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setHistoryModalOpen(false)}
+                onClick={closeHistoryModal}
                 className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
               >
                 <X className="w-5 h-5" />
@@ -509,7 +566,7 @@ export const AppUpdateManager: React.FC = () => {
                   <div className="flex items-center gap-2 text-[var(--status-success)] font-medium">
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
                     <span>
-                      {isFa ? 'برنامه در آخرین نسخه است.' : 'Your app is up to date.'}
+                      {isFa ? `برنامه در آخرین نسخه (${APP_VERSION}) است.` : `Your app is up to date (v${APP_VERSION}).`}
                     </span>
                   </div>
                   <button
@@ -524,23 +581,78 @@ export const AppUpdateManager: React.FC = () => {
                 </div>
               )}
 
-              <div className="space-y-3">
-                <div className="text-xs font-bold text-[var(--text-primary)]">
-                  {isFa ? 'تغییرات نسخه‌ها' : 'Changelog'}
+              {/* Search, Version Selector & Sort Controls (v1.0.0 -> Latest) */}
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[var(--text-muted)] absolute start-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    data-testid="changelog-search-input"
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                    placeholder={isFa ? 'جستجو در تغییرات یا شماره نسخه...' : 'Search release notes or version...'}
+                    className="w-full h-8 ps-8 pe-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
                 </div>
-                {renderReleaseItems(allChangelog, false)}
+                <select
+                  data-testid="changelog-version-select"
+                  value={historyVersionFilter}
+                  onChange={(e) => setHistoryVersionFilter(e.target.value)}
+                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                >
+                  <option value="all">
+                    {isFa ? `همه نسخه‌ها (${allChangelog.length})` : `All versions (${allChangelog.length})`}
+                  </option>
+                  {allChangelog.map((rel) => (
+                    <option key={rel.version} value={rel.version}>
+                      {isFa ? `نسخه ${rel.version}` : `Version ${rel.version}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  data-testid="changelog-sort-toggle"
+                  onClick={() => setHistorySortOrder((s) => (s === 'newest' ? 'oldest' : 'newest'))}
+                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-xs font-medium text-[var(--text-secondary)] flex items-center justify-center gap-1.5 whitespace-nowrap"
+                >
+                  <ArrowDownUp className="w-3.5 h-3.5" />
+                  <span>
+                    {historySortOrder === 'newest'
+                      ? isFa
+                        ? 'جدیدترین اول'
+                        : 'Newest first'
+                      : isFa
+                        ? `از نسخه ${earliestVersion}`
+                        : `From v${earliestVersion}`}
+                  </span>
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-[var(--text-primary)]">
+                    {isFa ? 'فهرست تغییرات نسخه‌ها' : 'Release Notes'}
+                  </span>
+                  <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                    {isFa
+                      ? `نمایش ${visibleChangelog.length} از ${allChangelog.length} نسخه`
+                      : `Showing ${visibleChangelog.length} of ${allChangelog.length} releases`}
+                  </span>
+                </div>
+                {visibleChangelog.length > 0 ? (
+                  renderReleaseItems(visibleChangelog, false)
+                ) : (
+                  <div className="p-6 text-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-muted)]">
+                    {isFa ? 'تغییری مطابق جستجوی شما یافت نشد.' : 'No matching release notes found.'}
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="px-5 py-3 border-t border-[var(--border-subtle)] flex justify-end">
               <button
                 type="button"
-                onClick={() => {
-                  if (evaluation.mode === 'reopen_whats_new') {
-                    handleAcknowledgeReopen();
-                  }
-                  setHistoryModalOpen(false);
-                }}
+                onClick={closeHistoryModal}
                 className="h-8 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium hover:bg-[var(--bg-subtle)]"
               >
                 {isFa ? 'بستن' : 'Close'}
@@ -552,3 +664,4 @@ export const AppUpdateManager: React.FC = () => {
     </>
   );
 };
+
