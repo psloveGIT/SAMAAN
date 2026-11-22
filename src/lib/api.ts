@@ -15,26 +15,24 @@ export class ApiError extends Error {
 
 export interface NetworkModeState {
   isOffline: boolean;
-  manualOffline: boolean;
   browserOnline: boolean;
+  serverReachable: boolean;
   staticFallback: boolean;
 }
 
-const MANUAL_OFFLINE_KEY = 'samaan_manual_offline_v1';
+const LEGACY_MANUAL_OFFLINE_KEY = 'samaan_manual_offline_v1';
 
-function readStoredManualOffline(): boolean {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem(MANUAL_OFFLINE_KEY) === '1';
-    }
-  } catch {
-    // Ignore storage errors
+// Clear any legacy manual offline flag so connectivity is strictly automatic
+try {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(LEGACY_MANUAL_OFFLINE_KEY);
   }
-  return false;
+} catch {
+  // Ignore storage errors
 }
 
-let manualOfflineMode = readStoredManualOffline();
 let staticFallbackActive = false;
+let probeInFlight: Promise<boolean> | null = null;
 const networkListeners = new Set<(state: NetworkModeState) => void>();
 
 function isBrowserOnline(): boolean {
@@ -44,11 +42,11 @@ function isBrowserOnline(): boolean {
 
 export function getNetworkModeState(): NetworkModeState {
   const browserOnline = isBrowserOnline();
-  const isOffline = manualOfflineMode || !browserOnline || staticFallbackActive;
+  const isOffline = !browserOnline || staticFallbackActive;
   return {
     isOffline,
-    manualOffline: manualOfflineMode,
     browserOnline,
+    serverReachable: browserOnline && !staticFallbackActive,
     staticFallback: staticFallbackActive,
   };
 }
@@ -71,37 +69,87 @@ export function subscribeNetworkMode(listener: (state: NetworkModeState) => void
   };
 }
 
-export function setManualOfflineMode(offline: boolean): NetworkModeState {
-  manualOfflineMode = Boolean(offline);
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(MANUAL_OFFLINE_KEY, manualOfflineMode ? '1' : '0');
-    }
-  } catch {
-    // Ignore storage errors
-  }
-  if (!manualOfflineMode) {
-    // Allow immediate attempt to reconnect to server
-    staticFallbackActive = false;
-  }
-  emitNetworkModeState();
-  return getNetworkModeState();
+export function isStaticFallbackMode(): boolean {
+  return !isBrowserOnline() || staticFallbackActive;
 }
 
-export function isStaticFallbackMode(): boolean {
-  return manualOfflineMode || !isBrowserOnline() || staticFallbackActive;
+/**
+ * Automatically probes server reachability (/api/health) and updates online/offline state.
+ * Never manually toggled by the user — strictly reflects real internet/server connectivity.
+ */
+export async function probeServerConnection(): Promise<boolean> {
+  if (!isBrowserOnline()) {
+    const changed = !staticFallbackActive;
+    staticFallbackActive = true;
+    if (changed) emitNetworkModeState();
+    return false;
+  }
+  if (probeInFlight) return probeInFlight;
+
+  probeInFlight = (async () => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), 3000) : null;
+    try {
+      const res = await fetch('/api/health', {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: controller?.signal,
+      });
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = (await res.json()) as { ok?: boolean };
+          if (data?.ok) {
+            const changed = staticFallbackActive;
+            staticFallbackActive = false;
+            if (changed) emitNetworkModeState();
+            return true;
+          }
+        }
+      }
+      const changed = !staticFallbackActive;
+      staticFallbackActive = true;
+      if (changed) emitNetworkModeState();
+      return false;
+    } catch {
+      const changed = !staticFallbackActive;
+      staticFallbackActive = true;
+      if (changed) emitNetworkModeState();
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+      probeInFlight = null;
+    }
+  })();
+
+  return probeInFlight;
 }
 
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    if (!manualOfflineMode) {
-      staticFallbackActive = false;
-    }
+    staticFallbackActive = false;
     emitNetworkModeState();
+    void probeServerConnection();
   });
   window.addEventListener('offline', () => {
+    staticFallbackActive = true;
     emitNetworkModeState();
   });
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        void probeServerConnection();
+      }
+    });
+  }
+  // Initial connectivity verification and light background recovery probe when temporarily disconnected
+  void probeServerConnection();
+  setInterval(() => {
+    if (staticFallbackActive && isBrowserOnline()) {
+      void probeServerConnection();
+    }
+  }, 15000);
 }
 
 const ACTIVE_PROJECT_KEY = 'samaan_active_project_v1';
@@ -190,12 +238,14 @@ function getTimeoutMs(url: string): number {
   if (
     url.startsWith('/api/import/') ||
     url.startsWith('/api/backup/') ||
-    url.startsWith('/api/ai/') ||
     url.startsWith('/api/database/')
   ) {
-    return 25000;
+    return 120000;
   }
-  return 4500;
+  if (url.startsWith('/api/ai/')) {
+    return 60000;
+  }
+  return 6000;
 }
 
 export async function apiRequest<T>(
@@ -203,10 +253,18 @@ export async function apiRequest<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const isAiRoute = url.startsWith('/api/ai/');
+  const isHeavyRoute =
+    url.startsWith('/api/import/') ||
+    url.startsWith('/api/backup/') ||
+    url.startsWith('/api/database/');
   const browserOnline = isBrowserOnline();
 
-  // Immediate offline bypass — never hang waiting on fetch when offline or manual offline is enabled
-  if (manualOfflineMode || !browserOnline) {
+  // Immediate offline bypass — never hang waiting on fetch when the device is offline
+  if (!browserOnline) {
+    if (!staticFallbackActive) {
+      staticFallbackActive = true;
+      emitNetworkModeState();
+    }
     return runFallback<T>(url, options, false);
   }
 
@@ -224,7 +282,13 @@ export async function apiRequest<T>(
   let res: Response;
   const controller = typeof AbortController !== 'undefined' && !options.signal ? new AbortController() : null;
   const timeoutMs = getTimeoutMs(url);
-  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let timedOut = false;
+  const timer = controller
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs)
+    : null;
 
   try {
     res = await fetch(url, {
@@ -233,9 +297,25 @@ export async function apiRequest<T>(
       credentials: 'same-origin',
       signal: options.signal || controller?.signal,
     });
-  } catch {
+  } catch (err) {
     if (timer) clearTimeout(timer);
-    // No reachable backend server or timed out — fall back immediately to local engine
+    // If a large online import/backup/AI request timed out while device is online, throw a clear timeout error
+    // instead of hanging the main browser thread inside the local fallback engine.
+    if (timedOut && isBrowserOnline() && (isHeavyRoute || isAiRoute)) {
+      const lang = getActiveLang();
+      throw new ApiError(
+        lang === 'en'
+          ? 'The server took too long to process this request. Please retry or split large files into smaller batches.'
+          : 'زمان پاسخ‌گویی سرور به پایان رسید. لطفاً مجدداً تلاش کنید یا در فایل‌های بسیار حجیم شیت‌ها را مرحله‌به‌مرحله وارد نمایید.',
+        504,
+        'REQUEST_TIMEOUT',
+      );
+    }
+    // User-initiated external abort
+    if (options.signal?.aborted && err instanceof Error && err.name === 'AbortError') {
+      throw err;
+    }
+    // Unreachable backend server — fall back seamlessly to local offline engine
     return runFallback<T>(url, options, true);
   } finally {
     if (timer) clearTimeout(timer);

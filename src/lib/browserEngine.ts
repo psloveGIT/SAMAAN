@@ -515,11 +515,45 @@ async function deleteProjectDb(projectId: string): Promise<void> {
   await idbDelete(idb, projectRecordKey(projectId));
 }
 
+const OFFLINE_SESSION_CACHE_KEY = 'samaan_offline_session_user_v1';
+
+function readCachedOfflineSessionUser(): UserAccount | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(OFFLINE_SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<UserAccount>;
+    if (parsed && typeof parsed.id === 'string' && typeof parsed.username === 'string' && parsed.role) {
+      return parsed as UserAccount;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return null;
+}
+
+export function clearOfflineSessionUser(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(OFFLINE_SESSION_CACHE_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export async function syncOfflineSessionUser(
   user: UserAccount | null,
   projectId = DEFAULT_PROJECT_ID,
 ): Promise<void> {
   if (!user) return;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(OFFLINE_SESSION_CACHE_KEY, JSON.stringify(user));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
   try {
     const resolved = await resolveProjectId(projectId);
     const db = await getDb(resolved);
@@ -855,9 +889,32 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
   const activeProjectId = await resolveProjectId(projectHeader);
   const db = await getDb(activeProjectId);
   const history = getProjectHistory(activeProjectId);
-  const currentUserObj = db.currentUserId
+  let currentUserObj = db.currentUserId
     ? db.users.find((u) => u.id === db.currentUserId && u.active) || null
     : null;
+  if (!currentUserObj && pathname !== '/api/auth/logout') {
+    const cachedUser = readCachedOfflineSessionUser();
+    if (cachedUser) {
+      let matched = db.users.find(
+        (u) => u.id === cachedUser.id || u.username.toLowerCase() === cachedUser.username.toLowerCase(),
+      );
+      if (!matched) {
+        matched = {
+          ...cachedUser,
+          active: true,
+          passwordHash: '',
+          preferences: cachedUser.preferences || { ...DEFAULT_PREFERENCES },
+          createdAt: cachedUser.createdAt || new Date().toISOString(),
+        };
+        db.users.push(matched);
+      } else {
+        matched.active = true;
+      }
+      db.currentUserId = matched.id;
+      currentUserObj = matched;
+      void saveDb(db, activeProjectId);
+    }
+  }
 
   const autoUndoSpec = resolveAutoUndoSpec(method, pathname);
   const snapshot =
@@ -917,6 +974,11 @@ async function handleStaticApiRequestInner<T>(
     }
     return currentUserObj;
   };
+
+  // ---------------- HEALTH CHECK ----------------
+  if (pathname === '/api/health' && method === 'GET') {
+    return { ok: true } as T;
+  }
 
   // ---------------- APP VERSION ----------------
   if (pathname === '/api/app/version' && method === 'GET') {

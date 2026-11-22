@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { apiRequest, getActiveProjectId, setActiveProjectId as persistActiveProjectId } from '../lib/api.ts';
-import { syncOfflineSessionUser } from '../lib/browserEngine.ts';
+import { clearOfflineSessionUser, syncOfflineSessionUser } from '../lib/browserEngine.ts';
 import { saveSnapshotToIndexedDb } from '../lib/indexedDbBackup.ts';
 import { resolveEmployerProfile } from '../shared/employers.ts';
 import type { ResolvedEmployerProfile } from '../shared/employers.ts';
@@ -532,14 +532,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [user, historyBusy, historyStatus.canRedo, prefs.language, notify, refreshHistoryStatus]);
 
-  const setAuthenticatedUser = useCallback((u: UserAccount | null) => {
-    setUser(u);
-    setNeedsSetup(false);
-  }, []);
+  const setAuthenticatedUser = useCallback(
+    (u: UserAccount | null) => {
+      setUser(u);
+      setNeedsSetup(false);
+      if (u) {
+        void syncOfflineSessionUser(u, activeProjectId);
+      } else {
+        clearOfflineSessionUser();
+      }
+    },
+    [activeProjectId],
+  );
 
   const logout = useCallback(async () => {
-    await apiRequest('/api/auth/logout', { method: 'POST' });
-    setUser(null);
+    try {
+      await apiRequest('/api/auth/logout', { method: 'POST' });
+    } finally {
+      clearOfflineSessionUser();
+      setUser(null);
+    }
   }, []);
 
   const formatDate = useCallback(

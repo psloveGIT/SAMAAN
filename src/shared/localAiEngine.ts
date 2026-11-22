@@ -146,9 +146,23 @@ const SUBJECT_STOP_PHRASES_FA = [
   'کل انبار',
   'کرایه حمل',
   'مواد شیمیایی',
+  'ماده شیمیایی',
   'ابزار مخصوص',
   'لوازم یدکی',
   'تاریخ انقضا',
+  'در شرف انقضا',
+  'نزدیک به انقضا',
+  'رو به انقضا',
+  'کمتر از 30 روز',
+  'زیر سی روز',
+  'تا یک ماه',
+  'چه اقدامی لازم است',
+  'چه اقداماتی لازم است',
+  'اقدامی لازم',
+  'چه کاری لازم است',
+  'موجودی کارفرما',
+  'موجودی پیمانکار',
+  'انبار کارفرما',
   'در راه',
   'مقدار واقعی',
   'مقدار پکینگ',
@@ -157,34 +171,41 @@ const SUBJECT_STOP_PHRASES_FA = [
 const SUBJECT_STOP_WORDS = new Set([
   // Persian conversational & generic domain words
   'موجودی', 'موجود', 'وضعیت', 'خلاصه', 'گزارش', 'چگونه', 'چطور', 'کدام', 'کدوم', 'چیست', 'چیه',
-  'کیست', 'کیه', 'است', 'هست', 'هستند', 'باشد', 'دارد', 'دارند', 'داریم', 'دارید', 'ندارد', 'نداریم',
-  'اقلام', 'قلم', 'کالا', 'کالاها', 'تجهیزات', 'انبار', 'سایت', 'پروژه', 'سامانه', 'برنامه',
+  'کیست', 'کیه', 'است', 'هست', 'هستند', 'هستن', 'باشد', 'باشند', 'شود', 'شوند', 'میشود', 'می‌شود',
+  'دارد', 'دارند', 'دارن', 'داریم', 'دارید', 'ندارد', 'ندارند', 'ندارن', 'نداریم', 'باید', 'انجام',
+  'اقلام', 'قلم', 'کالا', 'کالاها', 'تجهیز', 'تجهیزات', 'انبار', 'سایت', 'پروژه', 'سامانه', 'برنامه',
   'بگو', 'بده', 'نشان', 'نشون', 'لیست', 'فهرست', 'تعداد', 'مقدار', 'جمع', 'مجموع', 'کل', 'همه',
   'چند', 'چقدر', 'چه', 'چرا', 'آیا', 'ایا', 'کجا', 'کجاست', 'کجاهست', 'کدامند', 'کدامها',
   'در', 'از', 'به', 'با', 'برای', 'روی', 'بر', 'تا', 'و', 'یا', 'را', 'رو', 'که', 'این', 'آن', 'ان',
   'یک', 'یه', 'ها', 'های', 'دارای', 'بدون', 'فقط', 'هم', 'الان', 'فعلی', 'فعلا', 'لطفا', 'میشه', 'میتونی',
-  'بیشترین', 'کمترین', 'بهترین', 'مهمترین', 'فعال', 'باز', 'بسته', 'یکتا', 'جدید', 'اخیر',
+  'کن', 'کنید', 'بفرما', 'بفرمایید', 'بخش', 'توضیح', 'توضیحات',
+  'بیشترین', 'کمترین', 'بهترین', 'مهمترین', 'مهم', 'ترین', 'اصلی', 'کلیدی', 'فعال', 'باز', 'بسته', 'یکتا', 'جدید', 'اخیر',
+  'زیر', 'بالای', 'کمتر', 'بیشتر', 'نزدیک', 'آستانه', 'استانه', 'شرف', 'سی',
   'جزیره', 'جزایر', 'سیستم', 'واحد', 'سوله', 'محل', 'نگهداری', 'انبارها',
   'مپنا', 'پیمانکار', 'کارفرما', 'پکینگ', 'پکینگها', 'پکینگهای', 'محموله', 'محمولهها', 'محمولههای',
   'نگله', 'نگلهها', 'نگلههای', 'آیتم', 'آیتمها', 'آیتمهای', 'ردیف', 'ردیفها', 'ردیفهای',
   'ثبت', 'ثبتی', 'ثبتشده', 'خالص', 'ناخالص', 'کلی', 'جزئیات', 'جزئی', 'آمار', 'امار', 'اطلاعات', 'تحلیل', 'بررسی',
   'کسری', 'مغایرت', 'مغایرتها', 'خراب', 'آسیب', 'جایگزین', 'جایگزینی', 'بازرسی', 'گشایش', 'ارسال', 'رسیده',
   'وزن', 'تن', 'کرایه', 'حمل', 'ترانزیت', 'انقضا', 'انقضاء', 'منقضی', 'روز', 'ماه', 'سال', 'لازم', 'مورد', 'موارد',
-  'اسناد', 'سند', 'رسید', 'حواله', 'صورتجلسه', 'دعوتنامه', 'برآورد', 'تفکیک', 'اولویت', 'اولویتها', 'اقدام', 'اقدامات',
-  'پیشنهادی', 'پیشنهاد', 'عملیاتی', 'انبارگردانی', 'موازنه', 'بالانس',
+  'شیمیایی', 'مواد', 'ماده', 'کار', 'کاری', 'مناسب', 'فوری', 'ضروری', 'مرتبط', 'مربوط', 'مربوطه',
+  'اسناد', 'سند', 'رسید', 'رسیدها', 'حواله', 'حوالهها', 'صورتجلسه', 'صورتجلسات', 'دعوتنامه', 'دعوتنامهها',
+  'بستهها', 'برآورد', 'تفکیک', 'اولویت', 'اولویتها', 'اقدام', 'اقدامی', 'اقدامات',
+  'پیشنهادی', 'پیشنهاد', 'پیشنهادات', 'توصیه', 'توصیهها', 'عملیاتی', 'انبارگردانی', 'موازنه', 'بالانس',
+  'ریسک', 'ریسکها', 'هشدار', 'هشدارها', 'مشکل', 'مشکلات',
   // English conversational & generic domain words
   'what', 'which', 'where', 'who', 'when', 'how', 'much', 'many', 'is', 'are', 'was', 'were', 'be',
   'do', 'does', 'did', 'we', 'have', 'has', 'had', 'there', 'any', 'some', 'all', 'total', 'sum',
-  'count', 'number', 'qty', 'quantity', 'stock', 'inventory', 'available', 'left', 'remaining',
-  'show', 'list', 'give', 'tell', 'find', 'search', 'check', 'get', 'summary', 'report', 'status',
+  'count', 'counts', 'totals', 'number', 'qty', 'quantity', 'stock', 'inventory', 'available', 'left', 'remaining',
+  'show', 'list', 'lists', 'give', 'tell', 'find', 'search', 'check', 'get', 'summary', 'report', 'status',
   'overview', 'breakdown', 'detail', 'details', 'detailed', 'general', 'info', 'information', 'please', 'me', 'us', 'the',
   'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'from', 'by', 'with', 'about', 'and', 'or', 'vs',
-  'item', 'items', 'equipment', 'material', 'materials', 'warehouse', 'main', 'contractor', 'mapna',
+  'item', 'items', 'equipment', 'material', 'materials', 'warehouse', 'main', 'contractor', 'employer', 'mapna',
   'location', 'storage', 'island', 'islands', 'supplier', 'suppliers', 'vendor', 'packing', 'packings',
   'shipment', 'shipments', 'package', 'packages', 'row', 'rows', 'recorded', 'registered', 'shortage', 'shortages', 'damaged', 'damage',
-  'discrepancy', 'discrepancies', 'open', 'pending', 'active', 'expiring', 'expired', 'days', 'within',
-  'transit', 'shipping', 'inspection', 'arrived', 'weight', 'gross', 'net', 'ton', 'tons', 'tonnage',
-  'freight', 'cost', 'priority', 'priorities', 'actions', 'recommended', 'document', 'documents', 'provide', 'summarize',
+  'discrepancy', 'discrepancies', 'open', 'pending', 'active', 'expiring', 'expired', 'days', 'within', 'under', 'below', 'less', 'than', 'month', 'near', 'soon',
+  'chemical', 'chemicals', 'transit', 'shipping', 'inspection', 'arrived', 'weight', 'gross', 'net', 'ton', 'tons', 'tonnage',
+  'freight', 'cost', 'priority', 'priorities', 'action', 'actions', 'recommended', 'needed', 'required', 'should', 'take',
+  'document', 'documents', 'provide', 'summarize', 'unique', 'top', 'risk', 'risks', 'alert', 'alerts',
 ]);
 
 /**
@@ -242,11 +263,13 @@ export function extractEntitySubjectFromQuestion(prompt: string): string {
     const clean = tok.replace(/^["'`./\\-]+|["'`./\\-]+$/g, '');
     if (!clean) continue;
     if (SUBJECT_STOP_WORDS.has(clean)) continue;
-    // Strip Persian plural suffixes ("ها"/"های") and check stopword base too
+    // Strip Persian plural/indefinite suffixes ("ها"/"های"/"ی") and check stopword base too
     const singularBase = clean.replace(/(?:های|ها)$/, '');
     if (singularBase && singularBase !== clean && SUBJECT_STOP_WORDS.has(singularBase)) continue;
-    // Ignore isolated "mer" / "rep" / "opi" / "gcv" / "miv" / "smr" / "osdr" when there's no code attached
-    if (/^(mer|rep|opi|gcv|miv|smr|osdr)$/i.test(clean)) continue;
+    const indefBase = clean.length >= 4 && clean.endsWith('ی') ? clean.slice(0, -1) : '';
+    if (indefBase && SUBJECT_STOP_WORDS.has(indefBase)) continue;
+    // Ignore isolated "mer" / "rep" / "opi" / "gcv" / "miv" / "smr" / "osdr" / "bmr" / "mto" when there's no code attached
+    if (/^(mer|rep|opi|gcv|miv|smr|mrv|osdr|bmr|mto)$/i.test(clean)) continue;
     // Ignore bare numbers like "30" from "زیر 30 روز"
     if (/^\d+$/.test(clean) && !preservedSizes.length) continue;
     kept.push(clean);
@@ -426,12 +449,42 @@ export function answerLocalWarehouseQuestion(
     }
   }
 
-  // 2) Specific item / size / code / entity query (HIGHEST PRIORITY!)
+  // Pre-compute analytical intents so general operational questions are never misrouted into bogus item searches
+  const asksShortage = /کسری|اسیب|آسیب|مغایرت|خراب|mer|rep|shortage|damag|discrep|replace/i.test(q);
+  const asksChemical = /شیمیایی|انقضا|chemical|expir/i.test(q);
+  const asksTransit = /در راه|در دست ارسال|در دست بازرسی|رسیده|ترانزیت|transit|shipping|arrived/i.test(q);
+  const asksWeight = /وزن|(?:^|[\s،,.;])تن(?:$|[\s،,.;؟?!])|کرایه|پکینگ|نگله|\bweight\b|\bton(?:s|nage)?\b|\bfreight\b|\bpacking\b/i.test(q);
+  const asksIsland = /جزیره|جزایر|island/i.test(q);
+  const asksLocation = /سوله|محل نگهداری|انبارها|storage|location/i.test(q);
+  const asksSupplier = /تامین|فروشنده|supplier|vendor/i.test(q);
+  const asksOpi = /opi|بازرسی|گشایش|inspection/i.test(q);
+  const asksToolsOrSpares = /ابزار مخصوص|لوازم یدکی|special tool|spare part/i.test(q);
+  const asksDocs = /gcv|miv|smr|mrv|osdr|bmr|سند|اسناد|حواله|رسید|صورتجلسه|دعوتنامه|برآورد|موازنه|بالانس|جایگزین|document/i.test(q);
+  const hasAnyAnalyticalIntent =
+    asksShortage ||
+    asksChemical ||
+    asksTransit ||
+    asksWeight ||
+    asksIsland ||
+    asksLocation ||
+    asksSupplier ||
+    asksOpi ||
+    asksToolsOrSpares ||
+    asksDocs;
+
+  // 2) Specific item / size / code / entity query (HIGHEST PRIORITY when a genuine equipment/size/code subject is present)
   // e.g. `موجودی Pipe 8"` or `چند متر لوله ۸ اینچ داریم؟` or `Gate Valve DN100`
   const extractedSubject = extractEntitySubjectFromQuestion(prompt);
   const subjectTerms = parseSearchTerms(extractedSubject);
+  const hasTechnicalCodeOrSize =
+    /(?:\d+(?:[./-]\d+)?\s*(?:"|inch|in\b|اینچ|mm2?|cm|kv|kw|mw|bar|psi)|dn\s*\d+|[a-z]{2,}|[a-z0-9]+[-_/][a-z0-9]+)/i.test(
+      extractedSubject,
+    );
+  const shouldRunEntityLookup =
+    Boolean(extractedSubject && subjectTerms.length > 0) &&
+    (!hasAnyAnalyticalIntent || hasTechnicalCodeOrSize || (!asksChemical && !asksIsland && !asksWeight && !asksTransit && !asksOpi && !asksDocs));
 
-  if (extractedSubject && subjectTerms.length > 0) {
+  if (shouldRunEntityLookup) {
     const wantsOnlyShortage = /کسری|shortage/i.test(q);
     const wantsOnlyDamaged = /اسیب|آسیب|خراب|damag/i.test(q);
     const statusFilter = wantsOnlyShortage
@@ -582,17 +635,6 @@ export function answerLocalWarehouseQuestion(
   // 3) General analytical / operational warehouse questions (no specific item entity)
   const sections: string[] = [];
 
-  const asksShortage = /کسری|اسیب|آسیب|مغایرت|خراب|mer|rep|shortage|damag|discrep|replace/i.test(q);
-  const asksChemical = /شیمیایی|انقضا|chemical|expir/i.test(q);
-  const asksTransit = /در راه|در دست ارسال|در دست بازرسی|رسیده|ترانزیت|transit|shipping|arrived/i.test(q);
-  const asksWeight = /وزن|تن|کرایه|پکینگ|نگله|weight|ton|freight|packing/i.test(q);
-  const asksIsland = /جزیره|جزایر|island/i.test(q);
-  const asksLocation = /سوله|محل نگهداری|انبارها|storage|location/i.test(q);
-  const asksSupplier = /تامین|فروشنده|supplier|vendor/i.test(q);
-  const asksOpi = /opi|بازرسی|گشایش|inspection/i.test(q);
-  const asksToolsOrSpares = /ابزار مخصوص|لوازم یدکی|special tool|spare part/i.test(q);
-  const asksDocs = /gcv|miv|smr|osdr|سند|اسناد|حواله|رسید|صورتجلسه|برآورد|جایگزین|document/i.test(q);
-
   if (asksShortage) {
     const shortages = queryOperationalAlerts(db, { alertType: 'shortages', limit: 8 }, lang);
     const header = isFa
@@ -609,22 +651,51 @@ export function answerLocalWarehouseQuestion(
   }
 
   if (asksChemical) {
-    const exp = queryOperationalAlerts(db, { alertType: 'expiring_chemicals', days: 30, limit: 10 }, lang);
-    const items = (exp.items || []) as Array<{ shipmentNo: string; description: string; chemicalType: string; daysRemaining: number }>;
+    const exp = queryOperationalAlerts(db, { alertType: 'expiring_chemicals', days: 30, limit: 15 }, lang);
+    const items = (exp.items || []) as Array<{
+      shipmentNo: string;
+      description: string;
+      chemicalType: string;
+      expiryDate?: string;
+      daysRemaining: number;
+      mainWarehouseStock?: number;
+      contractorStock?: number;
+    }>;
     if (items.length === 0) {
       sections.push(
         isFa
-          ? `### مواد شیمیایی در آستانه انقضا\nدر حال حاضر هیچ ماده شیمیایی با تاریخ انقضای زیر ۳۰ روز وجود ندارد (کل اقلام شیمیایی ثبت‌شده: ${f(ov.chemicalsCount)} ردیف).`
-          : `### Expiring Chemicals (<30 Days)\nNo chemicals are expiring within 30 days (total chemical rows: ${f(ov.chemicalsCount)}).`,
+          ? `### مواد شیمیایی در آستانه انقضا و منقضی‌شده\nدر حال حاضر هیچ ماده شیمیایی **دارای موجودی** با تاریخ انقضای زیر ۳۰ روز یا منقضی‌شده در پایگاه داده انبار وجود ندارد (کل اقلام شیمیایی ثبت‌شده: **${f(ov.chemicalsCount)} ردیف**).\n\n**اقدام پیشنهادی:**\n- ادامه پایش دوره‌ای تاریخ انقضا و شرایط دمایی/تهویه انبار مواد شیمیایی در بازدیدهای ماهانه.`
+          : `### Expiring & Expired Chemicals (<30 Days)\nNo in-stock chemicals are currently expired or expiring within 30 days (total chemical rows: **${f(ov.chemicalsCount)}**).\n\n**Recommended Action:**\n- Continue routine monthly shelf-life and chemical storage temperature/ventilation checks.`,
       );
     } else {
+      const expiredCount = items.filter((c) => c.daysRemaining < 0).length;
+      const nearExpiryCount = items.length - expiredCount;
       const lines = items.map((c) =>
         isFa
-          ? `- پکینگ **${c.shipmentNo}**: ${c.description} (${c.chemicalType || 'شیمیایی'}) — ${c.daysRemaining < 0 ? `منقضی‌شده (${f(Math.abs(c.daysRemaining))} روز گذشته)` : `**${f(c.daysRemaining)} روز باقیمانده**`}`
-          : `- PL **${c.shipmentNo}**: ${c.description} (${c.chemicalType || 'Chemical'}) — ${c.daysRemaining < 0 ? `Expired (${f(Math.abs(c.daysRemaining))}d ago)` : `**${f(c.daysRemaining)}d remaining**`}`,
+          ? `- پکینگ **${c.shipmentNo}**: ${c.description} (${c.chemicalType || 'ماده شیمیایی'}) — ${c.daysRemaining < 0 ? `**منقضی‌شده** (${f(Math.abs(c.daysRemaining))} روز گذشته)` : `**${f(c.daysRemaining)} روز باقیمانده**`}`
+          : `- PL **${c.shipmentNo}**: ${c.description} (${c.chemicalType || 'Chemical'}) — ${c.daysRemaining < 0 ? `**Expired** (${f(Math.abs(c.daysRemaining))}d ago)` : `**${f(c.daysRemaining)}d remaining**`}`,
       );
+      const actionBullets = isFa
+        ? [
+            ...(expiredCount > 0
+              ? [`جداسازی فوری (قرنطینه) **${f(expiredCount)} قلم منقضی‌شده**، توقف تحویل آن‌ها و هماهنگی با واحد کنترل کیفیت برای تست مجدد آزمایشگاهی یا تعیین تکلیف امحا/تأمین مجدد.`]
+              : []),
+            ...(nearExpiryCount > 0
+              ? [`اولویت‌دهی مصرف (FEFO) برای **${f(nearExpiryCount)} قلم در آستانه انقضا (زیر ۳۰ روز)** و اطلاع‌رسانی به واحد نصب/بهره‌برداری جهت صدور حواله فوری.`]
+              : []),
+            'بررسی شرایط نگهداری (دما، رطوبت، تهویه) و ثبت نتیجه بررسی در گزارش بازدید ادواری انبار.',
+          ]
+        : [
+            ...(expiredCount > 0
+              ? [`Immediately quarantine **${f(expiredCount)} expired item(s)**, halt issuance, and coordinate with QC for lab re-certification or disposal/re-procurement.`]
+              : []),
+            ...(nearExpiryCount > 0
+              ? [`Prioritize FEFO issuance for **${f(nearExpiryCount)} item(s) expiring within 30 days** and notify erection/commissioning teams.`]
+              : []),
+            'Verify storage temperature/ventilation conditions and log findings in the periodic warehouse inspection checklist.',
+          ];
       sections.push(
-        `${isFa ? `### مواد شیمیایی با انقضای زیر ۳۰ روز (${f(items.length)} مورد)` : `### Chemicals Expiring Within 30 Days (${f(items.length)})`}\n${lines.join('\n')}`,
+        `${isFa ? `### مواد شیمیایی منقضی‌شده و در آستانه انقضا (زیر ۳۰ روز) — ${f(items.length)} مورد` : `### Expired & Expiring Chemicals (<30 Days) — ${f(items.length)} item(s)`}\n${lines.join('\n')}\n\n${isFa ? '**اقدامات لازم و پیشنهادی:**' : '**Recommended Actions:**'}\n${actionBullets.map((b) => `- ${b}`).join('\n')}`,
       );
     }
   }

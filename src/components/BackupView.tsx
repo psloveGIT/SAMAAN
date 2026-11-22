@@ -556,6 +556,87 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     );
   };
 
+  // Build a fast representative sample for Step 1 -> Step 2 scope detection when a sheet has > 1,500 rows.
+  // Preserves header rows, top data rows, evenly distributed rows across the file, AND non-empty samples
+  // for every sparse operational column (OPI/GCV/MIV/SMR/REP/BMR) so Step 1 -> Step 2 completes in < 1s
+  // instead of serializing 30MB+ JSON and freezing the browser! Full data is still used in Step 3 & Step 4.
+  const buildFastDetectionPayload = (
+    name: string,
+    fullMatrix: string[][],
+    fullFormulas?: Record<string, string>,
+  ): { matrix: string[][]; formulaMap?: Record<string, string> } => {
+    const MAX_FAST_ROWS = 1500;
+    if (fullMatrix.length <= MAX_FAST_ROWS) {
+      return {
+        matrix: fullMatrix,
+        ...(fullFormulas && Object.keys(fullFormulas).length > 0 ? { formulaMap: fullFormulas } : {}),
+      };
+    }
+
+    const pickedIndices = new Set<number>();
+    // 1. Always keep first 6 header/top rows + first 350 data rows
+    const headCount = Math.min(360, fullMatrix.length);
+    for (let r = 0; r < headCount; r += 1) pickedIndices.add(r);
+
+    // 2. Ensure every column has at least 3 non-empty sample rows represented (catches sparse operational cols like REP/BMR/SMR)
+    const maxCols = Math.min(120, Math.max(fullMatrix[0]?.length || 0, fullMatrix[1]?.length || 0, fullMatrix[2]?.length || 0));
+    const colHits = new Uint8Array(maxCols);
+    let colsCovered = 0;
+    for (let r = headCount; r < fullMatrix.length && pickedIndices.size < 950; r += 1) {
+      const row = fullMatrix[r];
+      if (!row) continue;
+      let needed = false;
+      for (let c = 0; c < Math.min(maxCols, row.length); c += 1) {
+        if (colHits[c] < 3 && row[c] && String(row[c]).trim() !== '') {
+          colHits[c] += 1;
+          if (colHits[c] === 3) colsCovered += 1;
+          needed = true;
+        }
+      }
+      if (needed) pickedIndices.add(r);
+      if (colsCovered >= maxCols && maxCols > 0) break;
+    }
+
+    // 3. Fill remaining budget up to ~1,300 rows evenly across the entire sheet
+    const targetTotal = 1300;
+    const remainingBudget = Math.max(0, targetTotal - pickedIndices.size);
+    if (remainingBudget > 0 && fullMatrix.length > headCount) {
+      const stride = Math.max(1, Math.floor((fullMatrix.length - headCount) / remainingBudget));
+      for (let r = headCount; r < fullMatrix.length && pickedIndices.size < targetTotal; r += stride) {
+        pickedIndices.add(r);
+      }
+    }
+
+    const sortedIndices = Array.from(pickedIndices).sort((a, b) => a - b);
+    const sampledMatrix: string[][] = [];
+    const oldToNewRow = new Map<number, number>();
+    for (let i = 0; i < sortedIndices.length; i += 1) {
+      const oldIdx = sortedIndices[i];
+      oldToNewRow.set(oldIdx, i);
+      sampledMatrix.push(fullMatrix[oldIdx]);
+    }
+
+    let remappedFormulas: Record<string, string> | undefined;
+    if (fullFormulas && Object.keys(fullFormulas).length > 0) {
+      remappedFormulas = {};
+      for (const [k, f] of Object.entries(fullFormulas)) {
+        const sep = k.indexOf(':');
+        if (sep <= 0) continue;
+        const oldR = Number(k.slice(0, sep));
+        const newR = oldToNewRow.get(oldR);
+        if (newR !== undefined) {
+          remappedFormulas[`${newR}:${k.slice(sep + 1)}`] = f;
+        }
+      }
+    }
+
+    void name;
+    return {
+      matrix: sampledMatrix,
+      ...(remappedFormulas && Object.keys(remappedFormulas).length > 0 ? { formulaMap: remappedFormulas } : {}),
+    };
+  };
+
   // Step 1 -> Step 2: Detect ALL candidate target sections ONLY for the sheets checked by the user
   const handleAnalyzeSelectedSheets = async (
     sheetsToAnalyze: string[] = checkedSheets,
@@ -566,20 +647,24 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       return;
     }
     setAnalyzingSheets(true);
+    // Yield a frame so the loading spinner paints immediately before sampling large sheets
+    await new Promise<void>((resolve) => setTimeout(resolve, 16));
     try {
-      const payloadSheets = sheetsToAnalyze.map((nm) => ({
-        name: nm,
-        matrix: sheetsMap[nm] || [],
-        ...(sheetFormulasMap[nm] && Object.keys(sheetFormulasMap[nm]).length > 0
-          ? { formulaMap: sheetFormulasMap[nm] }
-          : {}),
-        ...(structuredSheetsMap[nm]?.records?.length
-          ? {
-              structuredRecords: structuredSheetsMap[nm].records,
-              sectionHint: structuredSheetsMap[nm].sectionHint,
-            }
-          : {}),
-      }));
+      const payloadSheets = sheetsToAnalyze.map((nm) => {
+        const fullMatrix = sheetsMap[nm] || [];
+        const sampled = buildFastDetectionPayload(nm, fullMatrix, sheetFormulasMap[nm]);
+        return {
+          name: nm,
+          matrix: sampled.matrix,
+          ...(sampled.formulaMap ? { formulaMap: sampled.formulaMap } : {}),
+          ...(structuredSheetsMap[nm]?.records?.length
+            ? {
+                structuredRecords: structuredSheetsMap[nm].records.slice(0, 1200),
+                sectionHint: structuredSheetsMap[nm].sectionHint,
+              }
+            : {}),
+        };
+      });
       const res = await apiRequest<{ detectedSheets: AutoWorkbookPreviewSection[] }>('/api/import/auto-workbook', {
         method: 'POST',
         body: JSON.stringify({
@@ -588,12 +673,36 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
           dryRun: true,
         }),
       });
-      const detected = res.detectedSheets || [];
+      const detected = (res.detectedSheets || []).map((sec) => {
+        const fullMatrixLen = sheetsMap[sec.sheetName]?.length || 0;
+        if (fullMatrixLen <= 1500) return sec;
+        const approxFullDataRows = Math.max(0, fullMatrixLen - 1);
+        const fixCoreCount = (scope: ExtendedImportScope | null, count: number) =>
+          scope === 'general' || scope === 'detailed' || scope === 'transit'
+            ? Math.max(count, approxFullDataRows)
+            : count;
+        return {
+          ...sec,
+          rowCount: fixCoreCount(sec.scope, sec.rowCount),
+          candidates: (sec.candidates || []).map((c) => ({
+            ...c,
+            rowCount: fixCoreCount(c.scope, c.rowCount),
+          })),
+        };
+      });
       setAutoWorkbookPreview(detected);
       const initScopes: Record<string, ExtendedImportScope[]> = {};
       for (const sec of detected) {
         if (sec.scope) {
-          initScopes[sec.sheetName] = [sec.scope];
+          const initial: ExtendedImportScope[] = [sec.scope];
+          const candSet = new Set((sec.candidates || []).map((c) => c.scope));
+          // Auto-pair OPI Invitations <-> OPI Minutes when either is detected on the sheet
+          if (sec.scope === 'opiInvitations' && candSet.has('opiMinutes')) {
+            initial.push('opiMinutes');
+          } else if (sec.scope === 'opiMinutes' && candSet.has('opiInvitations')) {
+            initial.push('opiInvitations');
+          }
+          initScopes[sec.sheetName] = initial;
         } else {
           initScopes[sec.sheetName] = [];
         }
@@ -601,7 +710,11 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
       setSelectedScopesBySheet(initScopes);
       setImportStep(2);
     } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
+      if (err instanceof ApiError) {
+        notify('error', err.message);
+      } else {
+        notify('error', isFa ? 'خطا در تحلیل شیت‌های انتخاب‌شده.' : 'Failed to analyze selected sheets.');
+      }
     } finally {
       setAnalyzingSheets(false);
     }
@@ -610,9 +723,20 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
   const toggleSheetTargetScope = (sheetName: string, scope: ExtendedImportScope) => {
     setSelectedScopesBySheet((prev) => {
       const current = prev[sheetName] || [];
-      const next = current.includes(scope)
-        ? current.filter((s) => s !== scope)
-        : [...current, scope];
+      const isSelected = current.includes(scope);
+      let next = isSelected ? current.filter((s) => s !== scope) : [...current, scope];
+      // Keep OPI Invitations & OPI Minutes paired so their counts and packing lists remain identical
+      const sheetPreview = autoWorkbookPreview.find((s) => s.sheetName === sheetName);
+      const candSet = new Set((sheetPreview?.candidates || []).map((c) => c.scope));
+      if (scope === 'opiInvitations' && candSet.has('opiMinutes')) {
+        next = isSelected
+          ? next.filter((s) => s !== 'opiMinutes')
+          : Array.from(new Set([...next, 'opiMinutes']));
+      } else if (scope === 'opiMinutes' && candSet.has('opiInvitations')) {
+        next = isSelected
+          ? next.filter((s) => s !== 'opiInvitations')
+          : Array.from(new Set([...next, 'opiInvitations']));
+      }
       return { ...prev, [sheetName]: next };
     });
   };
@@ -621,7 +745,13 @@ export const BackupView: React.FC<BackupViewProps> = ({ onRestored }) => {
     setSelectedScopesBySheet((prev) => {
       const current = prev[sheetName] || [];
       if (current.includes(scope)) return prev;
-      return { ...prev, [sheetName]: [...current, scope] };
+      const next = [...current, scope];
+      if (scope === 'opiInvitations' && !next.includes('opiMinutes')) {
+        next.push('opiMinutes');
+      } else if (scope === 'opiMinutes' && !next.includes('opiInvitations')) {
+        next.push('opiInvitations');
+      }
+      return { ...prev, [sheetName]: next };
     });
   };
 

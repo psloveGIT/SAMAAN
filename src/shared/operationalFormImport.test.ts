@@ -1115,6 +1115,212 @@ test('previewAutoWorkbook scans 5,000 detailed rows quickly without blocking (< 
   assert.ok(elapsedMs < 1500, `Expected 5,000-row scan under 1500ms, took ${elapsedMs.toFixed(1)}ms`);
 });
 
+test('Rules 1-7 handle Kashida/Arabic headers, exclude date/status columns from docNos, enforce OPI Invitations === OPI Minutes equal counts, and GCV arrivalDate fallback', () => {
+  const db = makeEmptyDb();
+
+  // 1) Rule 1 with Arabic ك/ي in header ("صورتجلسه ورود كالا و تجهيزات به كارگاه")
+  const generalArabicMatrix = [
+    ['تاريخ ورود', 'شماره پكينگ ليست', 'شماره صورتجلسه ورود كالا و تجهيزات به كارگاه', 'شماره بارنامه', 'تامين كننده'],
+    ['1404/05/10', 'PL-AR-1', 'AN-1404-77', 'WB-77', 'MAPNA'],
+    ['1404/05/10', 'PL-AR-2', 'AN-1404-77', 'WB-77', 'MAPNA'],
+  ];
+  const seRes = commitOperationalFormImport({
+    db,
+    scope: 'siteEntryMinutes',
+    matrix: generalArabicMatrix,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(seRes.imported, 1, 'Identical AN-1404-77 rows must group into 1 Site Entry Minutes');
+  assert.equal(db.siteEntryMinutes![0].minutesNo, 'AN-1404-77');
+  assert.deepEqual(db.siteEntryMinutes![0].packingListNos, ['PL-AR-1', 'PL-AR-2']);
+
+  // 2) Master detailed sheet with Kashida ("مــوازنه"), Arabic ("كنترل", "تجهيزات", "مستقيم"),
+  //    date/status columns adjacent to docNo columns, and status values ("باز"/"بسته") that must NEVER become docNos!
+  const masterMatrix = [
+    [
+      'تاريخ ورود',
+      'شماره پكينگ ليست',
+      'شماره نگله',
+      'شماره آيتم',
+      'شرح كالا',
+      'شماره دعوتنامه بازرسي و گشايش بسته‌ها',
+      'تاريخ دعوتنامه بازرسي',
+      'شماره رسيد مصرف مستقيم راهكاران',
+      'تعداد رسيد راهكاران',
+      'وضعيت گزارش مــوازنه',
+      'شماره گزارش مــوازنه و كنترل مصرف مواد',
+      'شماره فرم جايگزيني REP',
+      'وضعيت جايگزيني REP',
+      'توضيحات جايگزيني',
+    ],
+    [
+      '1404/06/01',
+      'PL-AR-1',
+      'P-1',
+      '1',
+      'Valve A',
+      'OPI-1404-01',
+      '1404/06/05',
+      'GCV-901',
+      '3',
+      'تایید شده',
+      'BMR-1404-11',
+      'REP-801',
+      'بسته',
+      'تامین شد',
+    ],
+    [
+      '1404/06/01',
+      'PL-AR-2',
+      'P-2',
+      '2',
+      'Valve B',
+      'OPI-1404-01',
+      '1404/06/05',
+      'GCV-901',
+      '5',
+      'تایید شده',
+      'BMR-1404-11',
+      'باز', // Status accidentally placed in REP col — isLikelyDocNo must reject!
+      'باز',
+      '',
+    ],
+    [
+      '1404/06/02',
+      'PL-AR-3',
+      'P-3',
+      '1',
+      'Pump C',
+      'OPI-1404-02',
+      '1404/06/08',
+      '',
+      '',
+      'در دست بررسی',
+      'BMR-1404-12',
+      'REP-802',
+      'Open',
+      'در حال تامین',
+    ],
+  ];
+
+  // Commit ONLY opiInvitations — commitOperationalFormImport MUST automatically sync matching opiMinutes 1-to-1!
+  const invRes = commitOperationalFormImport({
+    db,
+    scope: 'opiInvitations',
+    matrix: masterMatrix,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(invRes.imported, 2);
+  assert.equal(db.opiInvitations!.length, 2);
+  assert.equal(db.opiMinutes!.length, 2, 'OPI Minutes count MUST strictly equal OPI Invitations count');
+  const inv1 = db.opiInvitations!.find((x) => x.invitationNo === 'OPI-1404-01');
+  const min1 = db.opiMinutes!.find((x) => x.minutesNo === 'OPI-1404-01');
+  assert.deepEqual(inv1?.packingNos, ['PL-AR-1', 'PL-AR-2']);
+  assert.ok(min1?.packingListNo.includes('PL-AR-1') && min1?.packingListNo.includes('PL-AR-2'));
+
+  // GCV: date falls back to arrivalDate (1404/06/01 -> 2025-08-23), and "تعداد رسید راهکاران" is NOT mistaken for a receiptNo!
+  const gcvRes = commitOperationalFormImport({
+    db,
+    scope: 'gcvDocuments',
+    matrix: masterMatrix,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(gcvRes.imported, 1, 'Only GCV-901 should be extracted (never qty column)');
+  assert.equal(db.gcvDocuments![0].receiptNo, 'GCV-901');
+  assert.equal(db.gcvDocuments![0].items.length, 2);
+  assert.equal(db.gcvDocuments![0].date, '2025-08-23', 'GCV date must inherit arrivalDate when receipt date column is absent');
+
+  // Rule 6 (Substitutions): must extract REP-801 and REP-802 ONLY (never "باز" or "بسته" from status col!)
+  const subRes = commitOperationalFormImport({
+    db,
+    scope: 'substitutions',
+    matrix: masterMatrix,
+    assumedCalendar: 'jalali',
+    duplicateRecordPolicy: 'replace',
+    actorName: 'admin',
+  });
+  assert.equal(subRes.imported, 2);
+  assert.ok(db.substitutions!.some((s) => s.docNo === 'REP-801' && s.status === 'executed'));
+  assert.ok(db.substitutions!.some((s) => s.docNo === 'REP-802' && s.status === 'pending'));
+
+  // Rule 7 (BMR): Kashida "مــوازنه" & Arabic "كنترل" matched, status in PREVIOUS column captured, status column NOT mistaken for BMR docNo!
+  const bmrPreview = previewOperationalFormImport({
+    db,
+    scope: 'materialBalance',
+    matrix: masterMatrix,
+    assumedCalendar: 'jalali',
+    actorName: 'admin',
+  });
+  assert.equal(bmrPreview.totalRows, 2);
+  const bmr11 = bmrPreview.parsedRecords.find((r) => r.reportNo === 'BMR-1404-11');
+  assert.equal(bmr11?.balanceStatus, 'تایید شده', 'Status from PREVIOUS column must be captured');
+  assert.equal(bmr11?.itemCount, 2);
+});
+
+test('previewAutoWorkbook handles 22,000-row workbook against 22,000-row DB with BMR/MTO columns in O(N) time (< 2500ms)', () => {
+  const db = makeEmptyDb();
+  // Populate 22,000 existing detailed rows with BMR & MTO references to exercise the former O(N*M) bottleneck!
+  db.detailed = Array.from({ length: 22000 }, (_, i) => ({
+    id: `det-bench-${i}`,
+    shipmentNo: `PL-${Math.floor(i / 20)}`,
+    packageNo: `P-${i % 10}`,
+    itemNo: String((i % 20) + 1),
+    description: `Bolt ${i}`,
+    itemCode: `CODE-${i}`,
+    mtoRef: `MTO-${i % 1000}`,
+    materialBalanceNo: `BMR-${i % 2000}`,
+    packingQty: 10,
+    actualQty: 10,
+    countingUnit: 'عدد',
+  })) as any;
+
+  const header = [
+    'شماره پکینگ لیست',
+    'شماره نگله',
+    'شماره آیتم',
+    'شرح کالا',
+    'کد کالا',
+    'مقدار پکینگ',
+    'مقدار واقعی',
+    'شماره بالانس متریال',
+    'وضعیت بالانس',
+    'شماره دعوتنامه OPI',
+  ];
+  const matrix: string[][] = [header];
+  for (let i = 0; i < 2000; i += 1) {
+    matrix.push([
+      `PL-${Math.floor(i / 10)}`,
+      `P-${i % 10}`,
+      String((i % 20) + 1),
+      `Bolt ${i}`,
+      `CODE-${i}`,
+      '10',
+      '10',
+      `BMR-${i}`,
+      'تایید شده',
+      `OPI-${Math.floor(i / 5)}`,
+    ]);
+  }
+
+  const t0 = performance.now();
+  const prev = previewAutoWorkbook({
+    db,
+    sheets: [{ name: 'Detailed_Master', matrix }],
+    assumedCalendar: 'jalali',
+    actorName: 'admin',
+  });
+  const elapsedMs = performance.now() - t0;
+  assert.equal(prev.detectedSheets.length, 1);
+  assert.ok(elapsedMs < 2500, `Expected 2,000-row BMR/OPI scan against 22,000-row DB under 2500ms, took ${elapsedMs.toFixed(1)}ms`);
+});
+
+
 
 
 

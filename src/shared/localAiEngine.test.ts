@@ -326,4 +326,42 @@ test('answerLocalWarehouseQuestion handles broad Persian summary, packing, trans
   assert.ok(ans.answer.includes('۲') || ans.answer.includes('2.5') || ans.answer.includes('۲.۵'), 'Should include net/gross weights');
 });
 
+test('answerLocalWarehouseQuestion accurately handles exact chemical expiry quick prompt without bogus «اقدامی» search', () => {
+  const db = buildFixtureDb();
+  const exactPrompt = 'کدام مواد شیمیایی در آستانه انقضا (زیر ۳۰ روز) هستند و چه اقدامی لازم است؟';
+  assert.equal(
+    extractEntitySubjectFromQuestion(exactPrompt),
+    '',
+    'Chemical expiry prompt must extract empty entity subject (never «اقدامی»)',
+  );
+
+  const ansWithChem = answerLocalWarehouseQuestion(db, exactPrompt, 'fa');
+  assert.ok(!ansWithChem.answer.includes('اقدامی»'), 'Must NEVER return false not-found for «اقدامی»');
+  assert.ok(!ansWithChem.answer.includes('یافت نشد'), 'Must NOT say not found');
+  assert.ok(ansWithChem.answer.includes('Epoxy Primer Paint'), 'Should list expiring chemical Epoxy Primer Paint');
+  assert.ok(ansWithChem.answer.includes('اقدامات لازم'), 'Should include actionable Persian recommendations');
+
+  // Also test when NO chemicals are expiring
+  const cleanDb = buildFixtureDb();
+  cleanDb.detailed = cleanDb.detailed.filter((d) => d.itemCategory !== 'chemicals');
+  const ansEmpty = answerLocalWarehouseQuestion(cleanDb, exactPrompt, 'fa');
+  assert.ok(!ansEmpty.answer.includes('اقدامی»'));
+  assert.ok(ansEmpty.answer.includes('هیچ ماده شیمیایی'));
+  assert.ok(ansEmpty.answer.includes('اقدام پیشنهادی'));
+
+  // Verify ALL 4 Persian quick prompts extract empty entity subject & never return false not-found
+  const allQuickPrompts = [
+    'وضعیت اقلام دارای کسری، آسیب‌دیدگی، MER و REP باز را خلاصه کن و مهم‌ترین موارد را لیست کن.',
+    'کدام مواد شیمیایی در آستانه انقضا (زیر ۳۰ روز) هستند و چه اقدامی لازم است؟',
+    'تفکیک تعداد ردیف‌ها و موجودی کارفرما و پیمانکار را بر اساس جزیره نشان بده.',
+    'خلاصه تعداد پکینگ‌ها، ردیف‌های ثبتی، محموله‌های در راه و وزن خالص/ناخالص کل انبار را گزارش بده.',
+  ];
+  for (const qp of allQuickPrompts) {
+    assert.equal(extractEntitySubjectFromQuestion(qp), '', `Quick prompt should not extract bogus entity: ${qp}`);
+    const res = answerLocalWarehouseQuestion(db, qp, 'fa');
+    assert.ok(!res.answer.includes('هیچ ردیفی با مشخصات دقیق'), `Quick prompt returned false not-found: ${qp}`);
+  }
+});
+
+
 

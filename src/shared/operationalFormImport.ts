@@ -296,8 +296,9 @@ function preserveNewlinesRaw(v: unknown): string {
   if (v === null || v === undefined) return '';
   return String(v)
     .replace(/\r\n?/g, '\n')
+    .replace(/\u0640/g, '')
     .replace(/\u200c/g, ' ')
-    .replace(/ي/g, 'ی')
+    .replace(/[يیى]/g, 'ی')
     .replace(/ك/g, 'ک')
     .trim();
 }
@@ -305,8 +306,9 @@ function preserveNewlinesRaw(v: unknown): string {
 function normKey(v: unknown): string {
   if (v === null || v === undefined) return '';
   return String(v)
+    .replace(/\u0640/g, '')
     .replace(/\u200c/g, ' ')
-    .replace(/ي/g, 'ی')
+    .replace(/[يیى]/g, 'ی')
     .replace(/ك/g, 'ک')
     .replace(/\s+/g, ' ')
     .trim();
@@ -319,7 +321,9 @@ function normMatchKey(v: unknown): string {
 function normHeader(h: unknown): string {
   return normalizeDigits(normKey(h))
     .toLowerCase()
-    .replace(/[_\-.:()（）/\\|]/g, ' ')
+    .replace(/[أإ]/g, 'ا')
+    .replace(/[ةۀ]/g, 'ه')
+    .replace(/[_\-.:()（）/\\|,،؛;]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -883,11 +887,22 @@ interface ParsedHeaderKey {
   colIdx: number;
 }
 
+interface CachedTripletAnchorPlan {
+  anchor: ParsedHeaderKey;
+  dateCols: string[];
+  qtyCols: string[];
+  partyCols: string[];
+  noteCols: string[];
+  statusCols: string[];
+  reprocCols: string[];
+}
+
 interface RowHeaderSchema {
   headers: string[];
   parsed: ParsedHeaderKey[];
   byRaw: Map<string, ParsedHeaderKey>;
   aliasCache: Map<string, string[]>;
+  tripletPlanCache: Map<string, CachedTripletAnchorPlan[]>;
 }
 
 type EnrichedRow = Record<string, unknown> & {
@@ -917,6 +932,7 @@ function buildRowHeaderSchema(headers: Array<{ raw: string; displayHeader: strin
     parsed,
     byRaw,
     aliasCache: new Map(),
+    tripletPlanCache: new Map(),
   };
 }
 
@@ -1207,6 +1223,28 @@ function splitHeaderTrailingIndex(rawKey: string): { base: string; index: string
   return { base: norm, index: '' };
 }
 
+const INVALID_DOC_NO_VALUES = new Set([
+  '-', '—', '--', '---', 'n/a', 'na', 'none', 'null', 'nil', 'ok', 'yes', 'no', 'true', 'false',
+  'open', 'closed', 'close', 'pending', 'done', 'complete', 'completed', 'approved', 'rejected',
+  'باز', 'بسته', 'بله', 'خیر', 'ندارد', 'نیاز نیست', 'ناقص', 'سالم', 'تکمیل', 'تکمیل شده', 'تایید', 'تایید شده', 'انجام شده', 'در دست بررسی', 'در حال بررسی',
+]);
+
+/**
+ * Validates that a candidate extracted cell token is genuinely a document/form number
+ * rather than a status flag ("باز"/"بسته"/"Open"/"Closed"), boolean, placeholder, or standalone date.
+ */
+export function isLikelyDocNo(raw: string): boolean {
+  const clean = normKey(raw);
+  if (!clean) return false;
+  const low = normHeader(clean);
+  if (!low || INVALID_DOC_NO_VALUES.has(low)) return false;
+  // Reject pure standalone dates like 1404/05/12 or 2025-04-10 or 05.12.2025
+  const normDigits = normalizeDigits(clean).trim();
+  if (/^\d{2,4}[/.-]\d{1,2}[/.-]\d{1,4}$/.test(normDigits)) return false;
+  // Must contain at least one digit or at least 2 alphanumeric/Persian characters
+  return /[0-9a-zA-Z\u0600-\u06ff]/.test(normDigits);
+}
+
 function headerMatchesAliases(base: string, aliases: string[], excludeAliases: string[] = []): boolean {
   if (!base) return false;
   for (const ex of excludeAliases) {
@@ -1224,6 +1262,44 @@ function headerMatchesAliases(base: string, aliases: string[], excludeAliases: s
 }
 
 /**
+ * Matches a normalized column header against multi-keyword token groups (e.g. [['صورتجلسه', 'ورود|کارگاه']]).
+ * Each item in a group may contain `|` alternatives; EVERY item in the group must appear in `base`.
+ */
+function headerMatchesKeywordGroups(
+  base: string,
+  keywordGroups: string[][] | undefined,
+  excludeAliases: string[] = [],
+): boolean {
+  if (!base || !keywordGroups || keywordGroups.length === 0) return false;
+  for (const ex of excludeAliases) {
+    const nex = normHeader(ex);
+    if (nex && base.includes(nex)) return false;
+  }
+  const words = new Set(base.split(' ').filter(Boolean));
+  for (const group of keywordGroups) {
+    if (group.length === 0) continue;
+    const matchedAll = group.every((clause) => {
+      const alts = clause.split('|').map((a) => normHeader(a)).filter(Boolean);
+      return alts.some((alt) => (alt.length <= 2 ? words.has(alt) : base.includes(alt)));
+    });
+    if (matchedAll) return true;
+  }
+  return false;
+}
+
+function headerMatchesDocAnchor(
+  base: string,
+  aliases: string[],
+  keywordGroups?: string[][],
+  excludeAliases: string[] = [],
+): boolean {
+  return (
+    headerMatchesAliases(base, aliases, excludeAliases) ||
+    headerMatchesKeywordGroups(base, keywordGroups, excludeAliases)
+  );
+}
+
+/**
  * Dynamically discovers ALL single, multi-value (newline/comma/slash), repeated/numbered,
  * AND adjacent-column document groups (with Excel formula support for quantities) inside a row.
  */
@@ -1231,6 +1307,7 @@ function extractMultiDocTriplets(
   row: Record<string, unknown>,
   config: {
     docNoAliases: string[];
+    docNoKeywordGroups?: string[][];
     dateAliases?: string[];
     qtyAliases?: string[];
     partyAliases?: string[];
@@ -1238,6 +1315,7 @@ function extractMultiDocTriplets(
     statusAliases?: string[];
     reprocuredAliases?: string[];
     excludeAliases?: string[];
+    companionExcludeAliases?: string[];
     docTypeHint?: MivDocType;
     enableAdjacentLookup?: boolean;
   },
@@ -1246,98 +1324,145 @@ function extractMultiDocTriplets(
   const schema = getOrBuildRowSchema(row);
   const parsedKeys = schema.parsed;
 
-  // Find ALL columns matching docNoAliases (supporting multiple distinct columns even without trailing numbers)
-  const docCols: ParsedHeaderKey[] = [];
-  for (const pk of parsedKeys) {
-    if (!headerMatchesAliases(pk.base, config.docNoAliases, config.excludeAliases)) continue;
-    docCols.push(pk);
-  }
+  // Cache the entire anchor + companion column plan once per (schema, config) for O(1) row iteration!
+  const planKey = [
+    config.docNoAliases.join('\u0001'),
+    (config.docNoKeywordGroups || []).map((g) => g.join('&')).join('\u0001'),
+    (config.dateAliases || []).join('\u0001'),
+    (config.qtyAliases || []).join('\u0001'),
+    (config.partyAliases || []).join('\u0001'),
+    (config.noteAliases || []).join('\u0001'),
+    (config.statusAliases || []).join('\u0001'),
+    (config.reprocuredAliases || []).join('\u0001'),
+    (config.excludeAliases || []).join('\u0001'),
+    (config.companionExcludeAliases || []).join('\u0001'),
+    config.enableAdjacentLookup ? '1' : '0',
+  ].join('\u0002');
 
-  if (docCols.length === 0) return [];
+  let plan = schema.tripletPlanCache.get(planKey);
+  if (!plan) {
+    const docCols: ParsedHeaderKey[] = [];
+    for (const pk of parsedKeys) {
+      if (!headerMatchesDocAnchor(pk.base, config.docNoAliases, config.docNoKeywordGroups, config.excludeAliases)) {
+        continue;
+      }
+      docCols.push(pk);
+    }
 
-  const docColIndices = new Set(docCols.map((d) => d.colIdx));
+    docCols.sort((a, b) => {
+      if (a.index !== b.index) {
+        if (a.index === '') return -1;
+        if (b.index === '') return 1;
+        return Number(a.index) - Number(b.index);
+      }
+      return a.colIdx - b.colIdx;
+    });
 
-  const findCompanionCol = (
-    anchor: ParsedHeaderKey,
-    aliases: string[] | undefined,
-    adjacentFallbackPatterns?: string[],
-  ): { colKey: string; val: unknown } | undefined => {
-    // Pass 1: Adjacent columns right next to anchor (if enabled & multiple doc cols or generic neighbor exists)
-    if (config.enableAdjacentLookup) {
-      for (const off of [1, 2, 3, -1]) {
-        const tIdx = anchor.colIdx + off;
-        if (tIdx < 0 || tIdx >= parsedKeys.length) continue;
-        if (docColIndices.has(tIdx)) continue;
-        const pk = parsedKeys[tIdx];
-        if (!pk) continue;
-        // Stop scanning right if another doc column sits between anchor and tIdx
-        if (off > 1 && docColIndices.has(anchor.colIdx + 1)) continue;
-        if (off > 2 && docColIndices.has(anchor.colIdx + 2)) continue;
+    const docColIndices = new Set(docCols.map((d) => d.colIdx));
+    const compExclude = config.companionExcludeAliases ?? [];
+
+    const collectCompanionColKeys = (
+      anchor: ParsedHeaderKey,
+      aliases: string[] | undefined,
+      adjacentFallbackPatterns?: string[],
+    ): string[] => {
+      const out: string[] = [];
+      const seen = new Set<string>();
+      const pushUnique = (rawKey: string) => {
+        if (!seen.has(rawKey)) {
+          seen.add(rawKey);
+          out.push(rawKey);
+        }
+      };
+
+      // Pass 1: Adjacent columns right next to anchor ([1, 2, 3, 4, -1, -2]) without crossing another docNo column
+      if (config.enableAdjacentLookup) {
         const matchList = adjacentFallbackPatterns && adjacentFallbackPatterns.length > 0
           ? [...(aliases || []), ...adjacentFallbackPatterns]
           : aliases || [];
-        if (matchList.length > 0 && headerMatchesAliases(pk.base, matchList, config.excludeAliases)) {
-          const v = row[pk.raw];
-          const f = getCellFormula(row, pk.raw);
-          if ((v !== undefined && v !== null && normKey(v) !== '') || Boolean(f)) {
-            return { colKey: pk.raw, val: v };
+        if (matchList.length > 0) {
+          for (const off of [1, 2, 3, 4, -1, -2]) {
+            const tIdx = anchor.colIdx + off;
+            if (tIdx < 0 || tIdx >= parsedKeys.length) continue;
+            if (docColIndices.has(tIdx)) continue;
+            const pk = parsedKeys[tIdx];
+            if (!pk) continue;
+            let blocked = false;
+            const step = off > 0 ? 1 : -1;
+            for (let mid = anchor.colIdx + step; mid !== tIdx; mid += step) {
+              if (docColIndices.has(mid)) {
+                blocked = true;
+                break;
+              }
+            }
+            if (blocked) continue;
+            if (headerMatchesAliases(pk.base, matchList, compExclude)) {
+              pushUnique(pk.raw);
+            }
           }
         }
       }
-    }
 
-    if (!aliases || aliases.length === 0) return undefined;
-    // Pass 2: exact same trailing index
-    for (const pk of parsedKeys) {
-      if (pk.index !== anchor.index) continue;
-      if (headerMatchesAliases(pk.base, aliases, config.excludeAliases)) {
-        const v = row[pk.raw];
-        const f = getCellFormula(row, pk.raw);
-        if ((v !== undefined && v !== null && normKey(v) !== '') || Boolean(f)) {
-          return { colKey: pk.raw, val: v };
+      if (!aliases || aliases.length === 0) return out;
+      // Pass 2: exact same trailing index
+      for (const pk of parsedKeys) {
+        if (pk.index !== anchor.index) continue;
+        if (headerMatchesAliases(pk.base, aliases, compExclude)) {
+          pushUnique(pk.raw);
         }
       }
-    }
-    // Pass 3: unindexed fallback (when anchor has a trailing index like "1", "2")
-    if (anchor.index !== '') {
-      for (const pk of parsedKeys) {
-        if (pk.index !== '') continue;
-        if (headerMatchesAliases(pk.base, aliases, config.excludeAliases)) {
-          const v = row[pk.raw];
-          const f = getCellFormula(row, pk.raw);
-          if ((v !== undefined && v !== null && normKey(v) !== '') || Boolean(f)) {
-            return { colKey: pk.raw, val: v };
+      // Pass 3: unindexed fallback (when anchor has a trailing index like "1", "2")
+      if (anchor.index !== '') {
+        for (const pk of parsedKeys) {
+          if (pk.index !== '') continue;
+          if (headerMatchesAliases(pk.base, aliases, compExclude)) {
+            pushUnique(pk.raw);
           }
         }
+      }
+      return out;
+    };
+
+    plan = docCols.map((anchor) => ({
+      anchor,
+      dateCols: collectCompanionColKeys(anchor, config.dateAliases, ['تاریخ', 'date']),
+      qtyCols: collectCompanionColKeys(anchor, config.qtyAliases, ['تعداد', 'مقدار', 'qty', 'quantity']),
+      partyCols: collectCompanionColKeys(anchor, config.partyAliases, ['تحویل گیرنده', 'تحویل آورنده', 'گیرنده', 'receiver', 'deliverer']),
+      noteCols: collectCompanionColKeys(anchor, config.noteAliases, ['توضیحات', 'ملاحظات', 'notes', 'remarks']),
+      statusCols: config.statusAliases
+        ? collectCompanionColKeys(anchor, config.statusAliases, ['وضعیت', 'status'])
+        : [],
+      reprocCols: config.reprocuredAliases
+        ? collectCompanionColKeys(anchor, config.reprocuredAliases, ['تامین مجدد', 'تأمین مجدد', 'reprocured'])
+        : [],
+    }));
+    schema.tripletPlanCache.set(planKey, plan);
+  }
+
+  if (plan.length === 0) return [];
+
+  const pickFirstNonEmpty = (colKeys: string[]): { colKey: string; val: unknown } | undefined => {
+    for (const colKey of colKeys) {
+      const v = row[colKey];
+      const f = getCellFormula(row, colKey);
+      if ((v !== undefined && v !== null && normKey(v) !== '') || Boolean(f)) {
+        return { colKey, val: v };
       }
     }
     return undefined;
   };
 
-  docCols.sort((a, b) => {
-    if (a.index !== b.index) {
-      if (a.index === '') return -1;
-      if (b.index === '') return 1;
-      return Number(a.index) - Number(b.index);
-    }
-    return a.colIdx - b.colIdx;
-  });
-
   const triplets: ExtractedDocTriplet[] = [];
-  for (const anchor of docCols) {
-    const docNos = splitMultiDocValues(row[anchor.raw]);
+  for (const item of plan) {
+    const docNos = splitMultiDocValues(row[item.anchor.raw]).filter(isLikelyDocNo);
     if (docNos.length === 0) continue;
 
-    const dateHit = findCompanionCol(anchor, config.dateAliases, ['تاریخ', 'date']);
-    const qtyHit = findCompanionCol(anchor, config.qtyAliases, ['تعداد', 'مقدار', 'qty', 'quantity']);
-    const partyHit = findCompanionCol(anchor, config.partyAliases, ['تحویل گیرنده', 'تحویل آورنده', 'گیرنده', 'receiver', 'deliverer']);
-    const noteHit = findCompanionCol(anchor, config.noteAliases, ['توضیحات', 'ملاحظات', 'notes', 'remarks']);
-    const statusHit = config.statusAliases
-      ? findCompanionCol(anchor, config.statusAliases, ['وضعیت', 'status'])
-      : undefined;
-    const reprocHit = config.reprocuredAliases
-      ? findCompanionCol(anchor, config.reprocuredAliases, ['تامین مجدد', 'تأمین مجدد', 'reprocured'])
-      : undefined;
+    const dateHit = pickFirstNonEmpty(item.dateCols);
+    const qtyHit = pickFirstNonEmpty(item.qtyCols);
+    const partyHit = pickFirstNonEmpty(item.partyCols);
+    const noteHit = pickFirstNonEmpty(item.noteCols);
+    const statusHit = item.statusCols.length > 0 ? pickFirstNonEmpty(item.statusCols) : undefined;
+    const reprocHit = item.reprocCols.length > 0 ? pickFirstNonEmpty(item.reprocCols) : undefined;
 
     const dates = splitMultiDateValues(dateHit?.val, cal);
     const qtyFormula = qtyHit ? getCellFormula(row, qtyHit.colKey) : undefined;
@@ -1369,7 +1494,7 @@ function extractMultiDocTriplets(
         status: statusVal,
         reprocured: reprocVal,
         docTypeHint: config.docTypeHint,
-        anchorColIdx: anchor.colIdx,
+        anchorColIdx: item.anchor.colIdx,
       });
     }
   }
@@ -1416,6 +1541,7 @@ export function parseOperationalFormInput(params: {
   if (scope === 'siteEntryMinutes') {
     const byKey = new Map<string, SiteEntryMinutesRecord>();
     let seq = 1;
+    const siteEntryNonDocExclude = ['تاریخ', 'date', 'وضعیت', 'status', 'توضیحات', 'notes', 'تعداد', 'مقدار', 'qty', 'وزن', 'weight', 'opi', 'بازرسی', 'گشایش', 'دعوتنامه'];
     const primarySiteEntryDocAliases = [
       'minutesNo',
       'mapnaEntryMinutesNo',
@@ -1428,32 +1554,49 @@ export function parseOperationalFormInput(params: {
       'an no',
       'شماره سند',
     ];
-    const employerSiteEntryDocAliases = ['employerEntryMinutesNo', 'شماره صورتجلسه کارفرما', 'شماره صورتجلسه ورود کارفرما'];
+    const primarySiteEntryKeywordGroups = [
+      ['صورتجلسه', 'ورود|مپنا|کالا|تجهیزات|کارگاه'],
+      ['arrival', 'notice'],
+      ['an', 'no|شماره'],
+    ];
+    const employerSiteEntryDocAliases = ['employerEntryMinutesNo', 'شماره صورتجلسه کارفرما', 'شماره صورتجلسه ورود کارفرما', 'صورتجلسه ورود کارفرما'];
     const siteEntryDocAliases = [...primarySiteEntryDocAliases, ...employerSiteEntryDocAliases];
+    const siteEntryKeywordGroups = [
+      ...primarySiteEntryKeywordGroups,
+      ['صورتجلسه', 'کارفرما|ورود'],
+    ];
     const rowSchema0 = sourceRows.length > 0 ? getOrBuildRowSchema(sourceRows[0]) : null;
     const hasPrimarySiteEntryCol = Boolean(
       rowSchema0?.parsed.some(
         (pk) =>
-          headerMatchesAliases(pk.base, primarySiteEntryDocAliases) &&
-          !pk.base.includes('کارفرما') &&
-          !pk.base.includes('employer'),
+          headerMatchesDocAnchor(pk.base, primarySiteEntryDocAliases, primarySiteEntryKeywordGroups, [
+            ...siteEntryNonDocExclude,
+            'کارفرما',
+            'employer',
+          ]),
       ),
     );
     const hasDocNoCol = Boolean(
-      rowSchema0?.parsed.some((pk) => headerMatchesAliases(pk.base, siteEntryDocAliases)),
+      rowSchema0?.parsed.some((pk) =>
+        headerMatchesDocAnchor(pk.base, siteEntryDocAliases, siteEntryKeywordGroups, siteEntryNonDocExclude),
+      ),
     );
     for (const row of sourceRows) {
       const extractedDocs = extractMultiDocTriplets(
         row,
         {
           docNoAliases: hasPrimarySiteEntryCol ? primarySiteEntryDocAliases : siteEntryDocAliases,
-          excludeAliases: hasPrimarySiteEntryCol ? ['کارفرما', 'employer'] : undefined,
+          docNoKeywordGroups: hasPrimarySiteEntryCol ? primarySiteEntryKeywordGroups : siteEntryKeywordGroups,
+          excludeAliases: hasPrimarySiteEntryCol
+            ? [...siteEntryNonDocExclude, 'کارفرما', 'employer']
+            : siteEntryNonDocExclude,
           dateAliases: ['date', 'arrivalDate', 'تاریخ صورتجلسه', 'تاریخ ورود', 'تاریخ'],
           enableAdjacentLookup: true,
         },
         assumedCalendar,
       );
-      const fallbackNo = strField(row, ['minutesNo', 'mapnaEntryMinutesNo', 'شماره صورتجلسه ورود', 'شماره صورتجلسه مپنا', 'شماره صورتجلسه', 'شماره صورتجلسه کارفرما', 'شماره سند']);
+      const rawFallbackNo = strField(row, ['minutesNo', 'mapnaEntryMinutesNo', 'شماره صورتجلسه ورود', 'شماره صورتجلسه مپنا', 'شماره صورتجلسه', 'شماره صورتجلسه کارفرما', 'شماره سند']);
+      const fallbackNo = isLikelyDocNo(rawFallbackNo) ? rawFallbackNo : '';
       const rawPackings = getField(row, ['packingListNos', 'packingListNo', 'shipmentNo', 'پکینگ لیست', 'شماره پکینگ لیست', 'لیست پکینگ', 'شماره محموله']);
       const packings = splitListValues(rawPackings);
       const baseDate = dateField(row, ['date', 'تاریخ صورتجلسه', 'تاریخ'], assumedCalendar);
@@ -1612,34 +1755,96 @@ export function parseOperationalFormInput(params: {
     return { scope, records: Array.from(byKey.values()) as unknown as Record<string, unknown>[], skippedEmpty, warnings };
   }
 
-  // ---- RULE 2A: OPI INVITATIONS (دعوتنامه گشایش و بازرسی بسته‌ها) ----
+  // ---- RULE 2 (UNIFIED): OPI INVITATIONS & OPI MINUTES (دعوتنامه و صورتجلسه گشایش و بازرسی بسته‌ها) ----
+  // Per Rule 2, OPI Invitations and OPI Minutes share the exact same document numbers, counts, and packing lists.
+  const OPI_SHARED_DOC_ALIASES = [
+    'invitationNo',
+    'opiInvitationNo',
+    'minutesNo',
+    'opiNo',
+    'opi no',
+    'شماره دعوتنامه opi',
+    'شماره دعوتنامه بازرسی',
+    'شماره دعوتنامه گشایش',
+    'شماره دعوتنامه',
+    'شماره صورتجلسه opi',
+    'شماره صورتجلسه گشایش',
+    'شماره صورتجلسه بازرسی',
+    'شماره opi',
+    'دعوتنامه بازرسی',
+    'دعوتنامه گشایش',
+    'opi invitation',
+    'opi minutes',
+    'شماره سند',
+  ];
+  const OPI_SHARED_KEYWORD_GROUPS = [
+    ['دعوتنامه', 'بازرسی|گشایش|بسته|تجهیزات|opi|شماره'],
+    ['صورتجلسه', 'بازرسی|گشایش|بسته|opi'],
+    ['opi', 'شماره|no|invitation|minutes|meeting'],
+    ['invitation', 'opi|inspection|package|no'],
+    ['minutes', 'opi|inspection|meeting'],
+  ];
+  const OPI_SHARED_EXCLUDE_ALIASES = [
+    'ورود', 'arrival', 'تاریخ', 'date', 'ساعت', 'time', 'وضعیت', 'status', 'نتیجه', 'result',
+    'توضیحات', 'notes', 'تعداد', 'مقدار', 'qty', 'مغایرت', 'mer', 'osdr',
+  ];
+
+  const OPI_INV_DEDICATED_ALIASES = [
+    'invitationNo',
+    'opiInvitationNo',
+    'شماره دعوتنامه opi',
+    'شماره دعوتنامه بازرسی',
+    'شماره دعوتنامه گشایش',
+    'شماره دعوتنامه',
+    'دعوتنامه بازرسی',
+    'دعوتنامه گشایش',
+    'opi invitation',
+  ];
+  const OPI_INV_DEDICATED_GROUPS = [
+    ['دعوتنامه', 'بازرسی|گشایش|بسته|تجهیزات|opi|شماره'],
+    ['invitation', 'opi|inspection|package|no'],
+  ];
+  const OPI_MIN_DEDICATED_ALIASES = [
+    'minutesNo',
+    'شماره صورتجلسه opi',
+    'شماره صورتجلسه گشایش',
+    'شماره صورتجلسه بازرسی',
+    'opi minutes',
+  ];
+  const OPI_MIN_DEDICATED_GROUPS = [
+    ['صورتجلسه', 'بازرسی|گشایش|بسته|opi'],
+    ['minutes', 'opi|inspection|meeting'],
+  ];
+
   if (scope === 'opiInvitations') {
     const byKey = new Map<string, OpiInvitationRecord>();
     let seq = 1;
-    const opiInvDocAliases = [
-      'invitationNo',
-      'opiInvitationNo',
-      'opiNo',
-      'opi no',
-      'شماره دعوتنامه opi',
-      'شماره دعوتنامه بازرسی',
-      'شماره دعوتنامه',
-      'شماره opi',
-      'دعوتنامه بازرسی',
-      'دعوتنامه گشایش',
-      'شماره صورتجلسه opi',
-      'opi invitation',
-      'شماره سند',
-    ];
-    const hasDocNoCol = sourceRows.length > 0 && getOrBuildRowSchema(sourceRows[0]).parsed.some((pk) =>
-      headerMatchesAliases(pk.base, opiInvDocAliases),
+    const schema0 = sourceRows.length > 0 ? getOrBuildRowSchema(sourceRows[0]) : null;
+    const hasDedicatedInvCol = Boolean(
+      schema0?.parsed.some((pk) =>
+        headerMatchesDocAnchor(pk.base, OPI_INV_DEDICATED_ALIASES, OPI_INV_DEDICATED_GROUPS, OPI_SHARED_EXCLUDE_ALIASES),
+      ),
+    );
+    const hasDedicatedMinCol = Boolean(
+      schema0?.parsed.some((pk) =>
+        headerMatchesDocAnchor(pk.base, OPI_MIN_DEDICATED_ALIASES, OPI_MIN_DEDICATED_GROUPS, OPI_SHARED_EXCLUDE_ALIASES),
+      ),
+    );
+    const invDocAliases = hasDedicatedInvCol && hasDedicatedMinCol ? OPI_INV_DEDICATED_ALIASES : OPI_SHARED_DOC_ALIASES;
+    const invDocGroups = hasDedicatedInvCol && hasDedicatedMinCol ? OPI_INV_DEDICATED_GROUPS : OPI_SHARED_KEYWORD_GROUPS;
+    const hasDocNoCol = Boolean(
+      schema0?.parsed.some((pk) =>
+        headerMatchesDocAnchor(pk.base, invDocAliases, invDocGroups, OPI_SHARED_EXCLUDE_ALIASES),
+      ),
     );
     for (const row of sourceRows) {
       const extractedDocs = extractMultiDocTriplets(
         row,
         {
-          docNoAliases: opiInvDocAliases,
-          dateAliases: ['date', 'opiInvitationDate', 'opiDate', 'تاریخ بازرسی', 'تاریخ دعوتنامه', 'تاریخ opi', 'تاریخ'],
+          docNoAliases: invDocAliases,
+          docNoKeywordGroups: invDocGroups,
+          excludeAliases: OPI_SHARED_EXCLUDE_ALIASES,
+          dateAliases: ['date', 'opiInvitationDate', 'opiDate', 'تاریخ بازرسی', 'تاریخ دعوتنامه', 'تاریخ opi', 'تاریخ صورتجلسه', 'تاریخ'],
           enableAdjacentLookup: true,
         },
         assumedCalendar,
@@ -1654,7 +1859,7 @@ export function parseOperationalFormInput(params: {
         extractedDocs.length > 0
           ? extractedDocs.map((t) => ({ docNo: t.docNo, date: t.date || baseDate }))
           : !hasDocNoCol && packings.length > 0
-            ? [{ docNo: `OPI-INV-${seq++}`, date: baseDate }]
+            ? [{ docNo: `OPI-${seq++}`, date: baseDate }]
             : [];
 
       if (docsToProcess.length === 0) {
@@ -1739,56 +1944,53 @@ export function parseOperationalFormInput(params: {
     return { scope, records: Array.from(byKey.values()) as unknown as Record<string, unknown>[], skippedEmpty, warnings };
   }
 
-  // ---- RULE 2B: OPI MINUTES (صورتجلسه گشایش و بازرسی OPI) ----
+  // ---- RULE 2B: OPI MINUTES (صورتجلسه گشایش و بازرسی بسته‌ها — همگام با دعوتنامه) ----
   if (scope === 'opiMinutes') {
     const byKey = new Map<string, OpiMinutesRecord>();
+    const packingsByKey = new Map<string, Set<string>>();
     let seq = 1;
-    const dedicatedOpiMinAliases = [
-      'minutesNo',
-      'شماره صورتجلسه opi',
-      'شماره صورتجلسه گشایش',
-      'شماره صورتجلسه',
-      'opi minutes',
-    ];
-    const sharedOpiMinAliases = [
-      ...dedicatedOpiMinAliases,
-      'opiNo',
-      'opi no',
-      'invitationNo',
-      'opiInvitationNo',
-      'شماره دعوتنامه opi',
-      'شماره دعوتنامه بازرسی',
-      'شماره دعوتنامه',
-      'شماره opi',
-    ];
-    const opiRowSchema0 = sourceRows.length > 0 ? getOrBuildRowSchema(sourceRows[0]) : null;
-    const hasDedicatedOpiMinCol = Boolean(
-      opiRowSchema0?.parsed.some((pk) => headerMatchesAliases(pk.base, dedicatedOpiMinAliases)),
+    const schema0 = sourceRows.length > 0 ? getOrBuildRowSchema(sourceRows[0]) : null;
+    const hasDedicatedInvCol = Boolean(
+      schema0?.parsed.some((pk) =>
+        headerMatchesDocAnchor(pk.base, OPI_INV_DEDICATED_ALIASES, OPI_INV_DEDICATED_GROUPS, OPI_SHARED_EXCLUDE_ALIASES),
+      ),
     );
-    const activeOpiMinAliases = hasDedicatedOpiMinCol ? dedicatedOpiMinAliases : sharedOpiMinAliases;
+    const hasDedicatedMinCol = Boolean(
+      schema0?.parsed.some((pk) =>
+        headerMatchesDocAnchor(pk.base, OPI_MIN_DEDICATED_ALIASES, OPI_MIN_DEDICATED_GROUPS, OPI_SHARED_EXCLUDE_ALIASES),
+      ),
+    );
+    const minDocAliases = hasDedicatedInvCol && hasDedicatedMinCol ? OPI_MIN_DEDICATED_ALIASES : OPI_SHARED_DOC_ALIASES;
+    const minDocGroups = hasDedicatedInvCol && hasDedicatedMinCol ? OPI_MIN_DEDICATED_GROUPS : OPI_SHARED_KEYWORD_GROUPS;
     const hasDocNoCol = Boolean(
-      opiRowSchema0?.parsed.some((pk) => headerMatchesAliases(pk.base, activeOpiMinAliases)),
+      schema0?.parsed.some((pk) =>
+        headerMatchesDocAnchor(pk.base, minDocAliases, minDocGroups, OPI_SHARED_EXCLUDE_ALIASES),
+      ),
     );
     for (const row of sourceRows) {
       const extractedDocs = extractMultiDocTriplets(
         row,
         {
-          docNoAliases: activeOpiMinAliases,
-          excludeAliases: hasDedicatedOpiMinCol ? ['دعوتنامه', 'invitation'] : undefined,
-          dateAliases: ['date', 'opiDate', 'opiInvitationDate', 'تاریخ opi', 'تاریخ دعوتنامه', 'تاریخ بازرسی', 'تاریخ'],
+          docNoAliases: minDocAliases,
+          docNoKeywordGroups: minDocGroups,
+          excludeAliases: OPI_SHARED_EXCLUDE_ALIASES,
+          dateAliases: ['date', 'opiDate', 'opiInvitationDate', 'تاریخ opi', 'تاریخ دعوتنامه', 'تاریخ بازرسی', 'تاریخ صورتجلسه', 'تاریخ'],
           enableAdjacentLookup: true,
         },
         assumedCalendar,
       );
-      const packingListNo = strField(row, ['packingListNo', 'shipmentNo', 'شماره پکینگ لیست', 'پکینگ لیست', 'شماره محموله']);
+      const rowPackings = splitListValues(
+        getField(row, ['packingNos', 'packingListNos', 'packingListNo', 'shipmentNo', 'شماره پکینگ لیست', 'پکینگ لیست', 'لیست پکینگ', 'شماره محموله']),
+      );
+      const packingListNo = rowPackings[0] || '';
       const baseDate = dateField(row, ['date', 'opiDate', 'opiInvitationDate', 'تاریخ opi', 'تاریخ دعوتنامه', 'تاریخ بازرسی', 'تاریخ'], assumedCalendar, todayIso);
       const packageNos = splitListValues(getField(row, ['packageNos', 'packageNo', 'شماره نگله', 'نگله ها']));
 
       const docsToProcess =
         extractedDocs.length > 0
           ? extractedDocs.map((t) => ({ docNo: t.docNo, date: t.date || baseDate }))
-          : !hasDocNoCol && packingListNo
-            ? [{ docNo: `OPI-MIN-${seq++}`, date: baseDate }]
+          : !hasDocNoCol && rowPackings.length > 0
+            ? [{ docNo: `OPI-${seq++}`, date: baseDate }]
             : [];
 
       if (docsToProcess.length === 0) {
@@ -1832,6 +2034,13 @@ export function parseOperationalFormInput(params: {
         const date = docItem.date || baseDate;
         const key = normMatchKey(effectiveNo);
 
+        let pkSet = packingsByKey.get(key);
+        if (!pkSet) {
+          pkSet = new Set<string>();
+          packingsByKey.set(key, pkSet);
+        }
+        for (const p of rowPackings) pkSet.add(p);
+
         let existing = byKey.get(key);
         if (!existing) {
           const rawRes = normHeader(getField(row, ['resultStatus', 'نتیجه بازرسی', 'وضعیت بازرسی', 'نتیجه']));
@@ -1839,10 +2048,10 @@ export function parseOperationalFormInput(params: {
           existing = {
             id: makeId(),
             minutesNo: effectiveNo,
-            invitationNo: strField(row, ['invitationNo', 'opiInvitationNo', 'شماره دعوتنامه']) || effectiveNo,
+            invitationNo: effectiveNo,
             date,
             time: strField(row, ['time', 'ساعت']),
-            packingListNo,
+            packingListNo: Array.from(pkSet).join(' / '),
             packageNos: [...packageNos],
             projectName: strField(row, ['projectName', 'نام پروژه', 'پروژه']),
             supplier: strField(row, ['supplier', 'تامین کننده', 'تأمین کننده']),
@@ -1870,6 +2079,7 @@ export function parseOperationalFormInput(params: {
           };
           byKey.set(key, existing);
         } else {
+          existing.packingListNo = Array.from(pkSet).join(' / ');
           existing.packageNos = Array.from(new Set([...existing.packageNos, ...packageNos]));
           if ((!existing.date || existing.date === todayIso) && docItem.date) existing.date = docItem.date;
           if (parsedItems.length > 0) existing.items = [...(existing.items || []), ...parsedItems];
@@ -2036,6 +2246,10 @@ export function parseOperationalFormInput(params: {
   if (scope === 'gcvDocuments') {
     const byKey = new Map<string, GcvDocumentRecord>();
     let seq = 1;
+    const gcvDocExclude = [
+      'تاریخ', 'date', 'تعداد', 'مقدار', 'qty', 'quantity', 'تحویل گیرنده', 'گیرنده', 'receiver',
+      'توضیحات', 'notes', 'وضعیت', 'status',
+    ];
     const gcvDocAliases = [
       'receiptNo',
       'gcvReceiptNo',
@@ -2049,15 +2263,27 @@ export function parseOperationalFormInput(params: {
       'راهکاران',
       'شماره سند',
     ];
+    const gcvDocKeywordGroups = [
+      ['رسید', 'gcv|راهکاران|rahkaran|مصرف|مستقیم|گشایش|کالا'],
+      ['gcv', 'شماره|no|receipt|رسید'],
+      ['rahkaran|راهکاران', 'شماره|رسید|no'],
+    ];
     const hasDocNoCol = sourceRows.length > 0 && getOrBuildRowSchema(sourceRows[0]).parsed.some((pk) =>
-      headerMatchesAliases(pk.base, gcvDocAliases),
+      headerMatchesDocAnchor(pk.base, gcvDocAliases, gcvDocKeywordGroups, gcvDocExclude),
     );
     for (const row of sourceRows) {
       const extractedDocs = extractMultiDocTriplets(
         row,
         {
           docNoAliases: gcvDocAliases,
-          dateAliases: ['date', 'تاریخ رسید مصرف', 'تاریخ رسید راهکاران', 'تاریخ رسید', 'تاریخ gcv', 'تاریخ'],
+          docNoKeywordGroups: gcvDocKeywordGroups,
+          excludeAliases: gcvDocExclude,
+          companionExcludeAliases: [
+            'دعوتنامه', 'بازرسی', 'گشایش', 'صورتجلسه', 'opi',
+            'حواله', 'miv', 'smr', 'mrv', 'ارجاع', 'برگشت',
+            'جایگزینی', 'rep', 'موازنه', 'بالانس', 'bmr', 'mer', 'osdr',
+          ],
+          dateAliases: ['date', 'تاریخ رسید مصرف', 'تاریخ رسید راهکاران', 'تاریخ رسید', 'تاریخ gcv', 'arrivalDate', 'تاریخ ورود', 'تاریخ'],
           qtyAliases: ['gcvDeliveredQty', 'تعداد رسید مصرف', 'مقدار تحویل شده', 'تعداد تحویلی', 'qty', 'تعداد', 'مقدار'],
           partyAliases: ['receiver', 'تحویل گیرنده', 'گیرنده'],
           enableAdjacentLookup: true,
@@ -2065,7 +2291,12 @@ export function parseOperationalFormInput(params: {
         assumedCalendar,
       );
       const baseReceiver = strField(row, ['receiver', 'تحویل گیرنده', 'گیرنده']);
-      const baseDate = dateField(row, ['date', 'تاریخ رسید مصرف', 'تاریخ رسید راهکاران', 'تاریخ رسید', 'تاریخ'], assumedCalendar, todayIso);
+      const baseDate = dateField(
+        row,
+        ['date', 'تاریخ رسید مصرف', 'تاریخ رسید راهکاران', 'تاریخ رسید', 'تاریخ gcv', 'arrivalDate', 'تاریخ ورود', 'تاریخ'],
+        assumedCalendar,
+        todayIso,
+      );
 
       const docsToProcess =
         extractedDocs.length > 0
@@ -2187,11 +2418,18 @@ export function parseOperationalFormInput(params: {
       // Extract ALL typed MIV/SMR columns in the SAME row (numbered cols, multi-value vertical cells, adjacent cols, AND Excel addition formulas!)
       let triplets: Array<ExtractedDocTriplet & { resolvedType: MivDocType }> = [];
 
+      const COMMON_MIV_DOC_EXCLUDE = [
+        'تاریخ', 'date', 'تعداد', 'مقدار', 'qty', 'quantity',
+        'تحویل گیرنده', 'تحویل آورنده', 'گیرنده', 'receiver', 'deliverer',
+        'توضیحات', 'ملاحظات', 'notes', 'remark', 'وضعیت', 'status',
+      ];
+
       if (hasExplicitDocTypeCol) {
         const genericDocs = extractMultiDocTriplets(
           row,
           {
             docNoAliases: ['docNo', 'mivNo', 'smrNo', 'mrvNo', 'شماره حواله', 'شماره فرم ارجاع', 'شماره برگشتی', 'شماره سند', 'شماره miv', 'شماره smr', 'شماره mrv'],
+            excludeAliases: COMMON_MIV_DOC_EXCLUDE,
             dateAliases: ['date', 'تاریخ حواله', 'تاریخ ارجاع', 'تاریخ برگشتی', 'تاریخ'],
             qtyAliases: ['qty', 'مقدار تحویلی', 'مقدار ارجاع', 'مقدار حواله', 'تعداد حواله', 'تعداد تحویل', 'تعداد', 'مقدار'],
             partyAliases: ['party', 'receiver', 'تحویل گیرنده', 'تحویل آورنده', 'پیمانکار', 'طرف مقابل'],
@@ -2217,6 +2455,11 @@ export function parseOperationalFormInput(params: {
               'material issue voucher',
               'docNo',
             ],
+            docNoKeywordGroups: [
+              ['miv'],
+              ['حواله'],
+              ['material', 'issue'],
+            ],
             dateAliases: ['mivContractorDate', 'تاریخ miv پیمانکار', 'تاریخ حواله پیمانکار', 'تاریخ حواله', 'تاریخ miv', 'date', 'تاریخ'],
             qtyAliases: [
               'mivContractorQty',
@@ -2233,7 +2476,8 @@ export function parseOperationalFormInput(params: {
               'مقدار',
             ],
             partyAliases: ['mivReceiver', 'تحویل گیرنده حواله', 'تحویل گیرنده', 'party', 'پیمانکار'],
-            excludeAliases: ['مپنا', 'mapna', 'کارفرما', 'employer', 'برگشت', 'ارجاع', 'smr', 'mrv', 'return'],
+            excludeAliases: [...COMMON_MIV_DOC_EXCLUDE, 'مپنا', 'mapna', 'کارفرما', 'employer', 'برگشت', 'ارجاع', 'smr', 'mrv', 'return'],
+            companionExcludeAliases: ['مپنا', 'mapna', 'کارفرما', 'employer', 'برگشت', 'ارجاع', 'smr', 'mrv', 'return'],
             enableAdjacentLookup: true,
           },
           assumedCalendar,
@@ -2252,10 +2496,16 @@ export function parseOperationalFormInput(params: {
               'employer miv',
               'mapna miv',
             ],
+            docNoKeywordGroups: [
+              ['miv', 'مپنا|mapna|کارفرما|employer'],
+              ['حواله', 'مپنا|mapna|کارفرما|employer'],
+              ['material', 'issue', 'مپنا|mapna|کارفرما|employer'],
+            ],
             dateAliases: ['mivMapnaDate', 'تاریخ miv مپنا', 'تاریخ miv کارفرما', 'تاریخ حواله مپنا', 'تاریخ حواله کارفرما'],
             qtyAliases: ['mivMapnaQty', 'مقدار حواله مپنا', 'تعداد حواله مپنا', 'مقدار حواله کارفرما', 'تعداد حواله کارفرما', 'تعداد miv مپنا', 'تعداد miv کارفرما'],
             partyAliases: ['mivReceiver', 'تحویل گیرنده حواله', 'تحویل گیرنده', 'party'],
-            excludeAliases: ['برگشت', 'ارجاع', 'smr', 'mrv', 'return'],
+            excludeAliases: [...COMMON_MIV_DOC_EXCLUDE, 'برگشت', 'ارجاع', 'smr', 'mrv', 'return', 'پیمانکار', 'contractor'],
+            companionExcludeAliases: ['برگشت', 'ارجاع', 'smr', 'mrv', 'return', 'پیمانکار', 'contractor'],
             enableAdjacentLookup: true,
           },
           assumedCalendar,
@@ -2279,11 +2529,19 @@ export function parseOperationalFormInput(params: {
               'mrv no',
               'smrNo',
             ],
+            docNoKeywordGroups: [
+              ['smr'],
+              ['mrv'],
+              ['فرم', 'ارجاع'],
+              ['ارجاع', 'قطعات|کالا|تجهیزات|انبار'],
+              ['برگشتی'],
+            ],
             dateAliases: ['smrContractorDate', 'تاریخ برگشتی پیمانکار', 'تاریخ برگشتی به انبار پیمانکار', 'تاریخ ارجاع پیمانکار', 'تاریخ ارجاع', 'تاریخ smr', 'تاریخ mrv'],
             qtyAliases: ['smrContractorQty', 'مقدار برگشتی پیمانکار', 'تعداد برگشتی پیمانکار', 'مقدار برگشتی به انبار پیمانکار', 'تعداد برگشتی', 'مقدار ارجاع', 'تعداد ارجاع'],
             partyAliases: ['smrDeliverer', 'تحویل آورنده', 'party', 'پیمانکار'],
             noteAliases: ['smrContractorNote', 'توضیحات برگشتی پیمانکار', 'علت ارجاع', 'دلیل برگشت'],
-            excludeAliases: ['مپنا', 'mapna', 'کارفرما', 'employer'],
+            excludeAliases: [...COMMON_MIV_DOC_EXCLUDE, 'مپنا', 'mapna', 'کارفرما', 'employer'],
+            companionExcludeAliases: ['مپنا', 'mapna', 'کارفرما', 'employer'],
             enableAdjacentLookup: true,
           },
           assumedCalendar,
@@ -2305,11 +2563,15 @@ export function parseOperationalFormInput(params: {
               'employer smr',
               'mapna smr',
             ],
+            docNoKeywordGroups: [
+              ['smr|mrv|برگشتی|برگشت|ارجاع', 'مپنا|mapna|کارفرما|employer'],
+            ],
             dateAliases: ['smrMapnaDate', 'تاریخ برگشتی کارفرما', 'تاریخ برگشتی مپنا', 'تاریخ برگشتی به انبار کارفرما', 'تاریخ ارجاع کارفرما'],
             qtyAliases: ['smrMapnaQty', 'مقدار برگشتی کارفرما', 'تعداد برگشتی کارفرما', 'مقدار برگشتی مپنا', 'تعداد برگشتی مپنا', 'مقدار برگشتی به انبار کارفرما'],
             partyAliases: ['smrDeliverer', 'تحویل آورنده', 'party'],
             noteAliases: ['smrMapnaNote', 'توضیحات برگشتی کارفرما', 'توضیحات برگشتی مپنا', 'علت ارجاع'],
-            excludeAliases: ['پیمانکار', 'contractor'],
+            excludeAliases: [...COMMON_MIV_DOC_EXCLUDE, 'پیمانکار', 'contractor'],
+            companionExcludeAliases: ['پیمانکار', 'contractor'],
             enableAdjacentLookup: true,
           },
           assumedCalendar,
@@ -2452,6 +2714,11 @@ export function parseOperationalFormInput(params: {
   if (scope === 'substitutions') {
     const byKey = new Map<string, SubstitutionRecord>();
     let seq = 1;
+    const subDocExclude = [
+      'تاریخ', 'date', 'تعداد', 'مقدار', 'qty', 'وضعیت', 'status',
+      'توضیحات', 'ملاحظات', 'notes', 'description', 'تامین مجدد', 'reprocured',
+      'دلیل', 'علت', 'شرح', 'کد', 'سایز', 'نقشه',
+    ];
     const subDocAliases = [
       'docNo',
       'repNo',
@@ -2465,14 +2732,21 @@ export function parseOperationalFormInput(params: {
       'شماره فرم',
       'شماره سند',
     ];
+    const subDocKeywordGroups = [
+      ['جایگزینی', 'شماره|فرم|سند|rep|no'],
+      ['rep', 'شماره|فرم|no'],
+      ['replacement', 'no|form|شماره'],
+    ];
     const hasDocNoCol = sourceRows.length > 0 && getOrBuildRowSchema(sourceRows[0]).parsed.some((pk) =>
-      headerMatchesAliases(pk.base, subDocAliases),
+      headerMatchesDocAnchor(pk.base, subDocAliases, subDocKeywordGroups, subDocExclude),
     );
     for (const row of sourceRows) {
       const extractedDocs = extractMultiDocTriplets(
         row,
         {
           docNoAliases: subDocAliases,
+          docNoKeywordGroups: subDocKeywordGroups,
+          excludeAliases: subDocExclude,
           dateAliases: ['date', 'تاریخ جایگزینی', 'تاریخ'],
           qtyAliases: ['qty', 'تعداد جایگزینی', 'تعداد', 'مقدار'],
           statusAliases: ['status', 'repStatus', 'وضعیت جایگزینی', 'وضعیت rep', 'وضعیت'],
@@ -2575,6 +2849,7 @@ export function parseOperationalFormInput(params: {
   // ---- RULE 7: MATERIAL BALANCE REPORT (گزارش موازنه و کنترل مصرف مواد / BMR) ----
   if (scope === 'materialBalance') {
     const byKey = new Map<string, MaterialBalanceImportRow>();
+    const bmrDocExclude = ['وضعیت', 'status', 'تاریخ', 'date', 'توضیحات', 'notes', 'remark', 'تعداد', 'مقدار', 'qty'];
     const bmrDocAliases = [
       'materialBalanceNo',
       'material balance no',
@@ -2592,6 +2867,13 @@ export function parseOperationalFormInput(params: {
       'شماره bmr',
       'بالانس متریال',
     ];
+    const bmrDocKeywordGroups = [
+      ['bmr'],
+      ['بالانس', 'متریال|تجهیزات|مواد|شماره'],
+      ['موازنه', 'مواد|مصرف|کنترل|گزارش|شماره'],
+      ['کنترل', 'مصرف', 'مواد'],
+      ['balance', 'material'],
+    ];
     const bmrStatusPatterns = [
       'balanceStatus',
       'balance status',
@@ -2605,7 +2887,9 @@ export function parseOperationalFormInput(params: {
 
     for (const row of sourceRows) {
       const schema = getOrBuildRowSchema(row);
-      const docCols = schema.parsed.filter((pk) => headerMatchesAliases(pk.base, bmrDocAliases));
+      const docCols = schema.parsed.filter((pk) =>
+        headerMatchesDocAnchor(pk.base, bmrDocAliases, bmrDocKeywordGroups, bmrDocExclude),
+      );
       if (docCols.length === 0) {
         skippedEmpty += 1;
         continue;
@@ -2619,7 +2903,7 @@ export function parseOperationalFormInput(params: {
 
       let foundAny = false;
       for (const anchor of docCols) {
-        const reportNos = splitMultiDocValues(row[anchor.raw]);
+        const reportNos = splitMultiDocValues(row[anchor.raw]).filter(isLikelyDocNo);
         if (reportNos.length === 0) continue;
         foundAny = true;
 
@@ -2905,6 +3189,9 @@ interface CoreLinkIndexes {
   detailedByComposite: Map<string, DetailedEntry>;
   detailedByShipItem: Map<string, DetailedEntry>;
   detailedByItemCode: Map<string, DetailedEntry[]>;
+  detailedByMto: Map<string, DetailedEntry[]>;
+  detailedByDescription: Map<string, DetailedEntry[]>;
+  existingBmrKeys: Set<string>;
 }
 
 function buildCoreLinkIndexes(db: ImportableDatabase): CoreLinkIndexes {
@@ -2931,6 +3218,9 @@ function buildCoreLinkIndexes(db: ImportableDatabase): CoreLinkIndexes {
   const detailedByComposite = new Map<string, DetailedEntry>();
   const detailedByShipItem = new Map<string, DetailedEntry>();
   const detailedByItemCode = new Map<string, DetailedEntry[]>();
+  const detailedByMto = new Map<string, DetailedEntry[]>();
+  const detailedByDescription = new Map<string, DetailedEntry[]>();
+  const existingBmrKeys = new Set<string>();
 
   for (const d of db.detailed || []) {
     detailedById.set(d.id, d);
@@ -2938,6 +3228,9 @@ function buildCoreLinkIndexes(db: ImportableDatabase): CoreLinkIndexes {
     const pkg = normMatchKey(d.packageNo);
     const item = normMatchKey(d.itemNo);
     const code = normMatchKey(d.itemCode);
+    const mto = normMatchKey(d.mtoRef);
+    const desc = normMatchKey(d.description);
+    const bmr = normMatchKey(d.materialBalanceNo);
 
     if (pk) {
       const arr = detailedByPacking.get(pk) || [];
@@ -2955,6 +3248,23 @@ function buildCoreLinkIndexes(db: ImportableDatabase): CoreLinkIndexes {
       arr.push(d);
       detailedByItemCode.set(code, arr);
     }
+    if (mto) {
+      const arr = detailedByMto.get(mto) || [];
+      arr.push(d);
+      detailedByMto.set(mto, arr);
+    }
+    if (desc) {
+      const arr = detailedByDescription.get(desc) || [];
+      arr.push(d);
+      detailedByDescription.set(desc, arr);
+    }
+    if (bmr) {
+      for (const part of splitMultiDocValues(d.materialBalanceNo)) {
+        const nk = normMatchKey(part);
+        if (nk) existingBmrKeys.add(nk);
+      }
+      existingBmrKeys.add(bmr);
+    }
   }
 
   return {
@@ -2965,6 +3275,9 @@ function buildCoreLinkIndexes(db: ImportableDatabase): CoreLinkIndexes {
     detailedByComposite,
     detailedByShipItem,
     detailedByItemCode,
+    detailedByMto,
+    detailedByDescription,
+    existingBmrKeys,
   };
 }
 
@@ -3191,8 +3504,8 @@ export function previewOperationalFormImport(params: {
       });
       if (d) linkedDetailedIds.add(d.id);
       if (r.mtoCode) {
-        for (const det of db.detailed || []) {
-          if (normMatchKey(det.mtoRef) === normMatchKey(r.mtoCode)) linkedDetailedIds.add(det.id);
+        for (const det of idx.detailedByMto.get(normMatchKey(r.mtoCode)) || []) {
+          linkedDetailedIds.add(det.id);
         }
       }
     } else if (scope === 'periodicInspections') {
@@ -3203,8 +3516,7 @@ export function previewOperationalFormImport(params: {
       }
     } else if (scope === 'materialBalance') {
       const r = raw as unknown as MaterialBalanceImportRow;
-      const existingBmr = (db.detailed || []).some((d) => normMatchKey(d.materialBalanceNo) === normMatchKey(r.reportNo));
-      if (existingBmr) {
+      if (idx.existingBmrKeys.has(normMatchKey(r.reportNo))) {
         duplicateDbCount += 1;
         if (duplicateSamples.length < 5) duplicateSamples.push(r.reportNo);
       }
@@ -3460,16 +3772,24 @@ export function commitOperationalFormImport(params: {
     }
   }
 
-  // ---- 2. OPI INVITATIONS ----
+  // ---- 2. OPI INVITATIONS (auto-synced 1-to-1 with OPI Minutes) ----
   else if (scope === 'opiInvitations') {
+    const existingInvByKey = new Map<string, OpiInvitationRecord>();
+    for (const x of db.opiInvitations) existingInvByKey.set(normMatchKey(x.invitationNo), x);
+    const existingMinByKey = new Map<string, OpiMinutesRecord>();
+    for (const x of db.opiMinutes) existingMinByKey.set(normMatchKey(x.minutesNo), x);
+
     for (const raw of parsed.records as unknown as OpiInvitationRecord[]) {
-      const existing = db.opiInvitations.find((x) => normMatchKey(x.invitationNo) === normMatchKey(raw.invitationNo));
-      if (existing && duplicateRecordPolicy === 'skip') {
+      const invKey = normMatchKey(raw.invitationNo);
+      const existing = existingInvByKey.get(invKey);
+      const isAutoPlaceholder = Boolean(existing && (existing as unknown as Record<string, unknown>).autoSyncedFromTwin);
+      if (existing && !isAutoPlaceholder && duplicateRecordPolicy === 'skip') {
         skipped += 1;
         continue;
       }
-      if (shouldSkipUnchanged(existing, raw)) continue;
+      if (!isAutoPlaceholder && shouldSkipUnchanged(existing, raw)) continue;
 
+      const allPkgNos = new Set<string>();
       for (const pk of raw.packingNos || []) {
         const k = normMatchKey(pk);
         const genMatches = idx.generalByPacking.get(k) || [];
@@ -3478,6 +3798,7 @@ export function commitOperationalFormImport(params: {
           if (!raw.island && g.island) raw.island = g.island;
           if (!raw.system && g.system) raw.system = g.system;
           if (!raw.unit && g.unit) raw.unit = g.unit;
+          if (g.packageNo) allPkgNos.add(g.packageNo);
           g.opiInvitationNo = raw.invitationNo;
           g.opiInvitationDate = raw.date;
           g.updatedAt = now;
@@ -3494,6 +3815,7 @@ export function commitOperationalFormImport(params: {
           }));
         }
         for (const d of idx.detailedByPacking.get(k) || []) {
+          if (d.packageNo) allPkgNos.add(d.packageNo);
           if (!normKey(d.opiNo) || duplicateRecordPolicy === 'replace') {
             d.opiNo = raw.invitationNo;
             d.opiDate = raw.date;
@@ -3505,68 +3827,159 @@ export function commitOperationalFormImport(params: {
 
       if (existing) {
         Object.assign(existing, { ...raw, id: existing.id, createdAt: existing.createdAt, createdBy: existing.createdBy });
-        replaced += 1;
+        delete (existing as unknown as Record<string, unknown>).autoSyncedFromTwin;
+        if (isAutoPlaceholder) imported += 1;
+        else replaced += 1;
       } else {
-        db.opiInvitations.unshift({ ...raw, id: makeId(), createdAt: now, createdBy: actorName });
+        const created: OpiInvitationRecord = { ...raw, id: makeId(), createdAt: now, createdBy: actorName };
+        db.opiInvitations.unshift(created);
+        existingInvByKey.set(invKey, created);
         imported += 1;
+      }
+
+      // Guarantee 1-to-1 parity: every OPI Invitation MUST have a matching OPI Minutes with identical number & packing lists
+      const joinedPackings = (raw.packingNos || []).join(' / ');
+      const twinMin = existingMinByKey.get(invKey);
+      if (!twinMin) {
+        const createdMin: OpiMinutesRecord = {
+          id: makeId(),
+          minutesNo: raw.invitationNo,
+          invitationNo: raw.invitationNo,
+          date: raw.date,
+          time: raw.time || '',
+          packingListNo: joinedPackings,
+          packageNos: Array.from(allPkgNos),
+          projectName: raw.projectName || '',
+          supplier: raw.supplier || '',
+          system: raw.system || '',
+          island: raw.island || '',
+          unit: raw.unit || '',
+          contractNo: raw.contractNo || '',
+          purchasePackageNo: raw.purchasePackageNo || '',
+          items: raw.items ? [...raw.items] : undefined,
+          merNo: '',
+          location: raw.location || '',
+          storekeeper: '',
+          mapnaInspector: '',
+          sellerRep: raw.supplierRep || '',
+          employerInspector: raw.employerRep || '',
+          contractorInspector: raw.installerContractor || '',
+          qcInspector: '',
+          resultStatus: 'compliant',
+          notes: raw.notes || '',
+          createdAt: now,
+          createdBy: actorName,
+        };
+        (createdMin as unknown as Record<string, unknown>).autoSyncedFromTwin = true;
+        db.opiMinutes.unshift(createdMin);
+        existingMinByKey.set(invKey, createdMin);
+      } else if (joinedPackings) {
+        const mergedPackings = Array.from(new Set([...splitListValues(twinMin.packingListNo), ...(raw.packingNos || [])]));
+        twinMin.packingListNo = mergedPackings.join(' / ');
+        if (!twinMin.invitationNo) twinMin.invitationNo = raw.invitationNo;
+        if (!twinMin.date && raw.date) twinMin.date = raw.date;
       }
     }
   }
 
-  // ---- 3. OPI MINUTES ----
+  // ---- 3. OPI MINUTES (auto-synced 1-to-1 with OPI Invitations) ----
   else if (scope === 'opiMinutes') {
+    const existingMinByKey = new Map<string, OpiMinutesRecord>();
+    for (const x of db.opiMinutes) existingMinByKey.set(normMatchKey(x.minutesNo), x);
+    const existingInvByKey = new Map<string, OpiInvitationRecord>();
+    for (const x of db.opiInvitations) existingInvByKey.set(normMatchKey(x.invitationNo), x);
+
     for (const raw of parsed.records as unknown as OpiMinutesRecord[]) {
-      const existing = db.opiMinutes.find((x) => normMatchKey(x.minutesNo) === normMatchKey(raw.minutesNo));
-      if (existing && duplicateRecordPolicy === 'skip') {
+      const minKey = normMatchKey(raw.minutesNo);
+      const existing = existingMinByKey.get(minKey);
+      const isAutoPlaceholder = Boolean(existing && (existing as unknown as Record<string, unknown>).autoSyncedFromTwin);
+      if (existing && !isAutoPlaceholder && duplicateRecordPolicy === 'skip') {
         skipped += 1;
         continue;
       }
-      if (shouldSkipUnchanged(existing, raw)) continue;
+      if (!isAutoPlaceholder && shouldSkipUnchanged(existing, raw)) continue;
 
-      const pk = normMatchKey(raw.packingListNo);
-      const genMatches = idx.generalByPacking.get(pk) || [];
-      for (const g of genMatches) {
-        if (!raw.supplier && g.supplier) raw.supplier = g.supplier;
-        if (!raw.island && g.island) raw.island = g.island;
-        if (!raw.system && g.system) raw.system = g.system;
-        if (!raw.unit && g.unit) raw.unit = g.unit;
-        if (raw.invitationNo && !normKey(g.opiInvitationNo)) {
-          g.opiInvitationNo = raw.invitationNo;
-          g.opiInvitationDate = g.opiInvitationDate || raw.date;
-          g.updatedAt = now;
-        }
-        linkedGeneralIds.add(g.id);
-      }
-
-      if (raw.invitationNo) {
-        const inv = db.opiInvitations.find((x) => normMatchKey(x.invitationNo) === normMatchKey(raw.invitationNo));
-        if (inv) inv.status = 'completed';
-      } else if (pk) {
-        for (const inv of db.opiInvitations) {
-          if (inv.packingNos.some((p) => normMatchKey(p) === pk)) inv.status = 'completed';
-        }
-      }
-
+      const packingListArr = splitListValues(raw.packingListNo);
       const pkgFilter = new Set((raw.packageNos || []).map(normMatchKey).filter(Boolean));
-      for (const d of idx.detailedByPacking.get(pk) || []) {
-        if (pkgFilter.size === 0 || pkgFilter.has(normMatchKey(d.packageNo))) {
-          d.opiNo = raw.minutesNo;
-          d.opiDate = raw.date || d.opiDate;
-          if (raw.merNo) {
-            d.merNo = appendUniqueRef(d.merNo, raw.merNo);
-            if (!normKey(d.merStatus)) d.merStatus = 'باز';
+      for (const pkItem of packingListArr) {
+        const pk = normMatchKey(pkItem);
+        const genMatches = idx.generalByPacking.get(pk) || [];
+        for (const g of genMatches) {
+          if (!raw.supplier && g.supplier) raw.supplier = g.supplier;
+          if (!raw.island && g.island) raw.island = g.island;
+          if (!raw.system && g.system) raw.system = g.system;
+          if (!raw.unit && g.unit) raw.unit = g.unit;
+          if (raw.invitationNo && !normKey(g.opiInvitationNo)) {
+            g.opiInvitationNo = raw.invitationNo;
+            g.opiInvitationDate = g.opiInvitationDate || raw.date;
+            g.updatedAt = now;
           }
-          d.updatedAt = now;
-          linkedDetailedIds.add(d.id);
+          linkedGeneralIds.add(g.id);
+        }
+        for (const d of idx.detailedByPacking.get(pk) || []) {
+          if (pkgFilter.size === 0 || pkgFilter.has(normMatchKey(d.packageNo))) {
+            d.opiNo = raw.minutesNo;
+            d.opiDate = raw.date || d.opiDate;
+            if (raw.merNo) {
+              d.merNo = appendUniqueRef(d.merNo, raw.merNo);
+              if (!normKey(d.merStatus)) d.merStatus = 'باز';
+            }
+            d.updatedAt = now;
+            linkedDetailedIds.add(d.id);
+          }
         }
       }
 
       if (existing) {
         Object.assign(existing, { ...raw, id: existing.id, createdAt: existing.createdAt, createdBy: existing.createdBy });
-        replaced += 1;
+        delete (existing as unknown as Record<string, unknown>).autoSyncedFromTwin;
+        if (isAutoPlaceholder) imported += 1;
+        else replaced += 1;
       } else {
-        db.opiMinutes.unshift({ ...raw, id: makeId(), createdAt: now, createdBy: actorName });
+        const created: OpiMinutesRecord = { ...raw, id: makeId(), createdAt: now, createdBy: actorName };
+        db.opiMinutes.unshift(created);
+        existingMinByKey.set(minKey, created);
         imported += 1;
+      }
+
+      // Guarantee 1-to-1 parity: every OPI Minutes MUST have a matching OPI Invitation with identical number & packing lists
+      const invKey = normMatchKey(raw.invitationNo || raw.minutesNo);
+      const twinInv = existingInvByKey.get(invKey) || existingInvByKey.get(minKey);
+      if (!twinInv) {
+        const createdInv: OpiInvitationRecord = {
+          id: makeId(),
+          invitationNo: raw.minutesNo,
+          issueDate: raw.date,
+          date: raw.date,
+          time: raw.time || '09:00',
+          packingNos: [...packingListArr],
+          location: raw.location || '',
+          projectName: raw.projectName || '',
+          system: raw.system || '',
+          island: raw.island || '',
+          unit: raw.unit || '',
+          supplier: raw.supplier || '',
+          contractNo: raw.contractNo || '',
+          purchasePackageNo: raw.purchasePackageNo || '',
+          items: raw.items ? [...raw.items] : undefined,
+          installerContractor: raw.contractorInspector || '',
+          supplierRep: raw.sellerRep || '',
+          equipmentSupply: '',
+          employerRep: raw.employerInspector || '',
+          notes: raw.notes || '',
+          status: 'completed',
+          createdAt: now,
+          createdBy: actorName,
+        };
+        (createdInv as unknown as Record<string, unknown>).autoSyncedFromTwin = true;
+        db.opiInvitations.unshift(createdInv);
+        existingInvByKey.set(minKey, createdInv);
+      } else {
+        twinInv.status = 'completed';
+        if (packingListArr.length > 0) {
+          twinInv.packingNos = Array.from(new Set([...(twinInv.packingNos || []), ...packingListArr]));
+        }
+        if (!twinInv.date && raw.date) twinInv.date = raw.date;
       }
     }
   }
@@ -3890,16 +4303,15 @@ export function commitOperationalFormImport(params: {
         }
       }
       if (matchedDetailed.length === 0 && raw.mtoCode) {
-        const mc = normMatchKey(raw.mtoCode);
-        for (const d of db.detailed || []) {
-          if (normMatchKey(d.mtoRef) === mc) matchedDetailed.push(d);
+        for (const d of idx.detailedByMto.get(normMatchKey(raw.mtoCode)) || []) {
+          matchedDetailed.push(d);
         }
       }
       if (matchedDetailed.length === 0 && raw.description) {
         const descKey = normMatchKey(raw.description);
         const sizeKey = normMatchKey(raw.size);
-        for (const d of db.detailed || []) {
-          if (normMatchKey(d.description) === descKey && (!sizeKey || normMatchKey(d.size) === sizeKey)) {
+        for (const d of idx.detailedByDescription.get(descKey) || []) {
+          if (!sizeKey || normMatchKey(d.size) === sizeKey) {
             matchedDetailed.push(d);
           }
         }

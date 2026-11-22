@@ -53,7 +53,6 @@ import {
 import { useApp } from '../context/AppContext.tsx';
 import {
   getNetworkModeState,
-  setManualOfflineMode,
   subscribeNetworkMode,
   type NetworkModeState,
 } from '../lib/api.ts';
@@ -147,9 +146,20 @@ export const Layout: React.FC<LayoutProps> = ({
   const historyMenuRef = React.useRef<HTMLDivElement | null>(null);
   const [networkState, setNetworkState] = React.useState<NetworkModeState>(() => getNetworkModeState());
 
+  const prevOfflineRef = React.useRef<boolean>(networkState.isOffline);
+
   React.useEffect(() => {
     return subscribeNetworkMode(setNetworkState);
   }, []);
+
+  React.useEffect(() => {
+    if (prevOfflineRef.current !== networkState.isOffline) {
+      prevOfflineRef.current = networkState.isOffline;
+      void refreshAuth().then(() => {
+        onNetworkModeChanged?.();
+      });
+    }
+  }, [networkState.isOffline, refreshAuth, onNetworkModeChanged]);
 
   React.useEffect(() => {
     const onUpdateStatus = (e: Event) => {
@@ -644,65 +654,41 @@ export const Layout: React.FC<LayoutProps> = ({
               <SpellCheck2 className="w-3.5 h-3.5 shrink-0" />
             </button>
 
-            <button
-              type="button"
-              data-testid="sidebar-network-mode-toggle-btn"
-              onClick={async () => {
-                const nextOffline = !networkState.isOffline;
-                setManualOfflineMode(nextOffline);
-                if (!nextOffline && !navigator.onLine) {
-                  notify(
-                    'warning',
-                    isFa
-                      ? 'اتصال شبکه برقرار نیست؛ برنامه در حالت آفلاین باقی می‌ماند.'
-                      : 'No network connection detected; staying in offline mode.',
-                  );
-                } else {
-                  notify(
-                    'info',
-                    nextOffline
-                      ? isFa
-                        ? 'حالت آفلاین فعال شد — داده‌ها به‌صورت محلی ذخیره می‌شوند.'
-                        : 'Offline mode enabled — changes are stored locally.'
-                      : isFa
-                        ? 'حالت آنلاین فعال شد.'
-                        : 'Online mode enabled.',
-                  );
-                }
-                await refreshAuth();
-                onNetworkModeChanged?.();
-              }}
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="sidebar-network-status-icon"
+              data-network-state={networkState.isOffline ? 'offline' : 'online'}
               title={
                 networkState.isOffline
                   ? isFa
-                    ? 'وضعیت: آفلاین (برای تغییر به حالت آنلاین کلیک کنید)'
-                    : 'Status: Offline (click to switch to Online)'
+                    ? 'وضعیت اتصال به سرور: آفلاین'
+                    : 'Server Connection: Offline'
                   : isFa
-                    ? 'وضعیت: آنلاین (برای تغییر به حالت آفلاین کلیک کنید)'
-                    : 'Status: Online (click to switch to Offline)'
+                    ? 'وضعیت اتصال به سرور: آنلاین'
+                    : 'Server Connection: Online'
               }
               aria-label={
                 networkState.isOffline
                   ? isFa
-                    ? 'حالت آفلاین — تغییر به آنلاین'
-                    : 'Offline mode — switch to online'
+                    ? 'وضعیت اتصال: آفلاین'
+                    : 'Connection status: Offline'
                   : isFa
-                    ? 'حالت آنلاین — تغییر به آفلاین'
-                    : 'Online mode — switch to offline'
+                    ? 'وضعیت اتصال: آنلاین'
+                    : 'Connection status: Online'
               }
-              aria-pressed={networkState.isOffline}
-              className={`h-8 rounded-lg flex items-center justify-center transition-colors ${
+              className={`h-8 rounded-lg flex items-center justify-center cursor-default select-none transition-colors ${
                 networkState.isOffline
-                  ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] hover:opacity-90'
-                  : 'bg-[var(--status-success-bg)] text-[var(--status-success)] hover:opacity-90'
+                  ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
+                  : 'bg-[var(--status-success-bg)] text-[var(--status-success)]'
               }`}
             >
               {networkState.isOffline ? (
-                <WifiOff className="w-3.5 h-3.5 shrink-0" />
+                <WifiOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               ) : (
-                <Wifi className="w-3.5 h-3.5 shrink-0" />
+                <Wifi className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               )}
-            </button>
+            </div>
           </div>
 
           {/* Quiet Version / Update Status & Shortcuts Inline Row */}

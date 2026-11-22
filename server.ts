@@ -559,6 +559,11 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  // ---------------- HEALTH CHECK ----------------
+  app.get('/api/health', (_req: Request, res: Response) => {
+    res.json({ ok: true });
+  });
+
   // ---------------- AUTH & PREFERENCES ----------------
   app.get('/api/auth/status', (req: AuthedRequest, res: Response) => {
     res.json({
@@ -7069,6 +7074,25 @@ CRITICAL OPERATING RULES:
       const prefetch: Record<string, unknown> = {
         overview: metrics,
       };
+      const normQ = question.toLowerCase();
+      if (/شیمیایی|انقضا|chemical|expir/i.test(normQ)) {
+        prefetch.expiringChemicals = queryOperationalAlerts(
+          dbSlice,
+          { alertType: 'expiring_chemicals', days: 30, limit: 20 },
+          activeLang,
+        );
+      }
+      if (/کسری|اسیب|آسیب|مغایرت|خراب|mer|rep|shortage|damag|discrep/i.test(normQ)) {
+        prefetch.shortages = queryOperationalAlerts(dbSlice, { alertType: 'shortages', limit: 15 }, activeLang);
+        prefetch.openMer = queryOperationalAlerts(dbSlice, { alertType: 'open_mer', limit: 12 }, activeLang);
+      }
+      if (/جزیره|جزایر|island/i.test(normQ)) {
+        prefetch.islandBreakdown = aggregateWarehouseByField(
+          dbSlice,
+          { groupBy: 'island', scope: 'detailed', limit: 15 },
+          activeLang,
+        );
+      }
       const extractedSubject = extractEntitySubjectFromQuestion(question);
       if (extractedSubject) {
         prefetch.autoItemSearch = {
