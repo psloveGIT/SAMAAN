@@ -1017,7 +1017,7 @@ export const Layout: React.FC<LayoutProps> = ({
                 data-testid="topbar-shortcuts-btn"
                 onClick={onOpenShortcuts}
                 title={`${isFa ? 'کلیدهای میانبر و شخصی‌سازی' : 'Keyboard Shortcuts & Settings'} (${shortcuts.shortcutsSettings || 'Ctrl+/'})`}
-                className="h-9 px-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+                className="hidden sm:flex h-9 px-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-xs font-medium items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
               >
                 <Keyboard className="w-4 h-4 text-[var(--accent-primary)]" />
                 <span className="hidden xl:inline">{isFa ? 'میانبرها' : 'Shortcuts'}</span>

@@ -12,6 +12,7 @@ import {
   normalizeCombo,
   type ShortcutActionId,
 } from '../shared/shortcuts.ts';
+import { applyThemeMetaToDocument } from '../shared/themeMeta.ts';
 import type { HistoryStatus } from '../shared/undoHistory.ts';
 import type {
   CalendarMode,
@@ -152,8 +153,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const root = document.documentElement;
     root.lang = p.language;
     root.dir = p.language === 'fa' ? 'rtl' : 'ltr';
-    root.classList.toggle('dark', p.theme === 'dark');
-    root.classList.toggle('eye-comfort', p.eyeComfort);
+    applyThemeMetaToDocument(p.theme, p.eyeComfort);
     root.setAttribute('spellcheck', p.spellCheck !== false ? 'true' : 'false');
     try {
       localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(p));

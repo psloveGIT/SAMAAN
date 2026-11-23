@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0D7A72" />
+    <meta name="color-scheme" content="only light" />
+    <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -16,6 +17,26 @@
     <meta property="og:description" content="سمان - سامانه مدیریت انبارهای نیروگاهی | Power Plant Warehouse Management System" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('samaan_user_preferences_v1');
+          var parsed = raw ? JSON.parse(raw) : {};
+          var isDark = parsed && parsed.theme === 'dark';
+          var isEye = Boolean(parsed && parsed.eyeComfort);
+          var root = document.documentElement;
+          root.classList.toggle('dark', isDark);
+          root.classList.toggle('eye-comfort', isEye);
+          var scheme = isDark ? 'only dark' : 'only light';
+          var themeColor = isDark ? (isEye ? '#171410' : '#0b111b') : (isEye ? '#f5efe3' : '#ffffff');
+          root.style.colorScheme = scheme;
+          var csMeta = document.querySelector('meta[name="color-scheme"]');
+          if (csMeta) csMeta.setAttribute('content', scheme);
+          var tcMeta = document.querySelector('meta[name="theme-color"]');
+          if (tcMeta) tcMeta.setAttribute('content', themeColor);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

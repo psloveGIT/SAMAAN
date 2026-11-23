@@ -28,10 +28,17 @@ function detectIOSSafari(): boolean {
   return !isThirdPartyIOS;
 }
 
+function detectAndroid(): boolean {
+  if (typeof window === 'undefined') return false;
+  const ua = window.navigator.userAgent || '';
+  return /android/i.test(ua);
+}
+
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState<boolean>(() => detectStandalone());
   const [isIOS] = useState<boolean>(() => detectIOSSafari());
+  const [isAndroid] = useState<boolean>(() => detectAndroid());
 
   useEffect(() => {
     const mediaQuery = window.matchMedia?.('(display-mode: standalone)');
@@ -75,6 +82,7 @@ export function usePWAInstall() {
   return {
     canInstall: Boolean(deferredPrompt) && !isInstalled,
     isIOS: isIOS && !isInstalled,
+    isAndroid: isAndroid && !isInstalled,
     isInstalled,
     triggerInstall,
   };

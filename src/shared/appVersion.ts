@@ -16,11 +16,26 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.9.1';
-export const APP_BUILD_ID = '2026.05.25-1';
-export const APP_RELEASED_AT = '2026-05-25';
+export const APP_VERSION = '2.9.2';
+export const APP_BUILD_ID = '2026.05.26-1';
+export const APP_RELEASED_AT = '2026-05-26';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.9.2',
+    buildId: '2026.05.26-1',
+    releasedAt: '2026-05-26',
+    titleFa: 'اصلاح کامل حالت روز و شب در اندروید و ارتقای سازگاری نصب در نسخه‌های جدید اندروید',
+    titleEn: 'Fixed Android Light/Dark Mode Auto-Darkening & Modern Android PWA Compatibility',
+    changesFa: [
+      'رفع کامل مشکل سبز و سرمه‌ای ماندن صفحه در گوشی‌های اندرویدی هنگام تغییر حالت روز و شب؛ جلوگیری از وارونه‌سازی اجباری رنگ‌ها توسط مرورگر و سیستم‌عامل اندروید و همگام‌سازی لحظه‌ای رنگ نوار وضعیت با حالت روشن، تاریک و محافظ چشم',
+      'به‌روزرسانی استاندارد فایل مانیفست وب‌اپلیکیشن (شناسه، محدوده اجرا، آیکون‌ها و هدرهای امنیتی) برای سازگاری کامل با نصب مستقیم مرورگر در نسخه‌های جدید اندروید و افزودن راهنمای نصب امن در اندروید',
+    ],
+    changesEn: [
+      'Fixed Android Light/Dark mode turning green and navy instead of crisp white by enforcing only light / only dark color-scheme, forced-color-adjust: none, explicit body backgrounds, and dynamic theme-color meta syncing',
+      'Upgraded Web App Manifest (scope-aligned id/start_url, prefer_related_applications: false, display_override, security headers) and added safe browser install guidance for modern Android devices',
+    ],
+  },
   {
     version: '2.9.1',
     buildId: '2026.05.25-1',
