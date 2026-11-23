@@ -309,9 +309,10 @@ async function startServer() {
   });
 
   app.post('/api/projects', (req: AuthedRequest, res: Response) => {
-    const { name, code, employerId, employerConfig, copyUsers } = req.body as {
+    const { name, code, contractRef, employerId, employerConfig, copyUsers } = req.body as {
       name?: string;
       code?: string;
+      contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
       copyUsers?: boolean;
@@ -329,6 +330,7 @@ async function startServer() {
     const created = projectManager.createProject({
       name: cleanName,
       code,
+      contractRef,
       employerId,
       employerConfig,
       copyUsersFromStore: shouldCopyUsers ? activeProjectStore() : null,
@@ -345,9 +347,10 @@ async function startServer() {
       });
       return;
     }
-    const { name, code, employerId, employerConfig } = req.body as {
+    const { name, code, contractRef, employerId, employerConfig } = req.body as {
       name?: string;
       code?: string;
+      contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
     };
@@ -364,6 +367,7 @@ async function startServer() {
     const updated = projectManager.renameProject(req.params.id, {
       name: cleanName,
       code,
+      contractRef,
       employerId,
       employerConfig,
     });
@@ -442,8 +446,18 @@ async function startServer() {
       });
       return;
     }
-    const ok = projectManager.deleteEmployer(req.params.id);
-    if (!ok) {
+    const result = projectManager.deleteEmployer(req.params.id);
+    if (!result.ok) {
+      if (result.reason === 'cannot_delete_builtin') {
+        res.status(400).json({
+          error: errMsg(
+            req,
+            'کارفرماهای پیش‌فرض سامانه قابل حذف نیستند',
+            'Built-in default employers cannot be deleted',
+          ),
+        });
+        return;
+      }
       res.status(404).json({ error: errMsg(req, 'کارفرما یافت نشد', 'Employer not found') });
       return;
     }
@@ -1802,6 +1816,7 @@ async function startServer() {
             d.smrMapnaNo,
             d.mivMapnaNo,
             d.storageLocation,
+            d.notes,
             d.stocktakeStatus,
             d.chemicalType || '',
             d.itemCategory || '',

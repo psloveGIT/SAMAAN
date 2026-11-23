@@ -64,9 +64,20 @@ function formatSingleIranPhone(digits: string): {
   };
 }
 
+function normalizeRtlAreaCode(rawPart: string): string {
+  const ascii = normalizeDigits(rawPart || '').trim();
+  // Match RTL reversed landline like "45357000–021" or "88795447 –021" or "88857450 021"
+  const rtlMatch = ascii.match(/^(\d{7,8})\s*[-–—\s]\s*(0[1-8]\d)$/);
+  if (rtlMatch) {
+    return `${rtlMatch[2]}${rtlMatch[1]}`;
+  }
+  return ascii;
+}
+
 /**
  * Formats and validates an Iranian phone number string (supports single or multiple
- * slash/comma-separated Iranian mobile or landline numbers, e.g. "0912-345-6789" or "021-88776655 / 0912-345-6789").
+ * slash/comma/'و'-separated Iranian mobile or landline numbers, e.g. "0912-345-6789",
+ * "021-88776655 / 0912-345-6789", or "02182980000 و 02182980001").
  * Empty string is considered valid (optional field); callers requiring non-empty check separately.
  */
 export function validateAndFormatIranPhone(rawInput: string | null | undefined): IranPhoneValidationResult {
@@ -76,7 +87,7 @@ export function validateAndFormatIranPhone(rawInput: string | null | undefined):
   }
 
   const parts = trimmed
-    .split(/[\/،,;|\n]+/)
+    .split(/(?:[\/،,;|\n]+|\s+و\s+)/)
     .map((p) => p.trim())
     .filter(Boolean);
 
@@ -90,7 +101,7 @@ export function validateAndFormatIranPhone(rawInput: string | null | undefined):
   let landlineCount = 0;
 
   for (const part of parts) {
-    const digits = stripToIranDigits(part);
+    const digits = stripToIranDigits(normalizeRtlAreaCode(part));
     const checked = formatSingleIranPhone(digits);
     if (!checked.valid) {
       return {
@@ -120,9 +131,9 @@ export function validateAndFormatIranPhone(rawInput: string | null | undefined):
 
 /**
  * Live input sanitizer: normalizes Persian/Arabic digits, restricts to valid phone characters,
- * and auto-inserts hyphens cleanly once complete without fighting user editing.
+ * and allows Persian 'و' separator for multiple phone numbers.
  */
 export function sanitizeIranPhoneInput(raw: string): string {
   const ascii = normalizeDigits(raw || '');
-  return ascii.replace(/[^0-9+\-\s/،,()]/g, '');
+  return ascii.replace(/[^0-9+\-–—\s/،,()و]/g, '');
 }

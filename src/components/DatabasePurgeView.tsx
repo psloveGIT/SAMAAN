@@ -141,8 +141,8 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
     group: 'operations',
     labelFa: 'فرم‌های اختصاصی ثبت‌شده کارفرما',
     labelEn: 'Custom Employer Form Submissions',
-    descFa: 'اسناد پرشده برای فرم‌های سفارشی هر کارفرما (طراحی فرم حفظ می‌شود)',
-    descEn: 'Saved custom form submissions (form templates are preserved)',
+    descFa: 'اسناد پرشده برای فرم‌های اختصاصی هر کارفرما (فایل‌های آپلودشده حفظ می‌شوند)',
+    descEn: 'Saved custom form submissions (uploaded form files are preserved)',
   },
   {
     key: 'categories',
@@ -395,7 +395,7 @@ export const DatabasePurgeView: React.FC<DatabasePurgeViewProps> = ({
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               {isFa
                 ? `این صفحه فقط در اختیار مدیر کل است. می‌توانید هر بخش را به‌صورت جداگانه پاک کنید، چند بخش دلخواه را هم‌زمان انتخاب کنید یا کل داده‌های پروژه فعال («${activeProject?.name || activeProjectId}») را پاکسازی نمایید. حساب‌های کاربری، فهرست پروژه‌ها و تنظیمات کارفرمایان حفظ می‌شوند.`
-                : `Restricted to Administrators. Purge individual sections, multi-select custom tables, or wipe all operational data for the active project ("${activeProject?.name || activeProjectId}"). User accounts, projects, and employer studio templates are preserved.`}
+                : `Restricted to Administrators. Purge individual sections, multi-select custom tables, or wipe all operational data for the active project ("${activeProject?.name || activeProjectId}"). User accounts, projects, and employer profiles and uploaded forms are preserved.`}
             </p>
             <div className="text-[11px] text-[var(--text-muted)] tabular-nums pt-0.5 flex flex-wrap items-center gap-2">
               <span>

@@ -6,7 +6,7 @@ import {
   Edit3,
   FileText,
   FolderPlus,
-  Palette,
+  Plus,
   Trash2,
   X,
 } from 'lucide-react';
@@ -44,6 +44,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
 
   const [newName, setNewName] = useState('');
   const [newCode, setNewCode] = useState('');
+  const [newContractRef, setNewContractRef] = useState('');
   const [newEmployerId, setNewEmployerId] = useState<EmployerId>(DEFAULT_EMPLOYER_ID);
   const [copyUsers, setCopyUsers] = useState(Boolean(user));
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -52,10 +53,12 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editCode, setEditCode] = useState('');
+  const [editContractRef, setEditContractRef] = useState('');
   const [editEmployerId, setEditEmployerId] = useState<EmployerId>(DEFAULT_EMPLOYER_ID);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [studioModalOpen, setStudioModalOpen] = useState(false);
-  const [studioAssignTarget, setStudioAssignTarget] = useState<'new' | 'edit'>('new');
+  const [employerModalOpen, setEmployerModalOpen] = useState(false);
+  const [employerModalInitialMode, setEmployerModalInitialMode] = useState<'list' | 'new'>('new');
+  const [employerAssignTarget, setEmployerAssignTarget] = useState<'new' | 'edit'>('new');
 
   if (!open) return null;
 
@@ -72,7 +75,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
       notify(
         'info',
         isFa
-          ? `پروژه فعال به «${target?.name || id}» (${targetEmp.isConfigured ? `کارفرما: ${targetEmp.nameFa}` : 'حالت خام'}) تغییر یافت.`
+          ? `پروژه فعال به «${target?.name || id}» (${targetEmp.isConfigured ? `کارفرما: ${targetEmp.nameFa}` : 'بدون کارفرما'}) تغییر یافت.`
           : `Switched to "${target?.name || id}".`,
       );
       onClose();
@@ -91,6 +94,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
       const created = await createProject({
         name: newName.trim(),
         code: newCode.trim() || undefined,
+        contractRef: newContractRef.trim() || undefined,
         employerId: newEmployerId,
         copyUsers: Boolean(user && copyUsers),
         autoSwitch: true,
@@ -98,11 +102,12 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
       const createdEmp = resolveEmployerProfile(created, employers);
       setNewName('');
       setNewCode('');
+      setNewContractRef('');
       setNewEmployerId(DEFAULT_EMPLOYER_ID);
       notify(
         'success',
         isFa
-          ? `پروژه «${created.name}» ${createdEmp.isConfigured ? `با کارفرمای «${createdEmp.nameFa}»` : '(در حالت خام)'} ایجاد و فعال شد.`
+          ? `پروژه «${created.name}» ${createdEmp.isConfigured ? `با کارفرمای «${createdEmp.nameFa}»` : ''} ایجاد و فعال شد.`
           : `Project "${created.name}" created.`,
       );
       onClose();
@@ -120,6 +125,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
       await renameProject(id, {
         name: editName.trim(),
         code: editCode.trim() || undefined,
+        contractRef: editContractRef.trim(),
         employerId: editEmployerId,
       });
       setEditingId(null);
@@ -168,14 +174,15 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                     onClose();
                     onOpenEmployersPage();
                   } else {
-                    setStudioAssignTarget('new');
-                    setStudioModalOpen(true);
+                    setEmployerAssignTarget('new');
+                    setEmployerModalInitialMode('list');
+                    setEmployerModalOpen(true);
                   }
                 }}
                 className="h-8 px-3 rounded-lg border border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold flex items-center gap-1.5"
               >
-                <Palette className="w-3.5 h-3.5" />
-                <span>{isFa ? 'طراحی کارفرما و فرم‌ها' : 'Employer & Form Studio'}</span>
+                <Building2 className="w-3.5 h-3.5" />
+                <span>{isFa ? 'مدیریت کارفرمایان' : 'Manage Employers'}</span>
               </button>
               <button
                 type="button"
@@ -210,21 +217,29 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                     >
                       {isEditing ? (
                         <div className="w-full space-y-2.5">
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <input
                               type="text"
                               value={editName}
                               onChange={(e) => setEditName(e.target.value)}
-                              placeholder={isFa ? 'نام پروژه' : 'Project name'}
+                              placeholder={isFa ? 'نام پروژه (مثلاً: نیروگاه نکا)' : 'Project name (e.g. Neka Power Plant)'}
                               className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+                            />
+                            <input
+                              type="text"
+                              dir="ltr"
+                              value={editContractRef}
+                              onChange={(e) => setEditContractRef(e.target.value)}
+                              placeholder={isFa ? 'کد / شماره قرارداد مرجع (اختیاری)' : 'Reference Contract No. (optional)'}
+                              className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono focus:outline-none focus:border-[var(--accent-primary)]"
                             />
                             <input
                               type="text"
                               dir="ltr"
                               value={editCode}
                               onChange={(e) => setEditCode(e.target.value)}
-                              placeholder={isFa ? 'کد پروژه (اختیاری)' : 'Code (optional)'}
-                              className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+                              placeholder={isFa ? 'کد پروژه (اختیاری)' : 'Project Code (optional)'}
+                              className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono focus:outline-none focus:border-[var(--accent-primary)]"
                             />
                             <div className="flex items-center gap-1">
                               <select
@@ -232,25 +247,23 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                                 onChange={(e) => setEditEmployerId(e.target.value)}
                                 className="flex-1 h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium focus:outline-none focus:border-[var(--accent-primary)]"
                               >
-                                <option value="">
-                                  {isFa ? 'بدون کارفرما (حالت خام)' : 'Unassigned (Neutral)'}
-                                </option>
                                 {employers.map((emp) => (
                                   <option key={emp.id} value={emp.id}>
-                                    {emp.nameFa}
+                                    {emp.nameFa} {emp.shortName ? `(${emp.shortName})` : ''}
                                   </option>
                                 ))}
                               </select>
                               <button
                                 type="button"
-                                title={isFa ? 'افزودن / ویرایش کارفرما' : 'Manage Employers'}
+                                title={isFa ? 'تعریف کارفرمای جدید' : 'Define New Employer'}
                                 onClick={() => {
-                                  setStudioAssignTarget('edit');
-                                  setStudioModalOpen(true);
+                                  setEmployerAssignTarget('edit');
+                                  setEmployerModalInitialMode('new');
+                                  setEmployerModalOpen(true);
                                 }}
-                                className="h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--accent-primary)]"
+                                className="h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--accent-primary)] flex items-center justify-center"
                               >
-                                <Palette className="w-3.5 h-3.5" />
+                                <Plus className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </div>
@@ -281,11 +294,21 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                             onClick={() => handleSelect(p.id)}
                             className="flex-1 min-w-[200px] flex items-center gap-2.5 text-start"
                           >
-                            <Database
-                              className={`w-4 h-4 shrink-0 ${
-                                isActive ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)]'
-                              }`}
-                            />
+                            {resolvedEmp.logos.length > 0 ? (
+                              <div className="w-11 h-8 rounded-lg border border-[var(--border-subtle)] bg-white p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                                <img
+                                  src={resolvedEmp.logos[0].dataUrl}
+                                  alt={resolvedEmp.shortName || resolvedEmp.nameFa}
+                                  className="max-w-full max-h-full object-contain"
+                                />
+                              </div>
+                            ) : (
+                              <Database
+                                className={`w-4 h-4 shrink-0 ${
+                                  isActive ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)]'
+                                }`}
+                              />
+                            )}
                             <div className="min-w-0">
                               <div className="text-xs font-bold text-[var(--text-primary)] flex flex-wrap items-center gap-2">
                                 <span className="truncate">{p.name}</span>
@@ -297,6 +320,14 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                                     {p.code}
                                   </span>
                                 )}
+                                {p.contractRef && (
+                                  <span
+                                    dir="ltr"
+                                    className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]"
+                                  >
+                                    {p.contractRef}
+                                  </span>
+                                )}
                               </div>
                               <div className="text-[11px] text-[var(--text-muted)] flex flex-wrap items-center gap-1.5 mt-0.5">
                                 <span>
@@ -305,8 +336,8 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                                       ? `کارفرما: ${resolvedEmp.nameFa}`
                                       : `Employer: ${resolvedEmp.nameEn}`
                                     : isFa
-                                      ? 'بدون کارفرما (قالب عمومی خام)'
-                                      : 'Neutral (No Employer Assigned)'}
+                                      ? 'بدون کارفرما'
+                                      : 'No Employer Assigned'}
                                 </span>
                                 {resolvedEmp.docCodePrefix && (
                                   <>
@@ -344,6 +375,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                                 setEditingId(p.id);
                                 setEditName(p.name);
                                 setEditCode(p.code || '');
+                                setEditContractRef(p.contractRef || '');
                                 setEditEmployerId(p.employerId || DEFAULT_EMPLOYER_ID);
                               }}
                               className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]"
@@ -399,7 +431,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                 <span>{isFa ? 'ایجاد پروژه جدید و انتخاب کارفرما' : 'Create New Project & Assign Employer'}</span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
                     {isFa ? 'نام پروژه *' : 'Project Name *'}
@@ -409,28 +441,14 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                     required
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
-                    placeholder={isFa ? 'مثال: پروژه احداث نیروگاه...' : 'e.g. Combined Cycle Power Plant'}
+                    placeholder={isFa ? 'مثلاً: نیروگاه نکا' : 'e.g. Neka Power Plant'}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'کد پروژه / شماره قرارداد' : 'Project Code / Contract No.'}
-                  </label>
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={newCode}
-                    onChange={(e) => setNewCode(e.target.value)}
-                    placeholder="PP-01 / C-..."
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'کارفرما (از فهرست تعریف‌شده)' : 'Employer'}
+                    {isFa ? 'کارفرما' : 'Employer'}
                   </label>
                   <div className="flex items-center gap-1">
                     <select
@@ -438,27 +456,54 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                       onChange={(e) => setNewEmployerId(e.target.value)}
                       className="flex-1 h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium focus:outline-none focus:border-[var(--accent-primary)]"
                     >
-                      <option value="">
-                        {isFa ? 'بدون کارفرما (حالت خام)' : 'Unassigned (Neutral)'}
-                      </option>
                       {employers.map((emp) => (
                         <option key={emp.id} value={emp.id}>
-                          {emp.nameFa}
+                          {emp.nameFa} {emp.shortName ? `(${emp.shortName})` : ''}
                         </option>
                       ))}
                     </select>
                     <button
                       type="button"
-                      title={isFa ? 'تعریف کارفرمای جدید' : 'Add Employer'}
+                      title={isFa ? 'تعریف کارفرمای جدید' : 'Define New Employer'}
                       onClick={() => {
-                        setStudioAssignTarget('new');
-                        setStudioModalOpen(true);
+                        setEmployerAssignTarget('new');
+                        setEmployerModalInitialMode('new');
+                        setEmployerModalOpen(true);
                       }}
-                      className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--accent-primary)] text-xs font-semibold shrink-0"
+                      className="h-9 px-2.5 rounded-lg border border-[var(--accent-primary)]/45 bg-[var(--accent-soft)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)] text-[var(--accent-primary)] text-xs font-semibold shrink-0 flex items-center gap-1 transition-colors"
                     >
-                      +
+                      <Plus className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">{isFa ? 'کارفرمای جدید' : 'New'}</span>
                     </button>
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'کد / شماره قرارداد مرجع (اختیاری)' : 'Reference Contract Code / No. (optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={newContractRef}
+                    onChange={(e) => setNewContractRef(e.target.value)}
+                    placeholder={isFa ? 'مثال: MD1-NEKA-1404' : 'e.g. CON-2026-01'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'کد اختصاری پروژه (اختیاری)' : 'Project Short Code (optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={newCode}
+                    onChange={(e) => setNewCode(e.target.value)}
+                    placeholder="PP-01"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
                 </div>
               </div>
 
@@ -479,8 +524,8 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                             ? newResolvedEmployer.nameFa
                             : newResolvedEmployer.nameEn
                           : isFa
-                            ? 'بدون کارفرما — قالب عمومی بدون لوگو و عنوان شرکت'
-                            : 'Neutral Default — No company logo or preset'}
+                            ? 'بدون کارفرما'
+                            : 'No Employer Assigned'}
                       </span>
                     </div>
                     {newResolvedEmployer.companyFullName && (
@@ -522,17 +567,23 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
         </div>
       </div>
 
-      {/* Inline Employer Studio Modal when triggered inside Project Manager */}
-      {studioModalOpen && (
+      {/* Inline Employer Management / New Employer Modal when triggered inside Project Manager */}
+      {employerModalOpen && (
         <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-6xl max-h-[92vh] flex flex-col rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] shadow-2xl overflow-hidden">
             <div className="px-5 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between">
               <span className="text-sm font-bold text-[var(--text-primary)]">
-                {isFa ? 'محیط اختصاصی تعریف کارفرما و طراحی فرم‌ها' : 'Employer & Custom Form Studio'}
+                {employerModalInitialMode === 'new'
+                  ? isFa
+                    ? 'تعریف کارفرمای جدید (لوگو و آپلود فرم)'
+                    : 'Define New Employer (Logo & Form Upload)'
+                  : isFa
+                    ? 'مدیریت کارفرمایان'
+                    : 'Employers Management'}
               </span>
               <button
                 type="button"
-                onClick={() => setStudioModalOpen(false)}
+                onClick={() => setEmployerModalOpen(false)}
                 className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
               >
                 <X className="w-4 h-4" />
@@ -541,13 +592,14 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
             <div className="p-4 overflow-y-auto">
               <EmployersStudioWorkspace
                 compact
+                initialMode={employerModalInitialMode}
                 onAssignEmployer={(empId) => {
-                  if (studioAssignTarget === 'edit') {
+                  if (employerAssignTarget === 'edit') {
                     setEditEmployerId(empId);
                   } else {
                     setNewEmployerId(empId);
                   }
-                  setStudioModalOpen(false);
+                  setEmployerModalOpen(false);
                 }}
               />
             </div>

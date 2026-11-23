@@ -16,11 +16,89 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.9.2';
-export const APP_BUILD_ID = '2026.05.26-1';
-export const APP_RELEASED_AT = '2026-05-26';
+export const APP_VERSION = '2.12.0';
+export const APP_BUILD_ID = '2026.05.28-1';
+export const APP_RELEASED_AT = '2026-05-28';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.12.0',
+    buildId: '2026.05.28-1',
+    releasedAt: '2026-05-28',
+    titleFa: 'بازطراحی کامل بخش برچسب انبارش کالا (MD1EX-FQP02/14-01) برای مپنا توسعه یک، چاپ ۴عددی A4 و تغییر نام ستون توضیحات تجهیز',
+    titleEn: 'Redesigned MD1 Storage Label (MD1EX-FQP02/14-01) with 4-Up A4 Printing, Smart 20-Rule Warehouse Detection & Equipment Notes Rename',
+    changesFa: [
+      'تغییر نام بخش «تعریف و آپلود فرم‌ها» به «آپلود و تعریف فرم‌ها» در سراسر سامانه و تغییر نام ستون «توضیحات کسری/مغایرت» به «توضیحات تجهیز» در جدول ثبت جزئیات تجهیزات',
+      'فعال‌سازی فرم رسمی «برچسب انبارش کالا (MD1EX-FQP02/14-01)» به‌عنوان اولین فرم پیش‌فرض کارفرمای «مپنا توسعه یک (MD1)» با حفظ قفل سایر کارفرماها تا زمان آپلود فرم اختصاصی',
+      'بازطراحی کامل بخش برچسب انبارش کالا با فیلترهای پیشرفته مشابه جزئیات تجهیزات (جستجو، انتخاب چند پکینگ، فیلتر شرطی و فیلتر ستونی اکسل) و امکان انتخاب ۱ تا هزاران ردیف',
+      'چیدمان دقیق و استاندارد چاپ ۴ عدد برچسب با فاصله برش در هر برگه A4 برای هر تعداد ردیف انتخاب‌شده (از ۱ ردیف تا ۱۰۰۰ ردیف)',
+      'تشخیص هوشمند فارسی نام انبار (Warehouse) بر اساس ۲۰ کد محل نگهداری (W1..W3، CA..CH، CR، Mapna، PR، S، Meco، Tuga، WNNC، SITE، WNNE) و پرکردن خودکار تمام فیلدهای رسمی فرم از داده‌های پروژه و جدول جزئیات',
+    ],
+    changesEn: [
+      'Renamed "Define & Upload Forms" to "Upload & Define Forms" across the UI and renamed "Discrepancy/Shortage Notes" to "Equipment Notes" in Detailed Equipment',
+      'Activated the official Storage Label (MD1EX-FQP02/14-01) as the first built-in default form for MAPNA MD1 while keeping other employers gated until upload',
+      'Redesigned Storage Labels with Detailed-Equipment-grade filtering (search, multi-packing, custom AND/OR filters, Excel column filters) and multi-row / all-filtered selection',
+      'Enforced strict 4-up A4 sheet printing (2×2 grid with cutting spacing) whether 1 row or 1,000 rows are selected',
+      'Added automatic 20-rule Persian Warehouse detection from Storage Location and exact field binding for Project, Tag No., Description, SYSTEM (Sub-System), Package No. (Shipment/Package), Item No., Location, VENDOR, and Drum number',
+    ],
+  },
+  {
+    version: '2.11.0',
+    buildId: '2026.05.27-3',
+    releasedAt: '2026-05-27',
+    titleFa: 'حذف فرم‌های پیش‌فرض قبلی و فعال‌سازی سیستم کنترل دسترسی ۹ بخش فرم‌ها بر اساس کارفرما و آپلود فرم',
+    titleEn: 'Removed Legacy Default Forms & Added Per-Employer 9-Section Form Access Control and Upload-to-Unlock Flow',
+    changesFa: [
+      'حذف کامل فرم‌های پیش‌فرض قدیمی از سامانه و آماده‌سازی ساختار تمیز برای جایگزینی بخش‌به‌بخش فرم‌های جدید کارفرمای «مپنا توسعه یک (MD1)»',
+      'اعمال قفل هوشمند روی هر ۹ بخش فرم‌های عملیاتی برای کارفرماهای «مپنا توسعه دو (MD2)»، «مپنا توسعه سه (MD3)»، کارفرماهای جدید و بخش‌های بدون فرم پیش‌فرض، همراه با نمایش پیام راهنما و لینک مستقیم به بخش «تعریف و آپلود فرم»',
+      'افزودن جدول وضعیت ۹ بخش فرم‌ها در تب «تعریف و آپلود فرم‌ها» با امکان آپلود مستقیم فایل فرم برای هر بخش و فعال‌سازی فوری دسترسی آن بخش بلافاصله پس از بارگذاری',
+      'اصلاح ذخیره‌سازی پایدار اتصال فرم‌های آپلودی به بخش‌های عملیاتی سامانه در سمت سرور و حالت آفلاین',
+    ],
+    changesEn: [
+      'Purged all legacy built-in default forms and prepared a clean per-section registry for replacing MD1 default forms section by section',
+      'Added per-employer access gating across all 9 operational form sections for MD2, MD3, custom employers, and unconfigured sections with guided prompts to Define & Upload Forms',
+      'Added a 9-section status and direct upload matrix inside the Define & Upload Forms tab that immediately unlocks each section once its form is uploaded',
+      'Fixed server and offline persistence of target section bindings and data sources for uploaded employer forms',
+    ],
+  },
+  {
+    version: '2.10.1',
+    buildId: '2026.05.27-2',
+    releasedAt: '2026-05-27',
+    titleFa: 'بازطراحی جمع‌وجور صفحه اول برای موبایل، نمایش ورژن در پایین صفحه و قوانین اعتبارسنجی دقیق تعریف کارفرمای جدید',
+    titleEn: 'Compact Mobile-First Onboarding, Footer Version Display & Strict New Employer Field Validation',
+    changesFa: [
+      'بازطراحی مدرن، جمع‌وجور و سازگار با نمایشگرهای کوچک برای بخش انتخاب کارفرما در صفحه اول با حذف آیکون‌های بزرگ اضافی',
+      'نمایش ورژن فعلی نصب‌شده روی دستگاه در پایین صفحه اول به قالب «سمان — سامانه جامع مدیریت انبارهای نیروگاهی ورژن #.#.#»',
+      'اعمال قوانین دقیق اعتبارسنجی در فرم تعریف کارفرمای جدید: تلفن و فکس تک‌کادره با پیش‌شماره ثابت 98+، کد استان ۲ رقمی بدون صفر و شماره ۸ رقمی (پشتیبانی از اعداد فارسی و انگلیسی)، کدپستی دقیقاً ۱۰ رقمی، اعتبارسنجی استاندارد ایمیل، و بررسی فرمت رسمی نام کاربری اینستاگرام و لینکدین',
+      'پاکسازی فرم تعریف کارفرما: حذف متن‌های نمونه (Placeholder)، حذف فیلد «نام لاتین کارفرما»، تغییر عنوان «عنوان کامل شرکت» به «عنوان کامل فارسی»، حذف توضیح قرارداد مرجع و خالی‌شدن مقدار پیش‌فرض زیرعنوان سیستم مدیریت',
+    ],
+    changesEn: [
+      'Redesigned the first-screen employer picker into a sleek, compact, mobile-friendly layout without oversized icons',
+      'Added active device version display in the first-screen footer',
+      'Added strict optional validation in Define New Employer: unified +98 / ## / ######## single-box inputs for Phone and Fax (Persian & English digits, no leading zero in province code), 10-digit Postal Code, valid Email domain/TLD check, and official Instagram & LinkedIn username enforcement',
+      'Cleaned up Employer Profile form: removed example placeholders, removed Latin Name field, renamed Full Company Title to Full Persian Title, removed contract-ref helper box, and cleared default Management System Subtitle',
+    ],
+  },
+  {
+    version: '2.10.0',
+    buildId: '2026.05.27-1',
+    releasedAt: '2026-05-27',
+    titleFa: 'بازطراحی کامل بخش کارفرمایان با کارفرماهای پیش‌فرض مپنا، انتخاب کارفرما و پروژه در صفحه ورود و حذف بخش طراحی فرم',
+    titleEn: 'Rebuilt Employers System with Built-in MAPNA Presets (MD1/MD2/MD3), Redesigned Onboarding & Form Designer Removal',
+    changesFa: [
+      'افزودن سه کارفرمای پیش‌فرض «مپنا توسعه یک (MD1)»، «مپنا توسعه دو (MD2)» و «مپنا توسعه سه (MD3)» با مشخصات کامل، کدپستی، فکس، پست الکترونیکی، شبکه‌های اجتماعی و لوگوی اختصاصی هر شرکت',
+      'بازطراحی صفحه ورود و راه‌اندازی اولیه نرم‌افزار برای انتخاب مستقیم کارفرما از بین سه کارفرمای پیش‌فرض، ثبت نام پروژه (مثلاً «نیروگاه نکا») و کد / شماره قرارداد مرجع (اختیاری)',
+      'افزودن گزینه «تعریف کارفرمای جدید» در صفحه ورود و بخش مدیریت پروژه‌ها با امکان بارگذاری لوگو و آپلود فرم اختصاصی برای کارفرمای جدید',
+      'حذف کامل بخش اضافی «طراحی فرم» از سراسر نرم‌افزار با حفظ کامل قابلیت آپلود و پرکردن خودکار فرم‌های کارفرما',
+    ],
+    changesEn: [
+      'Added three built-in default MAPNA employers (MD1, MD2, MD3) with full corporate metadata, contact details, social handles, and official PNG logos',
+      'Redesigned initial setup and login flow to pick among the 3 built-in MAPNA employers, enter Project Name (e.g. Neka Power Plant), and set an optional Reference Contract Code',
+      'Added "Define New Employer" workflow in both onboarding and Project Manager supporting custom logo upload and company form file upload',
+      'Removed the redundant Form Designer across the entire application while keeping uploaded form auto-fill and printing intact',
+    ],
+  },
   {
     version: '2.9.2',
     buildId: '2026.05.26-1',

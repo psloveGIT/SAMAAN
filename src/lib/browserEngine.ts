@@ -103,6 +103,8 @@ import {
 import { isValidDigitsOnly } from '../shared/validation.ts';
 import {
   DEFAULT_EMPLOYER_ID,
+  ensureDefaultEmployers,
+  isBuiltInEmployerId,
   sanitizeEmployerConfig,
   sanitizeEmployerProfile,
 } from '../shared/employers.ts';
@@ -373,14 +375,16 @@ async function getProjects(): Promise<ProjectInfo[]> {
   if (Array.isArray(loaded) && loaded.length > 0) {
     cachedProjects = loaded.map((p) => ({
       ...p,
-      employerId: typeof p.employerId === 'string' ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
+      contractRef: typeof p.contractRef === 'string' && p.contractRef.trim() ? p.contractRef.trim() : undefined,
+      employerId: typeof p.employerId === 'string' && p.employerId.trim() ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
       employerConfig: sanitizeEmployerConfig(p.employerConfig),
     }));
     if (!cachedProjects.some((p) => p.id === DEFAULT_PROJECT_ID)) {
       cachedProjects.unshift({
         id: DEFAULT_PROJECT_ID,
-        name: 'پروژه پیش‌فرض (اصلی)',
-        code: 'DEFAULT',
+        name: 'پروژه پیش‌فرض',
+        code: '',
+        contractRef: undefined,
         employerId: DEFAULT_EMPLOYER_ID,
         createdAt: new Date().toISOString(),
       });
@@ -390,8 +394,9 @@ async function getProjects(): Promise<ProjectInfo[]> {
   cachedProjects = [
     {
       id: DEFAULT_PROJECT_ID,
-      name: 'پروژه پیش‌فرض (اصلی)',
-      code: 'DEFAULT',
+      name: 'پروژه پیش‌فرض',
+      code: '',
+      contractRef: undefined,
       employerId: DEFAULT_EMPLOYER_ID,
       createdAt: new Date().toISOString(),
     },
@@ -410,20 +415,20 @@ async function getEmployers(): Promise<EmployerProfile[]> {
   if (cachedEmployers) return cachedEmployers;
   const idb = await openDb();
   const loaded = await idbGet<EmployerProfile[]>(idb, EMPLOYERS_REGISTRY_KEY);
-  if (Array.isArray(loaded)) {
-    cachedEmployers = loaded
-      .map(sanitizeEmployerProfile)
-      .filter((e): e is EmployerProfile => Boolean(e));
-    return cachedEmployers;
+  const sanitized = Array.isArray(loaded)
+    ? loaded.map(sanitizeEmployerProfile).filter((e): e is EmployerProfile => Boolean(e))
+    : [];
+  cachedEmployers = ensureDefaultEmployers(sanitized);
+  if (!Array.isArray(loaded) || sanitized.length !== cachedEmployers.length) {
+    await saveEmployers(cachedEmployers);
   }
-  cachedEmployers = [];
   return cachedEmployers;
 }
 
 async function saveEmployers(list: EmployerProfile[]): Promise<void> {
-  cachedEmployers = list;
+  cachedEmployers = ensureDefaultEmployers(list);
   const idb = await openDb();
-  await idbPut(idb, EMPLOYERS_REGISTRY_KEY, list);
+  await idbPut(idb, EMPLOYERS_REGISTRY_KEY, cachedEmployers);
 }
 
 async function resolveProjectId(rawId?: string): Promise<string> {
@@ -995,8 +1000,12 @@ async function handleStaticApiRequestInner<T>(
     const projects = await getProjects();
     const cleanName = normKey(String(body.name || ''));
     const cleanCode = normKey(String(body.code || ''));
+    const cleanContractRef = normKey(String(body.contractRef || ''));
     const rawEmployerId = body.employerId;
-    const employerId: EmployerId = typeof rawEmployerId === 'string' ? rawEmployerId.trim() : DEFAULT_EMPLOYER_ID;
+    const employerId: EmployerId =
+      typeof rawEmployerId === 'string' && rawEmployerId.trim()
+        ? rawEmployerId.trim()
+        : DEFAULT_EMPLOYER_ID;
     const employerConfig = sanitizeEmployerConfig(body.employerConfig as EmployerCustomConfig | undefined);
     const copyUsers = Boolean(body.copyUsers && currentUserObj);
     if (!cleanName) {
@@ -1013,6 +1022,7 @@ async function handleStaticApiRequestInner<T>(
       id: newId,
       name: cleanName,
       code: cleanCode || undefined,
+      contractRef: cleanContractRef || undefined,
       employerId,
       employerConfig,
       createdAt: new Date().toISOString(),
@@ -1053,6 +1063,9 @@ async function handleStaticApiRequestInner<T>(
     }
     if (body.code !== undefined) {
       targetProj.code = normKey(String(body.code || '')) || undefined;
+    }
+    if (body.contractRef !== undefined) {
+      targetProj.contractRef = normKey(String(body.contractRef || '')) || undefined;
     }
     if (body.employerId !== undefined) {
       targetProj.employerId = typeof body.employerId === 'string' ? body.employerId.trim() : '';
@@ -1104,13 +1117,13 @@ async function handleStaticApiRequestInner<T>(
     }
     const employers = await getEmployers();
     const id = `emp-${makeId().replace(/-/g, '').slice(0, 10)}`;
-    const created = sanitizeEmployerProfile({ ...body, id });
+    const created = sanitizeEmployerProfile({ ...body, id, isBuiltIn: false });
     if (!created) {
       throw new StaticEngineError(errMsg('نام کارفرما الزامی است', 'Employer name is required'), 400);
     }
     const updated = [...employers, created];
     await saveEmployers(updated);
-    return { employer: created, employers: updated } as T;
+    return { employer: created, employers: await getEmployers() } as T;
   }
 
   if (pathname.startsWith('/api/employers/') && method === 'PATCH') {
@@ -1131,6 +1144,7 @@ async function handleStaticApiRequestInner<T>(
       ...prev,
       ...body,
       id: prev.id,
+      isBuiltIn: Boolean(prev.isBuiltIn || isBuiltInEmployerId(prev.id)),
       createdAt: prev.createdAt,
       updatedAt: new Date().toISOString(),
     });
@@ -1140,7 +1154,7 @@ async function handleStaticApiRequestInner<T>(
     const updatedList = [...employers];
     updatedList[idx] = sanitized;
     await saveEmployers(updatedList);
-    return { employer: sanitized, employers: updatedList } as T;
+    return { employer: sanitized, employers: await getEmployers() } as T;
   }
 
   if (pathname.startsWith('/api/employers/') && method === 'DELETE') {
@@ -1151,9 +1165,22 @@ async function handleStaticApiRequestInner<T>(
       );
     }
     const targetId = pathname.split('/').pop()!;
+    if (isBuiltInEmployerId(targetId)) {
+      throw new StaticEngineError(
+        errMsg('کارفرماهای پیش‌فرض سامانه قابل حذف نیستند', 'Built-in default employers cannot be deleted'),
+        400,
+      );
+    }
     const employers = await getEmployers();
-    if (!employers.some((e) => e.id === targetId)) {
+    const targetEmp = employers.find((e) => e.id === targetId);
+    if (!targetEmp) {
       throw new StaticEngineError(errMsg('کارفرما یافت نشد', 'Employer not found'), 404);
+    }
+    if (targetEmp.isBuiltIn) {
+      throw new StaticEngineError(
+        errMsg('کارفرماهای پیش‌فرض سامانه قابل حذف نیستند', 'Built-in default employers cannot be deleted'),
+        400,
+      );
     }
     const updatedList = employers.filter((e) => e.id !== targetId);
     await saveEmployers(updatedList);
@@ -1162,14 +1189,14 @@ async function handleStaticApiRequestInner<T>(
     const nextProjects = projects.map((p) => {
       if (p.employerId === targetId) {
         changedProj = true;
-        return { ...p, employerId: '' };
+        return { ...p, employerId: DEFAULT_EMPLOYER_ID };
       }
       return p;
     });
     if (changedProj) {
       await saveProjects(nextProjects);
     }
-    return { ok: true, employers: updatedList, projects: nextProjects } as T;
+    return { ok: true, employers: await getEmployers(), projects: nextProjects } as T;
   }
 
   // ---------------- CUSTOM FORM SUBMISSIONS ----------------
@@ -2264,7 +2291,7 @@ async function handleStaticApiRequestInner<T>(
         d.itemCode, d.mtoRef, d.supplier, d.origin, d.island, d.system, d.subSystem, d.unit,
         d.opiNo, d.merNo, d.repNo, d.materialBalanceNo, d.balanceStatus, d.gcvReceiptNo,
         d.receiver, d.mivContractorNo, d.smrContractorNo, d.smrMapnaNo, d.mivMapnaNo,
-        d.storageLocation, d.stocktakeStatus, d.chemicalType || '', d.itemCategory || '',
+        d.storageLocation, d.notes, d.stocktakeStatus, d.chemicalType || '', d.itemCategory || '',
       ], q)) continue;
       const comp = computeDetailedEntry(d);
       if (!matchesCustomFilters(comp as unknown as Record<string, unknown>, customFilters)) continue;

@@ -87,7 +87,7 @@ export const DETAILED_IMPORT_COLUMNS: ImportColumnDef[] = [
   { key: 'opiDate', labelFa: 'تاریخ دعوتنامه', labelEn: 'Invitation Date', isDate: true },
   { key: 'merNo', labelFa: 'شماره کسری/مغایرت', labelEn: 'Discrepancy/Shortage No.' },
   { key: 'merStatus', labelFa: 'وضعیت کسری/مغایرت', labelEn: 'Discrepancy/Shortage Status' },
-  { key: 'notes', labelFa: 'توضیحات کسری/مغایرت', labelEn: 'Discrepancy/Shortage Notes' },
+  { key: 'notes', labelFa: 'توضیحات تجهیز', labelEn: 'Equipment Notes' },
   { key: 'materialBalanceNo', labelFa: 'شماره بالانس متریال', labelEn: 'Material Balance No.' },
   { key: 'balanceStatus', labelFa: 'وضعیت بالانس متریال', labelEn: 'Material Balance Status' },
   { key: 'storageLocation', labelFa: 'محل نگهداری', labelEn: 'Storage Location' },
@@ -545,7 +545,7 @@ function getAutoDetailedMapping(combinedCols: string[]): Record<string, number> 
     { key: 'merStatus', candidates: ['وضعیت کسری/مغایرت', 'وضعیت mer', 'mer status'], fallback: 27 + offset },
     {
       key: 'notes',
-      candidates: ['توضیحات کسری/مغایرت', 'توضیحات', 'notes'],
+      candidates: ['توضیحات تجهیز', 'توضیحات کسری/مغایرت', 'توضیحات', 'equipment notes', 'notes'],
       fallback: 28 + offset,
       excludeSubstrings: ['rep', 'جایگزینی', 'smr', 'برگشتی'],
     },

@@ -72,6 +72,7 @@ export const DETAILED_FILTER_FIELDS: FilterFieldOption[] = [
   { key: 'opiNo', labelFa: 'شماره دعوتنامه', labelEn: 'Invitation No.' },
   { key: 'merNo', labelFa: 'شماره کسری/مغایرت', labelEn: 'Discrepancy/Shortage No.' },
   { key: 'merStatus', labelFa: 'وضعیت کسری/مغایرت', labelEn: 'Discrepancy/Shortage Status' },
+  { key: 'notes', labelFa: 'توضیحات تجهیز', labelEn: 'Equipment Notes' },
   { key: 'repNo', labelFa: 'شماره جایگزینی', labelEn: 'Substitution No.' },
   { key: 'repStatus', labelFa: 'وضعیت جایگزینی', labelEn: 'Substitution Status' },
   { key: 'repReprocured', labelFa: 'تأمین مجدد جایگزین شده', labelEn: 'Reprocured Replacement' },

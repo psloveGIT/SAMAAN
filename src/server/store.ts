@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   DEFAULT_EMPLOYER_ID,
+  ensureDefaultEmployers,
+  isBuiltInEmployerId,
   sanitizeEmployerConfig,
   sanitizeEmployerProfile,
 } from '../shared/employers.ts';
@@ -671,24 +673,30 @@ export class ProjectManager {
       }
       if (fs.existsSync(PROJECTS_REGISTRY_FILE)) {
         const parsed = JSON.parse(fs.readFileSync(PROJECTS_REGISTRY_FILE, 'utf8')) as Partial<ProjectRegistryData>;
-        const employers: EmployerProfile[] = Array.isArray(parsed.employers)
+        const rawEmployers: EmployerProfile[] = Array.isArray(parsed.employers)
           ? parsed.employers
               .map(sanitizeEmployerProfile)
               .filter((e): e is EmployerProfile => Boolean(e))
           : [];
+        const employers = ensureDefaultEmployers(rawEmployers);
         const rawList = Array.isArray(parsed.projects) && parsed.projects.length > 0
           ? parsed.projects
-          : [{ id: 'default', name: 'پروژه پیش‌فرض', code: '', employerId: DEFAULT_EMPLOYER_ID, createdAt: new Date().toISOString() }];
+          : [{ id: 'default', name: 'پروژه پیش‌فرض', code: '', contractRef: '', employerId: DEFAULT_EMPLOYER_ID, createdAt: new Date().toISOString() }];
         const projects: ProjectInfo[] = rawList.map((p) => ({
           ...p,
-          employerId: typeof p.employerId === 'string' ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
+          contractRef: typeof p.contractRef === 'string' && p.contractRef.trim() ? p.contractRef.trim() : undefined,
+          employerId: typeof p.employerId === 'string' && p.employerId.trim() ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
           employerConfig: sanitizeEmployerConfig(p.employerConfig),
         }));
-        return {
+        const loaded: ProjectRegistryData = {
           authSecret: parsed.authSecret || crypto.randomBytes(32).toString('hex'),
           projects,
           employers,
         };
+        if (rawEmployers.length !== employers.length) {
+          this.saveRegistryData(loaded);
+        }
+        return loaded;
       }
     } catch (err) {
       console.error('Failed to load project registry, initializing default:', err);
@@ -700,11 +708,12 @@ export class ProjectManager {
           id: 'default',
           name: 'پروژه پیش‌فرض',
           code: '',
+          contractRef: '',
           employerId: DEFAULT_EMPLOYER_ID,
           createdAt: new Date().toISOString(),
         },
       ],
-      employers: [],
+      employers: ensureDefaultEmployers([]),
     };
     this.saveRegistryData(initial);
     return initial;
@@ -761,12 +770,14 @@ export class ProjectManager {
   public createProject(params: {
     name: string;
     code?: string;
+    contractRef?: string;
     employerId?: EmployerId;
     employerConfig?: EmployerCustomConfig;
     copyUsersFromStore?: SamaanStore | null;
   }): ProjectInfo {
     const cleanName = normKey(params.name);
     const cleanCode = normKey(params.code);
+    const cleanContractRef = normKey(params.contractRef);
     const baseSlug =
       cleanName
         .toLowerCase()
@@ -775,11 +786,15 @@ export class ProjectManager {
         .slice(0, 20) || 'project';
     const rand = crypto.randomBytes(3).toString('hex');
     const id = `proj-${baseSlug}-${rand}`;
-    const empId = typeof params.employerId === 'string' ? params.employerId.trim() : DEFAULT_EMPLOYER_ID;
+    const empId =
+      typeof params.employerId === 'string' && params.employerId.trim()
+        ? params.employerId.trim()
+        : DEFAULT_EMPLOYER_ID;
     const info: ProjectInfo = {
       id,
       name: cleanName,
-      code: cleanCode,
+      code: cleanCode || undefined,
+      contractRef: cleanContractRef || undefined,
       employerId: empId,
       employerConfig: sanitizeEmployerConfig(params.employerConfig),
       createdAt: new Date().toISOString(),
@@ -800,6 +815,7 @@ export class ProjectManager {
     params: {
       name?: string;
       code?: string;
+      contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
     },
@@ -811,7 +827,10 @@ export class ProjectManager {
       target.name = normKey(params.name);
     }
     if (params.code !== undefined) {
-      target.code = normKey(params.code);
+      target.code = normKey(params.code) || undefined;
+    }
+    if (params.contractRef !== undefined) {
+      target.contractRef = normKey(params.contractRef) || undefined;
     }
     if (params.employerId !== undefined) {
       target.employerId = typeof params.employerId === 'string' ? params.employerId.trim() : '';
@@ -844,19 +863,20 @@ export class ProjectManager {
 
   // ---------------- EMPLOYER REGISTRY CRUD ----------------
   public listEmployers(): EmployerProfile[] {
-    return [...(this.registry.employers || [])];
+    this.registry.employers = ensureDefaultEmployers(this.registry.employers || []);
+    return [...this.registry.employers];
   }
 
   public getEmployer(id: string): EmployerProfile | undefined {
     const clean = (id || '').trim();
-    return (this.registry.employers || []).find((e) => e.id === clean);
+    return this.listEmployers().find((e) => e.id === clean);
   }
 
   public createEmployer(raw: unknown): EmployerProfile | null {
     const id = `emp-${crypto.randomBytes(4).toString('hex')}`;
-    const sanitized = sanitizeEmployerProfile({ ...(raw as object), id });
+    const sanitized = sanitizeEmployerProfile({ ...(raw as object), id, isBuiltIn: false });
     if (!sanitized) return null;
-    if (!this.registry.employers) this.registry.employers = [];
+    this.registry.employers = ensureDefaultEmployers(this.registry.employers || []);
     this.registry.employers.push(sanitized);
     this.saveRegistryData(this.registry);
     return sanitized;
@@ -864,7 +884,7 @@ export class ProjectManager {
 
   public updateEmployer(id: string, raw: unknown): EmployerProfile | null {
     const clean = (id || '').trim();
-    const list = this.registry.employers || [];
+    const list = ensureDefaultEmployers(this.registry.employers || []);
     const idx = list.findIndex((e) => e.id === clean);
     if (idx === -1) return null;
     const prev = list[idx];
@@ -872,29 +892,38 @@ export class ProjectManager {
       ...prev,
       ...(raw as object),
       id: prev.id,
+      isBuiltIn: Boolean(prev.isBuiltIn || isBuiltInEmployerId(prev.id)),
       createdAt: prev.createdAt,
       updatedAt: new Date().toISOString(),
     };
     const sanitized = sanitizeEmployerProfile(merged);
     if (!sanitized) return null;
     list[idx] = sanitized;
+    this.registry.employers = list;
     this.saveRegistryData(this.registry);
     return sanitized;
   }
 
-  public deleteEmployer(id: string): boolean {
+  public deleteEmployer(id: string): { ok: boolean; reason?: 'not_found' | 'cannot_delete_builtin' } {
     const clean = (id || '').trim();
-    const list = this.registry.employers || [];
+    if (isBuiltInEmployerId(clean)) {
+      return { ok: false, reason: 'cannot_delete_builtin' };
+    }
+    const list = ensureDefaultEmployers(this.registry.employers || []);
     const idx = list.findIndex((e) => e.id === clean);
-    if (idx === -1) return false;
+    if (idx === -1) return { ok: false, reason: 'not_found' };
+    if (list[idx].isBuiltIn) {
+      return { ok: false, reason: 'cannot_delete_builtin' };
+    }
     list.splice(idx, 1);
+    this.registry.employers = list;
     for (const p of this.registry.projects) {
       if (p.employerId === clean) {
-        p.employerId = '';
+        p.employerId = DEFAULT_EMPLOYER_ID;
       }
     }
     this.saveRegistryData(this.registry);
-    return true;
+    return { ok: true };
   }
 }
 

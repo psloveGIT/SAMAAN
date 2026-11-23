@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { apiRequest, getActiveProjectId, setActiveProjectId as persistActiveProjectId } from '../lib/api.ts';
 import { clearOfflineSessionUser, syncOfflineSessionUser } from '../lib/browserEngine.ts';
 import { saveSnapshotToIndexedDb } from '../lib/indexedDbBackup.ts';
-import { resolveEmployerProfile } from '../shared/employers.ts';
+import { cloneBuiltInEmployers, ensureDefaultEmployers, resolveEmployerProfile } from '../shared/employers.ts';
 import type { ResolvedEmployerProfile } from '../shared/employers.ts';
 import { formatIsoDate, formatTimestampByCalendar } from '../shared/jalali.ts';
 import { getTranslations } from '../shared/i18n.ts';
@@ -95,6 +95,7 @@ interface AppContextValue {
   createProject: (input: {
     name: string;
     code?: string;
+    contractRef?: string;
     employerId?: EmployerId;
     employerConfig?: EmployerCustomConfig;
     copyUsers?: boolean;
@@ -105,6 +106,7 @@ interface AppContextValue {
     input: {
       name?: string;
       code?: string;
+      contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
     },
@@ -144,7 +146,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [prefs, setPrefs] = useState<UserPreferences>(readStoredPrefs);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [employers, setEmployers] = useState<EmployerProfile[]>([]);
+  const [employers, setEmployers] = useState<EmployerProfile[]>(() => cloneBuiltInEmployers());
   const [activeProjectId, setActiveProjectIdState] = useState<string>(() => getActiveProjectId());
   const [historyStatus, setHistoryStatus] = useState<HistoryStatus>(EMPTY_HISTORY_STATUS);
   const [historyBusy, setHistoryBusy] = useState(false);
@@ -193,9 +195,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshEmployers = useCallback(async () => {
     try {
       const res = await apiRequest<{ employers: EmployerProfile[] }>('/api/employers');
-      setEmployers(res.employers || []);
+      setEmployers(ensureDefaultEmployers(res.employers || []));
     } catch {
-      // Ignore initial employers fetch error
+      // Keep built-in defaults if fetch fails
     }
   }, []);
 
@@ -214,7 +216,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveProjectIdState(resolvedProject);
       }
       if (empRes) {
-        setEmployers(empRes.employers || []);
+        setEmployers(ensureDefaultEmployers(empRes.employers || []));
       }
       setNeedsSetup(data.needsSetup);
       setUser(data.user);
@@ -287,6 +289,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (input: {
       name: string;
       code?: string;
+      contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
       copyUsers?: boolean;
@@ -297,6 +300,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({
           name: input.name,
           code: input.code,
+          contractRef: input.contractRef,
           employerId: input.employerId,
           employerConfig: input.employerConfig,
           copyUsers: Boolean(input.copyUsers),
@@ -317,6 +321,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       input: {
         name?: string;
         code?: string;
+        contractRef?: string;
         employerId?: EmployerId;
         employerConfig?: EmployerCustomConfig;
       },

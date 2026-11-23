@@ -25,10 +25,10 @@ import {
   KeyRound,
   Keyboard,
   ListChecks,
+  Lock,
   LogOut,
   Menu,
   Moon,
-  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -57,6 +57,10 @@ import {
   type NetworkModeState,
 } from '../lib/api.ts';
 import { APP_VERSION } from '../shared/appVersion.ts';
+import {
+  isOperationalFormSection,
+  resolveOperationalSectionAccess,
+} from '../shared/formAccess.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { ProjectManagerModal } from './ProjectManagerModal.tsx';
@@ -270,7 +274,7 @@ export const Layout: React.FC<LayoutProps> = ({
         id: 'admin',
         groupLabel: t.navGroups.admin,
         items: [
-          { key: 'employers', label: t.nav.employers, icon: <Palette className="w-4 h-4 shrink-0" /> },
+          { key: 'employers', label: t.nav.employers, icon: <Building2 className="w-4 h-4 shrink-0" /> },
           { key: 'search', label: t.nav.search, icon: <Search className="w-4 h-4 shrink-0" /> },
           { key: 'categories', label: t.nav.categories, icon: <FolderTree className="w-4 h-4 shrink-0" /> },
           { key: 'trash', label: t.nav.trash, icon: <Trash2 className="w-4 h-4 shrink-0" /> },
@@ -423,9 +427,19 @@ export const Layout: React.FC<LayoutProps> = ({
             }`}
           >
             <div className={`flex items-center gap-2.5 min-w-0 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
-              <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
-                <Building2 className="w-4 h-4" />
-              </div>
+              {activeEmployer.logos.length > 0 && activeEmployer.logos[0]?.dataUrl ? (
+                <div className="w-9 h-8 rounded-lg bg-white border border-[var(--border-subtle)] p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
+                  <img
+                    src={activeEmployer.logos[0].dataUrl}
+                    alt={activeEmployer.shortName || activeEmployer.nameFa}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+                  <Building2 className="w-4 h-4" />
+                </div>
+              )}
               <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
                 <div className="text-[10px] font-medium text-[var(--text-muted)]">
                   {isFa ? 'پروژه فعال' : 'Active Project'}
@@ -531,11 +545,20 @@ export const Layout: React.FC<LayoutProps> = ({
                     >
                       {filteredItems.map((item) => {
                         const isActive = activeTab === item.key;
+                        const formAccess = isOperationalFormSection(item.key)
+                          ? resolveOperationalSectionAccess(activeEmployer, item.key)
+                          : null;
+                        const isLockedForm = Boolean(formAccess && !formAccess.hasAccess);
                         return (
                           <button
                             key={item.key}
                             type="button"
-                            title={item.label}
+                            data-testid={`nav-tab-${item.key}`}
+                            title={
+                              isLockedForm
+                                ? `${item.label} — ${isFa ? 'نیاز به آپلود فرم' : 'Form upload required'}`
+                                : item.label
+                            }
                             onClick={() => {
                               onTabChange(item.key);
                               setMobileMenuOpen(false);
@@ -557,9 +580,15 @@ export const Layout: React.FC<LayoutProps> = ({
                               />
                             )}
                             {item.icon}
-                            <span className={`truncate ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                            <span className={`truncate flex-1 text-start ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
                               {item.label}
                             </span>
+                            {isLockedForm && !sidebarCollapsed && (
+                              <Lock
+                                aria-label={isFa ? 'نیاز به آپلود فرم' : 'Requires form upload'}
+                                className="w-3.5 h-3.5 shrink-0 text-[var(--text-muted)]/75"
+                              />
+                            )}
                           </button>
                         );
                       })}

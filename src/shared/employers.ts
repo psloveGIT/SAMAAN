@@ -20,6 +20,7 @@ import type {
 
 export interface ResolvedEmployerProfile {
   id: string;
+  isBuiltIn: boolean;
   isConfigured: boolean;
   nameFa: string;
   nameEn: string;
@@ -36,6 +37,11 @@ export interface ResolvedEmployerProfile {
   docCodePrefix: string;
   address?: string;
   phone?: string;
+  postalCode?: string;
+  fax?: string;
+  email?: string;
+  instagram?: string;
+  linkedin?: string;
   contractRef?: string;
   logos: EmployerLogoAsset[];
   formTemplates: Partial<Record<BuiltInFormKey, EmployerFormTemplate>>;
@@ -57,7 +63,207 @@ export interface BuiltInFormDefinition {
   defaultSignatures: FormSignatureBox[];
 }
 
-export const DEFAULT_EMPLOYER_ID = '';
+export const BUILT_IN_EMPLOYER_IDS = ['mapna-md1', 'mapna-md2', 'mapna-md3'] as const;
+export type BuiltInEmployerId = (typeof BUILT_IN_EMPLOYER_IDS)[number];
+
+export const DEFAULT_EMPLOYER_ID: BuiltInEmployerId = 'mapna-md1';
+
+const BUILT_IN_SEED_TIMESTAMP = '2026-05-27T00:00:00.000Z';
+
+export const BUILT_IN_EMPLOYERS: EmployerProfile[] = [
+  {
+    id: 'mapna-md1',
+    isBuiltIn: true,
+    nameFa: 'مپنا توسعه یک',
+    nameEn: 'Mapna Power Plants Construction & Development Co.',
+    shortName: 'MD1',
+    badgeCode: 'MD1',
+    companyFullName: 'شركت احداث و توسعه نيروگاه‌های مپنا – توسعه یک (MD1)',
+    companyFullNameEn: 'Mapna Power Plants Construction & Development Co.',
+    docCodePrefix: 'MD1EX-FQP02',
+    imsSubtitle: 'سیستم مدیریت یکپارچه',
+    hideDocCodes: false,
+    securityLabel: 'حراست و انتظامات کارگاه',
+    equipmentSupplyLabel: 'تأمین تجهیزات MD1',
+    techOfficeLabel: 'دفتر فنی MD1',
+    installationLabel: 'واحد نصب MD1',
+    inspectorLabel: 'نماینده مپنا توسعه یک (MD1)',
+    address: 'تهران، بزرگراه نلسون ماندلا، جنوب چهارراه حقانی، نبش کوچه کیان، پلاک ۱۳',
+    phone: '0۲۱۸۲۹۸۰۰۰۰ و 0۲۱۸۲۹۸۰۰۰1',
+    postalCode: '۱۵۱۸۶۱۴۱۱۱',
+    fax: '۲۱۸۲۹۸۶۶۲۳',
+    email: 'Info@MD1.MapnaGroup.com',
+    instagram: 'Mapna_md1',
+    linkedin: 'Mapna_md1',
+    logos: [
+      {
+        id: 'md1-default-logo',
+        label: 'لوگوی مپنا توسعه یک (MD1)',
+        dataUrl: './assets/aistudio/______________8a639368.png',
+        isDefault: true,
+      },
+    ],
+    formTemplates: {},
+    customForms: [],
+    uploadedForms: [],
+    createdAt: BUILT_IN_SEED_TIMESTAMP,
+    updatedAt: BUILT_IN_SEED_TIMESTAMP,
+  },
+  {
+    id: 'mapna-md2',
+    isBuiltIn: true,
+    nameFa: 'مپنا توسعه دو',
+    nameEn: 'Mapna Power Plants Construction & Development Co.',
+    shortName: 'MD2',
+    badgeCode: 'MD2',
+    companyFullName: 'شركت احداث و توسعه نيروگاه‌های حرارتی مپنا – توسعه دو (MD2)',
+    companyFullNameEn: 'Mapna Power Plants Construction & Development Co.',
+    docCodePrefix: 'MD2EX-FQP02',
+    imsSubtitle: 'سیستم مدیریت یکپارچه',
+    hideDocCodes: false,
+    securityLabel: 'حراست و انتظامات کارگاه',
+    equipmentSupplyLabel: 'تأمین تجهیزات MD2',
+    techOfficeLabel: 'دفتر فنی MD2',
+    installationLabel: 'واحد نصب MD2',
+    inspectorLabel: 'نماینده مپنا توسعه دو (MD2)',
+    address: 'تهران - بزرگراه آفریقا - جنوب چهارراه حقانی - شماره 15',
+    phone: '۴۵۳۵۷۰۰۰–۰۲۱',
+    postalCode: '۱۵۱۸۶۱۴۴۱۱',
+    fax: '۸۸۷۹۵۴۴۷–۰۲۱',
+    email: 'Info@MD2.MapnaGroup.com',
+    instagram: 'Mapna_md2',
+    linkedin: 'Mapnamd2',
+    logos: [
+      {
+        id: 'md2-default-logo',
+        label: 'لوگوی مپنا توسعه دو (MD2)',
+        dataUrl: './assets/aistudio/______________16d5c0f7.png',
+        isDefault: true,
+      },
+    ],
+    formTemplates: {},
+    customForms: [],
+    uploadedForms: [],
+    createdAt: BUILT_IN_SEED_TIMESTAMP,
+    updatedAt: BUILT_IN_SEED_TIMESTAMP,
+  },
+  {
+    id: 'mapna-md3',
+    isBuiltIn: true,
+    nameFa: 'مپنا توسعه سه',
+    nameEn: 'Mapna Power Plants Construction & Development Co.',
+    shortName: 'MD3',
+    badgeCode: 'MD3',
+    companyFullName: 'شركت احداث و توسعه پروژه‌های ویژه مپنا – توسعه سه (MD3)',
+    companyFullNameEn: 'Mapna Power Plants Construction & Development Co.',
+    docCodePrefix: 'MD3EX-FQP02',
+    imsSubtitle: 'سیستم مدیریت یکپارچه',
+    hideDocCodes: false,
+    securityLabel: 'حراست و انتظامات کارگاه',
+    equipmentSupplyLabel: 'تأمین تجهیزات MD3',
+    techOfficeLabel: 'دفتر فنی MD3',
+    installationLabel: 'واحد نصب MD3',
+    inspectorLabel: 'نماینده مپنا توسعه سه (MD3)',
+    address: 'تهران، بزرگراه نلسون ماندلا، جنوب چهار راه حقانی، نبش کوچه ژوبین، پلاک 15',
+    phone: '02184620000 و 02184620001',
+    postalCode: '1518614411',
+    fax: '88857450 021',
+    email: 'info@mapnamd3.com',
+    instagram: 'Mapna_md3',
+    linkedin: 'Mapnamd3',
+    logos: [
+      {
+        id: 'md3-default-logo',
+        label: 'لوگوی مپنا توسعه سه (MD3)',
+        dataUrl: './assets/aistudio/______________5185c558.png',
+        isDefault: true,
+      },
+    ],
+    formTemplates: {},
+    customForms: [],
+    uploadedForms: [],
+    createdAt: BUILT_IN_SEED_TIMESTAMP,
+    updatedAt: BUILT_IN_SEED_TIMESTAMP,
+  },
+];
+
+export function isBuiltInEmployerId(id: string | undefined | null): boolean {
+  const clean = (id || '').trim();
+  return (BUILT_IN_EMPLOYER_IDS as readonly string[]).includes(clean);
+}
+
+export function isValidEmployerLogoUrl(url: string): boolean {
+  const clean = (url || '').trim();
+  if (!clean) return false;
+  if (clean.startsWith('data:image/')) return true;
+  if ((clean.startsWith('./assets/') || clean.startsWith('/assets/')) && !clean.includes('..')) {
+    return /\.(png|jpe?g|webp|svg|gif)(\?.*)?$/i.test(clean);
+  }
+  return false;
+}
+
+export function cloneBuiltInEmployers(): EmployerProfile[] {
+  return BUILT_IN_EMPLOYERS.map((emp) => ({
+    ...emp,
+    logos: emp.logos.map((l) => ({ ...l })),
+    formTemplates: { ...emp.formTemplates },
+    customForms: [...emp.customForms],
+    uploadedForms: [...(emp.uploadedForms || [])],
+  }));
+}
+
+/**
+ * Guarantees that all 3 built-in MAPNA employers (MD1, MD2, MD3) are always present
+ * in order at the top of the employers list, preserving any saved user updates
+ * (e.g. modified docCodePrefix or uploaded forms) and all custom user-defined employers.
+ */
+export function ensureDefaultEmployers(existing: EmployerProfile[] = []): EmployerProfile[] {
+  const byId = new Map<string, EmployerProfile>();
+  for (const item of existing) {
+    if (item && item.id) {
+      byId.set(item.id, item);
+    }
+  }
+
+  const mergedBuiltIns: EmployerProfile[] = BUILT_IN_EMPLOYERS.map((seed) => {
+    const saved = byId.get(seed.id);
+    if (!saved) {
+      return {
+        ...seed,
+        logos: seed.logos.map((l) => ({ ...l })),
+        formTemplates: { ...seed.formTemplates },
+        customForms: [...seed.customForms],
+        uploadedForms: [...(seed.uploadedForms || [])],
+      };
+    }
+    const logos = saved.logos && saved.logos.length > 0 ? saved.logos : seed.logos.map((l) => ({ ...l }));
+    return {
+      ...seed,
+      ...saved,
+      id: seed.id,
+      isBuiltIn: true,
+      nameFa: saved.nameFa || seed.nameFa,
+      nameEn: saved.nameEn || seed.nameEn,
+      shortName: saved.shortName || seed.shortName,
+      companyFullName: saved.companyFullName || seed.companyFullName,
+      companyFullNameEn: saved.companyFullNameEn || seed.companyFullNameEn,
+      docCodePrefix: saved.docCodePrefix !== undefined ? saved.docCodePrefix : seed.docCodePrefix,
+      imsSubtitle: saved.imsSubtitle || seed.imsSubtitle,
+      address: saved.address ?? seed.address,
+      phone: saved.phone ?? seed.phone,
+      postalCode: saved.postalCode ?? seed.postalCode,
+      fax: saved.fax ?? seed.fax,
+      email: saved.email ?? seed.email,
+      instagram: saved.instagram ?? seed.instagram,
+      linkedin: saved.linkedin ?? seed.linkedin,
+      logos,
+      uploadedForms: saved.uploadedForms || [],
+    };
+  });
+
+  const customEmployers = existing.filter((e) => e && e.id && !isBuiltInEmployerId(e.id));
+  return [...mergedBuiltIns, ...customEmployers];
+}
 
 export const BUILT_IN_FORM_DEFINITIONS: BuiltInFormDefinition[] = [
   {
@@ -323,7 +529,7 @@ export function sanitizeEmployerLogo(raw: unknown): EmployerLogoAsset | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<EmployerLogoAsset>;
   const dataUrl = typeof r.dataUrl === 'string' ? r.dataUrl.trim() : '';
-  if (!dataUrl.startsWith('data:image/')) return null;
+  if (!isValidEmployerLogoUrl(dataUrl)) return null;
   const id = typeof r.id === 'string' && r.id.trim() ? r.id.trim() : `logo-${Date.now()}`;
   const label = typeof r.label === 'string' && r.label.trim() ? r.label.trim() : 'لوگوی کارفرما';
   return {
@@ -502,10 +708,77 @@ export function sanitizeUploadedForm(raw: unknown): EmployerUploadedForm | null 
     ? (r.fileType as UploadedFormFileType)
     : 'excel';
 
-  const validSources: UploadedFormDataSource[] = ['siteEntry', 'general', 'detailed', 'transit', 'manual'];
+  const validSources: UploadedFormDataSource[] = [
+    'siteEntry',
+    'general',
+    'detailed',
+    'transit',
+    'opi',
+    'opiMinutes',
+    'gcv',
+    'miv',
+    'smr',
+    'substitution',
+    'balance',
+    'manual',
+  ];
   const dataSource: UploadedFormDataSource = validSources.includes(r.dataSource as UploadedFormDataSource)
     ? (r.dataSource as UploadedFormDataSource)
     : 'general';
+
+  const dataSources: UploadedFormDataSource[] | undefined = Array.isArray(r.dataSources)
+    ? Array.from(
+        new Set(
+          r.dataSources.filter((s): s is UploadedFormDataSource =>
+            validSources.includes(s as UploadedFormDataSource),
+          ),
+        ),
+      )
+    : undefined;
+
+  const validTargetSections: Array<BuiltInFormKey | 'custom_standalone'> = [
+    'custom_standalone',
+    ...BUILT_IN_FORM_DEFINITIONS.map((d) => d.key),
+  ];
+  const targetAppSection: BuiltInFormKey | 'custom_standalone' | undefined =
+    typeof r.targetAppSection === 'string' &&
+    validTargetSections.includes(r.targetAppSection as BuiltInFormKey | 'custom_standalone')
+      ? (r.targetAppSection as BuiltInFormKey | 'custom_standalone')
+      : undefined;
+
+  const targetSectionConfidence =
+    r.targetSectionConfidence === 'high' ||
+    r.targetSectionConfidence === 'medium' ||
+    r.targetSectionConfidence === 'low'
+      ? r.targetSectionConfidence
+      : undefined;
+
+  const detectedFormulas = Array.isArray(r.detectedFormulas)
+    ? r.detectedFormulas
+        .filter(
+          (fm) =>
+            fm &&
+            typeof fm.cellRef === 'string' &&
+            typeof fm.rowIndex === 'number' &&
+            typeof fm.colIndex === 'number' &&
+            typeof fm.formula === 'string',
+        )
+        .map((fm) => ({
+          cellRef: fm.cellRef.trim(),
+          rowIndex: fm.rowIndex,
+          colIndex: fm.colIndex,
+          formula: fm.formula,
+          label: typeof fm.label === 'string' && fm.label.trim() ? fm.label.trim() : undefined,
+          suggestedFieldKey:
+            typeof fm.suggestedFieldKey === 'string' && fm.suggestedFieldKey.trim()
+              ? fm.suggestedFieldKey.trim()
+              : undefined,
+          boundFieldKey:
+            typeof fm.boundFieldKey === 'string' && fm.boundFieldKey.trim()
+              ? fm.boundFieldKey.trim()
+              : undefined,
+        }))
+    : undefined;
 
   const psRaw = (r.printSettings || {}) as Partial<UploadedFormPrintSettings>;
   const clamp = (val: unknown, min: number, max: number, fallback: number) =>
@@ -560,6 +833,19 @@ export function sanitizeUploadedForm(raw: unknown): EmployerUploadedForm | null 
       : undefined,
     tokenBindings: Object.keys(tokenBindings).length > 0 ? tokenBindings : undefined,
     dataSource,
+    dataSources: dataSources && dataSources.length > 0 ? dataSources : undefined,
+    targetAppSection,
+    targetSectionConfidence,
+    targetSectionReasonFa:
+      typeof r.targetSectionReasonFa === 'string' && r.targetSectionReasonFa.trim()
+        ? r.targetSectionReasonFa.trim()
+        : undefined,
+    targetSectionReasonEn:
+      typeof r.targetSectionReasonEn === 'string' && r.targetSectionReasonEn.trim()
+        ? r.targetSectionReasonEn.trim()
+        : undefined,
+    targetSectionConfirmed: typeof r.targetSectionConfirmed === 'boolean' ? r.targetSectionConfirmed : undefined,
+    detectedFormulas: detectedFormulas && detectedFormulas.length > 0 ? detectedFormulas : undefined,
     printSettings,
     tableStartRowIndex:
       typeof r.tableStartRowIndex === 'number' && Number.isFinite(r.tableStartRowIndex) && r.tableStartRowIndex >= 0
@@ -614,8 +900,11 @@ export function sanitizeEmployerProfile(raw: unknown): EmployerProfile | null {
       : nameFa || companyFullName;
   const now = new Date().toISOString();
 
+  const resolvedId = typeof r.id === 'string' && r.id.trim() ? r.id.trim() : `emp-${Date.now()}`;
+
   return {
-    id: typeof r.id === 'string' && r.id.trim() ? r.id.trim() : `emp-${Date.now()}`,
+    id: resolvedId,
+    isBuiltIn: Boolean(r.isBuiltIn || isBuiltInEmployerId(resolvedId)),
     nameFa: nameFa || companyFullName,
     nameEn: typeof r.nameEn === 'string' && r.nameEn.trim() ? r.nameEn.trim() : undefined,
     companyFullName: companyFullName || nameFa,
@@ -654,6 +943,11 @@ export function sanitizeEmployerProfile(raw: unknown): EmployerProfile | null {
         : undefined,
     address: typeof r.address === 'string' && r.address.trim() ? r.address.trim() : undefined,
     phone: typeof r.phone === 'string' && r.phone.trim() ? r.phone.trim() : undefined,
+    postalCode: typeof r.postalCode === 'string' && r.postalCode.trim() ? r.postalCode.trim() : undefined,
+    fax: typeof r.fax === 'string' && r.fax.trim() ? r.fax.trim() : undefined,
+    email: typeof r.email === 'string' && r.email.trim() ? r.email.trim() : undefined,
+    instagram: typeof r.instagram === 'string' && r.instagram.trim() ? r.instagram.trim() : undefined,
+    linkedin: typeof r.linkedin === 'string' && r.linkedin.trim() ? r.linkedin.trim() : undefined,
     contractRef:
       typeof r.contractRef === 'string' && r.contractRef.trim() ? r.contractRef.trim() : undefined,
     notes: typeof r.notes === 'string' && r.notes.trim() ? r.notes.trim() : undefined,
@@ -681,7 +975,7 @@ export function sanitizeEmployerConfig(raw?: EmployerCustomConfig | null): Emplo
   if (typeof raw.imsSubtitle === 'string' && raw.imsSubtitle.trim()) {
     cleaned.imsSubtitle = raw.imsSubtitle.trim();
   }
-  if (typeof raw.logoDataUrl === 'string' && raw.logoDataUrl.startsWith('data:image/')) {
+  if (typeof raw.logoDataUrl === 'string' && isValidEmployerLogoUrl(raw.logoDataUrl)) {
     cleaned.logoDataUrl = raw.logoDataUrl;
   }
   if (typeof raw.hideDocCodes === 'boolean') {
@@ -693,9 +987,10 @@ export function sanitizeEmployerConfig(raw?: EmployerCustomConfig | null): Emplo
 export function createNeutralEmployerProfile(): ResolvedEmployerProfile {
   return {
     id: '',
+    isBuiltIn: false,
     isConfigured: false,
-    nameFa: 'بدون کارفرما (حالت خام عمومی)',
-    nameEn: 'Unassigned (Neutral Template)',
+    nameFa: 'بدون کارفرما',
+    nameEn: 'Unassigned',
     companyFullName: '',
     companyFullNameEn: '',
     shortName: 'کارفرما',
@@ -716,16 +1011,19 @@ export function createNeutralEmployerProfile(): ResolvedEmployerProfile {
 }
 
 export function resolveEmployerProfile(
-  project?: Pick<ProjectInfo, 'employerId' | 'employerConfig'> | null,
+  project?: Pick<ProjectInfo, 'employerId' | 'employerConfig' | 'contractRef' | 'code'> | null,
   employers: EmployerProfile[] = [],
 ): ResolvedEmployerProfile {
   const empId = (project?.employerId || '').trim();
-  const matched = empId ? employers.find((e) => e.id === empId) : undefined;
+  const effectiveEmployers = employers.length > 0 ? employers : BUILT_IN_EMPLOYERS;
+  const matched = empId ? effectiveEmployers.find((e) => e.id === empId) : undefined;
+  const projectContractRef = project?.contractRef?.trim() || undefined;
 
   if (matched) {
     const shortName = matched.shortName || matched.nameFa;
     return {
       id: matched.id,
+      isBuiltIn: Boolean(matched.isBuiltIn || isBuiltInEmployerId(matched.id)),
       isConfigured: true,
       nameFa: matched.nameFa,
       nameEn: matched.nameEn || matched.nameFa,
@@ -742,7 +1040,12 @@ export function resolveEmployerProfile(
       docCodePrefix: matched.docCodePrefix || '',
       address: matched.address,
       phone: matched.phone,
-      contractRef: matched.contractRef,
+      postalCode: matched.postalCode,
+      fax: matched.fax,
+      email: matched.email,
+      instagram: matched.instagram,
+      linkedin: matched.linkedin,
+      contractRef: projectContractRef || matched.contractRef,
       logos: matched.logos || [],
       formTemplates: matched.formTemplates || {},
       customForms: matched.customForms || [],
@@ -761,6 +1064,7 @@ export function resolveEmployerProfile(
     return {
       ...createNeutralEmployerProfile(),
       id: empId || 'inline-custom',
+      isBuiltIn: false,
       isConfigured: true,
       nameFa: cfg.companyFullName?.trim() || shortName,
       nameEn: cfg.companyFullName?.trim() || shortName,
@@ -770,12 +1074,16 @@ export function resolveEmployerProfile(
       badgeCode: shortName,
       imsSubtitle: cfg.imsSubtitle?.trim() || '',
       docCodePrefix: cfg.docCodePrefix?.trim() || '',
+      contractRef: projectContractRef,
       logos,
       hideDocCodes: Boolean(cfg.hideDocCodes),
     };
   }
 
-  return createNeutralEmployerProfile();
+  return {
+    ...createNeutralEmployerProfile(),
+    contractRef: projectContractRef,
+  };
 }
 
 export function resolveEmployerLogoById(

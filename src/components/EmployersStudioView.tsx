@@ -1,21 +1,22 @@
-import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Building2,
   Check,
   CheckCircle2,
-  Copy,
   Download,
-  FilePlus2,
   FileSpreadsheet,
-  FileText,
   FileUp,
+  Globe,
   ImagePlus,
   Layers,
-  LayoutTemplate,
+  Lock,
+  Mail,
+  MapPin,
+  Phone,
   Plus,
-  RotateCcw,
   Save,
+  ShieldCheck,
   Sparkles,
   Star,
   Trash2,
@@ -25,22 +26,35 @@ import {
 import { useApp } from '../context/AppContext.tsx';
 import { ApiError } from '../lib/api.ts';
 import {
-  BUILT_IN_FORM_DEFINITIONS,
   DEFAULT_UPLOADED_FORM_PRINT_SETTINGS,
-  getBuiltInFormDefinition,
-  resolveBuiltInFormDesign,
-  resolveEmployerLogoById,
+  isBuiltInEmployerId,
   sanitizeEmployerProfile,
 } from '../shared/employers.ts';
 import type { ResolvedEmployerProfile } from '../shared/employers.ts';
-import { sanitizeIranPhoneInput, validateAndFormatIranPhone } from '../shared/iranPhone.ts';
+import {
+  OPERATIONAL_FORM_SECTIONS,
+  getEmployerFormSectionsSummary,
+  getOperationalFormSectionMeta,
+  type OperationalFormSectionKey,
+} from '../shared/formAccess.ts';
+import {
+  parseIranFixedPhoneParts,
+  sanitizeDigitsOnly,
+  sanitizeInstagramInput,
+  sanitizeLinkedInInput,
+  sanitizeProvinceCodeInput,
+  serializeIranFixedPhoneParts,
+  validateEmail,
+  validateInstagramUsername,
+  validateIranFixedPhoneParts,
+  validateLinkedInUsername,
+  validatePostalCode,
+} from '../shared/employerValidation.ts';
 import type {
   BuiltInFormKey,
-  EmployerFormTemplate,
   EmployerLogoAsset,
   EmployerProfile,
   EmployerUploadedForm,
-  FormHeaderLayout,
   UploadedFormDataSource,
   UploadedFormPrintSettings,
 } from '../shared/types.ts';
@@ -50,18 +64,13 @@ import {
   SAMAAN_BINDABLE_FIELDS,
   UPLOADED_FORM_DATA_SOURCE_OPTIONS,
 } from '../shared/uploadedFormEngine.ts';
-import {
-  OfficialExtraMetaStrip,
-  OfficialFormFooter,
-  OfficialFormHeader,
-  OfficialFormSignatures,
-} from './OfficialSheetHeader.tsx';
 import { UploadedFormA4Sheet } from './UploadedFormA4Sheet.tsx';
 
 function createEmptyDraft(nameFa = ''): EmployerProfile {
   const now = new Date().toISOString();
   return {
     id: '',
+    isBuiltIn: false,
     nameFa,
     nameEn: '',
     companyFullName: nameFa,
@@ -78,6 +87,11 @@ function createEmptyDraft(nameFa = ''): EmployerProfile {
     inspectorLabel: 'نماینده کارفرما / دستگاه نظارت',
     address: '',
     phone: '',
+    postalCode: '',
+    fax: '',
+    email: '',
+    instagram: '',
+    linkedin: '',
     contractRef: '',
     notes: '',
     logos: [],
@@ -89,13 +103,17 @@ function createEmptyDraft(nameFa = ''): EmployerProfile {
   };
 }
 
-function toResolvedPreviewProfile(draft: EmployerProfile): ResolvedEmployerProfile {
+function toResolvedPreviewProfile(
+  draft: EmployerProfile,
+  projectContractRef?: string,
+): ResolvedEmployerProfile {
   const shortName = draft.shortName?.trim() || draft.nameFa?.trim() || 'کارفرما';
   return {
     id: draft.id || 'preview',
+    isBuiltIn: Boolean(draft.isBuiltIn || isBuiltInEmployerId(draft.id)),
     isConfigured: Boolean(draft.nameFa?.trim() || draft.companyFullName?.trim()),
-    nameFa: draft.nameFa?.trim() || 'پیش‌نمایش کارفرما',
-    nameEn: draft.nameEn?.trim() || draft.nameFa?.trim() || 'Employer Preview',
+    nameFa: draft.nameFa?.trim() || 'کارفرمای جدید',
+    nameEn: draft.nameEn?.trim() || draft.nameFa?.trim() || 'New Employer',
     companyFullName: draft.companyFullName?.trim() || draft.nameFa?.trim() || '',
     companyFullNameEn: draft.companyFullNameEn?.trim() || draft.nameEn?.trim() || '',
     shortName,
@@ -109,10 +127,15 @@ function toResolvedPreviewProfile(draft: EmployerProfile): ResolvedEmployerProfi
     docCodePrefix: draft.docCodePrefix?.trim() || '',
     address: draft.address,
     phone: draft.phone,
-    contractRef: draft.contractRef,
+    postalCode: draft.postalCode,
+    fax: draft.fax,
+    email: draft.email,
+    instagram: draft.instagram,
+    linkedin: draft.linkedin,
+    contractRef: projectContractRef || draft.contractRef,
     logos: draft.logos || [],
     formTemplates: draft.formTemplates || {},
-    customForms: draft.customForms || [],
+    customForms: [],
     uploadedForms: draft.uploadedForms || [],
     hideDocCodes: Boolean(draft.hideDocCodes),
   };
@@ -128,15 +151,14 @@ async function processLogoImageFile(file: File): Promise<string> {
         reject(new Error('Invalid image file'));
         return;
       }
-      // Keep SVG cleanly as-is without rasterizing
       if (file.type === 'image/svg+xml') {
         resolve(result);
         return;
       }
       const img = new Image();
       img.onload = () => {
-        const maxDim = 520;
-        if (img.width <= maxDim && img.height <= maxDim && result.length < 180_000) {
+        const maxDim = 560;
+        if (img.width <= maxDim && img.height <= maxDim && result.length < 220_000) {
           resolve(result);
           return;
         }
@@ -159,23 +181,138 @@ async function processLogoImageFile(file: File): Promise<string> {
   });
 }
 
-const LAYOUT_OPTIONS: { value: FormHeaderLayout; labelFa: string; labelEn: string }[] = [
-  { value: 'classic_right_logo', labelFa: 'کلاسیک (لوگو راست · عنوان وسط · کد چپ)', labelEn: 'Classic (Right Logo)' },
-  { value: 'split_dual_logo', labelFa: 'دو لوگویی (لوگوی اول راست · لوگوی دوم چپ)', labelEn: 'Dual Logo Split' },
-  { value: 'left_logo', labelFa: 'لوگو چپ (کد راست · عنوان وسط · لوگو چپ)', labelEn: 'Left Logo' },
-  { value: 'minimal_no_logo', labelFa: 'ساده بدون لوگو', labelEn: 'Minimal (No Logo)' },
-];
+function getEmployerPrimaryLogo(emp: EmployerProfile): EmployerLogoAsset | undefined {
+  if (!emp.logos || emp.logos.length === 0) return undefined;
+  return emp.logos.find((l) => l.isDefault) || emp.logos[0];
+}
 
-const ACCENT_PRESETS = ['#000000', '#0f172a', '#0369a1', '#0f766e', '#1d4ed8', '#7c2d12'];
+interface IranPhoneSplitInputProps {
+  value: string;
+  onChange: (nextValue: string) => void;
+  onBlurValidate?: () => void;
+  onLeadingZeroAttempt?: () => void;
+  hasError?: boolean;
+  isFa: boolean;
+  testIdPrefix: string;
+}
 
-interface EmployersStudioWorkspaceProps {
+const IranPhoneSplitInput: React.FC<IranPhoneSplitInputProps> = ({
+  value,
+  onChange,
+  onBlurValidate,
+  onLeadingZeroAttempt,
+  hasError,
+  isFa,
+  testIdPrefix,
+}) => {
+  const provinceRef = useRef<HTMLInputElement | null>(null);
+  const subscriberRef = useRef<HTMLInputElement | null>(null);
+  const { provinceCode, subscriber } = parseIranFixedPhoneParts(value);
+
+  const handleProvinceChange = (raw: string) => {
+    const digitsOnly = sanitizeDigitsOnly(raw, 4);
+    if (/^[0۰٠]/.test(digitsOnly)) {
+      onLeadingZeroAttempt?.();
+    }
+    const cleanProvince = sanitizeProvinceCodeInput(digitsOnly);
+    onChange(serializeIranFixedPhoneParts(cleanProvince, subscriber));
+    if (cleanProvince.length === 2) {
+      subscriberRef.current?.focus();
+    }
+  };
+
+  const handleSubscriberChange = (raw: string) => {
+    const cleanSubscriber = sanitizeDigitsOnly(raw, 8);
+    onChange(serializeIranFixedPhoneParts(provinceCode, cleanSubscriber));
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text');
+    const digits = sanitizeDigitsOnly(pasted, 16);
+    if (digits.length >= 10) {
+      e.preventDefault();
+      const parsed = parseIranFixedPhoneParts(pasted);
+      onChange(serializeIranFixedPhoneParts(parsed.provinceCode, parsed.subscriber));
+      if (parsed.provinceCode.length === 2) {
+        subscriberRef.current?.focus();
+      }
+    }
+  };
+
+  return (
+    <div
+      dir="ltr"
+      data-testid={`${testIdPrefix}-box`}
+      className={`w-full h-9 rounded-lg border bg-[var(--bg-canvas)] flex items-center overflow-hidden transition-colors focus-within:border-[var(--accent-primary)] ${
+        hasError ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)]'
+      }`}
+    >
+      <span
+        aria-label="Country code +98"
+        className="h-full px-2.5 bg-[var(--bg-subtle)]/80 border-r border-[var(--border-subtle)] text-xs font-mono font-semibold text-[var(--text-secondary)] flex items-center select-none shrink-0"
+      >
+        +98
+      </span>
+      <input
+        ref={provinceRef}
+        type="text"
+        inputMode="numeric"
+        maxLength={2}
+        data-testid={`${testIdPrefix}-province`}
+        aria-label={isFa ? 'کد استان (۲ رقم بدون صفر)' : 'Province code (2 digits, no leading zero)'}
+        value={provinceCode}
+        onChange={(e) => handleProvinceChange(e.target.value)}
+        onPaste={handlePaste}
+        onBlur={onBlurValidate}
+        placeholder="##"
+        className="w-11 h-full px-1.5 bg-transparent text-xs font-mono tabular-nums text-center text-[var(--text-primary)] placeholder:text-[var(--text-muted)]/55 focus:outline-none shrink-0"
+      />
+      <span aria-hidden="true" className="text-[var(--text-muted)] font-mono text-xs select-none">
+        -
+      </span>
+      <input
+        ref={subscriberRef}
+        type="text"
+        inputMode="numeric"
+        maxLength={8}
+        data-testid={`${testIdPrefix}-subscriber`}
+        aria-label={isFa ? 'شماره ۸ رقمی' : '8-digit number'}
+        value={subscriber}
+        onChange={(e) => handleSubscriberChange(e.target.value)}
+        onPaste={handlePaste}
+        onKeyDown={(e) => {
+          if (e.key === 'Backspace' && !subscriber) {
+            provinceRef.current?.focus();
+          }
+        }}
+        onBlur={onBlurValidate}
+        placeholder="########"
+        className="flex-1 min-w-0 h-full px-2 bg-transparent text-xs font-mono tabular-nums text-[var(--text-primary)] placeholder:text-[var(--text-muted)]/55 focus:outline-none"
+      />
+    </div>
+  );
+};
+
+export interface EmployersStudioWorkspaceProps {
   onAssignEmployer?: (employerId: string) => void;
+  initialMode?: 'list' | 'new';
   compact?: boolean;
+  initialEmployerId?: string;
+  initialSection?: 'profile' | 'forms';
+  initialFormSection?: OperationalFormSectionKey | null;
+  navigationToken?: number;
+  onOpenFormSection?: (sectionKey: OperationalFormSectionKey) => void;
 }
 
 export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> = ({
   onAssignEmployer,
+  initialMode = 'list',
   compact = false,
+  initialEmployerId,
+  initialSection,
+  initialFormSection = null,
+  navigationToken = 0,
+  onOpenFormSection,
 }) => {
   const {
     prefs,
@@ -189,34 +326,84 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
   } = useApp();
   const isFa = prefs.language === 'fa';
 
-  const [selectedId, setSelectedId] = useState<string>(() => employers[0]?.id || '__new__');
-  const [draft, setDraft] = useState<EmployerProfile>(() => {
-    const first = employers[0];
-    return first ? structuredClone(first) : createEmptyDraft('');
+  const [selectedId, setSelectedId] = useState<string>(() => {
+    if (initialMode === 'new') return '__new__';
+    if (initialEmployerId && employers.some((e) => e.id === initialEmployerId)) {
+      return initialEmployerId;
+    }
+    return employers[0]?.id || '__new__';
   });
-  const [studioTab, setStudioTab] = useState<'profile' | 'forms'>('profile');
-  const [formsMode, setFormsMode] = useState<'builtin' | 'uploaded'>('builtin');
-  const [selectedFormKey, setSelectedFormKey] = useState<BuiltInFormKey>('siteEntry');
-  const [selectedUploadedFormId, setSelectedUploadedFormId] = useState<string>(
-    () => employers[0]?.uploadedForms?.[0]?.id || '',
+  const [draft, setDraft] = useState<EmployerProfile>(() => {
+    if (initialMode === 'new') return createEmptyDraft('');
+    const target =
+      (initialEmployerId && employers.find((e) => e.id === initialEmployerId)) || employers[0];
+    return target ? structuredClone(target) : createEmptyDraft('');
+  });
+  const [activeSection, setActiveSection] = useState<'profile' | 'forms'>(
+    () => initialSection || 'profile',
   );
+  const [highlightedFormSection, setHighlightedFormSection] =
+    useState<OperationalFormSectionKey | null>(initialFormSection || null);
+  const [selectedUploadedFormId, setSelectedUploadedFormId] = useState<string>(() => {
+    if (initialMode === 'new') return '';
+    const target =
+      (initialEmployerId && employers.find((e) => e.id === initialEmployerId)) || employers[0];
+    return target?.uploadedForms?.[0]?.id || '';
+  });
   const [uploadingForm, setUploadingForm] = useState(false);
   const [newTokenName, setNewTokenName] = useState('');
-  const [phoneError, setPhoneError] = useState<string>('');
+  const [fieldErrors, setFieldErrors] = useState<{
+    phone?: string;
+    postalCode?: string;
+    fax?: string;
+    email?: string;
+    instagram?: string;
+    linkedin?: string;
+  }>({});
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(() => initialMode === 'new');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const builtInEmployers = useMemo(
+    () => employers.filter((e) => e.isBuiltIn || isBuiltInEmployerId(e.id)),
+    [employers],
+  );
+  const customEmployers = useMemo(
+    () => employers.filter((e) => !e.isBuiltIn && !isBuiltInEmployerId(e.id)),
+    [employers],
+  );
+
+  const isCreatingNew = selectedId === '__new__' || !draft.id;
+  const isDraftBuiltIn = Boolean(draft.isBuiltIn || isBuiltInEmployerId(draft.id));
+
+  useEffect(() => {
+    if (!navigationToken) return;
+    if (initialEmployerId) {
+      const target = employers.find((e) => e.id === initialEmployerId);
+      if (target) {
+        setSelectedId(target.id);
+        setDraft(structuredClone(target));
+        setSelectedUploadedFormId(target.uploadedForms?.[0]?.id || '');
+        setFieldErrors({});
+        setDirty(false);
+      }
+    }
+    if (initialSection) {
+      setActiveSection(initialSection);
+    }
+    setHighlightedFormSection(initialFormSection || null);
+  }, [navigationToken, initialEmployerId, initialSection, initialFormSection, employers]);
 
   useEffect(() => {
     if (selectedId === '__new__') return;
     const found = employers.find((e) => e.id === selectedId);
     if (found && !dirty) {
       setDraft(structuredClone(found));
-      setPhoneError('');
+      setFieldErrors({});
     } else if (!found && employers.length > 0 && !dirty) {
       setSelectedId(employers[0].id);
       setDraft(structuredClone(employers[0]));
-      setPhoneError('');
+      setFieldErrors({});
     }
   }, [employers, selectedId, dirty]);
 
@@ -224,7 +411,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     setSelectedId(emp.id);
     setDraft(structuredClone(emp));
     setSelectedUploadedFormId(emp.uploadedForms?.[0]?.id || '');
-    setPhoneError('');
+    setFieldErrors({});
     setDirty(false);
     setConfirmDeleteId(null);
   };
@@ -233,8 +420,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     setSelectedId('__new__');
     setDraft(createEmptyDraft(''));
     setSelectedUploadedFormId('');
-    setStudioTab('profile');
-    setPhoneError('');
+    setActiveSection('profile');
+    setFieldErrors({});
     setDirty(true);
     setConfirmDeleteId(null);
   };
@@ -244,7 +431,6 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     setDirty(true);
   };
 
-  // Snapshot File[] synchronously before input value reset so multi-file selection adds ALL logos
   const handleUploadLogos = async (fileList: File[]) => {
     if (!fileList || fileList.length === 0) return;
     const added: EmployerLogoAsset[] = [];
@@ -277,36 +463,131 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     });
     notify(
       'success',
-      isFa ? `${added.length} لوگو به گالری کارفرما اضافه شد.` : `Added ${added.length} logo(s).`,
+      isFa ? `${added.length} لوگو اضافه شد.` : `Added ${added.length} logo(s).`,
     );
   };
 
-  const handleSave = async () => {
+  const saveDraftInternal = async (): Promise<EmployerProfile | null> => {
     if (!draft.nameFa.trim()) {
-      notify('error', isFa ? 'نام کارفرما / شرکت الزامی است.' : 'Employer name is required.');
-      setStudioTab('profile');
-      return;
+      notify('error', isFa ? 'نام کارفرما الزامی است.' : 'Employer name is required.');
+      setActiveSection('profile');
+      return null;
     }
-    const phoneCheck = validateAndFormatIranPhone(draft.phone || '');
-    if (!phoneCheck.valid) {
-      const msg = isFa ? phoneCheck.errorFa || 'فرمت شماره تلفن ایران معتبر نیست.' : phoneCheck.errorEn || 'Invalid Iranian phone number.';
-      setPhoneError(msg);
-      notify('error', msg);
-      setStudioTab('profile');
-      return;
+
+    let phoneToSave = draft.phone?.trim() || '';
+    let postalCodeToSave = draft.postalCode?.trim() || '';
+    let faxToSave = draft.fax?.trim() || '';
+    let emailToSave = draft.email?.trim() || '';
+    let instagramToSave = draft.instagram?.trim() || '';
+    let linkedinToSave = draft.linkedin?.trim() || '';
+
+    if (!isDraftBuiltIn) {
+      const nextErrors: {
+        phone?: string;
+        postalCode?: string;
+        fax?: string;
+        email?: string;
+        instagram?: string;
+        linkedin?: string;
+      } = {};
+
+      const phoneParts = parseIranFixedPhoneParts(phoneToSave);
+      const phoneCheck = validateIranFixedPhoneParts(
+        phoneParts.provinceCode,
+        phoneParts.subscriber,
+        'تلفن',
+        'Phone',
+      );
+      if (!phoneCheck.valid) {
+        nextErrors.phone = isFa ? phoneCheck.errorFa : phoneCheck.errorEn;
+      } else {
+        phoneToSave = phoneCheck.normalized;
+      }
+
+      const postalCheck = validatePostalCode(postalCodeToSave);
+      if (!postalCheck.valid) {
+        nextErrors.postalCode = isFa ? postalCheck.errorFa : postalCheck.errorEn;
+      } else {
+        postalCodeToSave = postalCheck.normalized;
+      }
+
+      const faxParts = parseIranFixedPhoneParts(faxToSave);
+      const faxCheck = validateIranFixedPhoneParts(
+        faxParts.provinceCode,
+        faxParts.subscriber,
+        'فکس',
+        'Fax',
+      );
+      if (!faxCheck.valid) {
+        nextErrors.fax = isFa ? faxCheck.errorFa : faxCheck.errorEn;
+      } else {
+        faxToSave = faxCheck.normalized;
+      }
+
+      const emailCheck = validateEmail(emailToSave);
+      if (!emailCheck.valid) {
+        nextErrors.email = isFa ? emailCheck.errorFa : emailCheck.errorEn;
+      } else {
+        emailToSave = emailCheck.normalized;
+      }
+
+      const igCheck = validateInstagramUsername(instagramToSave);
+      if (!igCheck.valid) {
+        nextErrors.instagram = isFa ? igCheck.errorFa : igCheck.errorEn;
+      } else {
+        instagramToSave = igCheck.normalized;
+      }
+
+      const liCheck = validateLinkedInUsername(linkedinToSave);
+      if (!liCheck.valid) {
+        nextErrors.linkedin = isFa ? liCheck.errorFa : liCheck.errorEn;
+      } else {
+        linkedinToSave = liCheck.normalized;
+      }
+
+      const firstError =
+        nextErrors.phone ||
+        nextErrors.postalCode ||
+        nextErrors.fax ||
+        nextErrors.email ||
+        nextErrors.instagram ||
+        nextErrors.linkedin;
+
+      if (firstError) {
+        setFieldErrors(nextErrors);
+        notify('error', firstError);
+        setActiveSection('profile');
+        return null;
+      }
     }
-    setPhoneError('');
+
+    setFieldErrors({});
     setSaving(true);
     try {
       const payload: Partial<EmployerProfile> = {
         ...draft,
         nameFa: draft.nameFa.trim(),
+        nameEn: isDraftBuiltIn
+          ? draft.nameEn?.trim() || undefined
+          : draft.companyFullNameEn?.trim() || draft.shortName.trim() || draft.nameFa.trim(),
         companyFullName: draft.companyFullName.trim() || draft.nameFa.trim(),
+        companyFullNameEn: draft.companyFullNameEn?.trim() || undefined,
         shortName: draft.shortName.trim() || draft.nameFa.trim(),
-        phone: phoneCheck.formatted,
+        badgeCode: draft.shortName.trim() || draft.nameFa.trim(),
+        docCodePrefix: draft.docCodePrefix?.trim() || undefined,
+        imsSubtitle: draft.imsSubtitle?.trim() || undefined,
+        address: draft.address?.trim() || undefined,
+        phone: phoneToSave || undefined,
+        postalCode: postalCodeToSave || undefined,
+        fax: faxToSave || undefined,
+        email: emailToSave || undefined,
+        instagram: instagramToSave || undefined,
+        linkedin: linkedinToSave || undefined,
+        customForms: [],
       };
+
       let saved: EmployerProfile;
-      if (selectedId === '__new__' || !draft.id) {
+      if (isCreatingNew) {
         saved = await createEmployer(payload);
         setSelectedId(saved.id);
       } else {
@@ -317,36 +598,58 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
       notify(
         'success',
         isFa
-          ? `اطلاعات، لوگوها و قالب فرم‌های «${saved.nameFa}» ذخیره شد.`
+          ? `اطلاعات کارفرمای «${saved.nameFa}» با موفقیت ذخیره شد.`
           : `Saved employer "${saved.nameFa}".`,
       );
+      return saved;
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
+      return null;
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDuplicate = async (emp: EmployerProfile) => {
-    setSaving(true);
+  const handleSave = async () => {
+    const saved = await saveDraftInternal();
+    if (saved && onAssignEmployer && compact) {
+      onAssignEmployer(saved.id);
+    }
+  };
+
+  const handleAssignToActive = async () => {
+    let targetId = draft.id;
+    if (isCreatingNew || dirty) {
+      const saved = await saveDraftInternal();
+      if (!saved) return;
+      targetId = saved.id;
+    }
+    if (!targetId) return;
+    if (onAssignEmployer) {
+      onAssignEmployer(targetId);
+      return;
+    }
+    if (!activeProject) return;
     try {
-      const copy = await createEmployer({
-        ...emp,
-        id: undefined,
-        nameFa: `${emp.nameFa} (${isFa ? 'کپی' : 'Copy'})`,
+      await renameProject(activeProject.id, {
+        name: activeProject.name,
+        code: activeProject.code,
+        contractRef: activeProject.contractRef,
+        employerId: targetId,
       });
-      setSelectedId(copy.id);
-      setDraft(structuredClone(copy));
-      setDirty(false);
-      notify('success', isFa ? 'نسخه کپی کارفرما ایجاد شد.' : 'Employer duplicated.');
+      notify(
+        'success',
+        isFa
+          ? `کارفرمای پروژه «${activeProject.name}» به «${draft.nameFa}» تنظیم شد.`
+          : `Assigned "${draft.nameFa}" to active project.`,
+      );
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
-    } finally {
-      setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
+    if (isBuiltInEmployerId(id)) return;
     setSaving(true);
     try {
       await deleteEmployer(id);
@@ -357,10 +660,9 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
         setSelectedId(remaining[0].id);
         setDraft(structuredClone(remaining[0]));
       } else {
-        setSelectedId('__new__');
-        setDraft(createEmptyDraft(''));
+        startNewEmployer();
       }
-      notify('success', isFa ? 'کارفرما حذف شد.' : 'Employer deleted.');
+      notify('success', isFa ? 'کارفرمای سفارشی حذف شد.' : 'Custom employer deleted.');
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
@@ -373,7 +675,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `samaan-employer-${draft.shortName || draft.nameFa || 'template'}.json`;
+    a.download = `samaan-employer-${draft.shortName || draft.nameFa || 'profile'}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -383,81 +685,29 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
       const text = await file.text();
       const parsed = sanitizeEmployerProfile(JSON.parse(text));
       if (!parsed) {
-        notify('error', isFa ? 'فایل الگوی کارفرما نامعتبر است.' : 'Invalid employer template JSON.');
+        notify('error', isFa ? 'فایل الگوی کارفرما نامعتبر است.' : 'Invalid employer JSON file.');
         return;
       }
-      const created = await createEmployer({ ...parsed, id: undefined });
+      const created = await createEmployer({ ...parsed, id: undefined, isBuiltIn: false });
       setSelectedId(created.id);
       setDraft(structuredClone(created));
       setDirty(false);
       notify('success', isFa ? `کارفرمای «${created.nameFa}» وارد شد.` : `Imported "${created.nameFa}".`);
     } catch {
-      notify('error', isFa ? 'خطا در خواندن فایل الگو.' : 'Failed to parse template JSON.');
+      notify('error', isFa ? 'خطا در خواندن فایل کارفرما.' : 'Failed to read employer JSON file.');
     }
   };
 
-  const handleAssignToActive = async () => {
-    if (!draft.id || !activeProject) return;
-    try {
-      if (dirty) await handleSave();
-      if (onAssignEmployer) {
-        onAssignEmployer(draft.id);
-      } else {
-        await renameProject(activeProject.id, {
-          name: activeProject.name,
-          code: activeProject.code,
-          employerId: draft.id,
-        });
-        notify(
-          'success',
-          isFa
-            ? `کارفرمای پروژه فعال «${activeProject.name}» به «${draft.nameFa}» تنظیم شد.`
-            : `Assigned "${draft.nameFa}" to active project.`,
-        );
-      }
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    }
-  };
-
-  const resolvedPreview = useMemo(() => toResolvedPreviewProfile(draft), [draft]);
-  const builtInDef = getBuiltInFormDefinition(selectedFormKey);
-  const currentTpl: EmployerFormTemplate = draft.formTemplates?.[selectedFormKey] || {
-    formKey: selectedFormKey,
-  };
-  const resolvedFormDesign = useMemo(
-    () => resolveBuiltInFormDesign(resolvedPreview, selectedFormKey),
-    [resolvedPreview, selectedFormKey],
+  // Uploaded Forms State & Helpers
+  const resolvedPreview = useMemo(
+    () => toResolvedPreviewProfile(draft, activeProject?.contractRef),
+    [draft, activeProject?.contractRef],
   );
-
-  const patchBuiltInTemplate = (patch: Partial<EmployerFormTemplate>) => {
-    patchDraft((prev) => ({
-      ...prev,
-      formTemplates: {
-        ...(prev.formTemplates || {}),
-        [selectedFormKey]: {
-          ...(prev.formTemplates?.[selectedFormKey] || { formKey: selectedFormKey }),
-          ...patch,
-          formKey: selectedFormKey,
-        },
-      },
-    }));
-  };
-
-  const resetBuiltInTemplate = () => {
-    patchDraft((prev) => {
-      const next = { ...(prev.formTemplates || {}) };
-      delete next[selectedFormKey];
-      return { ...prev, formTemplates: next };
-    });
-  };
-
   const uploadedForms = draft.uploadedForms || [];
   const activeUploadedForm =
     uploadedForms.find((f) => f.id === selectedUploadedFormId) || uploadedForms[0] || null;
   const deferredUploadedForm = useDeferredValue(activeUploadedForm);
 
-  // Only re-parse Excel sheet metadata when the binary file or selected worksheet changes (never on typing title/code!)
   const activeExcelBase64 = activeUploadedForm?.fileType === 'excel' ? activeUploadedForm.fileDataBase64 : '';
   const activeExcelSheetName = activeUploadedForm?.fileType === 'excel' ? activeUploadedForm.sheetName : undefined;
   const activeExcelSheetMeta = useMemo(() => {
@@ -469,10 +719,50 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     }
   }, [activeExcelBase64, activeExcelSheetName]);
 
-  const handleUploadCompanyFormFiles = async (fileList: File[]) => {
+  const persistUploadedFormsImmediately = async (
+    nextUploadedForms: EmployerUploadedForm[],
+    successMsgFa: string,
+    successMsgEn: string,
+  ) => {
+    if (isCreatingNew || !draft.id) {
+      setDraft((prev) => ({ ...prev, uploadedForms: nextUploadedForms }));
+      setDirty(true);
+      notify('success', isFa ? successMsgFa : successMsgEn);
+      return;
+    }
+    try {
+      const updatedDraft: EmployerProfile = {
+        ...draft,
+        uploadedForms: nextUploadedForms,
+        customForms: [],
+      };
+      const saved = await updateEmployer(draft.id, updatedDraft);
+      setDraft(structuredClone(saved));
+      setDirty(false);
+      notify('success', isFa ? successMsgFa : successMsgEn);
+    } catch (err) {
+      setDraft((prev) => ({ ...prev, uploadedForms: nextUploadedForms }));
+      setDirty(true);
+      notify(
+        'error',
+        err instanceof ApiError
+          ? err.message
+          : isFa
+            ? 'فرم در پیش‌نویس اضافه شد اما ذخیره خودکار ناموفق بود؛ دکمه ذخیره تغییرات را بزنید.'
+            : 'Added to draft, but auto-save failed. Please click Save Changes.',
+      );
+    }
+  };
+
+  const handleUploadCompanyFormFiles = async (
+    fileList: File[],
+    forcedSection?: OperationalFormSectionKey,
+  ) => {
     if (!fileList || fileList.length === 0) return;
     setUploadingForm(true);
     try {
+      const sectionMeta = forcedSection ? getOperationalFormSectionMeta(forcedSection) : null;
+      const defaultSource = sectionMeta?.defaultDataSource || 'general';
       const createdList: EmployerUploadedForm[] = [];
       for (let i = 0; i < fileList.length; i += 1) {
         const file = fileList[i];
@@ -481,24 +771,38 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
           continue;
         }
         try {
-          const parsed = await parseUploadedFormFile(file, 'general');
+          const parsed = await parseUploadedFormFile(file, defaultSource);
+          if (forcedSection && sectionMeta) {
+            parsed.targetAppSection = forcedSection;
+            parsed.targetSectionConfirmed = true;
+            parsed.targetSectionConfidence = 'high';
+            parsed.dataSource = sectionMeta.defaultDataSource;
+            parsed.dataSources = [sectionMeta.defaultDataSource];
+          }
           createdList.push(parsed);
         } catch (err) {
           notify('error', err instanceof Error ? err.message : `خطا در خواندن ${file.name}`);
         }
       }
       if (createdList.length > 0) {
-        patchDraft((prev) => ({
-          ...prev,
-          uploadedForms: [...(prev.uploadedForms || []), ...createdList],
-        }));
+        const nextUploadedForms = [...(draft.uploadedForms || []), ...createdList];
         setSelectedUploadedFormId(createdList[0].id);
-        notify(
-          'success',
-          isFa
-            ? `${createdList.length} فرم رسمی شرکت اضافه و تحلیل هوشمند شد. لطفاً بخش مرتبط را تأیید و «ذخیره تغییرات» را بزنید.`
-            : `Uploaded & analyzed ${createdList.length} form(s). Confirm target section and save.`,
-        );
+        if (forcedSection) {
+          setHighlightedFormSection(forcedSection);
+        }
+        const msgFa = sectionMeta
+          ? isCreatingNew
+            ? `فرم بخش «${sectionMeta.titleFa}» اضافه شد. پس از ثبت کارفرما دسترسی این بخش فعال می‌شود.`
+            : `فرم بخش «${sectionMeta.titleFa}» ذخیره شد و دسترسی به این بخش بلافاصله فعال گردید.`
+          : isCreatingNew
+            ? `${createdList.length} فرم اضافه شد. برای ثبت نهایی، دکمه ثبت کارفرما را بزنید.`
+            : `${createdList.length} فرم با موفقیت بارگذاری و ذخیره شد.`;
+        const msgEn = sectionMeta
+          ? isCreatingNew
+            ? `Form added for "${sectionMeta.titleEn}". Save the employer to unlock this section.`
+            : `Form saved for "${sectionMeta.titleEn}". Access to this section is now active.`
+          : `Uploaded ${createdList.length} form(s) successfully.`;
+        await persistUploadedFormsImmediately(nextUploadedForms, msgFa, msgEn);
       }
     } finally {
       setUploadingForm(false);
@@ -525,33 +829,32 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
     }));
   };
 
-  const deleteUploadedForm = (id: string) => {
-    patchDraft((prev) => {
-      const remaining = (prev.uploadedForms || []).filter((f) => f.id !== id);
+  const deleteUploadedForm = async (id: string) => {
+    const remaining = (draft.uploadedForms || []).filter((f) => f.id !== id);
+    if (selectedUploadedFormId === id) {
       setSelectedUploadedFormId(remaining[0]?.id || '');
-      return { ...prev, uploadedForms: remaining };
-    });
+    }
+    await persistUploadedFormsImmediately(
+      remaining,
+      'فرم انتخاب‌شده حذف شد.',
+      'Selected form removed.',
+    );
   };
-
-  const draftContractRef = draft.contractRef;
-  const draftCompanyFullName = draft.companyFullName;
-  const draftNameFa = draft.nameFa;
-  const activeUploadedFormCode = activeUploadedForm?.formCode;
 
   const samplePreviewData = useMemo(() => {
     const headerTokens: Record<string, string> = {
-      projectName: activeProject?.name || 'نیروگاه نمونه (پیش‌نمایش)',
-      contractNo: activeProject?.code || draftContractRef || 'CNT-1404',
-      employerName: draftCompanyFullName || draftNameFa || 'کارفرما',
+      projectName: activeProject?.name || 'نیروگاه نکا',
+      contractNo: activeProject?.contractRef || activeProject?.code || 'CNT-1404',
+      employerName: draft.companyFullName || draft.nameFa || 'کارفرما',
       todayDate: '1404/02/15',
-      docNo: activeUploadedFormCode || 'FRM-001',
+      docNo: activeUploadedForm?.formCode || 'FRM-001',
       minutesNo: '404-012',
       employerEntryMinutesNo: 'EMP-404-08',
       releaseNoteNo: 'RN-8841',
       packingListNo: 'PK-1042-A',
       packageNo: 'PKG-03',
       arrivalDate: '1404/02/10',
-      supplier: 'شرکت تأمین‌کننده نمونه',
+      supplier: 'تأمین‌کننده نمونه',
       origin: 'بندرعباس',
       island: 'جزیره توربین',
       system: 'سیستم خنک‌کاری',
@@ -564,31 +867,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
       netWeight: '3,980',
       weighbridgeWeight: '4,260',
       dimensions: '3.2 × 1.8 × 1.5',
-      opiNo: 'OPI-404-021',
-      opiDate: '1404/02/12',
-      merNo: 'MER-404-04',
-      merStatus: 'باز',
-      gcvReceiptNo: 'GCV-404-09',
-      gcvDeliveredQty: '2',
-      receiver: 'واحد نصب توربین',
-      mivContractorNo: 'MIV-404-17',
-      mivContractorDate: '1404/02/14',
-      mivContractorQty: '1',
-      smrContractorNo: 'SMR-C-03',
-      smrContractorDate: '1404/02/15',
-      smrContractorQty: '0',
-      smrMapnaNo: 'SMR-E-01',
-      smrMapnaDate: '1404/02/15',
-      smrMapnaQty: '0',
-      smrDeliverer: 'مهندس محمدی',
-      repNo: 'REP-404-02',
-      repStatus: 'تأیید شده',
-      repReprocured: 'تأمین شده',
-      repDescription: 'جایگزینی شیر هم‌تراز',
-      mapnaInventory: '1',
-      contractorInventory: '1',
-      overallStatus: 'تحویل در کارگاه',
-      remarks: 'تست خودکار تطبیق ارتفاع سطر با متن طولانی تجهیز جهت بررسی نمایش صحیح و چاپ A4 بدون برش متن در سلول',
+      remarks: 'پیش‌نمایش نمونه جهت بررسی تطبیق ستون‌ها و چاپ A4',
     };
     const lineRows: Array<Record<string, string>> = [
       {
@@ -597,8 +876,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
         itemNo: '001',
         itemCode: 'TUR-VALV-402',
         size: '8" CL600',
-        description:
-          'شیر کنترل فشار اصلی توربین بخار با فلنج کلاس ۶۰۰ و عملگر الکتریکی کامل همراه با متعلقات نصب و دفترچه راهنما',
+        description: 'شیر کنترل فشار اصلی توربین بخار همراه با عملگر الکتریکی',
         packingQty: '2',
         actualQty: '2',
         countingUnit: 'دستگاه',
@@ -624,1201 +902,1014 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
       },
     ];
     return { headerTokens, lineRows };
-  }, [activeProject?.name, activeProject?.code, activeUploadedFormCode, draftContractRef, draftCompanyFullName, draftNameFa]);
+  }, [activeProject?.name, activeProject?.contractRef, activeProject?.code, activeUploadedForm?.formCode, draft.companyFullName, draft.nameFa]);
 
-  const logoSelectorGrid = (
-    selectedLogoId: string | undefined,
-    onSelect: (val: string | undefined) => void,
-    allowDefaultOption = true,
-  ) => (
-    <div className="flex flex-wrap gap-2">
-      {allowDefaultOption && (
-        <button
-          type="button"
-          onClick={() => onSelect(undefined)}
-          className={`h-14 px-2.5 rounded-lg border text-[11px] font-medium flex flex-col items-center justify-center transition-colors ${
-            !selectedLogoId
-              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-              : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]'
-          }`}
-        >
-          <span>{isFa ? 'پیش‌فرض کارفرما' : 'Default'}</span>
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={() => onSelect('__none__')}
-        className={`h-14 px-2.5 rounded-lg border text-[11px] font-medium flex flex-col items-center justify-center transition-colors ${
-          selectedLogoId === '__none__'
-            ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-            : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]'
-        }`}
-      >
-        <span>{isFa ? 'بدون لوگو' : 'No Logo'}</span>
-      </button>
-      {draft.logos.map((logo) => {
-        const active = selectedLogoId === logo.id;
-        return (
-          <button
-            key={logo.id}
-            type="button"
-            onClick={() => onSelect(logo.id)}
-            className={`h-14 px-2 rounded-lg border flex items-center gap-2 transition-colors ${
-              active
-                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
-                : 'border-[var(--border-subtle)] bg-white'
-            }`}
-          >
-            <img
-              src={logo.dataUrl}
-              alt={logo.label}
-              className="h-10 w-10 object-contain shrink-0"
-            />
-            <span className="text-[11px] font-medium text-slate-800 max-w-[90px] truncate">
-              {logo.label}
-            </span>
-          </button>
-        );
-      })}
-      {draft.logos.length === 0 && (
-        <div className="text-[11px] text-[var(--text-muted)] self-center">
-          {isFa
-            ? 'ابتدا در تب «اطلاعات پایه و گالری لوگوها» لوگو آپلود کنید.'
-            : 'Upload logos in Base Profile first.'}
-        </div>
-      )}
-    </div>
-  );
+  const primaryLogo = getEmployerPrimaryLogo(draft);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-      {/* Left Master List of Employers */}
-      <div className="lg:col-span-4 xl:col-span-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-        <div className="p-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <Building2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-            <span className="text-xs font-bold truncate">
-              {isFa ? 'فهرست کارفرمایان / نیروگاه‌ها' : 'Employers Registry'}
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            <label
-              title={isFa ? 'ورود الگوی JSON کارفرما' : 'Import JSON'}
-              className="h-8 w-8 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] flex items-center justify-center cursor-pointer text-[var(--text-secondary)]"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <input
-                type="file"
-                accept="application/json"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleImportTemplate(file);
-                  e.currentTarget.value = '';
-                }}
-              />
-            </label>
+    <div className={`grid grid-cols-1 ${compact && initialMode === 'new' ? '' : 'lg:grid-cols-12'} gap-5 items-start`}>
+      {/* Left/Start Master List of Employers (hidden when modal is strictly in compact New Employer mode) */}
+      {!(compact && initialMode === 'new') && (
+        <aside className="lg:col-span-4 xl:col-span-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="px-3.5 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Building2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+              <h2 className="text-sm font-bold text-[var(--text-primary)] whitespace-nowrap">
+                {isFa ? 'کارفرمایان' : 'Employers'}
+              </h2>
+            </div>
             <button
               type="button"
+              data-testid="new-employer-btn"
               onClick={startNewEmployer}
-              className="h-8 px-2.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1"
+              className="h-8 px-2.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>{isFa ? 'جدید' : 'New'}</span>
+              <span>{isFa ? 'کارفرمای جدید' : 'New Employer'}</span>
             </button>
           </div>
-        </div>
 
-        <div className="divide-y divide-[var(--border-subtle)] max-h-[65vh] overflow-y-auto">
-          {employers.length === 0 ? (
-            <div className="p-4 text-xs text-[var(--text-muted)] space-y-2 leading-relaxed">
-              <div className="font-semibold text-[var(--text-primary)]">
-                {isFa ? 'نرم‌افزار در حالت خام است' : 'System is in Raw Default State'}
+          <div className="p-3 space-y-4">
+            {/* Built-in Default MAPNA Employers */}
+            <div className="space-y-1.5">
+              <div className="px-1.5 text-[11px] font-semibold text-[var(--text-muted)]">
+                {isFa ? 'کارفرماهای پیش‌فرض سامانه' : 'Built-in Default Employers'}
               </div>
-              <p>
-                {isFa
-                  ? 'هیچ کارفرمایی به‌صورت پیش‌فرض تعریف نشده است. جزئیات کارفرما و لوگوهای آن را از پنل مقابل وارد کنید تا فرم‌های اختصاصی هر نیروگاه آماده شوند.'
-                  : 'No built-in employer presets exist. Define your first employer profile, upload logos, and customize its forms.'}
-              </p>
-            </div>
-          ) : (
-            employers.map((emp) => {
-              const active = selectedId === emp.id;
-              const defLogo = emp.logos.find((l) => l.isDefault) || emp.logos[0];
-              const isAssigned = activeProject?.employerId === emp.id;
-              const customTplCount = Object.keys(emp.formTemplates || {}).length;
-              return (
-                <div
-                  key={emp.id}
-                  onClick={() => selectEmployer(emp)}
-                  className={`p-3 cursor-pointer flex items-center justify-between gap-2 transition-colors ${
-                    active ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--bg-subtle)]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-10 h-10 rounded-lg border border-[var(--border-subtle)] bg-white flex items-center justify-center shrink-0 overflow-hidden">
-                      {defLogo ? (
-                        <img
-                          src={defLogo.dataUrl}
-                          alt={emp.nameFa}
-                          className="w-8 h-8 object-contain"
-                        />
-                      ) : (
-                        <Building2 className="w-4 h-4 text-slate-400" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold text-[var(--text-primary)] truncate flex items-center gap-1.5">
-                        <span>{emp.nameFa}</span>
-                        {isAssigned && (
-                          <span className="text-[10px] font-semibold text-[var(--accent-primary)]">
-                            · {isFa ? 'فعال' : 'Active'}
-                          </span>
+              <div className="space-y-1.5">
+                {builtInEmployers.map((emp) => {
+                  const isSelected = selectedId === emp.id;
+                  const isActiveOnProject = activeProject?.employerId === emp.id;
+                  const logo = getEmployerPrimaryLogo(emp);
+                  return (
+                    <button
+                      key={emp.id}
+                      type="button"
+                      data-testid={`employer-item-${emp.id}`}
+                      onClick={() => selectEmployer(emp)}
+                      className={`w-full p-2.5 rounded-xl border text-start transition-colors flex items-center gap-3 ${
+                        isSelected
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]/50 hover:bg-[var(--bg-subtle)]'
+                      }`}
+                    >
+                      <div className="w-14 h-10 rounded-lg border border-[var(--border-subtle)] bg-white p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                        {logo?.dataUrl ? (
+                          <img
+                            src={logo.dataUrl}
+                            alt={emp.nameFa}
+                            referrerPolicy="no-referrer"
+                            className="max-h-full max-w-full object-contain"
+                          />
+                        ) : (
+                          <Building2 className="w-4 h-4 text-slate-400" />
                         )}
                       </div>
-                      <div className="text-[11px] text-[var(--text-muted)] tabular-nums truncate">
-                        {emp.logos.length} {isFa ? 'لوگو' : 'logos'} · {customTplCount}{' '}
-                        {isFa ? 'قالب' : 'templates'} · {emp.uploadedForms?.length || 0}{' '}
-                        {isFa ? 'فرم آپلودی' : 'uploaded'}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                          {emp.nameFa}
+                        </div>
+                        <div className="text-[11px] text-[var(--text-muted)] flex items-center gap-1.5 mt-0.5 truncate">
+                          <span dir="ltr" className="font-mono font-semibold text-[var(--text-secondary)]">
+                            {emp.shortName}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>{isFa ? 'پیش‌فرض' : 'Default'}</span>
+                          {isActiveOnProject && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-[var(--accent-primary)] font-semibold">
+                                {isFa ? 'فعال' : 'Active'}
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-      {/* Right Studio Workspace */}
-      <div className="lg:col-span-8 xl:col-span-9 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
-        {/* Studio Header Action Bar */}
-        <div className="p-4 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-sm font-bold text-[var(--text-primary)] truncate">
-              {selectedId === '__new__'
-                ? isFa
-                  ? 'تعریف کارفرما / نیروگاه جدید'
-                  : 'Create New Employer'
-                : draft.nameFa || (isFa ? 'ویرایش کارفرما' : 'Edit Employer')}
-            </h3>
-            <div className="text-[11px] text-[var(--text-muted)] mt-0.5 flex flex-wrap items-center gap-2">
-              <span>{draft.companyFullName || (isFa ? 'نام کامل شرکت وارد نشده است' : 'No full title yet')}</span>
-              {dirty && (
-                <span className="text-[var(--status-warning)] font-semibold">
-                  · {isFa ? 'تغییرات ذخیره نشده' : 'Unsaved changes'}
-                </span>
+            {/* Custom User-Defined Employers */}
+            <div className="space-y-1.5 pt-3 border-t border-[var(--border-subtle)]">
+              <div className="px-1.5 text-[11px] font-semibold text-[var(--text-muted)]">
+                {isFa ? 'کارفرماهای تعریف‌شده توسط کاربر' : 'Custom Employers'}
+              </div>
+              {customEmployers.length === 0 ? (
+                <div className="px-2 py-3 text-[11px] text-[var(--text-muted)] leading-relaxed">
+                  {isFa
+                    ? 'هنوز کارفرمای سفارشی تعریف نشده است. برای افزودن کارفرما با لوگو و فرم‌های اختصاصی، روی «کارفرمای جدید» کلیک کنید.'
+                    : 'No custom employers yet. Click "New Employer" to define one with its own logo and forms.'}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {customEmployers.map((emp) => {
+                    const isSelected = selectedId === emp.id;
+                    const isActiveOnProject = activeProject?.employerId === emp.id;
+                    const logo = getEmployerPrimaryLogo(emp);
+                    return (
+                      <button
+                        key={emp.id}
+                        type="button"
+                        data-testid={`employer-item-${emp.id}`}
+                        onClick={() => selectEmployer(emp)}
+                        className={`w-full p-2.5 rounded-xl border text-start transition-colors flex items-center gap-3 ${
+                          isSelected
+                            ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]/50 hover:bg-[var(--bg-subtle)]'
+                        }`}
+                      >
+                        <div className="w-14 h-10 rounded-lg border border-[var(--border-subtle)] bg-white p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                          {logo?.dataUrl ? (
+                            <img
+                              src={logo.dataUrl}
+                              alt={emp.nameFa}
+                              referrerPolicy="no-referrer"
+                              className="max-h-full max-w-full object-contain"
+                            />
+                          ) : (
+                            <Building2 className="w-4 h-4 text-slate-400" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                            {emp.nameFa}
+                          </div>
+                          <div className="text-[11px] text-[var(--text-muted)] flex items-center gap-1.5 mt-0.5 truncate">
+                            <span dir="ltr" className="font-mono">
+                              {emp.shortName}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span>
+                              {isFa
+                                ? `${(emp.uploadedForms || []).length} فرم`
+                                : `${(emp.uploadedForms || []).length} forms`}
+                            </span>
+                            {isActiveOnProject && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-[var(--accent-primary)] font-semibold">
+                                  {isFa ? 'فعال' : 'Active'}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {!compact && draft.id && activeProject && activeProject.employerId !== draft.id && (
-              <button
-                type="button"
-                onClick={handleAssignToActive}
-                className="h-9 px-3 rounded-lg border border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold flex items-center gap-1.5"
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>{isFa ? 'اعمال روی پروژه فعال' : 'Assign to Active Project'}</span>
-              </button>
-            )}
-            {compact && draft.id && onAssignEmployer && (
-              <button
-                type="button"
-                onClick={handleAssignToActive}
-                className="h-9 px-3 rounded-lg border border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold flex items-center gap-1.5"
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>{isFa ? 'انتخاب این کارفرما' : 'Select This Employer'}</span>
-              </button>
-            )}
-            {draft.id && (
-              <>
+            {/* Subtle JSON Import / Export */}
+            <div className="pt-3 border-t border-[var(--border-subtle)] flex items-center gap-2">
+              <label className="flex-1 h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium text-[var(--text-secondary)] flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+                <Upload className="w-3.5 h-3.5" />
+                <span>{isFa ? 'ورود الگو' : 'Import'}</span>
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.currentTarget.value = '';
+                    if (file) void handleImportTemplate(file);
+                  }}
+                />
+              </label>
+              {!isCreatingNew && (
                 <button
                   type="button"
                   onClick={handleExportTemplate}
-                  title={isFa ? 'خروجی JSON الگوی کارفرما' : 'Export JSON'}
-                  className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs flex items-center gap-1"
+                  className="flex-1 h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium text-[var(--text-secondary)] flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">{isFa ? 'خروجی الگو' : 'Export'}</span>
+                  <span>{isFa ? 'خروجی الگو' : 'Export'}</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleDuplicate(draft)}
-                  title={isFa ? 'کپی کارفرما' : 'Duplicate'}
-                  className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs flex items-center gap-1"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                </button>
-                {confirmDeleteId === draft.id ? (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => handleDelete(draft.id)}
-                      className="h-9 px-2.5 rounded-lg bg-[var(--status-danger)] text-white text-xs font-semibold"
-                    >
-                      {isFa ? 'تأیید حذف' : 'Confirm'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteId(null)}
-                      className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] text-xs"
-                    >
-                      {isFa ? 'انصراف' : 'Cancel'}
-                    </button>
-                  </div>
-                ) : (
+              )}
+            </div>
+          </div>
+        </aside>
+      )}
+
+      {/* Right/End Employer Profile & Uploaded Forms Panel */}
+      <div
+        className={`${
+          compact && initialMode === 'new' ? '' : 'lg:col-span-8 xl:col-span-9'
+        } rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden`}
+      >
+        {/* Top Action Header */}
+        <div className="p-4 sm:p-5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-20 h-12 rounded-xl border border-[var(--border-subtle)] bg-white p-1.5 flex items-center justify-center shrink-0 overflow-hidden">
+              {primaryLogo?.dataUrl ? (
+                <img
+                  src={primaryLogo.dataUrl}
+                  alt={draft.nameFa || 'لوگوی کارفرما'}
+                  referrerPolicy="no-referrer"
+                  className="max-h-full max-w-full object-contain"
+                />
+              ) : (
+                <Building2 className="w-5 h-5 text-slate-400" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-base font-bold text-[var(--text-primary)] truncate">
+                {isCreatingNew
+                  ? isFa
+                    ? 'تعریف کارفرمای جدید'
+                    : 'Define New Employer'
+                  : draft.nameFa}
+              </h3>
+              <div className="text-xs text-[var(--text-muted)] flex flex-wrap items-center gap-1.5 mt-0.5">
+                <span>
+                  {isDraftBuiltIn
+                    ? isFa
+                      ? 'کارفرمای پیش‌فرض سامانه'
+                      : 'Built-in Default Employer'
+                    : isCreatingNew
+                      ? isFa
+                        ? 'ثبت مشخصات، آپلود لوگو و بارگذاری فرم‌های اختصاصی'
+                        : 'Configure profile, logo, and uploaded forms'
+                      : isFa
+                        ? 'کارفرمای سفارشی'
+                        : 'Custom Employer'}
+                </span>
+                {draft.shortName && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span dir="ltr" className="font-mono font-semibold text-[var(--text-secondary)]">
+                      {draft.shortName}
+                    </span>
+                  </>
+                )}
+                {draft.docCodePrefix && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span dir="ltr" className="font-mono">
+                      {draft.docCodePrefix}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {!isCreatingNew && !isDraftBuiltIn && (
+              confirmDeleteId === draft.id ? (
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => setConfirmDeleteId(draft.id)}
-                    className="h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] text-xs flex items-center gap-1"
+                    disabled={saving}
+                    onClick={() => handleDelete(draft.id)}
+                    className="h-9 px-3 rounded-lg bg-[var(--status-danger)] text-white text-xs font-semibold whitespace-nowrap"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    {isFa ? 'تأیید حذف' : 'Confirm Delete'}
                   </button>
-                )}
-              </>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteId(null)}
+                    className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] text-xs font-medium whitespace-nowrap"
+                  >
+                    {isFa ? 'انصراف' : 'Cancel'}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteId(draft.id)}
+                  className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:border-[var(--status-danger)] text-[var(--status-danger)] text-xs font-medium flex items-center gap-1.5 whitespace-nowrap transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'حذف' : 'Delete'}</span>
+                </button>
+              )
             )}
+
+            {activeProject && !compact && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleAssignToActive}
+                className="h-9 px-3.5 rounded-lg border border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>
+                  {activeProject.employerId === draft.id && !isCreatingNew
+                    ? isFa
+                      ? 'کارفرمای پروژه فعلی'
+                      : 'Active on Project'
+                    : isFa
+                      ? 'انتخاب برای پروژه فعلی'
+                      : 'Assign to Project'}
+                </span>
+              </button>
+            )}
+
             <button
               type="button"
+              data-testid="save-employer-btn"
               disabled={saving}
               onClick={handleSave}
-              className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+              className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors"
             >
               <Save className="w-3.5 h-3.5" />
-              <span>{saving ? (isFa ? 'در حال ذخیره...' : 'Saving...') : isFa ? 'ذخیره تغییرات' : 'Save Employer'}</span>
+              <span>
+                {saving
+                  ? isFa
+                    ? 'در حال ذخیره...'
+                    : 'Saving...'
+                  : compact && onAssignEmployer
+                    ? isFa
+                      ? 'ثبت و انتخاب کارفرما'
+                      : 'Save & Select'
+                    : isCreatingNew
+                      ? isFa
+                        ? 'ثبت کارفرمای جدید'
+                        : 'Create Employer'
+                      : isFa
+                        ? 'ذخیره تغییرات'
+                        : 'Save Changes'}
+              </span>
             </button>
           </div>
         </div>
 
-        {/* Studio Section Tabs (Merged Built-in & Uploaded Corporate Forms into Tab 2) */}
-        <div className="px-4 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)] flex flex-wrap gap-1">
-          {[
-            {
-              key: 'profile' as const,
-              icon: <Building2 className="w-3.5 h-3.5" />,
-              label: isFa ? '۱. اطلاعات پایه و گالری لوگوها' : '1. Identity & Multi-Logos',
-            },
-            {
-              key: 'forms' as const,
-              icon: <LayoutTemplate className="w-3.5 h-3.5" />,
-              label: isFa ? '۲. مدیریت، طراحی و آپلود فرم‌ها' : '2. Forms Design & Corporate Uploads',
-            },
-          ].map((tab) => (
+        {/* Clean 2-Tab Navigation (NO Form Designer!) */}
+        <div className="px-4 sm:px-5 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)]/50 flex items-center justify-between gap-3">
+          <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-[var(--bg-subtle)]">
             <button
-              key={tab.key}
               type="button"
-              data-testid={`studio-tab-${tab.key}`}
-              onClick={() => setStudioTab(tab.key)}
-              className={`h-10 px-3 text-xs font-semibold border-b-2 flex items-center gap-1.5 transition-colors ${
-                studioTab === tab.key
-                  ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]'
-                  : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              data-testid="employer-tab-profile"
+              onClick={() => setActiveSection('profile')}
+              className={`h-8 px-3.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap ${
+                activeSection === 'profile'
+                  ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
-              {tab.icon}
-              <span>{tab.label}</span>
+              {isFa ? '۱. مشخصات و لوگوی کارفرما' : '1. Employer Profile & Logo'}
             </button>
-          ))}
+            <button
+              type="button"
+              data-testid="employer-tab-forms"
+              onClick={() => setActiveSection('forms')}
+              className={`h-8 px-3.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                activeSection === 'forms'
+                  ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <span>
+                {isFa ? '۲. آپلود و تعریف فرم‌ها' : '2. Upload & Define Forms'}
+              </span>
+              {uploadedForms.length > 0 && (
+                <span className="tabular-nums opacity-75">({uploadedForms.length})</span>
+              )}
+            </button>
+          </div>
         </div>
 
-        {/* Tab 1: Base Identity + Multi-Logo Gallery */}
-        {studioTab === 'profile' && (
-          <div className="p-5 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'نام کارفرما / نیروگاه (فارسی) *' : 'Employer Name (FA) *'}
-                </label>
-                <input
-                  type="text"
-                  value={draft.nameFa}
-                  onChange={(e) => patchDraft((p) => ({ ...p, nameFa: e.target.value }))}
-                  placeholder={isFa ? 'مثال: شرکت تولید نیروی برق...' : 'Employer Name'}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'نام لاتین کارفرما (اختیاری)' : 'Employer Name (EN)'}
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={draft.nameEn || ''}
-                  onChange={(e) => patchDraft((p) => ({ ...p, nameEn: e.target.value }))}
-                  placeholder="Power Generation Co."
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'نام کوتاه (در امضاها و خلاصه‌ها)' : 'Short Name'}
-                </label>
-                <input
-                  type="text"
-                  value={draft.shortName}
-                  onChange={(e) => patchDraft((p) => ({ ...p, shortName: e.target.value }))}
-                  placeholder={isFa ? 'نام کوتاه کارفرما' : 'Short Name'}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'عنوان کامل شرکت در سربرگ فرم‌ها (فارسی)' : 'Header Full Company Title (FA)'}
-                </label>
-                <input
-                  type="text"
-                  value={draft.companyFullName}
-                  onChange={(e) => patchDraft((p) => ({ ...p, companyFullName: e.target.value }))}
-                  placeholder={isFa ? 'عنوان رسمی شرکت کارفرما در بالای تمام برگه‌های چاپی' : 'Official Header Title'}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'عنوان کامل انگلیسی در سربرگ' : 'Header Title (EN)'}
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={draft.companyFullNameEn || ''}
-                  onChange={(e) => patchDraft((p) => ({ ...p, companyFullNameEn: e.target.value }))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'پیشوند کد فرم‌ها (اختیاری)' : 'Document Code Prefix'}
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={draft.docCodePrefix || ''}
-                  onChange={(e) => patchDraft((p) => ({ ...p, docCodePrefix: e.target.value }))}
-                  placeholder="PP-WH-FQP"
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'زیرعنوان سیستم مدیریت (IMS / ISO)' : 'Management System Subtitle'}
-                </label>
-                <input
-                  type="text"
-                  value={draft.imsSubtitle || ''}
-                  onChange={(e) => patchDraft((p) => ({ ...p, imsSubtitle: e.target.value }))}
-                  placeholder={isFa ? 'مثال: سیستم مدیریت یکپارچه / کنترل پروژه' : 'IMS / ISO Header'}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'کد / شماره قرارداد مرجع' : 'Contract / Badge Ref'}
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={draft.contractRef || ''}
-                  onChange={(e) => patchDraft((p) => ({ ...p, contractRef: e.target.value }))}
-                  placeholder="CNT-403-01"
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'نشانی نیروگاه / کارفرما' : 'Plant Address'}
-                </label>
-                <input
-                  type="text"
-                  value={draft.address || ''}
-                  onChange={(e) => patchDraft((p) => ({ ...p, address: e.target.value }))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'تلفن / فکس (فرمت ایران)' : 'Phone (Iran Format)'}
-                </label>
-                <input
-                  type="tel"
-                  dir="ltr"
-                  data-testid="employer-phone-input"
-                  value={draft.phone || ''}
-                  placeholder="021-88776655 / 0912-345-6789"
-                  onChange={(e) => {
-                    const sanitized = sanitizeIranPhoneInput(e.target.value);
-                    patchDraft((p) => ({ ...p, phone: sanitized }));
-                    if (phoneError) {
-                      const chk = validateAndFormatIranPhone(sanitized);
-                      if (chk.valid) setPhoneError('');
-                    }
-                  }}
-                  onBlur={() => {
-                    const chk = validateAndFormatIranPhone(draft.phone || '');
-                    if (!chk.valid) {
-                      setPhoneError(isFa ? chk.errorFa || '' : chk.errorEn || '');
-                    } else {
-                      setPhoneError('');
-                      if (chk.formatted !== (draft.phone || '')) {
-                        patchDraft((p) => ({ ...p, phone: chk.formatted }));
-                      }
-                    }
-                  }}
-                  className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono ${
-                    phoneError ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)]'
-                  }`}
-                />
-                {phoneError && (
-                  <div data-testid="employer-phone-error" className="text-[10.5px] text-[var(--status-danger)] mt-1">
-                    {phoneError}
-                  </div>
-                )}
-              </div>
-              <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] pt-5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(draft.hideDocCodes)}
-                  onChange={(e) => patchDraft((p) => ({ ...p, hideDocCodes: e.target.checked }))}
-                />
-                <span>{isFa ? 'مخفی‌سازی پیش‌فرض کد مدرک در فرم‌ها' : 'Hide doc codes by default'}</span>
-              </label>
-            </div>
-
-            {/* Signatory Role Labels */}
-            <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
-              <div className="text-xs font-bold text-[var(--text-primary)]">
-                {isFa ? 'عناوین پیش‌فرض واحدهای امضاءکننده کارفرما:' : 'Default Signatory Unit Labels:'}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                {[
-                  { key: 'inspectorLabel' as const, label: isFa ? 'عنوان نماینده کارفرما' : 'Employer Rep' },
-                  { key: 'equipmentSupplyLabel' as const, label: isFa ? 'عنوان واحد تأمین تجهیزات' : 'Supply Unit' },
-                  { key: 'techOfficeLabel' as const, label: isFa ? 'عنوان دفتر فنی / کنترل کیفیت' : 'Tech Office' },
-                  { key: 'installationLabel' as const, label: isFa ? 'عنوان واحد نصب / بهره‌برداری' : 'Installation Dept' },
-                  { key: 'securityLabel' as const, label: isFa ? 'عنوان انتظامات / حراست' : 'Security Dept' },
-                ].map((item) => (
-                  <div key={item.key}>
-                    <label className="block text-[10.5px] text-[var(--text-muted)] mb-1">{item.label}</label>
-                    <input
-                      type="text"
-                      value={draft[item.key] || ''}
-                      onChange={(e) => patchDraft((p) => ({ ...p, [item.key]: e.target.value }))}
-                      className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Multi-Logo Gallery Section */}
-            <div className="pt-4 border-t border-[var(--border-subtle)] space-y-3">
+        {/* TAB 1: Employer Profile, Contact Details & Logo */}
+        {activeSection === 'profile' && (
+          <div className="p-4 sm:p-6 space-y-6">
+            {/* Logo Display / Upload Section */}
+            <div className="pb-6 border-b border-[var(--border-subtle)] space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h4 className="text-xs font-bold text-[var(--text-primary)]">
-                    {isFa ? 'گالری لوگوهای کارفرما (امکان افزودن یک یا چند لوگو)' : 'Employer Multi-Logo Gallery'}
+                    {isFa ? 'لوگوی کارفرما (نمایش در بخش‌های رابط کاربری)' : 'Employer Logo (App UI Display)'}
                   </h4>
-                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-relaxed">
                     {isFa
-                      ? 'می‌توانید چند لوگوی مختلف (لوگوی شرکت کارفرما، لوگوی نیروگاه، لوگوی مشاور، لوگوی استاندارد ISO و...) آپلود کنید و برای هر فرم مشخص کنید از کدام لوگو(ها) استفاده کند.'
-                      : 'Upload multiple logos (corporate, plant, consultant, ISO) and choose which ones appear on each form.'}
+                      ? 'این لوگو صرفاً جهت استفاده در بخش‌هایی از برنامه است که نیاز به نمایش لوگو دارند؛ لوگوی مخصوص هر فرم به‌صورت جداگانه در داخل خود فرم‌ها گنجانده می‌شود.'
+                      : 'Used strictly in UI sections displaying employer branding; operational forms embed their own dedicated headers/logos.'}
                   </p>
                 </div>
-                <label className="h-9 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer">
-                  <ImagePlus className="w-4 h-4" />
-                  <span>{isFa ? 'آپلود لوگو (تکی یا چندتایی)' : 'Upload Logo(s)'}</span>
-                  <input
-                    type="file"
-                    data-testid="employer-logo-upload-input"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || []);
-                      e.currentTarget.value = '';
-                      void handleUploadLogos(files);
-                    }}
-                  />
-                </label>
+
+                {!isDraftBuiltIn && (
+                  <label className="h-9 px-3.5 rounded-lg border border-dashed border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors">
+                    <ImagePlus className="w-4 h-4" />
+                    <span>{isFa ? 'آپلود لوگوی کارفرما' : 'Upload Logo'}</span>
+                    <input
+                      type="file"
+                      data-testid="employer-logo-upload-input"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        e.currentTarget.value = '';
+                        void handleUploadLogos(files);
+                      }}
+                    />
+                  </label>
+                )}
               </div>
 
               {draft.logos.length === 0 ? (
-                <div className="p-6 rounded-xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-canvas)] text-center text-xs text-[var(--text-muted)]">
+                <div className="p-5 rounded-xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-canvas)]/50 text-center text-xs text-[var(--text-muted)]">
                   {isFa
-                    ? 'هنوز لوگویی برای این کارفرما بارگذاری نشده است. می‌توانید یک یا چند تصویر لوگو (PNG، SVG، JPG) انتخاب کنید.'
-                    : 'No logos uploaded yet.'}
+                    ? 'هنوز لوگویی برای این کارفرما بارگذاری نشده است. می‌توانید تصویر لوگوی شرکت را با فرمت PNG، JPG یا SVG آپلود کنید.'
+                    : 'No logo uploaded yet. Upload a PNG, JPG, or SVG company logo.'}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="flex flex-wrap gap-3">
                   {draft.logos.map((logo) => (
                     <div
                       key={logo.id}
-                      className={`p-3 rounded-xl border flex flex-col gap-2.5 ${
+                      className={`p-3 rounded-xl border bg-[var(--bg-canvas)]/60 flex items-center gap-3 ${
                         logo.isDefault
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]/50'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]'
+                          ? 'border-[var(--accent-primary)]'
+                          : 'border-[var(--border-subtle)]'
                       }`}
                     >
-                      <div className="h-24 rounded-lg border border-[var(--border-subtle)] bg-white flex items-center justify-center p-2 overflow-hidden">
+                      <div className="h-14 w-36 rounded-lg border border-[var(--border-subtle)] bg-white p-2 flex items-center justify-center overflow-hidden shrink-0">
                         <img
                           src={logo.dataUrl}
                           alt={logo.label}
-                          className="max-h-20 max-w-full object-contain"
+                          referrerPolicy="no-referrer"
+                          className="max-h-full max-w-full object-contain"
                         />
                       </div>
-                      <input
-                        type="text"
-                        value={logo.label}
-                        onChange={(e) =>
-                          patchDraft((prev) => ({
-                            ...prev,
-                            logos: prev.logos.map((l) =>
-                              l.id === logo.id ? { ...l, label: e.target.value } : l,
-                            ),
-                          }))
-                        }
-                        placeholder={isFa ? 'عنوان لوگو (مثلاً: لوگوی نیروگاه)' : 'Logo label'}
-                        className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-medium"
-                      />
-                      <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            patchDraft((prev) => ({
-                              ...prev,
-                              logos: prev.logos.map((l) => ({
-                                ...l,
-                                isDefault: l.id === logo.id,
-                              })),
-                            }))
-                          }
-                          className={`h-7 px-2 rounded-md text-[11px] font-semibold flex items-center gap-1 ${
-                            logo.isDefault
-                              ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
-                              : 'border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                          }`}
-                        >
-                          <Star className="w-3 h-3" />
-                          <span>{logo.isDefault ? (isFa ? 'پیش‌فرض' : 'Default') : isFa ? 'تنظیم پیش‌فرض' : 'Set Default'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            patchDraft((prev) => {
-                              const next = prev.logos.filter((l) => l.id !== logo.id);
-                              if (next.length > 0 && !next.some((l) => l.isDefault)) {
-                                next[0].isDefault = true;
-                              }
-                              return { ...prev, logos: next };
-                            })
-                          }
-                          className="p-1.5 rounded-md text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
-                          title={isFa ? 'حذف لوگو' : 'Delete logo'}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="text-xs font-semibold text-[var(--text-primary)] truncate max-w-[180px]">
+                          {logo.label}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px]">
+                          {isDraftBuiltIn ? (
+                            <span className="text-[var(--accent-primary)] font-medium flex items-center gap-1">
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              <span>{isFa ? 'لوگوی پیش‌فرض رسمی' : 'Official Built-in Logo'}</span>
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  patchDraft((p) => ({
+                                    ...p,
+                                    logos: p.logos.map((l) => ({ ...l, isDefault: l.id === logo.id })),
+                                  }))
+                                }
+                                className={`flex items-center gap-1 font-medium ${
+                                  logo.isDefault
+                                    ? 'text-[var(--accent-primary)]'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                                }`}
+                              >
+                                <Star className="w-3.5 h-3.5" />
+                                <span>{logo.isDefault ? (isFa ? 'اصلی' : 'Primary') : (isFa ? 'انتخاب اصلی' : 'Set Primary')}</span>
+                              </button>
+                              <span aria-hidden="true" className="text-[var(--border-strong)]">·</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  patchDraft((p) => {
+                                    const remaining = p.logos.filter((l) => l.id !== logo.id);
+                                    if (remaining.length > 0 && !remaining.some((l) => l.isDefault)) {
+                                      remaining[0].isDefault = true;
+                                    }
+                                    return { ...p, logos: remaining };
+                                  })
+                                }
+                                className="text-[var(--status-danger)] hover:underline"
+                              >
+                                {isFa ? 'حذف' : 'Remove'}
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Section 1: Company Identity */}
+            <div className="space-y-3.5">
+              <h4 className="text-xs font-bold text-[var(--text-primary)]">
+                {isFa ? 'مشخصات هویتی کارفرما' : 'Company Identity'}
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-3.5">
+                <div className="md:col-span-4">
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'نام کارفرما *' : 'Employer Name *'}
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="employer-name-fa-input"
+                    value={draft.nameFa}
+                    onChange={(e) => patchDraft((p) => ({ ...p, nameFa: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'نام کوتاه' : 'Short Name / Code'}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    data-testid="employer-short-name-input"
+                    value={draft.shortName}
+                    onChange={(e) => patchDraft((p) => ({ ...p, shortName: e.target.value, badgeCode: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'عنوان کامل فارسی' : 'Full Persian Title'}
+                  </label>
+                  <input
+                    type="text"
+                    value={draft.companyFullName}
+                    onChange={(e) => patchDraft((p) => ({ ...p, companyFullName: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'عنوان کامل انگلیسی' : 'Full English Title'}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={draft.companyFullNameEn || ''}
+                    onChange={(e) => patchDraft((p) => ({ ...p, companyFullNameEn: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Section 2: Management System & Document Coding */}
+            <div className="pt-5 border-t border-[var(--border-subtle)] space-y-3.5">
+              <h4 className="text-xs font-bold text-[var(--text-primary)]">
+                {isFa ? 'سیستم مدیریت و کدگذاری فرم‌ها' : 'Management System & Document Coding'}
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'پیشوند کد فرم‌ها' : 'Form Code Prefix'}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    data-testid="employer-doc-prefix-input"
+                    value={draft.docCodePrefix || ''}
+                    onChange={(e) => patchDraft((p) => ({ ...p, docCodePrefix: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'زیرعنوان سیستم مدیریت' : 'Management System Subtitle'}
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="employer-ims-subtitle-input"
+                    value={draft.imsSubtitle || ''}
+                    onChange={(e) => patchDraft((p) => ({ ...p, imsSubtitle: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Section 3: Contact Info & Social Links */}
+            <div className="pt-5 border-t border-[var(--border-subtle)] space-y-3.5">
+              <h4 className="text-xs font-bold text-[var(--text-primary)]">
+                {isFa ? 'اطلاعات تماس و شبکه‌های اجتماعی' : 'Contact Information & Social Channels'}
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                <div className="md:col-span-2 lg:col-span-3">
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                    <span>{isFa ? 'آدرس' : 'Address'}</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={draft.address || ''}
+                    onChange={(e) => patchDraft((p) => ({ ...p, address: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                {/* Phone */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    <Phone className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                    <span>{isFa ? 'تلفن' : 'Phone'}</span>
+                  </label>
+                  {isDraftBuiltIn ? (
+                    <input
+                      type="text"
+                      value={draft.phone || ''}
+                      onChange={(e) => patchDraft((p) => ({ ...p, phone: e.target.value }))}
+                      className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                    />
+                  ) : (
+                    <IranPhoneSplitInput
+                      value={draft.phone || ''}
+                      isFa={isFa}
+                      testIdPrefix="employer-phone"
+                      hasError={Boolean(fieldErrors.phone)}
+                      onLeadingZeroAttempt={() =>
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          phone: isFa
+                            ? 'کد استان باید ۲ رقم و بدون صفر ابتدایی باشد.'
+                            : 'Province code must be 2 digits without a leading zero.',
+                        }))
+                      }
+                      onChange={(nextVal) => {
+                        patchDraft((p) => ({ ...p, phone: nextVal }));
+                        if (fieldErrors.phone) setFieldErrors((prev) => ({ ...prev, phone: undefined }));
+                      }}
+                      onBlurValidate={() => {
+                        const parts = parseIranFixedPhoneParts(draft.phone);
+                        const res = validateIranFixedPhoneParts(parts.provinceCode, parts.subscriber, 'تلفن', 'Phone');
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          phone: res.valid ? undefined : isFa ? res.errorFa : res.errorEn,
+                        }));
+                      }}
+                    />
+                  )}
+                  {fieldErrors.phone && (
+                    <div className="text-[11px] text-[var(--status-danger)] mt-1">{fieldErrors.phone}</div>
+                  )}
+                </div>
+
+                {/* Postal Code */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'کدپستی' : 'Postal Code'}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={10}
+                    data-testid="employer-postal-code-input"
+                    value={draft.postalCode || ''}
+                    onChange={(e) => {
+                      const val = isDraftBuiltIn ? e.target.value : sanitizeDigitsOnly(e.target.value, 10);
+                      patchDraft((p) => ({ ...p, postalCode: val }));
+                      if (fieldErrors.postalCode) setFieldErrors((prev) => ({ ...prev, postalCode: undefined }));
+                    }}
+                    onBlur={() => {
+                      if (isDraftBuiltIn) return;
+                      const res = validatePostalCode(draft.postalCode);
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        postalCode: res.valid ? undefined : isFa ? res.errorFa : res.errorEn,
+                      }));
+                    }}
+                    className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono tabular-nums text-[var(--text-primary)] focus:outline-none ${
+                      fieldErrors.postalCode
+                        ? 'border-[var(--status-danger)]'
+                        : 'border-[var(--border-subtle)] focus:border-[var(--accent-primary)]'
+                    }`}
+                  />
+                  {fieldErrors.postalCode && (
+                    <div className="text-[11px] text-[var(--status-danger)] mt-1">{fieldErrors.postalCode}</div>
+                  )}
+                </div>
+
+                {/* Fax */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'فکس' : 'Fax'}
+                  </label>
+                  {isDraftBuiltIn ? (
+                    <input
+                      type="text"
+                      value={draft.fax || ''}
+                      onChange={(e) => patchDraft((p) => ({ ...p, fax: e.target.value }))}
+                      className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                    />
+                  ) : (
+                    <IranPhoneSplitInput
+                      value={draft.fax || ''}
+                      isFa={isFa}
+                      testIdPrefix="employer-fax"
+                      hasError={Boolean(fieldErrors.fax)}
+                      onLeadingZeroAttempt={() =>
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          fax: isFa
+                            ? 'کد استان فکس باید ۲ رقم و بدون صفر ابتدایی باشد.'
+                            : 'Fax province code must be 2 digits without a leading zero.',
+                        }))
+                      }
+                      onChange={(nextVal) => {
+                        patchDraft((p) => ({ ...p, fax: nextVal }));
+                        if (fieldErrors.fax) setFieldErrors((prev) => ({ ...prev, fax: undefined }));
+                      }}
+                      onBlurValidate={() => {
+                        const parts = parseIranFixedPhoneParts(draft.fax);
+                        const res = validateIranFixedPhoneParts(parts.provinceCode, parts.subscriber, 'فکس', 'Fax');
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          fax: res.valid ? undefined : isFa ? res.errorFa : res.errorEn,
+                        }));
+                      }}
+                    />
+                  )}
+                  {fieldErrors.fax && (
+                    <div className="text-[11px] text-[var(--status-danger)] mt-1">{fieldErrors.fax}</div>
+                  )}
+                </div>
+
+                {/* Email */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    <Mail className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                    <span>{isFa ? 'پست الکترونیکی' : 'Email'}</span>
+                  </label>
+                  <input
+                    type="email"
+                    dir="ltr"
+                    data-testid="employer-email-input"
+                    value={draft.email || ''}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\s+/g, '');
+                      patchDraft((p) => ({ ...p, email: val }));
+                      if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                    }}
+                    onBlur={() => {
+                      if (isDraftBuiltIn) return;
+                      const res = validateEmail(draft.email);
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        email: res.valid ? undefined : isFa ? res.errorFa : res.errorEn,
+                      }));
+                    }}
+                    className={`w-full h-9 px-3 rounded-lg border bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] focus:outline-none ${
+                      fieldErrors.email
+                        ? 'border-[var(--status-danger)]'
+                        : 'border-[var(--border-subtle)] focus:border-[var(--accent-primary)]'
+                    }`}
+                  />
+                  {fieldErrors.email && (
+                    <div className="text-[11px] text-[var(--status-danger)] mt-1">{fieldErrors.email}</div>
+                  )}
+                </div>
+
+                {/* Instagram */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    <Globe className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                    <span>{isFa ? 'اینستاگرام' : 'Instagram'}</span>
+                  </label>
+                  <div
+                    dir="ltr"
+                    className={`w-full h-9 rounded-lg border bg-[var(--bg-canvas)] flex items-center overflow-hidden transition-colors focus-within:border-[var(--accent-primary)] ${
+                      fieldErrors.instagram ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)]'
+                    }`}
+                  >
+                    <span className="h-full px-2.5 bg-[var(--bg-subtle)]/80 border-r border-[var(--border-subtle)] text-xs font-mono font-semibold text-[var(--text-muted)] flex items-center select-none shrink-0">
+                      @
+                    </span>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      maxLength={30}
+                      data-testid="employer-instagram-input"
+                      value={draft.instagram || ''}
+                      onChange={(e) => {
+                        const val = isDraftBuiltIn ? e.target.value : sanitizeInstagramInput(e.target.value);
+                        patchDraft((p) => ({ ...p, instagram: val }));
+                        if (fieldErrors.instagram) setFieldErrors((prev) => ({ ...prev, instagram: undefined }));
+                      }}
+                      onBlur={() => {
+                        if (isDraftBuiltIn) return;
+                        const res = validateInstagramUsername(draft.instagram);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          instagram: res.valid ? undefined : isFa ? res.errorFa : res.errorEn,
+                        }));
+                      }}
+                      className="flex-1 min-w-0 h-full px-2.5 bg-transparent text-xs font-mono text-[var(--text-primary)] focus:outline-none"
+                    />
+                  </div>
+                  {fieldErrors.instagram && (
+                    <div className="text-[11px] text-[var(--status-danger)] mt-1">{fieldErrors.instagram}</div>
+                  )}
+                </div>
+
+                {/* LinkedIn */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    <Globe className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                    <span>{isFa ? 'لینکدین' : 'LinkedIn'}</span>
+                  </label>
+                  <div
+                    dir="ltr"
+                    className={`w-full h-9 rounded-lg border bg-[var(--bg-canvas)] flex items-center overflow-hidden transition-colors focus-within:border-[var(--accent-primary)] ${
+                      fieldErrors.linkedin ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)]'
+                    }`}
+                  >
+                    <span className="h-full px-2.5 bg-[var(--bg-subtle)]/80 border-r border-[var(--border-subtle)] text-xs font-mono font-semibold text-[var(--text-muted)] flex items-center select-none shrink-0">
+                      in/
+                    </span>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      maxLength={100}
+                      data-testid="employer-linkedin-input"
+                      value={draft.linkedin || ''}
+                      onChange={(e) => {
+                        const val = isDraftBuiltIn ? e.target.value : sanitizeLinkedInInput(e.target.value);
+                        patchDraft((p) => ({ ...p, linkedin: val }));
+                        if (fieldErrors.linkedin) setFieldErrors((prev) => ({ ...prev, linkedin: undefined }));
+                      }}
+                      onBlur={() => {
+                        if (isDraftBuiltIn) return;
+                        const res = validateLinkedInUsername(draft.linkedin);
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          linkedin: res.valid ? undefined : isFa ? res.errorFa : res.errorEn,
+                        }));
+                      }}
+                      className="flex-1 min-w-0 h-full px-2.5 bg-transparent text-xs font-mono text-[var(--text-primary)] focus:outline-none"
+                    />
+                  </div>
+                  {fieldErrors.linkedin && (
+                    <div className="text-[11px] text-[var(--status-danger)] mt-1">{fieldErrors.linkedin}</div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Tab 2: Unified Forms Management (Built-In Operational Designer + Uploaded Corporate Forms) */}
-        {studioTab === 'forms' && (
-          <div className="p-5 space-y-5">
-            {/* Unified Mode Switcher inside Tab 2 */}
-            <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]">
-              <div className="inline-flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  data-testid="forms-mode-builtin"
-                  onClick={() => setFormsMode('builtin')}
-                  className={`h-9 px-3.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors ${
-                    formsMode === 'builtin'
-                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] shadow-xs'
-                      : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
-                  }`}
+        {/* TAB 2: Define & Upload Employer Forms (9 Operational Sections Matrix) */}
+        {activeSection === 'forms' && (
+          <div className="p-4 sm:p-6 space-y-5">
+            {(() => {
+              const formSummary = getEmployerFormSectionsSummary(draft);
+              return (
+                <div
+                  data-testid="employer-9-sections-grid"
+                  className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 p-4 space-y-3"
                 >
-                  <LayoutTemplate className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'طراحی و لوگوی فرم‌های عملیاتی' : 'Operational Forms Designer'}</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="forms-mode-uploaded"
-                  onClick={() => setFormsMode('uploaded')}
-                  className={`h-9 px-3.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors ${
-                    formsMode === 'uploaded'
-                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] shadow-xs'
-                      : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  <FileUp className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'فرم‌های آپلودی شرکتی' : 'Uploaded Company Forms'}</span>
-                  {uploadedForms.length > 0 && (
-                    <span className="px-1.5 py-0.5 rounded bg-black/15 text-[10px] font-mono">
-                      {uploadedForms.length}
-                    </span>
-                  )}
-                </button>
-              </div>
-              <div className="text-[11px] text-[var(--text-muted)]">
-                {formsMode === 'builtin'
-                  ? isFa
-                    ? 'سفارشی‌سازی چیدمان، لوگو، امضاها و ستون‌های ۱۱ فرم استاندارد سامانه'
-                    : 'Customize logos, signatures, and columns for built-in forms'
-                  : isFa
-                    ? 'آپلود فرم رسمی شرکت، اتصال چندمنبعی به بخش‌های سامانه و تطبیق خودکار فرمول‌ها'
-                    : 'Upload official corporate files with multi-source data binding and formula detection'}
-              </div>
-            </div>
-
-            {formsMode === 'builtin' && (
-              <div className="space-y-5">
-            {/* Built-in Form Selector Strip */}
-            <div className="flex flex-wrap gap-1.5">
-              {BUILT_IN_FORM_DEFINITIONS.map((def) => {
-                const isCustomized = Boolean(draft.formTemplates?.[def.key]);
-                const active = selectedFormKey === def.key;
-                return (
-                  <button
-                    key={def.key}
-                    type="button"
-                    onClick={() => setSelectedFormKey(def.key)}
-                    className={`h-8 px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-colors ${
-                      active
-                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
-                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                    }`}
-                  >
-                    <span>{isFa ? def.titleFa : def.titleEn}</span>
-                    {isCustomized && (
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          active ? 'bg-white' : 'bg-[var(--accent-primary)]'
-                        }`}
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
-              {/* Customization Controls */}
-              <div className="xl:col-span-6 space-y-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-4">
-                <div className="flex items-center justify-between gap-2 pb-2 border-b border-[var(--border-subtle)]">
-                  <span className="text-xs font-bold text-[var(--text-primary)]">
-                    {isFa ? builtInDef.titleFa : builtInDef.titleEn}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={resetBuiltInTemplate}
-                    className="h-7 px-2 rounded-md border border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] flex items-center gap-1"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>{isFa ? 'بازنشانی فرم' : 'Reset'}</span>
-                  </button>
-                </div>
-
-                {/* Logo Selection for this Specific Form */}
-                <div className="space-y-2">
-                  <label className="block text-[11px] font-bold text-[var(--text-primary)]">
-                    {isFa ? 'انتخاب لوگوی اول (اصلی) برای این فرم:' : 'Primary Logo for This Form:'}
-                  </label>
-                  {logoSelectorGrid(currentTpl.primaryLogoId, (val) =>
-                    patchBuiltInTemplate({ primaryLogoId: val }),
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'چیدمان سربرگ فرم' : 'Header Layout'}
-                    </label>
-                    <select
-                      value={currentTpl.headerLayout || builtInDef.defaultHeaderLayout}
-                      onChange={(e) =>
-                        patchBuiltInTemplate({ headerLayout: e.target.value as FormHeaderLayout })
-                      }
-                      className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                    >
-                      {LAYOUT_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {isFa ? opt.labelFa : opt.labelEn}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'جهت کاغذ چاپ (A4)' : 'Paper Orientation'}
-                    </label>
-                    <select
-                      value={currentTpl.orientation || builtInDef.defaultOrientation}
-                      onChange={(e) =>
-                        patchBuiltInTemplate({
-                          orientation: e.target.value as 'portrait' | 'landscape',
-                        })
-                      }
-                      className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                    >
-                      <option value="portrait">{isFa ? 'عمودی' : 'Portrait'}</option>
-                      <option value="landscape">{isFa ? 'افقی' : 'Landscape'}</option>
-                    </select>
-                  </div>
-                </div>
-
-                {(currentTpl.headerLayout || builtInDef.defaultHeaderLayout) === 'split_dual_logo' && (
-                  <div className="space-y-2 p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]">
-                    <label className="block text-[11px] font-bold text-[var(--text-primary)]">
-                      {isFa ? 'انتخاب لوگوی دوم (سمت مقابل):' : 'Secondary Logo:'}
-                    </label>
-                    {logoSelectorGrid(
-                      currentTpl.secondaryLogoId || '__none__',
-                      (val) => patchBuiltInTemplate({ secondaryLogoId: val }),
-                      false,
-                    )}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'عنوان فارسی اختصاصی فرم' : 'Custom Title (FA)'}
-                    </label>
-                    <input
-                      type="text"
-                      value={currentTpl.titleFa ?? ''}
-                      placeholder={builtInDef.titleFa}
-                      onChange={(e) => patchBuiltInTemplate({ titleFa: e.target.value })}
-                      className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'عنوان انگلیسی فرم' : 'Custom Title (EN)'}
-                    </label>
-                    <input
-                      type="text"
-                      dir="ltr"
-                      value={currentTpl.titleEn ?? ''}
-                      placeholder={builtInDef.titleEn}
-                      onChange={(e) => patchBuiltInTemplate({ titleEn: e.target.value })}
-                      className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'کد اختصاصی این فرم' : 'Custom Doc Code'}
-                    </label>
-                    <input
-                      type="text"
-                      dir="ltr"
-                      value={currentTpl.docCode ?? ''}
-                      placeholder={resolvedFormDesign.docCode || 'FQP-01'}
-                      onChange={(e) => patchBuiltInTemplate({ docCode: e.target.value })}
-                      className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'شماره بازنگری' : 'Revision'}
-                    </label>
-                    <input
-                      type="text"
-                      dir="ltr"
-                      value={currentTpl.revisionText ?? ''}
-                      placeholder="Rev.02"
-                      onChange={(e) => patchBuiltInTemplate({ revisionText: e.target.value })}
-                      className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(currentTpl.hideDocCode)}
-                      onChange={(e) => patchBuiltInTemplate({ hideDocCode: e.target.checked })}
-                    />
-                    <span>{isFa ? 'مخفی‌سازی کد مدرک برای این فرم' : 'Hide doc code'}</span>
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] text-[var(--text-muted)]">
-                      {isFa ? 'رنگ کادر:' : 'Border:'}
-                    </span>
-                    {ACCENT_PRESETS.map((col) => (
-                      <button
-                        key={col}
-                        type="button"
-                        onClick={() => patchBuiltInTemplate({ accentColor: col })}
-                        style={{ backgroundColor: col }}
-                        className={`w-5 h-5 rounded border ${
-                          (currentTpl.accentColor || '#000000') === col
-                            ? 'ring-2 ring-offset-1 ring-[var(--accent-primary)]'
-                            : 'border-slate-300'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Intro / Footer Texts */}
-                <div className="space-y-2">
-                  <div>
-                    <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'متن شرح / صورتجلسه / تعهدنامه فرم' : 'Body / Declaration Text'}
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={currentTpl.introText ?? ''}
-                      placeholder={builtInDef.defaultIntroText || ''}
-                      onChange={(e) => patchBuiltInTemplate({ introText: e.target.value })}
-                      className="w-full p-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                      {isFa ? 'متن رونوشت / پاورقی پایین فرم' : 'Footer Copy / Notes'}
-                    </label>
-                    <input
-                      type="text"
-                      value={currentTpl.footerCopyText ?? ''}
-                      placeholder={builtInDef.defaultFooterCopyText || ''}
-                      onChange={(e) => patchBuiltInTemplate({ footerCopyText: e.target.value })}
-                      className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                    />
-                  </div>
-                </div>
-
-                {/* Extra Header Meta Fields */}
-                <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-[var(--text-primary)]">
-                      {isFa ? 'فیلدهای متادیتای اضافی سربرگ:' : 'Extra Metadata Strip Fields:'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        patchBuiltInTemplate({
-                          extraMetaFields: [
-                            ...(currentTpl.extraMetaFields || []),
-                            { id: `meta-${Date.now()}`, label: isFa ? 'فیلد جدید' : 'New Field', defaultValue: '' },
-                          ],
-                        })
-                      }
-                      className="h-6 px-2 rounded border border-[var(--border-subtle)] text-[10.5px] font-semibold flex items-center gap-1 hover:bg-[var(--bg-subtle)]"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>{isFa ? 'افزودن فیلد' : 'Add Field'}</span>
-                    </button>
-                  </div>
-                  {(currentTpl.extraMetaFields || []).map((f, idx) => (
-                    <div key={f.id} className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={f.label}
-                        onChange={(e) =>
-                          patchBuiltInTemplate({
-                            extraMetaFields: (currentTpl.extraMetaFields || []).map((item, i) =>
-                              i === idx ? { ...item, label: e.target.value } : item,
-                            ),
-                          })
-                        }
-                        placeholder={isFa ? 'عنوان فیلد' : 'Label'}
-                        className="flex-1 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                      />
-                      <input
-                        type="text"
-                        value={f.defaultValue || ''}
-                        onChange={(e) =>
-                          patchBuiltInTemplate({
-                            extraMetaFields: (currentTpl.extraMetaFields || []).map((item, i) =>
-                              i === idx ? { ...item, defaultValue: e.target.value } : item,
-                            ),
-                          })
-                        }
-                        placeholder={isFa ? 'مقدار پیش‌فرض (اختیاری)' : 'Default value'}
-                        className="flex-1 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          patchBuiltInTemplate({
-                            extraMetaFields: (currentTpl.extraMetaFields || []).filter((_, i) => i !== idx),
-                          })
-                        }
-                        className="p-1 text-[var(--status-danger)]"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-bold text-[var(--text-primary)] flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                        <span>
+                          {isFa
+                            ? `آپلود و تعریف فرم‌های ۹ بخش عملیاتی (${draft.nameFa || 'کارفرمای جدید'})`
+                            : `Upload & Define Forms for 9 Operational Sections (${draft.nameFa || 'New Employer'})`}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                        {isFa
+                          ? 'برای فعال‌سازی دسترسی به هر یک از ۹ بخش فرم‌های سامانه، فایل فرم مخصوص همان بخش را بارگذاری کنید تا بلافاصله فعال شود.'
+                          : 'Upload each section’s form file below to immediately unlock access to that operational section.'}
+                      </p>
                     </div>
-                  ))}
-                </div>
+                    <span className="text-xs font-bold text-[var(--accent-primary)] tabular-nums shrink-0">
+                      {isFa
+                        ? `${formSummary.unlockedCount} از ${formSummary.totalCount} بخش فعال`
+                        : `${formSummary.unlockedCount} / ${formSummary.totalCount} active`}
+                    </span>
+                  </div>
 
-                {/* Columns Visibility & Labels */}
-                <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
-                  <span className="block text-[11px] font-bold text-[var(--text-primary)]">
-                    {isFa ? 'ستون‌های جدول فرم (نام سفارشی و نمایش/عدم نمایش):' : 'Table Columns Customization:'}
-                  </span>
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto pe-1">
-                    {builtInDef.defaultColumns.map((col) => {
-                      const ov = currentTpl.columnOverrides?.find((c) => c.key === col.key);
-                      const visible = ov ? ov.visible !== false : true;
-                      const customLabel = ov?.label ?? '';
-                      const updateCol = (nextLabel: string, nextVis: boolean) => {
-                        const existing = currentTpl.columnOverrides || [];
-                        const filtered = existing.filter((c) => c.key !== col.key);
-                        patchBuiltInTemplate({
-                          columnOverrides: [...filtered, { key: col.key, label: nextLabel, visible: nextVis }],
-                        });
-                      };
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {formSummary.sections.map((sec) => {
+                      const isHighlighted = highlightedFormSection === sec.sectionKey;
+                      const primaryUploaded = sec.uploadedForms[0];
                       return (
-                        <div key={col.key} className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={visible}
-                            onChange={(e) => updateCol(customLabel, e.target.checked)}
-                          />
-                          <input
-                            type="text"
-                            value={customLabel}
-                            placeholder={col.label}
-                            onChange={(e) => updateCol(e.target.value, visible)}
-                            className="flex-1 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                          />
+                        <div
+                          key={sec.sectionKey}
+                          data-testid={`employer-section-slot-${sec.sectionKey}`}
+                          className={`p-3 rounded-xl border transition-colors flex flex-col justify-between gap-2.5 ${
+                            isHighlighted
+                              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]/50 ring-1 ring-[var(--accent-primary)]/30'
+                              : sec.hasAccess
+                                ? 'border-emerald-500/35 bg-[var(--bg-surface)]'
+                                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 space-y-0.5">
+                              <div className="text-[11.5px] font-bold text-[var(--text-primary)] leading-snug">
+                                {sec.meta.order}. {isFa ? sec.meta.titleFa : sec.meta.titleEn}
+                              </div>
+                              <div className="text-[10.5px] text-[var(--text-muted)] truncate">
+                                {sec.mode === 'uploaded' && primaryUploaded
+                                  ? primaryUploaded.fileName
+                                  : sec.mode === 'builtin'
+                                    ? isFa
+                                      ? 'فرم پیش‌فرض سامانه فعال است'
+                                      : 'Built-in default form active'
+                                    : isFa
+                                      ? 'فرمی بارگذاری نشده (بخش قفل است)'
+                                      : 'No form uploaded (section locked)'}
+                              </div>
+                            </div>
+                            {sec.hasAccess ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                            ) : (
+                              <Lock className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 mt-0.5" />
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-[var(--border-subtle)]/70">
+                            <label className="h-7 px-2.5 rounded-lg border border-dashed border-[var(--accent-primary)]/70 text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer transition-colors">
+                              <FileUp className="w-3.5 h-3.5 shrink-0" />
+                              <span>
+                                {sec.mode === 'uploaded'
+                                  ? isFa
+                                    ? 'افزودن / تعویض فرم'
+                                    : 'Add / Replace'
+                                  : isFa
+                                    ? 'آپلود فرم'
+                                    : 'Upload Form'}
+                              </span>
+                              <input
+                                type="file"
+                                data-testid={`section-upload-input-${sec.sectionKey}`}
+                                accept=".xlsx,.xls,.xlsm,.csv,.docx,.doc,.pdf,.png,.jpg,.jpeg,.webp,.svg"
+                                disabled={uploadingForm}
+                                className="hidden"
+                                onChange={(e) => {
+                                  const files = Array.from(e.target.files || []);
+                                  e.currentTarget.value = '';
+                                  void handleUploadCompanyFormFiles(files, sec.sectionKey);
+                                }}
+                              />
+                            </label>
+
+                            <div className="flex items-center gap-1.5">
+                              {primaryUploaded && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedUploadedFormId(primaryUploaded.id)}
+                                  className="h-7 px-2 rounded-lg text-[10.5px] font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]"
+                                >
+                                  {isFa ? 'تنظیمات' : 'Edit'}
+                                </button>
+                              )}
+                              {sec.hasAccess && onOpenFormSection && !isCreatingNew && (
+                                <button
+                                  type="button"
+                                  data-testid={`open-unlocked-section-${sec.sectionKey}`}
+                                  onClick={() => onOpenFormSection(sec.sectionKey)}
+                                  className="h-7 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10.5px] font-semibold transition-colors"
+                                >
+                                  {isFa ? 'ورود به بخش' : 'Open'}
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
+              );
+            })()}
 
-                {/* Signature Boxes Builder */}
-                <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
-                  <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-2 text-[11px] font-bold text-[var(--text-primary)] cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={currentTpl.showSignatures !== false}
-                        onChange={(e) => patchBuiltInTemplate({ showSignatures: e.target.checked })}
-                      />
-                      <span>{isFa ? 'کادرهای امضاء پایین فرم:' : 'Signature Boxes:'}</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const base =
-                          currentTpl.signatures && currentTpl.signatures.length > 0
-                            ? currentTpl.signatures
-                            : builtInDef.defaultSignatures;
-                        patchBuiltInTemplate({
-                          signatures: [
-                            ...base,
-                            {
-                              id: `sig-${Date.now()}`,
-                              label: isFa ? 'امضاءکننده جدید' : 'New Signatory',
-                              subtitle: isFa ? 'نام و امضاء' : 'Name & Signature',
-                            },
-                          ],
-                        });
-                      }}
-                      className="h-6 px-2 rounded border border-[var(--border-subtle)] text-[10.5px] font-semibold flex items-center gap-1 hover:bg-[var(--bg-subtle)]"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>{isFa ? 'افزودن امضاء' : 'Add Signatory'}</span>
-                    </button>
-                  </div>
-                  {(currentTpl.signatures && currentTpl.signatures.length > 0
-                    ? currentTpl.signatures
-                    : builtInDef.defaultSignatures
-                  ).map((sig, idx, arr) => (
-                    <div key={sig.id} className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={sig.label}
-                        onChange={(e) =>
-                          patchBuiltInTemplate({
-                            signatures: arr.map((s, i) => (i === idx ? { ...s, label: e.target.value } : s)),
-                          })
-                        }
-                        className="flex-1 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                      />
-                      <input
-                        type="text"
-                        value={sig.subtitle || ''}
-                        placeholder={isFa ? 'زیرنویس' : 'Subtitle'}
-                        onChange={(e) =>
-                          patchBuiltInTemplate({
-                            signatures: arr.map((s, i) => (i === idx ? { ...s, subtitle: e.target.value } : s)),
-                          })
-                        }
-                        className="w-32 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          patchBuiltInTemplate({
-                            signatures: arr.filter((_, i) => i !== idx),
-                          })
-                        }
-                        className="p-1 text-[var(--status-danger)]"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Live Form Sheet Preview */}
-              <div className="xl:col-span-6 space-y-2">
-                <div className="text-xs font-bold text-[var(--text-secondary)] flex items-center justify-between">
-                  <span>{isFa ? 'پیش‌نمایش زنده فرم طراحی‌شده (A4)' : 'Live Sheet Preview (A4)'}</span>
-                  <span className="text-[11px] font-normal text-[var(--text-muted)]">
-                    {resolvedFormDesign.orientation === 'landscape'
-                      ? isFa
-                        ? 'افقی'
-                        : 'Landscape'
-                      : isFa
-                        ? 'عمودی'
-                        : 'Portrait'}
-                  </span>
-                </div>
-
-                <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-white text-black shadow-xs space-y-2 overflow-x-auto">
-                  <OfficialFormHeader
-                    employer={resolvedPreview}
-                    design={resolvedFormDesign}
-                    rightMetaSlot={
-                      <>
-                        <div className="px-2 py-1 flex items-center justify-between gap-2">
-                          <span className="font-semibold">شماره فرم:</span>
-                          <span dir="ltr" className="font-mono font-bold">
-                            1404-001
-                          </span>
-                        </div>
-                        <div className="px-2 py-1 flex items-center justify-between gap-2">
-                          <span className="font-semibold">تاریخ:</span>
-                          <span dir="ltr" className="font-mono">
-                            1404/01/15
-                          </span>
-                        </div>
-                      </>
-                    }
-                  />
-                  <OfficialExtraMetaStrip design={resolvedFormDesign} />
-
-                  <table
-                    dir="rtl"
-                    style={{ borderColor: resolvedFormDesign.accentColor }}
-                    className="w-full border-collapse border border-black text-[10px]"
-                  >
-                    <thead>
-                      <tr className="bg-slate-100">
-                        {builtInDef.defaultColumns
-                          .filter((c) => resolvedFormDesign.isColumnVisible(c.key))
-                          .map((c) => (
-                            <th key={c.key} className="border border-black px-1.5 py-1 text-center font-bold">
-                              {resolvedFormDesign.columnLabel(c.key, c.label)}
-                            </th>
-                          ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[1, 2].map((r) => (
-                        <tr key={r}>
-                          {builtInDef.defaultColumns
-                            .filter((c) => resolvedFormDesign.isColumnVisible(c.key))
-                            .map((c) => (
-                              <td key={c.key} className="border border-black px-1.5 py-1.5 text-center text-slate-500">
-                                {c.key === 'row' ? r : '—'}
-                              </td>
-                            ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  {resolvedFormDesign.introText && (
-                    <div
-                      dir="rtl"
-                      className="p-2 border border-black text-[10px] leading-relaxed bg-slate-50/50"
-                    >
-                      {resolvedFormDesign.introText}
-                    </div>
-                  )}
-
-                  <OfficialFormSignatures
-                    signatures={resolvedFormDesign.signatures}
-                    showSignatures={resolvedFormDesign.showSignatures}
-                    borderColor={resolvedFormDesign.accentColor}
-                  />
-
-                  <OfficialFormFooter design={resolvedFormDesign} />
-                </div>
-              </div>
-            </div>
-              </div>
-            )}
-
-            {/* Mode 2: Company Uploaded Forms (Excel, Word, PDF, Image) */}
-            {formsMode === 'uploaded' && (
-              <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Upload Form Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
               <div className="flex flex-wrap items-center gap-1.5">
                 {uploadedForms.map((uf) => (
                   <button
                     key={uf.id}
                     type="button"
                     onClick={() => setSelectedUploadedFormId(uf.id)}
-                    className={`h-8 px-3 rounded-lg border text-xs font-semibold flex items-center gap-1.5 ${
+                    className={`h-8 px-3 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
                       activeUploadedForm?.id === uf.id
                         ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
-                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
                     }`}
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5" />
                     <span>{uf.titleFa}</span>
-                    <span className="text-[10px] opacity-80">
-                      (
-                      {uf.fileType === 'excel'
-                        ? isFa
-                          ? 'جدول'
-                          : 'Sheet'
-                        : uf.fileType === 'word'
-                          ? isFa
-                            ? 'سند'
-                            : 'Doc'
-                          : uf.fileType === 'pdf'
-                            ? isFa
-                              ? 'پی‌دی‌اف'
-                              : 'PDF'
-                            : isFa
-                              ? 'تصویر'
-                              : 'Image'}
-                      )
-                    </span>
                   </button>
                 ))}
-                <label className="h-8 px-3 rounded-lg border border-dashed border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer">
-                  <FileUp className="w-3.5 h-3.5" />
+
+                <label className="h-9 px-3.5 rounded-lg border border-dashed border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors">
+                  <FileUp className="w-4 h-4" />
                   <span>
                     {uploadingForm
                       ? isFa
-                        ? 'در حال پردازش...'
-                        : 'Parsing...'
+                        ? 'در حال پردازش فایل...'
+                        : 'Processing...'
                       : isFa
-                        ? 'آپلود فرم شرکتی (فایل جدول، سند، پی‌دی‌اف یا تصویر)'
-                        : 'Upload Company Form'}
+                        ? 'آپلود فرم کارفرما (اکسل، ورد، پی‌دی‌اف یا تصویر)'
+                        : 'Upload Employer Form (Excel, Word, PDF, Image)'}
                   </span>
                   <input
                     type="file"
@@ -1838,33 +1929,35 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
             </div>
 
             {!activeUploadedForm ? (
-              <div className="p-8 rounded-xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-canvas)] text-center space-y-2">
+              <div className="p-8 rounded-xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-canvas)]/50 text-center space-y-2">
                 <FileUp className="w-7 h-7 text-[var(--accent-primary)] mx-auto" />
                 <div className="text-xs font-bold text-[var(--text-primary)]">
                   {isFa
-                    ? 'هنوز فرم رسمی شرکتی برای این کارفرما آپلود نشده است'
-                    : 'No official company forms uploaded yet'}
+                    ? 'فرم آپلودی برای این کارفرما ثبت نشده است'
+                    : 'No uploaded forms for this employer yet'}
                 </div>
-                <p className="text-xs text-[var(--text-muted)] max-w-xl mx-auto leading-relaxed">
+                <p className="text-xs text-[var(--text-muted)] max-w-lg mx-auto leading-relaxed">
                   {isFa
-                    ? 'فایل‌های آماده و کددار شرکت را با قالب‌های جدولی، اسناد متنی، پی‌دی‌اف یا تصویر وارد کنید. سامانه به‌صورت هوشمند فرمول‌های داخلی، بخش عملیاتی متناظر و اتصال داده‌ها به یک یا چند بخش مختلف را شناسایی می‌کند.'
-                    : 'Upload official coded spreadsheet, document, PDF, or image forms. The system detects formulas, matching operational section, and multi-source bindings.'}
+                    ? 'برای کارفرماهای جدید یا فرم‌های اختصاصی، فایل فرم آماده (اکسل، ورد، پی‌دی‌اف یا تصویر) را آپلود کنید تا سامانه ستون‌ها و متغیرها را به داده‌های انبار متصل کند.'
+                    : 'Upload official Excel, Word, PDF, or Image templates to connect fields and print directly from warehouse records.'}
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
-                {/* Settings & Data Binding Panel */}
+                {/* Uploaded Form Binding & Print Settings */}
                 <div className="xl:col-span-6 space-y-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-4">
-                  <div className="flex items-center justify-between pb-2 border-b border-[var(--border-subtle)]">
+                  <div className="flex items-center justify-between pb-2.5 border-b border-[var(--border-subtle)]">
                     <div className="min-w-0">
-                      <div className="text-xs font-bold truncate">{activeUploadedForm.titleFa}</div>
-                      <div dir="ltr" className="text-[10.5px] font-mono text-[var(--text-muted)] truncate">
+                      <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                        {activeUploadedForm.titleFa}
+                      </div>
+                      <div dir="ltr" className="text-[11px] font-mono text-[var(--text-muted)] truncate">
                         {activeUploadedForm.fileName}
                       </div>
                     </div>
                     <button
                       type="button"
-                      onClick={() => deleteUploadedForm(activeUploadedForm.id)}
+                      onClick={() => void deleteUploadedForm(activeUploadedForm.id)}
                       className="text-xs text-[var(--status-danger)] hover:underline flex items-center gap-1 shrink-0"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -1872,7 +1965,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     </button>
                   </div>
 
-                  {/* Target App Operational Section Auto-Detection & User Confirmation */}
+                  {/* Target App Section Matching */}
                   <div
                     data-testid="target-section-card"
                     className={`p-3 rounded-lg border space-y-2 ${
@@ -1888,11 +1981,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                         ) : (
                           <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                         )}
-                        <span>
-                          {isFa
-                            ? 'تطبیق با بخش عملیاتی متناظر در برنامه (تشخیص هوشمند + تأیید کاربر):'
-                            : 'Target Operational Section in App (Auto-Detect + Confirm):'}
-                        </span>
+                        <span>{isFa ? 'بخش عملیاتی متناظر در سامانه:' : 'Target Operational Section:'}</span>
                       </div>
                       {activeUploadedForm.targetSectionConfirmed && (
                         <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
@@ -1900,11 +1989,6 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                         </span>
                       )}
                     </div>
-                    {(activeUploadedForm.targetSectionReasonFa || activeUploadedForm.targetSectionReasonEn) && (
-                      <div className="text-[10.5px] text-[var(--text-secondary)]">
-                        {isFa ? activeUploadedForm.targetSectionReasonFa : activeUploadedForm.targetSectionReasonEn}
-                      </div>
-                    )}
                     <div className="flex flex-wrap items-center gap-2">
                       <select
                         data-testid="target-section-select"
@@ -1919,11 +2003,13 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                         className="flex-1 min-w-[200px] h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
                       >
                         <option value="custom_standalone">
-                          {isFa ? 'فرم اختصاصی مستقل (در منوی فرم‌های اختصاصی کارفرما)' : 'Standalone Custom Form'}
+                          {isFa ? 'فرم مستقل (در بخش فرم‌های آپلودشده کارفرما)' : 'Standalone Uploaded Form'}
                         </option>
-                        {BUILT_IN_FORM_DEFINITIONS.map((def) => (
-                          <option key={def.key} value={def.key}>
-                            {isFa ? `بخش: ${def.titleFa}` : `Section: ${def.titleEn}`}
+                        {OPERATIONAL_FORM_SECTIONS.map((sec) => (
+                          <option key={sec.key} value={sec.key}>
+                            {isFa
+                              ? `بخش ${sec.order}: ${sec.titleFa}`
+                              : `Section ${sec.order}: ${sec.titleEn}`}
                           </option>
                         ))}
                       </select>
@@ -1946,17 +2032,17 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                         <span>
                           {activeUploadedForm.targetSectionConfirmed
                             ? isFa
-                              ? 'انطباق تأیید شد'
+                              ? 'تأیید شد'
                               : 'Confirmed'
                             : isFa
-                              ? 'تأیید انطباق بخش'
-                              : 'Confirm Match'}
+                              ? 'تأیید انطباق'
+                              : 'Confirm'}
                         </span>
                       </button>
                     </div>
                   </div>
 
-                  {/* Form Identity */}
+                  {/* Form Title & Code */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
@@ -1966,23 +2052,19 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                         type="text"
                         data-testid="uploaded-form-title-input"
                         value={activeUploadedForm.titleFa}
-                        onChange={(e) =>
-                          patchUploadedForm((f) => ({ ...f, titleFa: e.target.value }))
-                        }
+                        onChange={(e) => patchUploadedForm((f) => ({ ...f, titleFa: e.target.value }))}
                         className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
                       />
                     </div>
                     <div>
                       <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                        {isFa ? 'کد مدرک شرکت' : 'Company Form Code'}
+                        {isFa ? 'کد مدرک فرم' : 'Form Code'}
                       </label>
                       <input
                         type="text"
                         dir="ltr"
                         value={activeUploadedForm.formCode || ''}
-                        onChange={(e) =>
-                          patchUploadedForm((f) => ({ ...f, formCode: e.target.value }))
-                        }
+                        onChange={(e) => patchUploadedForm((f) => ({ ...f, formCode: e.target.value }))}
                         placeholder="FQP-WH-014"
                         className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
                       />
@@ -1990,7 +2072,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     {activeUploadedForm.fileType === 'excel' && activeExcelSheetMeta && (
                       <div className="sm:col-span-2">
                         <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                          {isFa ? 'برگه فعال فرم' : 'Active Worksheet'}
+                          {isFa ? 'برگه فعال اکسل' : 'Active Worksheet'}
                         </label>
                         <select
                           value={activeUploadedForm.sheetName || activeExcelSheetMeta.activeSheetName}
@@ -2017,8 +2099,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     )}
                   </div>
 
-                  {/* Multi-Source Data Binding Selector (1 to 5 system sections simultaneously) */}
-                  <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2.5">
+                  {/* Multi-Source Data Binding */}
+                  <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
                     {(() => {
                       const currentSources: UploadedFormDataSource[] =
                         activeUploadedForm.dataSources && activeUploadedForm.dataSources.length > 0
@@ -2033,46 +2115,33 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                           next.push(candidate);
                         }
                         const trimmed = next.slice(0, clamped);
-                        patchUploadedForm((f) => ({
-                          ...f,
-                          dataSource: trimmed[0],
-                          dataSources: trimmed,
-                        }));
+                        patchUploadedForm((f) => ({ ...f, dataSource: trimmed[0], dataSources: trimmed }));
                       };
                       return (
                         <>
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-[11px] font-bold text-[var(--text-primary)] flex items-center gap-1.5">
                               <Layers className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                              <span>
-                                {isFa
-                                  ? 'منابع خواندن اطلاعات از سامانه (امکان اتصال همزمان به چند بخش):'
-                                  : 'Multi-Source Data Binding (Bind 1 to 5 System Sections):'}
-                              </span>
+                              <span>{isFa ? 'منابع خواندن اطلاعات از سامانه:' : 'System Data Sources:'}</span>
                             </span>
-                            <div className="flex items-center gap-1.5">
-                              <label className="text-[10.5px] text-[var(--text-muted)]">
-                                {isFa ? 'تعداد منابع:' : 'Sources:'}
-                              </label>
-                              <select
-                                data-testid="multi-source-count-select"
-                                value={currentSources.length}
-                                onChange={(e) => setSourcesCount(Number(e.target.value) || 1)}
-                                className="h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
-                              >
-                                {[1, 2, 3, 4, 5].map((n) => (
-                                  <option key={n} value={n}>
-                                    {n}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
+                            <select
+                              data-testid="multi-source-count-select"
+                              value={currentSources.length}
+                              onChange={(e) => setSourcesCount(Number(e.target.value) || 1)}
+                              className="h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
+                            >
+                              {[1, 2, 3, 4, 5].map((n) => (
+                                <option key={n} value={n}>
+                                  {n}
+                                </option>
+                              ))}
+                            </select>
                           </div>
                           <div className="space-y-1.5">
                             {currentSources.map((src, sIdx) => (
                               <div key={`${sIdx}-${src}`} className="flex items-center gap-2">
-                                <span className="text-[10.5px] font-semibold text-[var(--text-muted)] w-16 shrink-0">
-                                  {isFa ? `منبع ${sIdx + 1}:` : `Source ${sIdx + 1}:`}
+                                <span className="text-[10.5px] font-semibold text-[var(--text-muted)] w-14 shrink-0">
+                                  {isFa ? `منبع ${sIdx + 1}:` : `Src ${sIdx + 1}:`}
                                 </span>
                                 <select
                                   data-testid={`data-source-select-${sIdx}`}
@@ -2106,7 +2175,6 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                                       }));
                                     }}
                                     className="p-1 text-[var(--status-danger)]"
-                                    title={isFa ? 'حذف منبع' : 'Remove source'}
                                   >
                                     <X className="w-3.5 h-3.5" />
                                   </button>
@@ -2119,222 +2187,63 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     })()}
                   </div>
 
-                  {/* Detected Excel Formulas & Smart SAMAAN Field Bindings */}
-                  {activeUploadedForm.fileType === 'excel' && (activeUploadedForm.detectedFormulas || []).length > 0 && (
-                    <div
-                      data-testid="detected-formulas-panel"
-                      className="pt-3 border-t border-[var(--border-subtle)] space-y-2"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-bold text-[var(--text-primary)] flex items-center gap-1.5">
+                  {/* Detected Excel Formulas */}
+                  {activeUploadedForm.fileType === 'excel' &&
+                    (activeUploadedForm.detectedFormulas || []).length > 0 && (
+                      <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
+                        <div className="text-[11px] font-bold text-[var(--text-primary)] flex items-center gap-1.5">
                           <Sparkles className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
                           <span>
                             {isFa
-                              ? `فرمول‌های شناسایی‌شده در قالب فرم (${activeUploadedForm.detectedFormulas?.length} سلول):`
-                              : `Detected Form Formulas (${activeUploadedForm.detectedFormulas?.length} cells):`}
+                              ? `فرمول‌های شناسایی‌شده (${activeUploadedForm.detectedFormulas?.length} سلول):`
+                              : `Detected Formulas (${activeUploadedForm.detectedFormulas?.length}):`}
                           </span>
-                        </span>
-                      </div>
-                      <div className="space-y-1.5 max-h-44 overflow-y-auto pe-1">
-                        {(activeUploadedForm.detectedFormulas || []).map((fm, fIdx) => (
-                          <div
-                            key={`${fm.cellRef}-${fIdx}`}
-                            className="grid grid-cols-12 gap-1.5 items-center bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1"
-                          >
-                            <div dir="ltr" className="col-span-2 text-[10.5px] font-mono font-bold text-[var(--accent-primary)]">
-                              {fm.cellRef}
-                            </div>
-                            <div dir="ltr" className="col-span-4 text-[10px] font-mono text-[var(--text-secondary)] truncate" title={fm.formula}>
-                              {fm.formula}
-                            </div>
-                            <select
-                              value={fm.boundFieldKey || ''}
-                              onChange={(e) =>
-                                patchUploadedForm((f) => ({
-                                  ...f,
-                                  detectedFormulas: (f.detectedFormulas || []).map((item, i) =>
-                                    i === fIdx ? { ...item, boundFieldKey: e.target.value || undefined } : item,
-                                  ),
-                                }))
-                              }
-                              className="col-span-6 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[10.5px]"
-                            >
-                              <option value="">
-                                {isFa ? '-- بدون جایگزینی (حفظ فرمول اصلی) --' : '-- Keep Formula --'}
-                              </option>
-                              {SAMAAN_BINDABLE_FIELDS.map((sf) => (
-                                <option key={sf.key} value={sf.key}>
-                                  {isFa ? sf.labelFa : sf.labelEn}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Optional Company Logo Overlay */}
-                  <div className="space-y-1.5">
-                    <label className="block text-[11px] font-bold text-[var(--text-primary)]">
-                      {isFa ? 'افزودن لوگوی شرکت بالای فرم (اختیاری):' : 'Stamp Logo Header (Optional):'}
-                    </label>
-                    {logoSelectorGrid(
-                      activeUploadedForm.primaryLogoId || '__none__',
-                      (val) => patchUploadedForm((f) => ({ ...f, primaryLogoId: val })),
-                      false,
-                    )}
-                  </div>
-
-                  {/* A4 Print & Auto Row Height Calibration */}
-                  <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2.5">
-                    <div className="text-[11px] font-bold text-[var(--text-primary)]">
-                      {isFa ? 'تنظیمات چاپ، مقیاس A4 و اندازه خودکار سطرها:' : 'A4 Print & Auto-Fit Row Calibration:'}
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
-                          {isFa ? 'جهت صفحه A4' : 'Orientation'}
-                        </label>
-                        <select
-                          value={activeUploadedForm.printSettings.orientation}
-                          onChange={(e) =>
-                            patchUploadedPrintSettings({
-                              orientation: e.target.value as 'portrait' | 'landscape',
-                            })
-                          }
-                          className="w-full h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
-                        >
-                          <option value="portrait">{isFa ? 'عمودی' : 'Portrait'}</option>
-                          <option value="landscape">{isFa ? 'افقی' : 'Landscape'}</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
-                          {isFa ? 'اندازه فونت (pt)' : 'Font (pt)'}
-                        </label>
-                        <input
-                          type="number"
-                          min={6}
-                          max={20}
-                          value={activeUploadedForm.printSettings.fontSizePt}
-                          onChange={(e) =>
-                            patchUploadedPrintSettings({
-                              fontSizePt: Math.min(20, Math.max(6, Number(e.target.value) || 10)),
-                            })
-                          }
-                          className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
-                          {isFa ? 'مقیاس چاپ (%)' : 'Scale (%)'}
-                        </label>
-                        <input
-                          type="number"
-                          min={40}
-                          max={150}
-                          value={activeUploadedForm.printSettings.scalePercent}
-                          onChange={(e) =>
-                            patchUploadedPrintSettings({
-                              scalePercent: Math.min(150, Math.max(40, Number(e.target.value) || 100)),
-                            })
-                          }
-                          className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
-                          {isFa ? 'حداقل ارتفاع سطر (px)' : 'Min Row H (px)'}
-                        </label>
-                        <input
-                          type="number"
-                          min={16}
-                          max={120}
-                          value={activeUploadedForm.printSettings.minRowHeightPx}
-                          onChange={(e) =>
-                            patchUploadedPrintSettings({
-                              minRowHeightPx: Math.min(120, Math.max(16, Number(e.target.value) || 24)),
-                            })
-                          }
-                          className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-4 gap-2">
-                      {(
-                        [
-                          { key: 'marginTopMm' as const, label: isFa ? 'حاشیه بالا (mm)' : 'Top mm' },
-                          { key: 'marginRightMm' as const, label: isFa ? 'حاشیه راست' : 'Right mm' },
-                          { key: 'marginBottomMm' as const, label: isFa ? 'حاشیه پایین' : 'Bottom mm' },
-                          { key: 'marginLeftMm' as const, label: isFa ? 'حاشیه چپ' : 'Left mm' },
-                        ]
-                      ).map((m) => (
-                        <div key={m.key}>
-                          <label className="block text-[10px] text-[var(--text-muted)] mb-1">{m.label}</label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={40}
-                            value={activeUploadedForm.printSettings[m.key]}
-                            onChange={(e) =>
-                              patchUploadedPrintSettings({
-                                [m.key]: Math.min(40, Math.max(0, Number(e.target.value) || 0)),
-                              })
-                            }
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
-                          />
                         </div>
-                      ))}
-                    </div>
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto pe-1">
+                          {(activeUploadedForm.detectedFormulas || []).map((fm, fIdx) => (
+                            <div
+                              key={`${fm.cellRef}-${fIdx}`}
+                              className="grid grid-cols-12 gap-1.5 items-center bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-2 py-1"
+                            >
+                              <div dir="ltr" className="col-span-2 text-[10.5px] font-mono font-bold text-[var(--accent-primary)]">
+                                {fm.cellRef}
+                              </div>
+                              <div dir="ltr" className="col-span-4 text-[10px] font-mono text-[var(--text-secondary)] truncate" title={fm.formula}>
+                                {fm.formula}
+                              </div>
+                              <select
+                                value={fm.boundFieldKey || ''}
+                                onChange={(e) =>
+                                  patchUploadedForm((f) => ({
+                                    ...f,
+                                    detectedFormulas: (f.detectedFormulas || []).map((item, i) =>
+                                      i === fIdx ? { ...item, boundFieldKey: e.target.value || undefined } : item,
+                                    ),
+                                  }))
+                                }
+                                className="col-span-6 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[10.5px]"
+                              >
+                                <option value="">{isFa ? '-- حفظ فرمول اصلی --' : '-- Keep Formula --'}</option>
+                                {SAMAAN_BINDABLE_FIELDS.map((sf) => (
+                                  <option key={sf.key} value={sf.key}>
+                                    {isFa ? sf.labelFa : sf.labelEn}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
-                    <div className="flex flex-wrap gap-3 pt-1">
-                      <label className="flex items-center gap-1.5 text-[11px] cursor-pointer font-semibold text-[var(--accent-primary)]">
-                        <input
-                          type="checkbox"
-                          checked={activeUploadedForm.printSettings.autoRowHeight}
-                          onChange={(e) =>
-                            patchUploadedPrintSettings({ autoRowHeight: e.target.checked })
-                          }
-                        />
-                        <span>
-                          {isFa
-                            ? 'تغییر اندازه خودکار ارتفاع سطر متناسب با متن'
-                            : 'Auto-fit row height to content'}
-                        </span>
-                      </label>
-                      <label className="flex items-center gap-1.5 text-[11px] cursor-pointer text-[var(--text-secondary)]">
-                        <input
-                          type="checkbox"
-                          checked={activeUploadedForm.printSettings.fitToPageWidth}
-                          onChange={(e) =>
-                            patchUploadedPrintSettings({ fitToPageWidth: e.target.checked })
-                          }
-                        />
-                        <span>{isFa ? 'تنظیم عرض در یک صفحه A4' : 'Fit to A4 Page Width'}</span>
-                      </label>
-                      <label className="flex items-center gap-1.5 text-[11px] cursor-pointer text-[var(--text-secondary)]">
-                        <input
-                          type="checkbox"
-                          checked={activeUploadedForm.printSettings.showGridlines}
-                          onChange={(e) =>
-                            patchUploadedPrintSettings({ showGridlines: e.target.checked })
-                          }
-                        />
-                        <span>{isFa ? 'نمایش خطوط جدول' : 'Show Gridlines'}</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Placeholder {{Token}} -> SAMAAN Field Mappings */}
-                  {(activeUploadedForm.fileType === 'excel' || activeUploadedForm.fileType === 'word' || activeUploadedForm.fileType === 'image') && (
+                  {/* Placeholder {{Token}} Bindings */}
+                  {(activeUploadedForm.fileType === 'excel' ||
+                    activeUploadedForm.fileType === 'word' ||
+                    activeUploadedForm.fileType === 'image') && (
                     <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[11px] font-bold text-[var(--text-primary)]">
-                          {isFa
-                            ? 'اتصال متغیرهای {{...}} درون فایل به فیلدهای سمان:'
-                            : 'Template {{Placeholder}} Field Bindings:'}
+                          {isFa ? 'اتصال متغیرهای {{...}} به فیلدهای سامانه:' : 'Template {{Placeholder}} Bindings:'}
                         </span>
                         <div className="flex items-center gap-1">
                           <input
@@ -2362,14 +2271,8 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                           </button>
                         </div>
                       </div>
-                      {(activeUploadedForm.detectedTokens || []).length === 0 ? (
-                        <div className="text-[10.5px] text-[var(--text-muted)]">
-                          {isFa
-                            ? 'در این فایل متغیر {{...}} یافت نشد. اگر داخل فایل فرم متغیرهایی مثل {{packingListNo}} یا {{شماره پکینگ}} بگذارید، به‌صورت خودکار پر می‌شوند.'
-                            : 'No {{tokens}} detected in file. Use tokens like {{packingListNo}} inside your form template for auto-fill.'}
-                        </div>
-                      ) : (
-                        <div className="space-y-1.5 max-h-40 overflow-y-auto pe-1">
+                      {(activeUploadedForm.detectedTokens || []).length > 0 && (
+                        <div className="space-y-1.5 max-h-36 overflow-y-auto pe-1">
                           {(activeUploadedForm.detectedTokens || []).map((tok) => (
                             <div key={tok} className="grid grid-cols-12 gap-1.5 items-center">
                               <div dir="ltr" className="col-span-5 text-[11px] font-mono bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded px-2 py-1 truncate">
@@ -2388,7 +2291,7 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                                 }
                                 className="col-span-6 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
                               >
-                                <option value="">{isFa ? '-- تطبیق خودکار / دستی --' : '-- Auto / Manual --'}</option>
+                                <option value="">{isFa ? '-- تطبیق خودکار --' : '-- Auto --'}</option>
                                 {SAMAAN_BINDABLE_FIELDS.map((sf) => (
                                   <option key={sf.key} value={sf.key}>
                                     {isFa ? sf.labelFa : sf.labelEn}
@@ -2419,145 +2322,77 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                     </div>
                   )}
 
-                  {/* Excel Dynamic Table Row Insertion Config */}
-                  {activeUploadedForm.fileType === 'excel' && (
-                    <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-[11px] font-bold text-[var(--text-primary)]">
-                          {isFa ? 'تزریق خودکار ردیف اقلام در جدول فرم:' : 'Dynamic Table Row Injection:'}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <label className="text-[10.5px] text-[var(--text-secondary)]">
-                            {isFa ? 'شروع از ردیف:' : 'Start Row (1-based):'}
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={
-                              typeof activeUploadedForm.tableStartRowIndex === 'number'
-                                ? activeUploadedForm.tableStartRowIndex + 1
-                                : ''
-                            }
-                            placeholder="مثلاً 6"
-                            onChange={(e) => {
-                              const n = Number(e.target.value);
-                              patchUploadedForm((f) => ({
-                                ...f,
-                                tableStartRowIndex: Number.isFinite(n) && n >= 1 ? Math.floor(n) - 1 : undefined,
-                              }));
-                            }}
-                            className="w-16 h-6 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              patchUploadedForm((f) => {
-                                const list = f.tableColumnBindings || [];
-                                const nextCol = list.length > 0 ? Math.max(...list.map((c) => c.colIndex)) + 1 : 0;
-                                return {
-                                  ...f,
-                                  tableColumnBindings: [
-                                    ...list,
-                                    {
-                                      colIndex: nextCol,
-                                      headerLabel: `ستون ${nextCol + 1}`,
-                                      fieldKey: 'description',
-                                    },
-                                  ],
-                                };
-                              })
-                            }
-                            className="h-6 px-2 rounded border border-[var(--border-subtle)] text-[10.5px] font-semibold hover:bg-[var(--bg-subtle)]"
-                          >
-                            + {isFa ? 'ستون جدول' : 'Add Col Binding'}
-                          </button>
-                        </div>
-                      </div>
-                      {(activeUploadedForm.tableColumnBindings || []).map((cb, idx) => (
-                        <div key={`${cb.colIndex}-${idx}`} className="grid grid-cols-12 gap-1.5 items-center">
-                          <input
-                            type="number"
-                            min={1}
-                            max={40}
-                            value={cb.colIndex + 1}
-                            onChange={(e) => {
-                              const nextIdx = Math.max(0, (Number(e.target.value) || 1) - 1);
-                              patchUploadedForm((f) => ({
-                                ...f,
-                                tableColumnBindings: (f.tableColumnBindings || []).map((item, i) =>
-                                  i === idx ? { ...item, colIndex: nextIdx } : item,
-                                ),
-                              }));
-                            }}
-                            title={isFa ? 'شماره ستون (از ۱)' : 'Column #'}
-                            className="col-span-2 h-7 px-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
-                          />
-                          <input
-                            type="text"
-                            value={cb.headerLabel}
-                            onChange={(e) =>
-                              patchUploadedForm((f) => ({
-                                ...f,
-                                tableColumnBindings: (f.tableColumnBindings || []).map((item, i) =>
-                                  i === idx ? { ...item, headerLabel: e.target.value } : item,
-                                ),
-                              }))
-                            }
-                            placeholder={isFa ? 'عنوان ستون' : 'Label'}
-                            className="col-span-4 h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
-                          />
-                          <select
-                            value={cb.fieldKey}
-                            onChange={(e) =>
-                              patchUploadedForm((f) => ({
-                                ...f,
-                                tableColumnBindings: (f.tableColumnBindings || []).map((item, i) =>
-                                  i === idx ? { ...item, fieldKey: e.target.value } : item,
-                                ),
-                              }))
-                            }
-                            className="col-span-5 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
-                          >
-                            {SAMAAN_BINDABLE_FIELDS.map((sf) => (
-                              <option key={sf.key} value={sf.key}>
-                                {isFa ? sf.labelFa : sf.labelEn}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              patchUploadedForm((f) => ({
-                                ...f,
-                                tableColumnBindings: (f.tableColumnBindings || []).filter((_, i) => i !== idx),
-                              }))
-                            }
-                            className="col-span-1 text-[var(--status-danger)] flex justify-center"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
+                  {/* A4 Print Settings */}
+                  <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
+                    <div className="text-[11px] font-bold text-[var(--text-primary)]">
+                      {isFa ? 'تنظیمات چاپ A4:' : 'A4 Print Settings:'}
                     </div>
-                  )}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
+                          {isFa ? 'جهت صفحه' : 'Orientation'}
+                        </label>
+                        <select
+                          value={activeUploadedForm.printSettings.orientation}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({ orientation: e.target.value as 'portrait' | 'landscape' })
+                          }
+                          className="w-full h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px]"
+                        >
+                          <option value="portrait">{isFa ? 'عمودی' : 'Portrait'}</option>
+                          <option value="landscape">{isFa ? 'افقی' : 'Landscape'}</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
+                          {isFa ? 'فونت (pt)' : 'Font (pt)'}
+                        </label>
+                        <input
+                          type="number"
+                          min={6}
+                          max={20}
+                          value={activeUploadedForm.printSettings.fontSizePt}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({
+                              fontSizePt: Math.min(20, Math.max(6, Number(e.target.value) || 10)),
+                            })
+                          }
+                          className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-[var(--text-muted)] mb-1">
+                          {isFa ? 'مقیاس (%)' : 'Scale (%)'}
+                        </label>
+                        <input
+                          type="number"
+                          min={40}
+                          max={150}
+                          value={activeUploadedForm.printSettings.scalePercent}
+                          onChange={(e) =>
+                            patchUploadedPrintSettings({
+                              scalePercent: Math.min(150, Math.max(40, Number(e.target.value) || 100)),
+                            })
+                          }
+                          className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-mono text-center"
+                        />
+                      </div>
+                      <label className="flex items-center gap-1.5 text-[11px] pt-4 cursor-pointer text-[var(--text-secondary)]">
+                        <input
+                          type="checkbox"
+                          checked={activeUploadedForm.printSettings.autoRowHeight}
+                          onChange={(e) => patchUploadedPrintSettings({ autoRowHeight: e.target.checked })}
+                        />
+                        <span>{isFa ? 'سطر خودکار' : 'AutoFit'}</span>
+                      </label>
+                    </div>
+                  </div>
                 </div>
 
-                {/* Live A4 Form Preview with Auto-Fit Row Height */}
+                {/* Live A4 Preview */}
                 <div className="xl:col-span-6 space-y-2">
-                  <div className="text-xs font-bold text-[var(--text-secondary)] flex items-center justify-between gap-2">
-                    <span>
-                      {isFa ? 'پیش‌نمایش زنده فرم آپلودی (کاغذ A4 و ارتفاع سطر خودکار)' : 'Live A4 Preview'}
-                    </span>
-                    <span className="text-[10.5px] font-normal text-[var(--text-muted)]">
-                      {activeUploadedForm.printSettings.autoRowHeight
-                        ? isFa
-                          ? 'ارتفاع سطر خودکار: فعال'
-                          : 'AutoFit Rows: ON'
-                        : isFa
-                          ? 'ارتفاع ثابت'
-                          : 'Fixed Height'}
-                    </span>
+                  <div className="text-xs font-bold text-[var(--text-secondary)]">
+                    {isFa ? 'پیش‌نمایش فرم بارگذاری‌شده (A4)' : 'Uploaded Form Preview (A4)'}
                   </div>
                   <UploadedFormA4Sheet
                     form={deferredUploadedForm || activeUploadedForm}
@@ -2570,38 +2405,6 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                 </div>
               </div>
             )}
-
-            {/* Legacy archive accordion if old manually-created custom forms exist */}
-            {draft.customForms.length > 0 && (
-              <details className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-3 text-xs">
-                <summary className="cursor-pointer font-semibold text-[var(--text-secondary)]">
-                  {isFa
-                    ? `آرشیو فرم‌های دست‌ساز قبلی (${draft.customForms.length} مورد)`
-                    : `Legacy Manual Custom Forms (${draft.customForms.length})`}
-                </summary>
-                <div className="mt-2 space-y-1.5">
-                  {draft.customForms.map((cf) => (
-                    <div key={cf.id} className="flex items-center justify-between px-2 py-1 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
-                      <span>{cf.titleFa} {cf.docCode ? `(${cf.docCode})` : ''}</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          patchDraft((p) => ({
-                            ...p,
-                            customForms: p.customForms.filter((x) => x.id !== cf.id),
-                          }))
-                        }
-                        className="text-[var(--status-danger)] text-[11px] hover:underline"
-                      >
-                        {isFa ? 'حذف' : 'Delete'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -2609,6 +2412,28 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
   );
 };
 
-export const EmployersStudioView: React.FC = () => {
-  return <EmployersStudioWorkspace />;
+export interface EmployersStudioViewProps {
+  initialEmployerId?: string;
+  initialSection?: 'profile' | 'forms';
+  initialFormSection?: OperationalFormSectionKey | null;
+  navigationToken?: number;
+  onOpenFormSection?: (sectionKey: OperationalFormSectionKey) => void;
+}
+
+export const EmployersStudioView: React.FC<EmployersStudioViewProps> = ({
+  initialEmployerId,
+  initialSection,
+  initialFormSection,
+  navigationToken,
+  onOpenFormSection,
+}) => {
+  return (
+    <EmployersStudioWorkspace
+      initialEmployerId={initialEmployerId}
+      initialSection={initialSection}
+      initialFormSection={initialFormSection}
+      navigationToken={navigationToken}
+      onOpenFormSection={onOpenFormSection}
+    />
+  );
 };

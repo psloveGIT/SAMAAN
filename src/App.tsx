@@ -18,6 +18,7 @@ import { Layout } from './components/Layout.tsx';
 import type { NavTabKey } from './components/Layout.tsx';
 import { MaterialEstimationView } from './components/MaterialEstimationView.tsx';
 import { MivView } from './components/MivView.tsx';
+import { OperationalFormGate } from './components/OperationalFormGate.tsx';
 import { OpiMinutesView } from './components/OpiMinutesView.tsx';
 import { OpiView } from './components/OpiView.tsx';
 import { PackingWizardModal } from './components/PackingWizardModal.tsx';
@@ -30,9 +31,14 @@ import { StorageLabelView } from './components/StorageLabelView.tsx';
 import { SubstitutionView } from './components/SubstitutionView.tsx';
 import { TransitView } from './components/TransitView.tsx';
 import { TrashView } from './components/TrashView.tsx';
+import { UploadedSectionWorkspace } from './components/UploadedSectionWorkspace.tsx';
 import { UsersAuditView } from './components/UsersAuditView.tsx';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { apiRequest } from './lib/api.ts';
+import {
+  resolveOperationalSectionAccess,
+  type OperationalFormSectionKey,
+} from './shared/formAccess.ts';
 import type { CategoryStore, TransitEntry } from './shared/types.ts';
 import { DEFAULT_TRANSIT_STATUSES } from './shared/normalizers.ts';
 import {
@@ -150,6 +156,7 @@ const SamaanWorkspace: React.FC = () => {
     t,
     prefs,
     activeProjectId,
+    activeEmployer,
     shortcuts,
     performUndo,
     performRedo,
@@ -161,6 +168,12 @@ const SamaanWorkspace: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTabKey>('dashboard');
   const [categories, setCategories] = useState<CategoryStore>(EMPTY_CATEGORIES);
   const [refreshSignal, setRefreshSignal] = useState(0);
+  const [employerStudioTarget, setEmployerStudioTarget] = useState<{
+    employerId?: string;
+    section?: 'profile' | 'forms';
+    formSection?: OperationalFormSectionKey | null;
+    token: number;
+  }>({ token: 0 });
 
   // Packing Wizard Modal & Drawers state
   const [packingModalOpen, setPackingModalOpen] = useState(false);
@@ -173,6 +186,46 @@ const SamaanWorkspace: React.FC = () => {
   const [detailedShipmentFilter, setDetailedShipmentFilter] = useState('');
   const [detailedPackageFilter, setDetailedPackageFilter] = useState('');
   const [detailedAutoOpenToken, setDetailedAutoOpenToken] = useState(0);
+
+  const openEmployerFormUpload = useCallback(
+    (sectionKey?: OperationalFormSectionKey) => {
+      setEmployerStudioTarget({
+        employerId: activeEmployer.id || undefined,
+        section: 'forms',
+        formSection: sectionKey || null,
+        token: Date.now(),
+      });
+      setActiveTab('employers');
+    },
+    [activeEmployer.id],
+  );
+
+  const renderOperationalFormSection = (
+    sectionKey: OperationalFormSectionKey,
+    builtInView: React.ReactNode,
+  ) => {
+    const access = resolveOperationalSectionAccess(activeEmployer, sectionKey);
+    if (!access.hasAccess) {
+      return (
+        <OperationalFormGate
+          sectionKey={sectionKey}
+          onGoToUploadForms={openEmployerFormUpload}
+          onSelectSection={(targetKey) => setActiveTab(targetKey)}
+        />
+      );
+    }
+    if (access.mode === 'uploaded') {
+      return (
+        <UploadedSectionWorkspace
+          sectionKey={sectionKey}
+          uploadedForms={access.uploadedForms}
+          refreshSignal={refreshSignal}
+          onGoToUploadForms={openEmployerFormUpload}
+        />
+      );
+    }
+    return builtInView;
+  };
 
   const bumpRefresh = useCallback(() => {
     setRefreshSignal((s) => s + 1);
@@ -470,9 +523,11 @@ const SamaanWorkspace: React.FC = () => {
               />
             )}
 
-            {activeTab === 'siteEntry' && (
-              <SiteEntryMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-            )}
+            {activeTab === 'siteEntry' &&
+              renderOperationalFormSection(
+                'siteEntry',
+                <SiteEntryMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />,
+              )}
 
             {activeTab === 'general' && (
               <GeneralView
@@ -505,29 +560,41 @@ const SamaanWorkspace: React.FC = () => {
               />
             )}
 
-            {activeTab === 'opi' && (
-              <OpiView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-            )}
+            {activeTab === 'opi' &&
+              renderOperationalFormSection(
+                'opi',
+                <OpiView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />,
+              )}
 
-            {activeTab === 'opiMinutes' && (
-              <OpiMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-            )}
+            {activeTab === 'opiMinutes' &&
+              renderOperationalFormSection(
+                'opiMinutes',
+                <OpiMinutesView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />,
+              )}
 
-            {activeTab === 'gcv' && (
-              <GcvView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-            )}
+            {activeTab === 'gcv' &&
+              renderOperationalFormSection(
+                'gcv',
+                <GcvView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />,
+              )}
 
-            {activeTab === 'miv' && (
-              <MivView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-            )}
+            {activeTab === 'miv' &&
+              renderOperationalFormSection(
+                'miv',
+                <MivView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />,
+              )}
 
-            {activeTab === 'smr' && (
-              <SmrView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-            )}
+            {activeTab === 'smr' &&
+              renderOperationalFormSection(
+                'smr',
+                <SmrView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />,
+              )}
 
-            {activeTab === 'substitution' && (
-              <SubstitutionView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-            )}
+            {activeTab === 'substitution' &&
+              renderOperationalFormSection(
+                'substitution',
+                <SubstitutionView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />,
+              )}
 
             {activeTab === 'materialEstimation' && (
               <MaterialEstimationView
@@ -537,27 +604,39 @@ const SamaanWorkspace: React.FC = () => {
               />
             )}
 
-            {activeTab === 'balance' && (
-              <BalanceView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
-            )}
+            {activeTab === 'balance' &&
+              renderOperationalFormSection(
+                'balance',
+                <BalanceView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />,
+              )}
 
             {activeTab === 'stocktake' && (
               <StocktakeView refreshSignal={refreshSignal} onDataChanged={bumpRefresh} />
             )}
 
-            {activeTab === 'storageLabel' && (
-              <StorageLabelView refreshSignal={refreshSignal} />
-            )}
+            {activeTab === 'storageLabel' &&
+              renderOperationalFormSection(
+                'storageLabel',
+                <StorageLabelView refreshSignal={refreshSignal} />,
+              )}
 
             {activeTab === 'customForms' && (
               <CustomFormsRunnerView
                 refreshSignal={refreshSignal}
                 onDataChanged={bumpRefresh}
-                onOpenEmployerStudio={() => setActiveTab('employers')}
+                onOpenEmployerStudio={() => openEmployerFormUpload()}
               />
             )}
 
-            {activeTab === 'employers' && <EmployersStudioView />}
+            {activeTab === 'employers' && (
+              <EmployersStudioView
+                initialEmployerId={employerStudioTarget.employerId}
+                initialSection={employerStudioTarget.section}
+                initialFormSection={employerStudioTarget.formSection}
+                navigationToken={employerStudioTarget.token}
+                onOpenFormSection={(sectionKey) => setActiveTab(sectionKey)}
+              />
+            )}
 
             {activeTab === 'search' && (
               <GlobalSearchView refreshSignal={refreshSignal} onJumpToDetailed={jumpToDetailed} />

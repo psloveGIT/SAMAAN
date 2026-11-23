@@ -223,6 +223,7 @@ export interface EmployerUploadedForm {
 
 export interface EmployerProfile {
   id: string;
+  isBuiltIn?: boolean;
   nameFa: string;
   nameEn?: string;
   companyFullName: string;
@@ -239,6 +240,11 @@ export interface EmployerProfile {
   inspectorLabel?: string;
   address?: string;
   phone?: string;
+  postalCode?: string;
+  fax?: string;
+  email?: string;
+  instagram?: string;
+  linkedin?: string;
   contractRef?: string;
   notes?: string;
   logos: EmployerLogoAsset[];
@@ -262,6 +268,7 @@ export interface ProjectInfo {
   id: string;
   name: string;
   code?: string;
+  contractRef?: string;
   employerId?: EmployerId;
   employerConfig?: EmployerCustomConfig;
   createdAt: string;
@@ -373,7 +380,7 @@ export interface DetailedEntry {
   opiDate: string; // تاریخ دعوتنامه (OPI)
   merNo: string; // شماره کسری/مغایرت (MER)
   merStatus: string; // وضعیت کسری/مغایرت (MER)
-  notes: string; // توضیحات کسری/مغایرت
+  notes: string; // توضیحات تجهیز
   materialBalanceNo: string; // شماره بالانس متریال
   balanceStatus: string; // وضعیت بالانس
   storageLocation: string; // محل نگهداری
