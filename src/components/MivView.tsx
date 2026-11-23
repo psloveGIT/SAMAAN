@@ -41,13 +41,13 @@ interface MivViewProps {
 
 type MivOnlyType = 'miv_contractor' | 'miv_mapna';
 
-interface OfficialMivSheetProps {
+export interface OfficialMivSheetProps {
   doc: MivDocumentRecord;
   detailedItems: DetailedComputed[];
   formatDate: (iso: string) => string;
 }
 
-const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
+export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
   doc,
   detailedItems,
   formatDate,

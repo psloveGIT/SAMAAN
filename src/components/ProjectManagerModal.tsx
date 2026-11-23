@@ -128,10 +128,13 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
         contractRef: editContractRef.trim(),
         employerId: editEmployerId,
       });
+      const updatedEmp = resolveEmployerProfile({ employerId: editEmployerId }, employers);
       setEditingId(null);
       notify(
         'success',
-        isFa ? 'مشخصات پروژه و کارفرما با موفقیت به‌روزرسانی شد.' : 'Project and employer updated.',
+        isFa
+          ? `کارفرمای پروژه به «${updatedEmp.nameFa}» تغییر یافت و دسترسی فرم‌ها به‌روزرسانی شد.`
+          : `Project employer changed to "${updatedEmp.nameEn}" and form permissions updated.`,
       );
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -243,6 +246,8 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                             />
                             <div className="flex items-center gap-1">
                               <select
+                                data-testid="project-edit-employer-select"
+                                aria-label={isFa ? 'انتخاب کارفرما' : 'Select employer'}
                                 value={editEmployerId}
                                 onChange={(e) => setEditEmployerId(e.target.value)}
                                 className="flex-1 h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium focus:outline-none focus:border-[var(--accent-primary)]"
@@ -271,6 +276,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
+                              data-testid="project-edit-save-btn"
                               disabled={busyId === p.id}
                               onClick={() => handleSaveEdit(p.id)}
                               className="h-8 px-3 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold"
@@ -370,6 +376,8 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
 
                             <button
                               type="button"
+                              data-testid={`project-edit-btn-${p.id}`}
+                              aria-label={isFa ? 'ویرایش پروژه و کارفرما' : 'Edit project & employer'}
                               title={isFa ? 'ویرایش پروژه و کارفرما' : 'Edit project & employer'}
                               onClick={() => {
                                 setEditingId(p.id);

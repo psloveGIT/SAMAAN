@@ -16,11 +16,32 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.12.0';
-export const APP_BUILD_ID = '2026.05.28-1';
-export const APP_RELEASED_AT = '2026-05-28';
+export const APP_VERSION = '2.13.0';
+export const APP_BUILD_ID = '2026.05.29-1';
+export const APP_RELEASED_AT = '2026-05-29';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.13.0',
+    buildId: '2026.05.29-1',
+    releasedAt: '2026-05-29',
+    titleFa: 'رفع فوری باگ قفل فرم‌ها هنگام تغییر کارفرما و بازطراحی کامل فرم جایگزینی (MD1EX-FQP02/10-03) با صدور خودکار حواله و چاپ هم‌زمان',
+    titleEn: 'Fixed Immediate Form-Locking on Employer Switch & Redesigned MD1 Substitution Form (MD1EX-FQP02/10-03) with Automatic MIV Issuance and Simultaneous Printing',
+    changesFa: [
+      'رفع کامل باگ باز ماندن قفل فرم‌ها پس از تغییر کارفرمای پروژه در داخل نرم‌افزار؛ اعمال فوری قفل و دسترسی تمام ۹ بخش فرم‌ها در منوی کناری و صفحه فعال بلافاصله پس از تغییر کارفرما در هر دو حالت آنلاین و آفلاین',
+      'فعال‌سازی و بازطراحی کامل دومین فرم پیش‌فرض کارفرمای «مپنا توسعه یک (MD1)» با عنوان «فرم درخواست تعویض و جایگزینی قطعات / تجهیزات (MD1EX-FQP02/10-03)» با حفظ قفل سایر کارفرماها تا زمان آپلود فرم اختصاصی',
+      'طراحی گردش‌کار دو مرحله‌ای با فیلترهای پیشرفته مشابه جزئیات تجهیزات: مرحله ۱ انتخاب یک یا چند قلم نیازمند تعویض با تعداد صرفاً عددی، توضیحات اختصاصی هر ردیف، دلیل تعویض، تأمین‌کننده مجدد، هزینه، توضیحات اختیاری تأمین‌کننده و فوریت تأمین (پیش‌فرض عادی / اضطراری)',
+      'مرحله ۲ فیلتر هوشمند صرفاً اقلام دارای موجودی (کارفرما یا پیمانکار)، کسر خودکار موجودی و صدور خودکار حواله خروج از انبار (MIV) با شماره‌گذاری استاندارد و شماره‌گذاری خودکار فرم جایگزینی بر اساس پیشوند تأمین‌کننده (TU/ME/PS و اختصار دوحرفی)',
+      'پیاده‌سازی دقیق تمام ۲۹ فیلد رسمی فرم MD1EX-FQP02/10-03 و پنجره پیش‌نمایش و چاپ هم‌زمان فرم جایگزینی به همراه حواله خروج خودکار صادرشده در صفحات مجزا',
+    ],
+    changesEn: [
+      'Fixed form locks staying open after switching the active project employer inside the app; sidebar and active operational views now immediately lock or unlock in both online and offline modes',
+      'Activated and redesigned the second built-in MAPNA MD1 default form: Equipment/Parts Replacement & Substitution Request (MD1EX-FQP02/10-03), while keeping MD2/MD3/custom employers gated until upload',
+      'Built a 2-step Detailed-Equipment-grade workflow: Step 1 selects original rows needing replacement with strictly numeric quantities, per-row notes, replacement reason, reprocurement party, cost, optional supplier notes, and urgency (default Normal / Urgent)',
+      'Step 2 filters strictly to rows with available Employer or Contractor stock, automatically issues linked MIV warehouse issue voucher(s) with automatic stock deduction, and generates supplier-prefixed substitution numbers (TU/ME/PS or deterministic 2-letter prefix)',
+      'Implemented all 29 official MD1EX-FQP02/10-03 fields and a simultaneous print preview & print portal outputting both the Substitution form and auto-issued MIV voucher(s) together',
+    ],
+  },
   {
     version: '2.12.0',
     buildId: '2026.05.28-1',

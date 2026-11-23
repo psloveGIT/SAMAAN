@@ -139,6 +139,7 @@ import type {
   DatabaseSectionSummaryItem,
   ShortageBackfillRecord,
   SiteEntryMinutesRecord,
+  SubstitutionLineItem,
   SubstitutionRecord,
   TransitEntry,
   TrashRecord,
@@ -369,7 +370,7 @@ function projectRecordKey(projectId: string): string {
 }
 
 async function getProjects(): Promise<ProjectInfo[]> {
-  if (cachedProjects) return cachedProjects;
+  if (cachedProjects) return cachedProjects.map((p) => ({ ...p }));
   const idb = await openDb();
   const loaded = await idbGet<ProjectInfo[]>(idb, PROJECTS_REGISTRY_KEY);
   if (Array.isArray(loaded) && loaded.length > 0) {
@@ -389,7 +390,7 @@ async function getProjects(): Promise<ProjectInfo[]> {
         createdAt: new Date().toISOString(),
       });
     }
-    return cachedProjects;
+    return cachedProjects.map((p) => ({ ...p }));
   }
   cachedProjects = [
     {
@@ -402,17 +403,17 @@ async function getProjects(): Promise<ProjectInfo[]> {
     },
   ];
   await saveProjects(cachedProjects);
-  return cachedProjects;
+  return cachedProjects.map((p) => ({ ...p }));
 }
 
 async function saveProjects(list: ProjectInfo[]): Promise<void> {
-  cachedProjects = list;
+  cachedProjects = list.map((p) => ({ ...p }));
   const idb = await openDb();
-  await idbPut(idb, PROJECTS_REGISTRY_KEY, list);
+  await idbPut(idb, PROJECTS_REGISTRY_KEY, cachedProjects);
 }
 
 async function getEmployers(): Promise<EmployerProfile[]> {
-  if (cachedEmployers) return cachedEmployers;
+  if (cachedEmployers) return cachedEmployers.map((e) => structuredClone(e));
   const idb = await openDb();
   const loaded = await idbGet<EmployerProfile[]>(idb, EMPLOYERS_REGISTRY_KEY);
   const sanitized = Array.isArray(loaded)
@@ -422,11 +423,11 @@ async function getEmployers(): Promise<EmployerProfile[]> {
   if (!Array.isArray(loaded) || sanitized.length !== cachedEmployers.length) {
     await saveEmployers(cachedEmployers);
   }
-  return cachedEmployers;
+  return cachedEmployers.map((e) => structuredClone(e));
 }
 
 async function saveEmployers(list: EmployerProfile[]): Promise<void> {
-  cachedEmployers = ensureDefaultEmployers(list);
+  cachedEmployers = ensureDefaultEmployers(list).map((e) => structuredClone(e));
   const idb = await openDb();
   await idbPut(idb, EMPLOYERS_REGISTRY_KEY, cachedEmployers);
 }
@@ -2244,6 +2245,7 @@ async function handleStaticApiRequestInner<T>(
     const replacedOnly = query.get('replacedOnly') === 'true';
     const hasEmployerStock = query.get('hasEmployerStock') === 'true';
     const hasContractorStock = query.get('hasContractorStock') === 'true';
+    const hasAnyStock = query.get('hasAnyStock') === 'true';
     const chemicalExpiry = (query.get('chemicalExpiry') || '').trim();
     const fromDate = query.get('fromDate') || '';
     const toDate = query.get('toDate') || '';
@@ -2319,6 +2321,7 @@ async function handleStaticApiRequestInner<T>(
       }
       if (hasEmployerStock && (comp.opiPending || comp.mapnaInventory <= 0)) continue;
       if (hasContractorStock && (comp.opiPending || comp.contractorInventory <= 0)) continue;
+      if (hasAnyStock && (comp.opiPending || (comp.mapnaInventory <= 0 && comp.contractorInventory <= 0))) continue;
       if (chemicalExpiry === 'expired' && !expiredChemIds.has(comp.id)) continue;
       if (chemicalExpiry === 'expiring_soon' && !expiringSoonChemIds.has(comp.id)) continue;
       if (chemicalExpiry === 'all' && !expiredChemIds.has(comp.id) && !expiringSoonChemIds.has(comp.id)) continue;
@@ -4835,6 +4838,7 @@ async function handleStaticApiRequestInner<T>(
       records: db.substitutions,
       detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
       generalEntries: [...db.general].reverse(),
+      mivDocuments: db.mivDocuments,
     } as T;
   }
 
@@ -4843,9 +4847,69 @@ async function handleStaticApiRequestInner<T>(
     const raw = body as Partial<SubstitutionRecord>;
     const cleanNo = normKey(raw.docNo);
     const cleanDate = normKey(raw.date);
-    const cleanSubDesc = normKey(raw.substituteDescription);
     const cleanReason = normKey(raw.reason);
-    const d = db.detailed.find((x) => x.id === raw.detailedId);
+
+    const rawOrigItems = Array.isArray(raw.originalItems) ? raw.originalItems : [];
+    const sanitizedOrigItems: SubstitutionLineItem[] = [];
+    for (const item of rawOrigItems) {
+      const targetDet = db.detailed.find((x) => x.id === item?.detailedId);
+      const qVal = Number(item?.qty);
+      if (!targetDet || !Number.isFinite(qVal) || qVal <= 0) continue;
+      sanitizedOrigItems.push({
+        detailedId: targetDet.id,
+        itemNo: normKey(item.itemNo) || targetDet.itemNo || '',
+        shipmentNo: normKey(item.shipmentNo) || targetDet.shipmentNo || '',
+        packageNo: normKey(item.packageNo) || targetDet.packageNo || '',
+        description: normKey(item.description) || targetDet.description || targetDet.generalDescription || '',
+        itemCode: normKey(item.itemCode) || targetDet.itemCode || '',
+        qty: qVal,
+        countingUnit: normalizeCountingUnitToFa(targetDet.countingUnit) || 'عدد',
+        drawingNo: '',
+        remarks: normKey(item.remarks),
+        system: targetDet.system || '',
+        island: targetDet.island || '',
+        unit: targetDet.unit || '',
+        supplier: targetDet.supplier || '',
+        receiver: targetDet.receiver || '',
+        merNo: targetDet.merNo || '',
+      });
+    }
+
+    const rawSubItems = Array.isArray(raw.substituteItems) ? raw.substituteItems : [];
+    const sanitizedSubItems: SubstitutionLineItem[] = [];
+    for (const item of rawSubItems) {
+      const targetDet = db.detailed.find((x) => x.id === item?.detailedId);
+      const qVal = Number(item?.qty);
+      if (!Number.isFinite(qVal) || qVal <= 0) continue;
+      const desc = normKey(item?.description) || targetDet?.description || targetDet?.generalDescription || '';
+      if (!desc) continue;
+      sanitizedSubItems.push({
+        detailedId: targetDet?.id || normKey(item?.detailedId),
+        itemNo: normKey(item?.itemNo) || targetDet?.itemNo || '',
+        shipmentNo: normKey(item?.shipmentNo) || targetDet?.shipmentNo || '',
+        packageNo: normKey(item?.packageNo) || targetDet?.packageNo || '',
+        description: desc,
+        itemCode: normKey(item?.itemCode) || targetDet?.itemCode || '',
+        qty: qVal,
+        countingUnit: normalizeCountingUnitToFa(targetDet?.countingUnit || item?.countingUnit || '') || 'عدد',
+        drawingNo: '',
+        remarks: normKey(item?.remarks),
+        system: targetDet?.system || normKey(item?.system),
+        island: targetDet?.island || normKey(item?.island),
+        unit: targetDet?.unit || normKey(item?.unit),
+        supplier: targetDet?.supplier || normKey(item?.supplier),
+        receiver: targetDet?.receiver || normKey(item?.receiver),
+        merNo: targetDet?.merNo || normKey(item?.merNo),
+        stockSource: item?.stockSource === 'contractor' ? 'contractor' : 'mapna',
+      });
+    }
+
+    const primaryDetailedId = sanitizedOrigItems[0]?.detailedId || raw.detailedId;
+    const d = db.detailed.find((x) => x.id === primaryDetailedId);
+    const cleanSubDesc =
+      normKey(raw.substituteDescription) ||
+      sanitizedSubItems.map((i) => i.description).filter(Boolean).join(' / ');
+
     if (!cleanNo || !cleanDate || !d || !cleanSubDesc || !cleanReason) {
       throw new StaticEngineError(
         errMsg(
@@ -4855,10 +4919,20 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const numQty = Number(raw.qty);
+    const numQty =
+      sanitizedOrigItems.length > 0
+        ? roundQty(sanitizedOrigItems.reduce((sum, i) => sum + i.qty, 0))
+        : Number(raw.qty);
     if (!Number.isFinite(numQty) || numQty <= 0) {
       throw new StaticEngineError(errMsg('تعداد جایگزینی باید بزرگتر از صفر باشد', 'Substitution quantity must be greater than zero'), 400);
     }
+
+    const mivDocIds = Array.isArray(raw.mivDocIds)
+      ? raw.mivDocIds.map((id) => normKey(id)).filter(Boolean)
+      : raw.mivDocId
+        ? [normKey(raw.mivDocId)]
+        : [];
+
     const record: SubstitutionRecord = {
       id: makeId(),
       docNo: cleanNo,
@@ -4873,20 +4947,26 @@ async function handleStaticApiRequestInner<T>(
       island: normKey(raw.island) || d.island || '',
       unit: normKey(raw.unit) || d.unit || '',
       supplier: normKey(raw.supplier) || d.supplier || '',
-      supplyUrgency: normKey(raw.supplyUrgency),
+      supplyUrgency: normKey(raw.supplyUrgency) || 'عادی',
       installerContractor: normKey(raw.installerContractor),
       mivNo: normKey(raw.mivNo) || d.mivContractorNo || d.mivMapnaNo || '',
-      merNcrNo: normKey(raw.merNcrNo) || d.merNo || d.repNo || '',
+      mivDocId: normKey(raw.mivDocId) || mivDocIds[0] || undefined,
+      mivDocIds: mivDocIds.length > 0 ? mivDocIds : undefined,
+      merNcrNo: raw.merNcrNo !== undefined ? normKey(raw.merNcrNo) : d.merNo || '',
       originalDescription: d.description || d.generalDescription,
       originalItemCode: d.itemCode,
       originalDrawingNo: normKey(raw.originalDrawingNo),
-      originalRemarks: normKey(raw.originalRemarks),
-      substitutePackageNo: normKey(raw.substitutePackageNo),
+      originalRemarks: normKey(raw.originalRemarks) || sanitizedOrigItems[0]?.remarks || '',
+      originalItems: sanitizedOrigItems.length > 0 ? sanitizedOrigItems : undefined,
+      substitutePackageNo:
+        normKey(raw.substitutePackageNo) || sanitizedSubItems[0]?.shipmentNo || '',
       substituteDescription: cleanSubDesc,
-      substituteItemCode: normKey(raw.substituteItemCode),
+      substituteItemCode:
+        normKey(raw.substituteItemCode) || sanitizedSubItems[0]?.itemCode || '',
       substituteSize: normKey(raw.substituteSize),
       substituteDrawingNo: normKey(raw.substituteDrawingNo),
-      substituteRemarks: normKey(raw.substituteRemarks),
+      substituteRemarks: normKey(raw.substituteRemarks) || sanitizedSubItems[0]?.remarks || '',
+      substituteItems: sanitizedSubItems.length > 0 ? sanitizedSubItems : undefined,
       qty: numQty,
       countingUnit: normalizeCountingUnitToFa(d.countingUnit) || 'عدد',
       reason: cleanReason,
@@ -4897,20 +4977,27 @@ async function handleStaticApiRequestInner<T>(
       mapnaRep: normKey(raw.mapnaRep) || normKey(raw.approvedBy),
       installerSignatory: normKey(raw.installerSignatory),
       supplierSignatory: normKey(raw.supplierSignatory),
-      status: raw.status || 'pending',
+      status: raw.status || 'executed',
       notes: normKey(raw.notes),
       createdAt: new Date().toISOString(),
       createdBy: u.fullName || u.username,
     };
     db.substitutions.unshift(record);
-    d.repNo = appendUniqueRef(d.repNo, cleanNo);
-    if (record.status === 'approved') d.repStatus = 'تأیید شده';
-    else if (record.status === 'executed') d.repStatus = 'اجرا شده';
-    else if (!d.repStatus) d.repStatus = 'در انتظار تأیید';
-    if (record.reprocureBy) d.repReprocured = record.reprocureBy;
-    if (record.substituteDescription) d.repDescription = record.substituteDescription;
-    d.updatedAt = record.createdAt;
-    addAudit(db, sanitizeUser(u), 'CREATE_SUBSTITUTION', 'substitution', cleanNo, `ثبت فرم جایگزینی شماره ${cleanNo}`);
+
+    const affectedOrigIds = new Set<string>([d.id, ...sanitizedOrigItems.map((i) => i.detailedId)]);
+    for (const detId of affectedOrigIds) {
+      const detRow = db.detailed.find((x) => x.id === detId);
+      if (!detRow) continue;
+      detRow.repNo = appendUniqueRef(detRow.repNo, cleanNo);
+      if (record.status === 'approved') detRow.repStatus = 'تأیید شده';
+      else if (record.status === 'executed') detRow.repStatus = 'اجرا شده';
+      else if (!detRow.repStatus) detRow.repStatus = 'در انتظار تأیید';
+      if (record.reprocureBy) detRow.repReprocured = record.reprocureBy;
+      if (record.substituteDescription) detRow.repDescription = record.substituteDescription;
+      detRow.updatedAt = record.createdAt;
+    }
+
+    addAudit(db, sanitizeUser(u), 'CREATE_SUBSTITUTION', 'substitution', cleanNo, `ثبت فرم جایگزینی شماره ${cleanNo} (${affectedOrigIds.size} قلم اصلی)`);
     await saveActiveDb();
     return { record } as T;
   }

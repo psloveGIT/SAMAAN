@@ -208,6 +208,7 @@ const SamaanWorkspace: React.FC = () => {
     if (!access.hasAccess) {
       return (
         <OperationalFormGate
+          key={`gate:${activeEmployer.id}:${sectionKey}`}
           sectionKey={sectionKey}
           onGoToUploadForms={openEmployerFormUpload}
           onSelectSection={(targetKey) => setActiveTab(targetKey)}
@@ -217,6 +218,7 @@ const SamaanWorkspace: React.FC = () => {
     if (access.mode === 'uploaded') {
       return (
         <UploadedSectionWorkspace
+          key={`uploaded:${activeEmployer.id}:${sectionKey}`}
           sectionKey={sectionKey}
           uploadedForms={access.uploadedForms}
           refreshSignal={refreshSignal}
@@ -224,7 +226,7 @@ const SamaanWorkspace: React.FC = () => {
         />
       );
     }
-    return builtInView;
+    return <React.Fragment key={`builtin:${activeEmployer.id}:${sectionKey}`}>{builtInView}</React.Fragment>;
   };
 
   const bumpRefresh = useCallback(() => {
@@ -510,7 +512,7 @@ const SamaanWorkspace: React.FC = () => {
           onNetworkModeChanged={bumpRefresh}
         >
           <AppErrorBoundary
-            resetKey={`${activeTab}:${activeProjectId}:${refreshSignal}`}
+            resetKey={`${activeTab}:${activeProjectId}:${activeEmployer.id}:${refreshSignal}`}
             isFa={prefs.language === 'fa'}
             onResetToDashboard={() => setActiveTab('dashboard')}
           >

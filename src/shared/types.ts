@@ -619,6 +619,26 @@ export interface OsdrReportRecord {
   createdBy: string;
 }
 
+export interface SubstitutionLineItem {
+  detailedId: string;
+  itemNo: string;
+  shipmentNo: string;
+  packageNo: string;
+  description: string;
+  itemCode: string;
+  qty: number;
+  countingUnit?: string;
+  drawingNo?: string;
+  remarks?: string;
+  system?: string;
+  island?: string;
+  unit?: string;
+  supplier?: string;
+  receiver?: string;
+  merNo?: string;
+  stockSource?: 'mapna' | 'contractor';
+}
+
 export interface SubstitutionRecord {
   id: string;
   docNo: string;
@@ -636,17 +656,21 @@ export interface SubstitutionRecord {
   supplyUrgency?: string;
   installerContractor?: string;
   mivNo?: string;
+  mivDocId?: string;
+  mivDocIds?: string[];
   merNcrNo?: string;
   originalDescription: string;
   originalItemCode: string;
   originalDrawingNo?: string;
   originalRemarks?: string;
+  originalItems?: SubstitutionLineItem[];
   substitutePackageNo?: string;
   substituteDescription: string;
   substituteItemCode: string;
   substituteSize?: string;
   substituteDrawingNo?: string;
   substituteRemarks?: string;
+  substituteItems?: SubstitutionLineItem[];
   qty: number;
   countingUnit: string;
   reason: string;

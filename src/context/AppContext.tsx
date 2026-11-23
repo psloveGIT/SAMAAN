@@ -183,7 +183,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshProjects = useCallback(async () => {
     try {
       const res = await apiRequest<{ projects: ProjectInfo[]; activeProjectId: string }>('/api/projects');
-      setProjects(res.projects || []);
+      setProjects((res.projects || []).map((p) => ({ ...p })));
       const resolved = res.activeProjectId || 'default';
       persistActiveProjectId(resolved);
       setActiveProjectIdState(resolved);
@@ -195,7 +195,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshEmployers = useCallback(async () => {
     try {
       const res = await apiRequest<{ employers: EmployerProfile[] }>('/api/employers');
-      setEmployers(ensureDefaultEmployers(res.employers || []));
+      setEmployers(ensureDefaultEmployers(res.employers || []).map((e) => ({ ...e })));
     } catch {
       // Keep built-in defaults if fetch fails
     }
@@ -211,12 +211,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ]);
       const resolvedProject = projRes?.activeProjectId || getActiveProjectId() || 'default';
       if (projRes) {
-        setProjects(projRes.projects || []);
+        setProjects((projRes.projects || []).map((p) => ({ ...p })));
         persistActiveProjectId(resolvedProject);
         setActiveProjectIdState(resolvedProject);
       }
       if (empRes) {
-        setEmployers(ensureDefaultEmployers(empRes.employers || []));
+        setEmployers(ensureDefaultEmployers(empRes.employers || []).map((e) => ({ ...e })));
       }
       setNeedsSetup(data.needsSetup);
       setUser(data.user);
@@ -245,7 +245,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       method: 'POST',
       body: JSON.stringify(input),
     });
-    setEmployers(res.employers || []);
+    setEmployers(ensureDefaultEmployers(res.employers || []).map((e) => ({ ...e })));
     return res.employer;
   }, []);
 
@@ -257,7 +257,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify(input),
       },
     );
-    setEmployers(res.employers || []);
+    setEmployers(ensureDefaultEmployers(res.employers || []).map((e) => ({ ...e })));
     return res.employer;
   }, []);
 
@@ -269,7 +269,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           method: 'DELETE',
         },
       );
-      setEmployers(res.employers || []);
+      setEmployers(ensureDefaultEmployers(res.employers || []).map((e) => ({ ...e })));
       await refreshProjects();
     },
     [refreshProjects],
@@ -306,7 +306,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           copyUsers: Boolean(input.copyUsers),
         }),
       });
-      setProjects(res.projects || []);
+      setProjects((res.projects || []).map((p) => ({ ...p })));
       if (input.autoSwitch !== false) {
         await switchProject(res.project.id);
       }
@@ -333,7 +333,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           body: JSON.stringify(input),
         },
       );
-      setProjects(res.projects || []);
+      setProjects((res.projects || []).map((p) => ({ ...p })));
       return res.project;
     },
     [],
@@ -347,7 +347,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           method: 'DELETE',
         },
       );
-      setProjects(res.projects || []);
+      setProjects((res.projects || []).map((p) => ({ ...p })));
       if (activeProjectId === id) {
         await switchProject('default');
       }

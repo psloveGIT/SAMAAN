@@ -158,6 +158,7 @@ import type {
   DatabaseSectionSummaryItem,
   ShortageBackfillRecord,
   SiteEntryMinutesRecord,
+  SubstitutionLineItem,
   SubstitutionRecord,
   TransitEntry,
   TrashRecord,
@@ -1745,6 +1746,7 @@ async function startServer() {
     const replacedOnly = String(req.query.replacedOnly || '') === 'true';
     const hasEmployerStock = String(req.query.hasEmployerStock || '') === 'true';
     const hasContractorStock = String(req.query.hasContractorStock || '') === 'true';
+    const hasAnyStock = String(req.query.hasAnyStock || '') === 'true';
     const chemicalExpiry = String(req.query.chemicalExpiry || '').trim();
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
@@ -1852,6 +1854,7 @@ async function startServer() {
       }
       if (hasEmployerStock && (comp.opiPending || comp.mapnaInventory <= 0)) continue;
       if (hasContractorStock && (comp.opiPending || comp.contractorInventory <= 0)) continue;
+      if (hasAnyStock && (comp.opiPending || (comp.mapnaInventory <= 0 && comp.contractorInventory <= 0))) continue;
       if (chemicalExpiry === 'expired' && !expiredChemIds.has(comp.id)) continue;
       if (chemicalExpiry === 'expiring_soon' && !expiringSoonChemIds.has(comp.id)) continue;
       if (chemicalExpiry === 'all' && !expiredChemIds.has(comp.id) && !expiringSoonChemIds.has(comp.id)) continue;
@@ -4781,6 +4784,7 @@ async function startServer() {
       records: store.db.substitutions,
       detailedItems: [...store.getDetailedComputedList()].reverse(),
       generalEntries: [...store.db.general].reverse(),
+      mivDocuments: store.db.mivDocuments,
     });
   });
 
@@ -4788,9 +4792,69 @@ async function startServer() {
     const raw = req.body as Partial<SubstitutionRecord>;
     const cleanNo = normKey(raw.docNo);
     const cleanDate = normKey(raw.date);
-    const cleanSubDesc = normKey(raw.substituteDescription);
     const cleanReason = normKey(raw.reason);
-    const d = store.db.detailed.find((x) => x.id === raw.detailedId);
+
+    const rawOrigItems = Array.isArray(raw.originalItems) ? raw.originalItems : [];
+    const sanitizedOrigItems: SubstitutionLineItem[] = [];
+    for (const item of rawOrigItems) {
+      const targetDet = store.db.detailed.find((x) => x.id === item?.detailedId);
+      const qVal = Number(item?.qty);
+      if (!targetDet || !Number.isFinite(qVal) || qVal <= 0) continue;
+      sanitizedOrigItems.push({
+        detailedId: targetDet.id,
+        itemNo: normKey(item.itemNo) || targetDet.itemNo || '',
+        shipmentNo: normKey(item.shipmentNo) || targetDet.shipmentNo || '',
+        packageNo: normKey(item.packageNo) || targetDet.packageNo || '',
+        description: normKey(item.description) || targetDet.description || targetDet.generalDescription || '',
+        itemCode: normKey(item.itemCode) || targetDet.itemCode || '',
+        qty: qVal,
+        countingUnit: normalizeCountingUnitToFa(targetDet.countingUnit) || 'عدد',
+        drawingNo: '',
+        remarks: normKey(item.remarks),
+        system: targetDet.system || '',
+        island: targetDet.island || '',
+        unit: targetDet.unit || '',
+        supplier: targetDet.supplier || '',
+        receiver: targetDet.receiver || '',
+        merNo: targetDet.merNo || '',
+      });
+    }
+
+    const rawSubItems = Array.isArray(raw.substituteItems) ? raw.substituteItems : [];
+    const sanitizedSubItems: SubstitutionLineItem[] = [];
+    for (const item of rawSubItems) {
+      const targetDet = store.db.detailed.find((x) => x.id === item?.detailedId);
+      const qVal = Number(item?.qty);
+      if (!Number.isFinite(qVal) || qVal <= 0) continue;
+      const desc = normKey(item?.description) || targetDet?.description || targetDet?.generalDescription || '';
+      if (!desc) continue;
+      sanitizedSubItems.push({
+        detailedId: targetDet?.id || normKey(item?.detailedId),
+        itemNo: normKey(item?.itemNo) || targetDet?.itemNo || '',
+        shipmentNo: normKey(item?.shipmentNo) || targetDet?.shipmentNo || '',
+        packageNo: normKey(item?.packageNo) || targetDet?.packageNo || '',
+        description: desc,
+        itemCode: normKey(item?.itemCode) || targetDet?.itemCode || '',
+        qty: qVal,
+        countingUnit: normalizeCountingUnitToFa(targetDet?.countingUnit || item?.countingUnit || '') || 'عدد',
+        drawingNo: '',
+        remarks: normKey(item?.remarks),
+        system: targetDet?.system || normKey(item?.system),
+        island: targetDet?.island || normKey(item?.island),
+        unit: targetDet?.unit || normKey(item?.unit),
+        supplier: targetDet?.supplier || normKey(item?.supplier),
+        receiver: targetDet?.receiver || normKey(item?.receiver),
+        merNo: targetDet?.merNo || normKey(item?.merNo),
+        stockSource: item?.stockSource === 'contractor' ? 'contractor' : 'mapna',
+      });
+    }
+
+    const primaryDetailedId = sanitizedOrigItems[0]?.detailedId || raw.detailedId;
+    const d = store.db.detailed.find((x) => x.id === primaryDetailedId);
+    const cleanSubDesc =
+      normKey(raw.substituteDescription) ||
+      sanitizedSubItems.map((i) => i.description).filter(Boolean).join(' / ');
+
     if (!cleanNo || !cleanDate || !d || !cleanSubDesc || !cleanReason) {
       res.status(400).json({
         error: errMsg(
@@ -4802,11 +4866,20 @@ async function startServer() {
       return;
     }
 
-    const numQty = Number(raw.qty);
+    const numQty =
+      sanitizedOrigItems.length > 0
+        ? roundQty(sanitizedOrigItems.reduce((sum, i) => sum + i.qty, 0))
+        : Number(raw.qty);
     if (!Number.isFinite(numQty) || numQty <= 0) {
       res.status(400).json({ error: errMsg(req, 'تعداد جایگزینی باید بزرگتر از صفر باشد', 'Substitution quantity must be greater than zero') });
       return;
     }
+
+    const mivDocIds = Array.isArray(raw.mivDocIds)
+      ? raw.mivDocIds.map((id) => normKey(id)).filter(Boolean)
+      : raw.mivDocId
+        ? [normKey(raw.mivDocId)]
+        : [];
 
     const record: SubstitutionRecord = {
       id: makeId(),
@@ -4822,20 +4895,26 @@ async function startServer() {
       island: normKey(raw.island) || d.island || '',
       unit: normKey(raw.unit) || d.unit || '',
       supplier: normKey(raw.supplier) || d.supplier || '',
-      supplyUrgency: normKey(raw.supplyUrgency),
+      supplyUrgency: normKey(raw.supplyUrgency) || 'عادی',
       installerContractor: normKey(raw.installerContractor),
       mivNo: normKey(raw.mivNo) || d.mivContractorNo || d.mivMapnaNo || '',
-      merNcrNo: normKey(raw.merNcrNo) || d.merNo || d.repNo || '',
+      mivDocId: normKey(raw.mivDocId) || mivDocIds[0] || undefined,
+      mivDocIds: mivDocIds.length > 0 ? mivDocIds : undefined,
+      merNcrNo: raw.merNcrNo !== undefined ? normKey(raw.merNcrNo) : d.merNo || '',
       originalDescription: d.description || d.generalDescription,
       originalItemCode: d.itemCode,
       originalDrawingNo: normKey(raw.originalDrawingNo),
-      originalRemarks: normKey(raw.originalRemarks),
-      substitutePackageNo: normKey(raw.substitutePackageNo),
+      originalRemarks: normKey(raw.originalRemarks) || sanitizedOrigItems[0]?.remarks || '',
+      originalItems: sanitizedOrigItems.length > 0 ? sanitizedOrigItems : undefined,
+      substitutePackageNo:
+        normKey(raw.substitutePackageNo) || sanitizedSubItems[0]?.shipmentNo || '',
       substituteDescription: cleanSubDesc,
-      substituteItemCode: normKey(raw.substituteItemCode),
+      substituteItemCode:
+        normKey(raw.substituteItemCode) || sanitizedSubItems[0]?.itemCode || '',
       substituteSize: normKey(raw.substituteSize),
       substituteDrawingNo: normKey(raw.substituteDrawingNo),
-      substituteRemarks: normKey(raw.substituteRemarks),
+      substituteRemarks: normKey(raw.substituteRemarks) || sanitizedSubItems[0]?.remarks || '',
+      substituteItems: sanitizedSubItems.length > 0 ? sanitizedSubItems : undefined,
       qty: numQty,
       countingUnit: normalizeCountingUnitToFa(d.countingUnit) || 'عدد',
       reason: cleanReason,
@@ -4846,25 +4925,32 @@ async function startServer() {
       mapnaRep: normKey(raw.mapnaRep) || normKey(raw.approvedBy),
       installerSignatory: normKey(raw.installerSignatory),
       supplierSignatory: normKey(raw.supplierSignatory),
-      status: raw.status || 'pending',
+      status: raw.status || 'executed',
       notes: normKey(raw.notes),
       createdAt: new Date().toISOString(),
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
     };
     store.db.substitutions.unshift(record);
-    d.repNo = appendUniqueRef(d.repNo, cleanNo);
-    if (record.status === 'approved') d.repStatus = 'تأیید شده';
-    else if (record.status === 'executed') d.repStatus = 'اجرا شده';
-    else if (!d.repStatus) d.repStatus = 'در انتظار تأیید';
-    if (record.reprocureBy) d.repReprocured = record.reprocureBy;
-    if (record.substituteDescription) d.repDescription = record.substituteDescription;
-    d.updatedAt = record.createdAt;
+
+    const affectedOrigIds = new Set<string>([d.id, ...sanitizedOrigItems.map((i) => i.detailedId)]);
+    for (const detId of affectedOrigIds) {
+      const detRow = store.db.detailed.find((x) => x.id === detId);
+      if (!detRow) continue;
+      detRow.repNo = appendUniqueRef(detRow.repNo, cleanNo);
+      if (record.status === 'approved') detRow.repStatus = 'تأیید شده';
+      else if (record.status === 'executed') detRow.repStatus = 'اجرا شده';
+      else if (!detRow.repStatus) detRow.repStatus = 'در انتظار تأیید';
+      if (record.reprocureBy) detRow.repReprocured = record.reprocureBy;
+      if (record.substituteDescription) detRow.repDescription = record.substituteDescription;
+      detRow.updatedAt = record.createdAt;
+    }
+
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'CREATE_SUBSTITUTION',
       scope: 'substitution',
       targetId: cleanNo,
-      summary: `ثبت فرم جایگزینی شماره ${cleanNo} برای آیتم ${d.itemNo || d.rowNo} (${d.shipmentNo})`,
+      summary: `ثبت فرم جایگزینی شماره ${cleanNo} (${affectedOrigIds.size} قلم اصلی)`,
     });
     store.saveImmediate();
     res.json({ record });

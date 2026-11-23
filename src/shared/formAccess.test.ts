@@ -45,19 +45,21 @@ test('OPERATIONAL_FORM_SECTIONS contains exactly the 9 warehouse operational for
   assert.equal(isOperationalFormSection('general'), false);
 });
 
-test('MD1 has built-in storageLabel active (1/9) while MD2, MD3 and custom employers start with 0/9 active sections until forms are uploaded', () => {
-  assert.deepEqual(BUILT_IN_EMPLOYER_DEFAULT_FORMS['mapna-md1'], ['storageLabel']);
+test('MD1 has built-in storageLabel & substitution active (2/9) while MD2, MD3 and custom employers start with 0/9 active sections until forms are uploaded', () => {
+  assert.deepEqual(BUILT_IN_EMPLOYER_DEFAULT_FORMS['mapna-md1'], ['storageLabel', 'substitution']);
   assert.deepEqual(BUILT_IN_EMPLOYER_DEFAULT_FORMS['mapna-md2'], []);
   assert.deepEqual(BUILT_IN_EMPLOYER_DEFAULT_FORMS['mapna-md3'], []);
+
+  const md1BuiltIns = new Set(['storageLabel', 'substitution']);
 
   for (const emp of BUILT_IN_EMPLOYERS) {
     const summary = getEmployerFormSectionsSummary(emp);
     assert.equal(summary.totalCount, 9);
     if (emp.id === 'mapna-md1') {
-      assert.equal(summary.unlockedCount, 1);
-      assert.equal(summary.lockedCount, 8);
+      assert.equal(summary.unlockedCount, 2);
+      assert.equal(summary.lockedCount, 7);
       for (const sec of summary.sections) {
-        if (sec.sectionKey === 'storageLabel') {
+        if (md1BuiltIns.has(sec.sectionKey)) {
           assert.equal(sec.hasAccess, true);
           assert.equal(sec.mode, 'builtin');
         } else {
@@ -74,6 +76,17 @@ test('MD1 has built-in storageLabel active (1/9) while MD2, MD3 and custom emplo
       }
     }
   }
+
+  // Switching active employer from MD1 -> MD2 -> MD3 -> Custom immediately re-locks MD1 forms
+  const md1 = BUILT_IN_EMPLOYERS.find((e) => e.id === 'mapna-md1')!;
+  const md2 = BUILT_IN_EMPLOYERS.find((e) => e.id === 'mapna-md2')!;
+  const md3 = BUILT_IN_EMPLOYERS.find((e) => e.id === 'mapna-md3')!;
+  assert.equal(resolveOperationalSectionAccess(md1, 'storageLabel').hasAccess, true);
+  assert.equal(resolveOperationalSectionAccess(md1, 'substitution').hasAccess, true);
+  assert.equal(resolveOperationalSectionAccess(md2, 'storageLabel').hasAccess, false);
+  assert.equal(resolveOperationalSectionAccess(md2, 'substitution').hasAccess, false);
+  assert.equal(resolveOperationalSectionAccess(md3, 'storageLabel').hasAccess, false);
+  assert.equal(resolveOperationalSectionAccess(md3, 'substitution').hasAccess, false);
 
   const customEmployer: Pick<EmployerProfile, 'id' | 'uploadedForms'> = {
     id: 'emp-custom-neka',

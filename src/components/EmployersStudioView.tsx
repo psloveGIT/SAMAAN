@@ -1191,9 +1191,14 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
             {activeProject && !compact && (
               <button
                 type="button"
+                data-testid="assign-employer-to-project-btn"
                 disabled={saving}
                 onClick={handleAssignToActive}
-                className="h-9 px-3.5 rounded-lg border border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors"
+                className={`h-9 px-3.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+                  activeProject.employerId === draft.id && !isCreatingNew
+                    ? 'border border-emerald-500/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                    : 'border border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)]'
+                }`}
               >
                 <Check className="w-3.5 h-3.5" />
                 <span>
@@ -1861,16 +1866,19 @@ export const EmployersStudioWorkspace: React.FC<EmployersStudioWorkspaceProps> =
                                   {isFa ? 'تنظیمات' : 'Edit'}
                                 </button>
                               )}
-                              {sec.hasAccess && onOpenFormSection && !isCreatingNew && (
-                                <button
-                                  type="button"
-                                  data-testid={`open-unlocked-section-${sec.sectionKey}`}
-                                  onClick={() => onOpenFormSection(sec.sectionKey)}
-                                  className="h-7 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10.5px] font-semibold transition-colors"
-                                >
-                                  {isFa ? 'ورود به بخش' : 'Open'}
-                                </button>
-                              )}
+                              {sec.hasAccess &&
+                                onOpenFormSection &&
+                                !isCreatingNew &&
+                                activeProject?.employerId === draft.id && (
+                                  <button
+                                    type="button"
+                                    data-testid={`open-unlocked-section-${sec.sectionKey}`}
+                                    onClick={() => onOpenFormSection(sec.sectionKey)}
+                                    className="h-7 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10.5px] font-semibold transition-colors"
+                                  >
+                                    {isFa ? 'ورود به بخش' : 'Open'}
+                                  </button>
+                                )}
                             </div>
                           </div>
                         </div>
