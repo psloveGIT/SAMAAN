@@ -5,6 +5,7 @@ import {
   runConnectivityProbe,
   type NetworkModeState,
 } from '../shared/networkStatus.ts';
+import { recordDiagnosticEvent } from './diagnostics.ts';
 
 export type { NetworkModeState };
 
@@ -310,6 +311,12 @@ export async function apiRequest<T>(
     // If a large online import/backup/AI request timed out while device is online, throw a clear timeout error
     // instead of hanging the main browser thread inside the local fallback engine.
     if (timedOut && isBrowserOnline() && (isHeavyRoute || isAiRoute)) {
+      recordDiagnosticEvent({
+        kind: 'api_error',
+        severity: 'error',
+        message: `API Timeout (504): ${options.method || 'GET'} ${url}`,
+        details: `Timeout after ${timeoutMs}ms`,
+      });
       const lang = getActiveLang();
       throw new ApiError(
         lang === 'en'
@@ -349,6 +356,14 @@ export async function apiRequest<T>(
 
   if (!res.ok) {
     const obj = (data || {}) as { error?: string; code?: string };
+    if (res.status >= 500) {
+      recordDiagnosticEvent({
+        kind: 'api_error',
+        severity: 'error',
+        message: `API Error (${res.status}): ${options.method || 'GET'} ${url}`,
+        details: obj.error || text.slice(0, 300),
+      });
+    }
     throw new ApiError(
       obj.error || `Request failed (${res.status})`,
       res.status,

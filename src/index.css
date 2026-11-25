@@ -10,7 +10,9 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-:root {
+:root,
+html.light,
+html[data-theme="light"] {
   --bg-canvas: #f8fafc;
   --bg-surface: #ffffff;
   --bg-subtle: #f1f5f9;
@@ -34,9 +36,12 @@
   --shadow-float: 0 14px 36px -10px rgba(15, 23, 42, 0.14), 0 4px 12px -4px rgba(15, 23, 42, 0.06);
   color-scheme: only light;
   forced-color-adjust: none;
+  -webkit-forced-color-adjust: none;
 }
 
-.dark {
+.dark,
+html.dark,
+html[data-theme="dark"] {
   --bg-canvas: #0b111b;
   --bg-surface: #121a26;
   --bg-subtle: #192334;
@@ -536,10 +541,14 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
     white-space: nowrap !important;
   }
   .samaan-col-fluid {
-    white-space: pre-wrap !important;
+    white-space: pre-line !important;
   }
   .samaan-keep-together {
     break-inside: avoid !important;
     page-break-inside: avoid !important;
+  }
+  .samaan-print-page-break {
+    break-after: page !important;
+    page-break-after: always !important;
   }
 }

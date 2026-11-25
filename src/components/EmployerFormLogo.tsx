@@ -2,6 +2,7 @@ import React from 'react';
 import { resolveEmployerLogoById } from '../shared/employers.ts';
 import type { ResolvedEmployerProfile } from '../shared/employers.ts';
 import type { EmployerLogoAsset } from '../shared/types.ts';
+import { resolveEmployerLogoSrc } from '../lib/employerLogoCache.ts';
 
 interface EmployerFormLogoProps {
   employer: ResolvedEmployerProfile;
@@ -23,11 +24,13 @@ export const EmployerFormLogo: React.FC<EmployerFormLogoProps> = ({
   const chosenLogo =
     logo || (logoId ? resolveEmployerLogoById(employer, logoId, false) : resolveEmployerLogoById(employer, '__default__', true));
 
-  if (chosenLogo?.dataUrl) {
+  const resolvedSrc = resolveEmployerLogoSrc(chosenLogo?.dataUrl);
+
+  if (resolvedSrc) {
     return (
       <img
-        src={chosenLogo.dataUrl}
-        alt={chosenLogo.label || employer.companyFullName || employer.nameFa}
+        src={resolvedSrc}
+        alt={chosenLogo?.label || employer.companyFullName || employer.nameFa}
         referrerPolicy="no-referrer"
         style={{
           height: `${height}px`,

@@ -240,6 +240,7 @@ export interface EmployerProfile {
   inspectorLabel?: string;
   address?: string;
   phone?: string;
+  secondaryPhone?: string;
   postalCode?: string;
   fax?: string;
   email?: string;
@@ -264,10 +265,15 @@ export interface EmployerCustomConfig {
   hideDocCodes?: boolean;
 }
 
+export type PlantAbbreviationPosition = 'prefix' | 'before_number';
+
 export interface ProjectInfo {
   id: string;
   name: string;
   code?: string;
+  plantAbbreviation?: string;
+  usePlantAbbreviationInDocs?: boolean;
+  plantAbbreviationPosition?: PlantAbbreviationPosition;
   contractRef?: string;
   employerId?: EmployerId;
   employerConfig?: EmployerCustomConfig;
@@ -380,6 +386,7 @@ export interface DetailedEntry {
   opiDate: string; // تاریخ دعوتنامه (OPI)
   merNo: string; // شماره کسری/مغایرت (MER)
   merStatus: string; // وضعیت کسری/مغایرت (MER)
+  merDescription?: string; // توضیحات کسری/مغایرت (MER)
   notes: string; // توضیحات تجهیز
   materialBalanceNo: string; // شماره بالانس متریال
   balanceStatus: string; // وضعیت بالانس
@@ -704,6 +711,11 @@ export interface DocumentLineItem {
   opiNo?: string;
   returnReason?: string;
   remark?: string;
+  userRemark?: string;
+  equipmentNotes?: string;
+  sourceWarehouse?: 'auto' | 'employer' | 'contractor';
+  deductedFromMapna?: number;
+  deductedFromContractor?: number;
 }
 
 export interface GcvDocumentRecord {
@@ -1006,4 +1018,107 @@ export interface DatabasePurgeResponse {
   deletedCounts: Partial<Record<PurgeableSectionKey, number>>;
   totalDeleted: number;
 }
+
+export type DiagnosticEventKind =
+  | 'runtime_error'
+  | 'unhandled_rejection'
+  | 'react_crash'
+  | 'ui_freeze'
+  | 'api_error'
+  | 'manual_note';
+
+export interface DiagnosticLogEntry {
+  id: string;
+  timestamp: string;
+  kind: DiagnosticEventKind;
+  severity: 'info' | 'warning' | 'error' | 'critical';
+  message: string;
+  stack?: string;
+  details?: string;
+  section?: string;
+  durationMs?: number;
+  url?: string;
+  appVersion?: string;
+}
+
+export interface ErrorReportRecord {
+  id: string;
+  createdAt: string;
+  title: string;
+  category: 'bug' | 'ui_layout' | 'freeze_crash' | 'print_export' | 'data_sync' | 'other';
+  section: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  stepsToReproduce?: string;
+  attachLogs: boolean;
+  logs?: DiagnosticLogEntry[];
+  projectName?: string;
+  username?: string;
+  appVersion?: string;
+  userAgent?: string;
+  viewport?: string;
+  syncedToServer: boolean;
+  syncedAt?: string;
+}
+
+export interface ReprocurementApplyPayload {
+  sourceShipmentNo: string;
+  sourcePackingQty: number;
+  sourceCountingUnit?: string;
+  substitutionTargets?: Array<{
+    detailedId: string;
+    substitutionId?: string;
+    repNo?: string;
+    targetQty?: number;
+  }>;
+  shortageTargets?: Array<{
+    detailedId: string;
+  }>;
+}
+
+export interface ReprocurementApplyResponse {
+  ok: boolean;
+  updatedSubstitutionRowIds: string[];
+  closedSubstitutionRowIds: string[];
+  updatedShortageRowIds: string[];
+  closedShortageRowIds: string[];
+}
+
+export interface DeveloperRequestAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataBase64: string;
+}
+
+export interface DeveloperEmployerRequest {
+  id: string;
+  createdAt: string;
+  requestType: 'missing_form' | 'new_employer';
+  targetEmployerId?: string;
+  targetEmployerName?: string;
+  sectionKeys: string[];
+  requesterName: string;
+  requesterRole?: string;
+  requesterPhone: string;
+  requesterEmail?: string;
+  projectName?: string;
+  newEmployerNameFa?: string;
+  newEmployerNameEn?: string;
+  newEmployerShortName?: string;
+  newEmployerAddress?: string;
+  newEmployerPhone?: string;
+  newEmployerFax?: string;
+  newEmployerPostalCode?: string;
+  newEmployerEmail?: string;
+  newEmployerSocials?: string;
+  description?: string;
+  attachments: DeveloperRequestAttachment[];
+  submittedByUserId?: string;
+  submittedByUsername?: string;
+  appVersion?: string;
+  syncedToServer: boolean;
+}
+
 

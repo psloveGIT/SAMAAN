@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import {
   Download,
@@ -357,7 +358,7 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
           {effectiveUploadedForm.fileType !== 'pdf' && (
             <button
               type="button"
-              onClick={() => window.print()}
+              onClick={() => triggerAppPrint()}
               className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
             >
               <Printer className="w-3.5 h-3.5" />

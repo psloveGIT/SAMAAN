@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { triggerAppPrint } from './lib/print.ts';
 import { AlertTriangle, RotateCcw, X } from 'lucide-react';
 import { AiAssistantDrawer } from './components/AiAssistantDrawer.tsx';
 import { AppUpdateManager } from './components/AppUpdateManager.tsx';
@@ -6,7 +7,6 @@ import { AuthGate } from './components/AuthGate.tsx';
 import { BackupView } from './components/BackupView.tsx';
 import { BalanceView } from './components/BalanceView.tsx';
 import { CategoryManagerView } from './components/CategoryManagerView.tsx';
-import { CustomFormsRunnerView } from './components/CustomFormsRunnerView.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
 import { DatabasePurgeView } from './components/DatabasePurgeView.tsx';
 import { DetailedView } from './components/DetailedView.tsx';
@@ -31,7 +31,6 @@ import { StorageLabelView } from './components/StorageLabelView.tsx';
 import { SubstitutionView } from './components/SubstitutionView.tsx';
 import { TransitView } from './components/TransitView.tsx';
 import { TrashView } from './components/TrashView.tsx';
-import { UploadedSectionWorkspace } from './components/UploadedSectionWorkspace.tsx';
 import { UsersAuditView } from './components/UsersAuditView.tsx';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { apiRequest } from './lib/api.ts';
@@ -168,9 +167,9 @@ const SamaanWorkspace: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTabKey>('dashboard');
   const [categories, setCategories] = useState<CategoryStore>(EMPTY_CATEGORIES);
   const [refreshSignal, setRefreshSignal] = useState(0);
-  const [employerStudioTarget, setEmployerStudioTarget] = useState<{
+  const [employerStudioTarget] = useState<{
     employerId?: string;
-    section?: 'profile' | 'forms';
+    section?: 'profile' | 'request';
     formSection?: OperationalFormSectionKey | null;
     token: number;
   }>({ token: 0 });
@@ -187,19 +186,6 @@ const SamaanWorkspace: React.FC = () => {
   const [detailedPackageFilter, setDetailedPackageFilter] = useState('');
   const [detailedAutoOpenToken, setDetailedAutoOpenToken] = useState(0);
 
-  const openEmployerFormUpload = useCallback(
-    (sectionKey?: OperationalFormSectionKey) => {
-      setEmployerStudioTarget({
-        employerId: activeEmployer.id || undefined,
-        section: 'forms',
-        formSection: sectionKey || null,
-        token: Date.now(),
-      });
-      setActiveTab('employers');
-    },
-    [activeEmployer.id],
-  );
-
   const renderOperationalFormSection = (
     sectionKey: OperationalFormSectionKey,
     builtInView: React.ReactNode,
@@ -210,19 +196,7 @@ const SamaanWorkspace: React.FC = () => {
         <OperationalFormGate
           key={`gate:${activeEmployer.id}:${sectionKey}`}
           sectionKey={sectionKey}
-          onGoToUploadForms={openEmployerFormUpload}
           onSelectSection={(targetKey) => setActiveTab(targetKey)}
-        />
-      );
-    }
-    if (access.mode === 'uploaded') {
-      return (
-        <UploadedSectionWorkspace
-          key={`uploaded:${activeEmployer.id}:${sectionKey}`}
-          sectionKey={sectionKey}
-          uploadedForms={access.uploadedForms}
-          refreshSignal={refreshSignal}
-          onGoToUploadForms={openEmployerFormUpload}
         />
       );
     }
@@ -409,7 +383,7 @@ const SamaanWorkspace: React.FC = () => {
             });
             const notHandled = window.dispatchEvent(ev);
             if (notHandled) {
-              window.print();
+              triggerAppPrint();
             }
             return;
           }
@@ -621,14 +595,6 @@ const SamaanWorkspace: React.FC = () => {
                 'storageLabel',
                 <StorageLabelView refreshSignal={refreshSignal} />,
               )}
-
-            {activeTab === 'customForms' && (
-              <CustomFormsRunnerView
-                refreshSignal={refreshSignal}
-                onDataChanged={bumpRefresh}
-                onOpenEmployerStudio={() => openEmployerFormUpload()}
-              />
-            )}
 
             {activeTab === 'employers' && (
               <EmployersStudioView

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import {
   Download,
@@ -195,7 +196,7 @@ export const UploadedSectionWorkspace: React.FC<UploadedSectionWorkspaceProps> =
   const isLandscape = ps.orientation === 'landscape';
 
   const handlePrint = () => {
-    window.print();
+    triggerAppPrint();
   };
 
   const handleExportFile = async () => {

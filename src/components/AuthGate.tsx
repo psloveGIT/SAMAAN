@@ -8,7 +8,7 @@ import {
   Globe,
   Lock,
   Moon,
-  Plus,
+  Send,
   ShieldCheck,
   Sun,
   UserPlus,
@@ -22,9 +22,14 @@ import {
   isBuiltInEmployerId,
   resolveEmployerProfile,
 } from '../shared/employers.ts';
-import type { EmployerId, UserAccount } from '../shared/types.ts';
+import {
+  formatDocumentNumberWithPlantCode,
+  sanitizePlantAbbreviation,
+  validatePlantAbbreviation,
+} from '../shared/docNumbering.ts';
+import type { EmployerId, PlantAbbreviationPosition, UserAccount } from '../shared/types.ts';
 import { EmployerFormLogo } from './EmployerFormLogo.tsx';
-import { EmployersStudioWorkspace } from './EmployersStudioView.tsx';
+import { DeveloperFormRequestPanel } from './DeveloperFormRequestPanel.tsx';
 import { ProjectManagerModal } from './ProjectManagerModal.tsx';
 import { SamaanLogo } from './SamaanLogo.tsx';
 
@@ -59,6 +64,15 @@ export const AuthGate: React.FC = () => {
   const [projectName, setProjectName] = useState<string>(() =>
     isPlaceholderProjectName(activeProject?.name) ? '' : activeProject?.name || '',
   );
+  const [plantAbbreviation, setPlantAbbreviation] = useState<string>(
+    () => activeProject?.plantAbbreviation || '',
+  );
+  const [usePlantAbbreviationInDocs, setUsePlantAbbreviationInDocs] = useState<boolean>(
+    () => Boolean(activeProject?.usePlantAbbreviationInDocs),
+  );
+  const [plantAbbreviationPosition, setPlantAbbreviationPosition] = useState<PlantAbbreviationPosition>(
+    () => activeProject?.plantAbbreviationPosition || 'prefix',
+  );
   const [contractRef, setContractRef] = useState<string>(() => activeProject?.contractRef || '');
 
   const [username, setUsername] = useState('');
@@ -75,14 +89,16 @@ export const AuthGate: React.FC = () => {
     if (!activeProject) return;
     setSelectedEmployerId(activeProject.employerId || DEFAULT_EMPLOYER_ID);
     setProjectName(isPlaceholderProjectName(activeProject.name) ? '' : activeProject.name);
+    setPlantAbbreviation(activeProject.plantAbbreviation || '');
+    setUsePlantAbbreviationInDocs(Boolean(activeProject.usePlantAbbreviationInDocs));
+    setPlantAbbreviationPosition(activeProject.plantAbbreviationPosition || 'prefix');
     setContractRef(activeProject.contractRef || '');
   }, [activeProject?.id]);
 
-  const orderedEmployers = useMemo(() => {
-    const builtIns = employers.filter((e) => e.isBuiltIn || isBuiltInEmployerId(e.id));
-    const customs = employers.filter((e) => !e.isBuiltIn && !isBuiltInEmployerId(e.id));
-    return [...builtIns, ...customs];
-  }, [employers]);
+  const orderedEmployers = useMemo(
+    () => employers.filter((e) => e.isBuiltIn || isBuiltInEmployerId(e.id)),
+    [employers],
+  );
 
   const selectedEmployerObj = useMemo(
     () => orderedEmployers.find((e) => e.id === selectedEmployerId) || orderedEmployers[0],
@@ -93,9 +109,13 @@ export const AuthGate: React.FC = () => {
     setSelectedEmployerId(empId);
     if (!activeProject || !needsSetup) return;
     try {
+      const abbrCheck = validatePlantAbbreviation(plantAbbreviation);
       await renameProject(activeProject.id, {
         name: projectName.trim() || activeProject.name,
         code: activeProject.code,
+        plantAbbreviation: abbrCheck.valid ? abbrCheck.normalized : undefined,
+        usePlantAbbreviationInDocs: abbrCheck.valid && abbrCheck.normalized ? usePlantAbbreviationInDocs : false,
+        plantAbbreviationPosition,
         contractRef: contractRef.trim() || undefined,
         employerId: empId,
       });
@@ -108,6 +128,7 @@ export const AuthGate: React.FC = () => {
     e.preventDefault();
     setErrorMsg('');
 
+    const abbrCheck = validatePlantAbbreviation(plantAbbreviation);
     if (needsSetup) {
       const cleanProjectName = projectName.trim();
       if (!cleanProjectName) {
@@ -118,11 +139,15 @@ export const AuthGate: React.FC = () => {
         );
         return;
       }
+      if (!abbrCheck.valid) {
+        setErrorMsg((isFa ? abbrCheck.errorFa : abbrCheck.errorEn) || '');
+        return;
+      }
       if (!selectedEmployerId) {
         setErrorMsg(
           isFa
-            ? 'لطفاً یکی از کارفرماهای پیش‌فرض را انتخاب کنید یا کارفرمای جدید تعریف نمایید.'
-            : 'Please select an employer or define a new one.',
+            ? 'لطفاً یکی از کارفرماهای پیش‌فرض را انتخاب کنید.'
+            : 'Please select a built-in employer.',
         );
         return;
       }
@@ -133,10 +158,14 @@ export const AuthGate: React.FC = () => {
       if (needsSetup) {
         const cleanProjectName = projectName.trim();
         const cleanContractRef = contractRef.trim() || undefined;
+        const cleanPlantAbbr = abbrCheck.valid ? abbrCheck.normalized : '';
         if (activeProject) {
           await renameProject(activeProject.id, {
             name: cleanProjectName,
             code: activeProject.code,
+            plantAbbreviation: cleanPlantAbbr,
+            usePlantAbbreviationInDocs: Boolean(cleanPlantAbbr && usePlantAbbreviationInDocs),
+            plantAbbreviationPosition,
             contractRef: cleanContractRef,
             employerId: selectedEmployerId,
           });
@@ -274,12 +303,12 @@ export const AuthGate: React.FC = () => {
                     </h2>
                     <button
                       type="button"
-                      data-testid="auth-define-new-employer-btn"
+                      data-testid="auth-request-new-employer-btn"
                       onClick={() => setNewEmployerModalOpen(true)}
                       className="h-7 px-2.5 rounded-lg border border-dashed border-[var(--accent-primary)]/60 bg-[var(--accent-soft)]/50 hover:bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap transition-colors"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>{isFa ? 'تعریف کارفرمای جدید' : 'New Employer'}</span>
+                      <Send className="w-3 h-3" />
+                      <span>{isFa ? 'درخواست افزودن کارفرما به سازنده' : 'Request New Employer'}</span>
                     </button>
                   </div>
 
@@ -335,26 +364,106 @@ export const AuthGate: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Project Name & Optional Contract Reference */}
-                <div className="pt-3.5 border-t border-[var(--border-subtle)] grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label
-                      htmlFor="auth-project-name"
-                      className="block text-[11px] font-semibold text-[var(--text-primary)] mb-1"
-                    >
-                      {isFa ? 'نام پروژه *' : 'Project Name *'}
-                    </label>
-                    <input
-                      id="auth-project-name"
-                      type="text"
-                      required
-                      data-testid="auth-project-name-input"
-                      value={projectName}
-                      onChange={(e) => setProjectName(e.target.value)}
-                      placeholder={isFa ? 'مثلاً: نیروگاه نکا' : 'e.g. Neka Power Plant'}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs sm:text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)]"
-                    />
+                {/* Project Name, Power Plant Abbreviation & Optional Contract Reference */}
+                <div className="pt-3.5 border-t border-[var(--border-subtle)] space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <div className="sm:col-span-7">
+                      <label
+                        htmlFor="auth-project-name"
+                        className="block text-[11px] font-semibold text-[var(--text-primary)] mb-1"
+                      >
+                        {isFa ? 'نام پروژه *' : 'Project Name *'}
+                      </label>
+                      <input
+                        id="auth-project-name"
+                        type="text"
+                        required
+                        data-testid="auth-project-name-input"
+                        value={projectName}
+                        onChange={(e) => setProjectName(e.target.value)}
+                        placeholder={isFa ? 'مثلاً: نیروگاه نکا' : 'e.g. Neka Power Plant'}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs sm:text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-5">
+                      <label
+                        htmlFor="auth-plant-abbr"
+                        className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                      >
+                        {isFa ? 'مخفف نیروگاه (۲ تا ۳ حرف انگلیسی)' : 'Plant Abbr. (2-3 letters)'}
+                      </label>
+                      <input
+                        id="auth-plant-abbr"
+                        type="text"
+                        dir="ltr"
+                        maxLength={3}
+                        data-testid="auth-plant-abbr-input"
+                        value={plantAbbreviation}
+                        onChange={(e) => setPlantAbbreviation(sanitizePlantAbbreviation(e.target.value))}
+                        placeholder="NK"
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs sm:text-sm font-mono uppercase tracking-wider text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
                   </div>
+
+                  {/* Plant Abbreviation in Document Numbers Toggle & Position */}
+                  {plantAbbreviation.length >= 2 && (
+                    <div className="p-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 space-y-2">
+                      <label className="flex items-center gap-2 text-[11.5px] font-medium text-[var(--text-primary)] cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          data-testid="auth-use-plant-abbr-checkbox"
+                          checked={usePlantAbbreviationInDocs}
+                          onChange={(e) => setUsePlantAbbreviationInDocs(e.target.checked)}
+                          className="w-3.5 h-3.5 accent-[var(--accent-primary)]"
+                        />
+                        <span>
+                          {isFa
+                            ? 'درج مخفف نیروگاه در شماره‌گذاری خودکار فرم‌ها و اسناد'
+                            : 'Include plant abbreviation in automatic document numbering'}
+                        </span>
+                      </label>
+
+                      {usePlantAbbreviationInDocs && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[var(--border-subtle)]/70">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              data-testid="auth-plant-abbr-pos-prefix"
+                              onClick={() => setPlantAbbreviationPosition('prefix')}
+                              className={`h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-colors ${
+                                plantAbbreviationPosition === 'prefix'
+                                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                                  : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
+                              }`}
+                            >
+                              {isFa ? 'ابتدای شماره' : 'At Start'}
+                            </button>
+                            <button
+                              type="button"
+                              data-testid="auth-plant-abbr-pos-before"
+                              onClick={() => setPlantAbbreviationPosition('before_number')}
+                              className={`h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-colors ${
+                                plantAbbreviationPosition === 'before_number'
+                                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                                  : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
+                              }`}
+                            >
+                              {isFa ? 'قبل از عدد ردیف' : 'Before Number'}
+                            </button>
+                          </div>
+                          <span dir="ltr" className="text-[11px] font-mono font-bold text-[var(--accent-primary)]">
+                            {formatDocumentNumberWithPlantCode('TU', '0001', {
+                              plantAbbreviation,
+                              usePlantAbbreviationInDocs: true,
+                              plantAbbreviationPosition,
+                            })}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div>
                     <label
@@ -628,15 +737,17 @@ export const AuthGate: React.FC = () => {
 
       <ProjectManagerModal open={projectModalOpen} onClose={() => setProjectModalOpen(false)} />
 
-      {/* Define New Employer Modal directly from Login / Onboarding */}
+      {/* Request New Employer / Forms Modal directly from Onboarding */}
       {newEmployerModalOpen && (
         <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div className="w-full max-w-5xl max-h-[92vh] flex flex-col rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] shadow-2xl overflow-hidden">
+          <div className="w-full max-w-4xl max-h-[92vh] flex flex-col rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] shadow-2xl overflow-hidden">
             <div className="px-4 sm:px-5 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-[var(--accent-primary)]" />
+                <Send className="w-4 h-4 text-[var(--accent-primary)]" />
                 <span className="text-sm font-bold text-[var(--text-primary)]">
-                  {isFa ? 'تعریف کارفرمای جدید (لوگو و آپلود فرم)' : 'Define New Employer (Logo & Form Upload)'}
+                  {isFa
+                    ? 'درخواست تعریف کارفرمای جدید و ارسال فرم‌ها به سازنده برنامه'
+                    : 'Request New Employer & Submit Forms to Developer'}
                 </span>
               </div>
               <button
@@ -649,13 +760,10 @@ export const AuthGate: React.FC = () => {
               </button>
             </div>
             <div className="p-3.5 sm:p-5 overflow-y-auto">
-              <EmployersStudioWorkspace
+              <DeveloperFormRequestPanel
                 compact
-                initialMode="new"
-                onAssignEmployer={async (empId) => {
-                  await handleSelectEmployerCard(empId);
-                  setNewEmployerModalOpen(false);
-                }}
+                defaultRequestType="new_employer"
+                onSubmitted={() => setNewEmployerModalOpen(false)}
               />
             </div>
           </div>

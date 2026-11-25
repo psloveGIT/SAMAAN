@@ -117,7 +117,7 @@ export const OPERATIONAL_FORM_SECTIONS: readonly OperationalFormSectionMeta[] = 
  *   have no built-in default forms and unlock each section once the user uploads its form.
  */
 export const BUILT_IN_EMPLOYER_DEFAULT_FORMS: Record<string, readonly OperationalFormSectionKey[]> = {
-  'mapna-md1': ['storageLabel', 'substitution'],
+  'mapna-md1': ['storageLabel', 'substitution', 'miv'],
   'mapna-md2': [],
   'mapna-md3': [],
 };
@@ -167,7 +167,6 @@ export function matchesOperationalFormSection(
 ): boolean {
   if (!targetSection || targetSection === 'custom_standalone') return false;
   if (targetSection === sectionKey) return true;
-  // MER belongs under OPI Minutes section if mapped explicitly as 'mer'
   if (sectionKey === 'opiMinutes' && targetSection === 'mer') return true;
   return false;
 }
@@ -184,18 +183,7 @@ export function resolveOperationalSectionAccess(
   employer: Pick<EmployerProfile | ResolvedEmployerProfile, 'id' | 'uploadedForms'> | null | undefined,
   sectionKey: OperationalFormSectionKey,
 ): OperationalSectionAccessResult {
-  const uploadedForms = getUploadedFormsForSection(employer, sectionKey);
   const builtIn = hasBuiltInDefaultForm(employer?.id, sectionKey);
-
-  if (uploadedForms.length > 0) {
-    return {
-      sectionKey,
-      hasAccess: true,
-      mode: 'uploaded',
-      hasBuiltInDefault: builtIn,
-      uploadedForms,
-    };
-  }
 
   if (builtIn) {
     return {

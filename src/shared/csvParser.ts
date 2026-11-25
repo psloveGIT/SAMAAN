@@ -1,4 +1,5 @@
 import { extractChemicalDatesFromTexts } from './chemicalDates.ts';
+import { normalizeRepStatus } from './docNumbering.ts';
 import { normalizeDigits, parseFlexibleDateToIso } from './jalali.ts';
 import { inferItemClassification, normalizeCountingUnitToFa, normalizeTransitStatus } from './normalizers.ts';
 import type {
@@ -87,6 +88,7 @@ export const DETAILED_IMPORT_COLUMNS: ImportColumnDef[] = [
   { key: 'opiDate', labelFa: 'تاریخ دعوتنامه', labelEn: 'Invitation Date', isDate: true },
   { key: 'merNo', labelFa: 'شماره کسری/مغایرت', labelEn: 'Discrepancy/Shortage No.' },
   { key: 'merStatus', labelFa: 'وضعیت کسری/مغایرت', labelEn: 'Discrepancy/Shortage Status' },
+  { key: 'merDescription', labelFa: 'توضیحات کسری/مغایرت', labelEn: 'Shortage/Discrepancy Notes' },
   { key: 'notes', labelFa: 'توضیحات تجهیز', labelEn: 'Equipment Notes' },
   { key: 'materialBalanceNo', labelFa: 'شماره بالانس متریال', labelEn: 'Material Balance No.' },
   { key: 'balanceStatus', labelFa: 'وضعیت بالانس متریال', labelEn: 'Material Balance Status' },
@@ -544,10 +546,15 @@ function getAutoDetailedMapping(combinedCols: string[]): Record<string, number> 
     { key: 'merNo', candidates: ['شماره کسری/مغایرت', 'شماره mer', 'mer no', 'discrepancy'], fallback: 26 + offset },
     { key: 'merStatus', candidates: ['وضعیت کسری/مغایرت', 'وضعیت mer', 'mer status'], fallback: 27 + offset },
     {
+      key: 'merDescription',
+      candidates: ['توضیحات کسری/مغایرت', 'توضیحات کسری', 'توضیحات مغایرت', 'توضیحات mer', 'mer description', 'shortage notes', 'discrepancy notes'],
+      fallback: -1,
+    },
+    {
       key: 'notes',
-      candidates: ['توضیحات تجهیز', 'توضیحات کسری/مغایرت', 'توضیحات', 'equipment notes', 'notes'],
+      candidates: ['توضیحات تجهیز', 'توضیحات', 'equipment notes', 'notes'],
       fallback: 28 + offset,
-      excludeSubstrings: ['rep', 'جایگزینی', 'smr', 'برگشتی'],
+      excludeSubstrings: ['rep', 'جایگزینی', 'smr', 'برگشتی', 'کسری', 'مغایرت', 'mer'],
     },
     { key: 'balanceStatus', candidates: ['وضعیت بالانس', 'وضعیت موازنه', 'وضعیت کنترل مصرف', 'balance status', 'bmr status'], fallback: 29 + offset },
     { key: 'storageLocation', candidates: ['محل نگهداری', 'storage location'], fallback: 30 + offset },
@@ -872,6 +879,7 @@ export function parseDetailedCsv(
   const idxOpiDate = col('opiDate');
   const idxMerNo = col('merNo');
   const idxMerStatus = col('merStatus');
+  const idxMerDesc = col('merDescription');
   const idxNotes = col('notes');
   const idxBalanceStatus = col('balanceStatus');
   const idxStorageLoc = col('storageLocation');
@@ -974,7 +982,10 @@ export function parseDetailedCsv(
       damagedQty: idxDamagedQty >= 0 ? parseNum(line[idxDamagedQty]) : null,
       mtoRef: idxMto >= 0 ? cleanStr(line[idxMto]) : '',
       repNo: idxRepNo >= 0 ? cleanStr(line[idxRepNo]) : '',
-      repStatus: idxRepStatus >= 0 ? cleanStr(line[idxRepStatus]) : '',
+      repStatus: normalizeRepStatus(
+        idxRepStatus >= 0 ? cleanStr(line[idxRepStatus]) : '',
+        Boolean(idxRepNo >= 0 && cleanStr(line[idxRepNo])),
+      ),
       repReprocured: idxRepReprocured >= 0 ? cleanStr(line[idxRepReprocured]) : '',
       repDescription: idxRepDesc >= 0 ? cleanStr(line[idxRepDesc]) : '',
       countingUnit: idxCountingUnit >= 0 ? normalizeCountingUnitToFa(cleanStr(line[idxCountingUnit])) : '',
@@ -986,6 +997,7 @@ export function parseDetailedCsv(
       opiDate: idxOpiDate >= 0 ? parseFlexibleDateToIso(line[idxOpiDate] || '', assumedCalendar) : '',
       merNo: idxMerNo >= 0 ? cleanStr(line[idxMerNo]) : '',
       merStatus: idxMerStatus >= 0 ? cleanStr(line[idxMerStatus]) : '',
+      merDescription: idxMerDesc >= 0 ? cleanStr(line[idxMerDesc]) : '',
       notes: notesVal,
       materialBalanceNo: idxBalNo >= 0 ? cleanStr(line[idxBalNo]) : '',
       balanceStatus: idxBalanceStatus >= 0 ? cleanStr(line[idxBalanceStatus]) : '',

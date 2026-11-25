@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
@@ -921,6 +923,24 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
   // OPI Minutes Form
   const [minutesNo, setMinutesNo] = useState('');
+  const suggestedMinutesNo = useMemo(
+    () =>
+      generateNextPlantAwareDocNo(
+        'OPM',
+        minutesList.map((m) => m.minutesNo),
+        extractPlantDocConfig(activeProject),
+      ),
+    [minutesList, activeProject],
+  );
+  const suggestedMerNo = useMemo(
+    () =>
+      generateNextPlantAwareDocNo(
+        'MER',
+        osdrList.map((o) => o.reportNo),
+        extractPlantDocConfig(activeProject),
+      ),
+    [osdrList, activeProject],
+  );
   const [invitationNo, setInvitationNo] = useState('');
   const [date, setDate] = useState(getTodayIso());
   const [time, setTime] = useState('09:00');
@@ -1645,16 +1665,28 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره OPI / صورتجلسه' : 'OPI Minutes No.'} *
-                  </label>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] text-[var(--text-secondary)]">
+                      {isFa ? 'شماره OPI / صورتجلسه' : 'OPI Minutes No.'} *
+                    </label>
+                    {!editingMinutes && (
+                      <button
+                        type="button"
+                        onClick={() => setMinutesNo(suggestedMinutesNo)}
+                        className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
+                        dir="ltr"
+                      >
+                        {suggestedMinutesNo}
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="text"
                     required
                     dir={isFa && !minutesNo ? 'rtl' : 'ltr'}
                     value={minutesNo}
                     onChange={(e) => setMinutesNo(e.target.value)}
-                    placeholder="OPM-1405-001"
+                    placeholder={suggestedMinutesNo}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !minutesNo ? 'text-right' : 'text-left'
                     }`}
@@ -2231,16 +2263,28 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره گزارش (MER)' : 'MER Report No.'} *
-                  </label>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] text-[var(--text-secondary)]">
+                      {isFa ? 'شماره گزارش (MER)' : 'MER Report No.'} *
+                    </label>
+                    {!editingOsdr && (
+                      <button
+                        type="button"
+                        onClick={() => setOsdrReportNo(suggestedMerNo)}
+                        className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
+                        dir="ltr"
+                      >
+                        {suggestedMerNo}
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="text"
                     required
                     dir={isFa && !osdrReportNo ? 'rtl' : 'ltr'}
                     value={osdrReportNo}
                     onChange={(e) => setOsdrReportNo(e.target.value)}
-                    placeholder="MER-1405-001"
+                    placeholder={suggestedMerNo}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !osdrReportNo ? 'text-right' : 'text-left'
                     }`}
@@ -2549,7 +2593,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => triggerAppPrint()}
                   className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
@@ -2595,7 +2639,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => triggerAppPrint()}
                   className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />

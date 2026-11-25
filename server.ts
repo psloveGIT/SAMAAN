@@ -132,6 +132,28 @@ import {
 import { extractEntitySubjectFromQuestion } from './src/shared/localAiEngine.ts';
 import { extractChemicalDatesFromTexts } from './src/shared/chemicalDates.ts';
 import { isValidDigitsOnly } from './src/shared/validation.ts';
+import {
+  normalizeRepStatus,
+  preserveMultilineText,
+  validatePlantAbbreviation,
+} from './src/shared/docNumbering.ts';
+import {
+  buildReplacementDetailedDescription,
+  removeRefTokenFromList,
+  stripSubstitutionBlockFromText,
+} from './src/shared/substitution.ts';
+import {
+  appendMultilineLine,
+  buildShortageReprocurementNote,
+  buildSubstitutionReprocurementNote,
+  shouldCloseShortage,
+  shouldCloseSubstitution,
+} from './src/shared/reprocurementMatch.ts';
+import {
+  buildMivLineRemark,
+  computeMivStockDeduction,
+  type MivStockSourcePreference,
+} from './src/shared/miv.ts';
 import type {
   CalendarMode,
   CategoryGroupKey,
@@ -139,9 +161,12 @@ import type {
   DatabaseSnapshot,
   DetailedComputed,
   DetailedEntry,
+  DeveloperEmployerRequest,
+  DeveloperRequestAttachment,
   DocumentLineItem,
   EmployerCustomConfig,
   EmployerId,
+  ErrorReportRecord,
   GcvDocumentRecord,
   GeneralEntry,
   ImportRejectedRecord,
@@ -154,8 +179,11 @@ import type {
   OsdrReportItem,
   OsdrReportRecord,
   PeriodicInspectionRecord,
+  PlantAbbreviationPosition,
   PurgeableSectionKey,
   DatabaseSectionSummaryItem,
+  ReprocurementApplyPayload,
+  ReprocurementApplyResponse,
   ShortageBackfillRecord,
   SiteEntryMinutesRecord,
   SubstitutionLineItem,
@@ -213,6 +241,184 @@ function removeRefToken(existing: string, token: string): string {
     .map((s) => normKey(s))
     .filter((s) => s && s !== cleanToken);
   return Array.from(new Set(parts)).join(', ');
+}
+
+function reverseMivDocument(s: SamaanStore, mivId: string): MivDocumentRecord | null {
+  const idx = s.db.mivDocuments.findIndex((doc) => doc.id === mivId);
+  if (idx === -1) return null;
+  const [removed] = s.db.mivDocuments.splice(idx, 1);
+  const now = new Date().toISOString();
+  for (const oldLine of removed.items) {
+    const d = s.db.detailed.find((x) => x.id === oldLine.detailedId);
+    if (!d) continue;
+    if (removed.docType === 'miv_contractor' || removed.docType === 'miv_mapna') {
+      const hasSplit =
+        typeof oldLine.deductedFromMapna === 'number' ||
+        typeof oldLine.deductedFromContractor === 'number';
+      const revMapna = hasSplit
+        ? Math.max(0, roundQty(oldLine.deductedFromMapna || 0))
+        : removed.docType === 'miv_mapna'
+          ? oldLine.qty
+          : 0;
+      const revContractor = hasSplit
+        ? Math.max(0, roundQty(oldLine.deductedFromContractor || 0))
+        : removed.docType === 'miv_contractor'
+          ? oldLine.qty
+          : 0;
+
+      if (revContractor > 0) {
+        d.mivContractorQty = Math.max(0, roundQty(toNum(d.mivContractorQty) - revContractor));
+        d.mivContractorNo = removeRefToken(d.mivContractorNo, removed.docNo);
+        const remC = s.db.mivDocuments.find(
+          (doc) =>
+            (doc.docType === 'miv_contractor' || doc.docType === 'miv_mapna') &&
+            doc.items.some(
+              (it) =>
+                it.detailedId === d.id &&
+                (typeof it.deductedFromContractor === 'number'
+                  ? it.deductedFromContractor > 0
+                  : doc.docType === 'miv_contractor'),
+            ),
+        );
+        if (d.mivContractorQty === 0 && !remC) d.mivContractorDate = '';
+        else if (remC && d.mivContractorDate === removed.date) d.mivContractorDate = remC.date;
+      }
+
+      if (revMapna > 0) {
+        d.mivMapnaQty = Math.max(0, roundQty(toNum(d.mivMapnaQty) - revMapna));
+        d.mivMapnaNo = removeRefToken(d.mivMapnaNo, removed.docNo);
+        const remM = s.db.mivDocuments.find(
+          (doc) =>
+            (doc.docType === 'miv_mapna' || doc.docType === 'miv_contractor') &&
+            doc.items.some(
+              (it) =>
+                it.detailedId === d.id &&
+                (typeof it.deductedFromMapna === 'number'
+                  ? it.deductedFromMapna > 0
+                  : doc.docType === 'miv_mapna'),
+            ),
+        );
+        if (d.mivMapnaQty === 0 && !remM) d.mivMapnaDate = '';
+        else if (remM && d.mivMapnaDate === removed.date) d.mivMapnaDate = remM.date;
+      }
+    } else if (removed.docType === 'smr_contractor') {
+      d.smrContractorQty = Math.max(0, roundQty(toNum(d.smrContractorQty) - oldLine.qty));
+      d.smrContractorNo = removeRefToken(d.smrContractorNo, removed.docNo);
+      const rem = s.db.mivDocuments.find((doc) => doc.docType === 'smr_contractor' && doc.items.some((it) => it.detailedId === d.id));
+      if (d.smrContractorQty === 0 && !rem) {
+        d.smrContractorDate = '';
+        if (d.smrContractorNote === removed.notes) d.smrContractorNote = '';
+      } else if (rem && d.smrContractorDate === removed.date) {
+        d.smrContractorDate = rem.date;
+      }
+    } else if (removed.docType === 'smr_mapna') {
+      d.smrMapnaQty = Math.max(0, roundQty(toNum(d.smrMapnaQty) - oldLine.qty));
+      d.smrMapnaNo = removeRefToken(d.smrMapnaNo, removed.docNo);
+      const rem = s.db.mivDocuments.find((doc) => doc.docType === 'smr_mapna' && doc.items.some((it) => it.detailedId === d.id));
+      if (d.smrMapnaQty === 0 && !rem) {
+        d.smrMapnaDate = '';
+        if (d.smrMapnaNote === removed.notes) d.smrMapnaNote = '';
+      } else if (rem && d.smrMapnaDate === removed.date) {
+        d.smrMapnaDate = rem.date;
+      }
+    }
+    if (removed.docType === 'miv_contractor' || removed.docType === 'miv_mapna') {
+      const remReceivers = Array.from(
+        new Set(
+          s.db.mivDocuments
+            .filter((doc) => (doc.docType === 'miv_contractor' || doc.docType === 'miv_mapna') && doc.items.some((it) => it.detailedId === d.id))
+            .map((doc) => normKey(doc.receiver || doc.party))
+            .filter(Boolean),
+        ),
+      );
+      d.mivReceiver = remReceivers.join(' , ');
+    } else if (removed.docType === 'smr_contractor' || removed.docType === 'smr_mapna') {
+      const remDeliverers = Array.from(
+        new Set(
+          s.db.mivDocuments
+            .filter((doc) => (doc.docType === 'smr_contractor' || doc.docType === 'smr_mapna') && doc.items.some((it) => it.detailedId === d.id))
+            .map((doc) => normKey(doc.deliveredBy))
+            .filter(Boolean),
+        ),
+      );
+      d.smrDeliverer = remDeliverers.join(' , ');
+    }
+    d.updatedAt = now;
+  }
+  return removed;
+}
+
+const ERROR_REPORTS_FILE = path.resolve(process.cwd(), 'data', 'samaan-error-reports.json');
+const EMPLOYER_REQUESTS_FILE = path.resolve(process.cwd(), 'data', 'samaan-employer-requests.json');
+const ALLOWED_DEV_REQUEST_EXTS = new Set([
+  '.xlsx', '.xls', '.xlsm', '.csv', '.docx', '.doc', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.txt',
+]);
+
+function loadErrorReportsFromDisk(): ErrorReportRecord[] {
+  try {
+    if (!fs.existsSync(ERROR_REPORTS_FILE)) return [];
+    const parsed = JSON.parse(fs.readFileSync(ERROR_REPORTS_FILE, 'utf8'));
+    return Array.isArray(parsed) ? (parsed as ErrorReportRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveErrorReportsToDisk(reports: ErrorReportRecord[]): void {
+  try {
+    const dir = path.dirname(ERROR_REPORTS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${ERROR_REPORTS_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(reports.slice(0, 200)), 'utf8');
+    fs.renameSync(tmp, ERROR_REPORTS_FILE);
+  } catch (err) {
+    console.error('Failed to persist error reports:', err);
+  }
+}
+
+function loadEmployerRequestsFromDisk(): DeveloperEmployerRequest[] {
+  try {
+    if (!fs.existsSync(EMPLOYER_REQUESTS_FILE)) return [];
+    const parsed = JSON.parse(fs.readFileSync(EMPLOYER_REQUESTS_FILE, 'utf8'));
+    return Array.isArray(parsed) ? (parsed as DeveloperEmployerRequest[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveEmployerRequestsToDisk(requests: DeveloperEmployerRequest[]): void {
+  try {
+    const dir = path.dirname(EMPLOYER_REQUESTS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${EMPLOYER_REQUESTS_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(requests.slice(0, 150)), 'utf8');
+    fs.renameSync(tmp, EMPLOYER_REQUESTS_FILE);
+  } catch (err) {
+    console.error('Failed to persist employer requests:', err);
+  }
+}
+
+function sanitizeRequestAttachments(raw: unknown): DeveloperRequestAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DeveloperRequestAttachment[] = [];
+  for (const item of raw.slice(0, 5)) {
+    if (!item || typeof item !== 'object') continue;
+    const a = item as Partial<DeveloperRequestAttachment>;
+    const rawName = String(a.fileName || '').replace(/[/\\:*?"<>|\0]+/g, '_').trim();
+    if (!rawName) continue;
+    const ext = path.extname(rawName).toLowerCase();
+    if (!ALLOWED_DEV_REQUEST_EXTS.has(ext)) continue;
+    const b64 = typeof a.dataBase64 === 'string' ? a.dataBase64.trim() : '';
+    if (!b64 || b64.length > 6_000_000) continue; // ~4.5MB max base64
+    out.push({
+      id: normKey(a.id) || makeId(),
+      fileName: rawName.slice(0, 140),
+      mimeType: normKey(a.mimeType).slice(0, 120) || 'application/octet-stream',
+      sizeBytes: Number.isFinite(Number(a.sizeBytes)) ? Math.max(0, Math.min(5_000_000, Number(a.sizeBytes))) : Math.floor((b64.length * 3) / 4),
+      dataBase64: b64,
+    });
+  }
+  return out;
 }
 
 const projectAsyncStorage = new AsyncLocalStorage<SamaanStore>();
@@ -310,17 +516,41 @@ async function startServer() {
   });
 
   app.post('/api/projects', (req: AuthedRequest, res: Response) => {
-    const { name, code, contractRef, employerId, employerConfig, copyUsers } = req.body as {
+    const {
+      name,
+      code,
+      contractRef,
+      employerId,
+      employerConfig,
+      plantAbbreviation,
+      usePlantAbbreviationInDocs,
+      plantAbbreviationPosition,
+      copyUsers,
+    } = req.body as {
       name?: string;
       code?: string;
       contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
+      plantAbbreviation?: string;
+      usePlantAbbreviationInDocs?: boolean;
+      plantAbbreviationPosition?: PlantAbbreviationPosition;
       copyUsers?: boolean;
     };
     const cleanName = normKey(name);
     if (!cleanName) {
       res.status(400).json({ error: errMsg(req, 'نام پروژه الزامی است', 'Project name is required') });
+      return;
+    }
+    const abbrCheck = validatePlantAbbreviation(plantAbbreviation);
+    if (!abbrCheck.valid) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          abbrCheck.errorFa || 'مخفف نیروگاه نامعتبر است',
+          abbrCheck.errorEn || 'Invalid plant abbreviation',
+        ),
+      });
       return;
     }
     if (projectManager.listProjects().some((p) => p.name.toLowerCase() === cleanName.toLowerCase())) {
@@ -334,6 +564,9 @@ async function startServer() {
       contractRef,
       employerId,
       employerConfig,
+      plantAbbreviation: abbrCheck.normalized,
+      usePlantAbbreviationInDocs: Boolean(usePlantAbbreviationInDocs && abbrCheck.normalized),
+      plantAbbreviationPosition,
       copyUsersFromStore: shouldCopyUsers ? activeProjectStore() : null,
     });
     res.json({ project: created, projects: projectManager.listProjects() });
@@ -348,12 +581,24 @@ async function startServer() {
       });
       return;
     }
-    const { name, code, contractRef, employerId, employerConfig } = req.body as {
+    const {
+      name,
+      code,
+      contractRef,
+      employerId,
+      employerConfig,
+      plantAbbreviation,
+      usePlantAbbreviationInDocs,
+      plantAbbreviationPosition,
+    } = req.body as {
       name?: string;
       code?: string;
       contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
+      plantAbbreviation?: string;
+      usePlantAbbreviationInDocs?: boolean;
+      plantAbbreviationPosition?: PlantAbbreviationPosition;
     };
     const existing = projectManager.getProject(req.params.id);
     if (!existing) {
@@ -365,12 +610,28 @@ async function startServer() {
       res.status(400).json({ error: errMsg(req, 'نام پروژه الزامی است', 'Project name is required') });
       return;
     }
+    if (plantAbbreviation !== undefined) {
+      const abbrCheck = validatePlantAbbreviation(plantAbbreviation);
+      if (!abbrCheck.valid) {
+        res.status(400).json({
+          error: errMsg(
+            req,
+            abbrCheck.errorFa || 'مخفف نیروگاه نامعتبر است',
+            abbrCheck.errorEn || 'Invalid plant abbreviation',
+          ),
+        });
+        return;
+      }
+    }
     const updated = projectManager.renameProject(req.params.id, {
       name: cleanName,
       code,
       contractRef,
       employerId,
       employerConfig,
+      plantAbbreviation,
+      usePlantAbbreviationInDocs,
+      plantAbbreviationPosition,
     });
     if (!updated) {
       res.status(404).json({ error: errMsg(req, 'پروژه یافت نشد', 'Project not found') });
@@ -437,6 +698,134 @@ async function startServer() {
       return;
     }
     res.json({ employer: updated, employers: projectManager.listEmployers() });
+  });
+
+  // ---------------- ERROR REPORTS & CRASH DIAGNOSTICS ----------------
+  app.get('/api/error-reports', (_req: AuthedRequest, res: Response) => {
+    res.json({ reports: loadErrorReportsFromDisk() });
+  });
+
+  app.post('/api/error-reports', (req: AuthedRequest, res: Response) => {
+    const raw = (req.body || {}) as Partial<ErrorReportRecord>;
+    const desc = preserveMultilineText(raw.description);
+    if (!desc) {
+      res.status(400).json({
+        error: errMsg(req, 'شرح خطا الزامی است', 'Error description is required'),
+      });
+      return;
+    }
+    const now = new Date().toISOString();
+    const record: ErrorReportRecord = {
+      id: normKey(raw.id) || makeId(),
+      createdAt: normKey(raw.createdAt) || now,
+      title: normKey(raw.title) || desc.slice(0, 60),
+      category: raw.category || 'bug',
+      section: normKey(raw.section) || 'general',
+      severity: raw.severity || 'medium',
+      description: desc.slice(0, 4000),
+      stepsToReproduce: preserveMultilineText(raw.stepsToReproduce).slice(0, 2000) || undefined,
+      attachLogs: Boolean(raw.attachLogs),
+      logs: Array.isArray(raw.logs) ? raw.logs.slice(0, 200) : undefined,
+      projectName: normKey(raw.projectName) || undefined,
+      username: normKey(raw.username) || req.currentUser?.username || undefined,
+      appVersion: normKey(raw.appVersion) || undefined,
+      userAgent: normKey(raw.userAgent) || String(req.headers['user-agent'] || '').slice(0, 300),
+      viewport: normKey(raw.viewport) || undefined,
+      syncedToServer: true,
+      syncedAt: now,
+    };
+    const existing = loadErrorReportsFromDisk().filter((r) => r.id !== record.id);
+    existing.unshift(record);
+    saveErrorReportsToDisk(existing);
+    res.json({ ok: true, report: record, syncedAt: now });
+  });
+
+  // ---------------- DEVELOPER EMPLOYER & FORM REQUESTS ----------------
+  app.get('/api/employer-requests', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
+    const all = loadEmployerRequestsFromDisk();
+    if (req.currentUser?.role === 'admin') {
+      res.json({ requests: all });
+      return;
+    }
+    const uid = req.currentUser?.id;
+    res.json({ requests: all.filter((r) => uid && r.submittedByUserId === uid) });
+  });
+
+  app.post('/api/employer-requests', (req: AuthedRequest, res: Response) => {
+    const raw = (req.body || {}) as Partial<DeveloperEmployerRequest>;
+    const requesterName = normKey(raw.requesterName).slice(0, 120);
+    const requesterPhone = normKey(raw.requesterPhone).slice(0, 40);
+    if (!requesterName || !requesterPhone) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'نام و شماره تماس درخواست‌کننده الزامی است.',
+          'Requester name and phone number are required.',
+        ),
+      });
+      return;
+    }
+    const requestType: 'missing_form' | 'new_employer' =
+      raw.requestType === 'new_employer' ? 'new_employer' : 'missing_form';
+    const newEmployerNameFa = normKey(raw.newEmployerNameFa).slice(0, 160);
+    if (requestType === 'new_employer' && !newEmployerNameFa) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'نام کارفرمای جدید الزامی است.',
+          'New employer name is required.',
+        ),
+      });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const record: DeveloperEmployerRequest = {
+      id: normKey(raw.id) || makeId(),
+      createdAt: normKey(raw.createdAt) || now,
+      requestType,
+      targetEmployerId: normKey(raw.targetEmployerId).slice(0, 80) || undefined,
+      targetEmployerName: normKey(raw.targetEmployerName).slice(0, 160) || undefined,
+      sectionKeys: Array.isArray(raw.sectionKeys)
+        ? raw.sectionKeys.map((s) => normKey(String(s)).slice(0, 40)).filter(Boolean).slice(0, 20)
+        : [],
+      requesterName,
+      requesterRole: normKey(raw.requesterRole).slice(0, 120) || undefined,
+      requesterPhone,
+      requesterEmail: normKey(raw.requesterEmail).slice(0, 140) || undefined,
+      projectName: normKey(raw.projectName).slice(0, 160) || undefined,
+      newEmployerNameFa: newEmployerNameFa || undefined,
+      newEmployerNameEn: normKey(raw.newEmployerNameEn).slice(0, 160) || undefined,
+      newEmployerShortName: normKey(raw.newEmployerShortName).slice(0, 40) || undefined,
+      newEmployerAddress: preserveMultilineText(raw.newEmployerAddress).slice(0, 400) || undefined,
+      newEmployerPhone: normKey(raw.newEmployerPhone).slice(0, 40) || undefined,
+      newEmployerFax: normKey(raw.newEmployerFax).slice(0, 40) || undefined,
+      newEmployerPostalCode: normKey(raw.newEmployerPostalCode).slice(0, 20) || undefined,
+      newEmployerEmail: normKey(raw.newEmployerEmail).slice(0, 140) || undefined,
+      newEmployerSocials: normKey(raw.newEmployerSocials).slice(0, 200) || undefined,
+      description: preserveMultilineText(raw.description).slice(0, 3000) || undefined,
+      attachments: sanitizeRequestAttachments(raw.attachments),
+      submittedByUserId: req.currentUser?.id,
+      submittedByUsername: req.currentUser?.username,
+      appVersion: normKey(raw.appVersion).slice(0, 40) || undefined,
+      syncedToServer: true,
+    };
+
+    const existing = loadEmployerRequestsFromDisk().filter((r) => r.id !== record.id);
+    existing.unshift(record);
+    saveEmployerRequestsToDisk(existing);
+    res.json({ ok: true, request: record });
+  });
+
+  app.delete('/api/employer-requests/:id', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
+    const existing = loadEmployerRequestsFromDisk();
+    const next = existing.filter((r) => r.id !== req.params.id);
+    if (next.length === existing.length) {
+      res.status(404).json({ error: errMsg(req, 'درخواست یافت نشد', 'Request not found') });
+      return;
+    }
+    saveEmployerRequestsToDisk(next);
+    res.json({ ok: true });
   });
 
   app.delete('/api/employers/:id', (req: AuthedRequest, res: Response) => {
@@ -1993,8 +2382,9 @@ async function startServer() {
 
     const shared = store.getGeneralSharedInfo(pk, pkgNo);
     const now = new Date().toISOString();
-    const cleanDescription = normKey(raw.description);
-    const cleanNotes = normKey(raw.notes);
+    const cleanDescription = preserveMultilineText(raw.description);
+    const cleanNotes = preserveMultilineText(raw.notes);
+    const cleanRepNo = normKey(raw.repNo);
     const rawGenDesc = normKey(raw.generalDescription);
     const resolvedGeneralDesc = rawGenDesc
       ? formatGeneralDescriptionCase(rawGenDesc)
@@ -2030,10 +2420,10 @@ async function startServer() {
       actualQty: raw.actualQty ?? null,
       damagedQty: raw.damagedQty ?? null,
       mtoRef: normKey(raw.mtoRef),
-      repNo: normKey(raw.repNo),
-      repStatus: normKey(raw.repStatus),
+      repNo: cleanRepNo,
+      repStatus: normalizeRepStatus(raw.repStatus, Boolean(cleanRepNo)),
       repReprocured: normKey(raw.repReprocured),
-      repDescription: normKey(raw.repDescription),
+      repDescription: preserveMultilineText(raw.repDescription),
       countingUnit: normalizeCountingUnitToFa(raw.countingUnit),
       island: normKey(raw.island) || shared?.island || '',
       system: normKey(raw.system) || shared?.system || '',
@@ -2043,6 +2433,7 @@ async function startServer() {
       opiDate: normKey(raw.opiDate),
       merNo: normKey(raw.merNo),
       merStatus: normKey(raw.merStatus),
+      merDescription: preserveMultilineText(raw.merDescription),
       notes: cleanNotes,
       materialBalanceNo: normKey(raw.materialBalanceNo),
       balanceStatus: normKey(raw.balanceStatus),
@@ -2057,16 +2448,16 @@ async function startServer() {
       smrContractorNo: normKey(raw.smrContractorNo),
       smrContractorDate: normKey(raw.smrContractorDate),
       smrContractorQty: raw.smrContractorQty ?? null,
-      smrContractorNote: normKey(raw.smrContractorNote),
+      smrContractorNote: preserveMultilineText(raw.smrContractorNote),
       smrMapnaNo: normKey(raw.smrMapnaNo),
       smrMapnaDate: normKey(raw.smrMapnaDate),
       smrMapnaQty: raw.smrMapnaQty ?? null,
-      smrMapnaNote: normKey(raw.smrMapnaNote),
+      smrMapnaNote: preserveMultilineText(raw.smrMapnaNote),
       smrDeliverer: normKey(raw.smrDeliverer),
       mivMapnaNo: normKey(raw.mivMapnaNo),
       mivMapnaDate: normKey(raw.mivMapnaDate),
       mivMapnaQty: raw.mivMapnaQty ?? null,
-      stocktakeInfo: normKey(raw.stocktakeInfo),
+      stocktakeInfo: preserveMultilineText(raw.stocktakeInfo),
       stocktakeStatus: normKey(raw.stocktakeStatus),
       stocktakeDate: normKey(raw.stocktakeDate),
       itemCategory: resolvedItemCategory,
@@ -2109,6 +2500,167 @@ async function startServer() {
     res.json({ item: computeDetailedEntry(created), transitUpdated });
   });
 
+  app.post('/api/detailed/apply-reprocurement', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const payload = (req.body || {}) as ReprocurementApplyPayload;
+    const sourceShipmentNo = normKey(payload.sourceShipmentNo);
+    const sourcePackingQty = Number(payload.sourcePackingQty);
+    const sourceCountingUnit = normalizeCountingUnitToFa(payload.sourceCountingUnit || '');
+    if (!sourceShipmentNo || !Number.isFinite(sourcePackingQty) || sourcePackingQty <= 0) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره پکینگ لیست و تعداد پکینگ معتبر (بزرگتر از صفر) برای ثبت تأمین مجدد الزامی است',
+          'Valid Packing List No. and positive Packing Qty are required for re-procurement linking',
+        ),
+      });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const updatedSubstitutionRowIds = new Set<string>();
+    const closedSubstitutionRowIds = new Set<string>();
+    const updatedShortageRowIds = new Set<string>();
+    const closedShortageRowIds = new Set<string>();
+    const historyChanges: HistoryChange[] = [];
+    const beforeMap = new Map<string, DetailedEntry>();
+    const trackRow = (row: DetailedEntry) => {
+      if (!beforeMap.has(row.id)) beforeMap.set(row.id, { ...row });
+    };
+
+    // 1) Substitution re-procurement matches -> append to Section B rows (fallback to selected row) & auto-close if qty matches
+    for (const target of payload.substitutionTargets || []) {
+      const selectedRow = store.db.detailed.find((d) => d.id === target.detailedId);
+      if (!selectedRow) continue;
+      const firstRepNo =
+        normKey(target.repNo) ||
+        (selectedRow.repNo || '').split(/[،,\n/]+/)[0]?.trim() ||
+        '';
+      const linkedSub =
+        (target.substitutionId
+          ? store.db.substitutions.find((s) => s.id === target.substitutionId)
+          : undefined) ||
+        (firstRepNo
+          ? store.db.substitutions.find(
+              (s) => normKey(s.docNo).toLowerCase() === firstRepNo.toLowerCase(),
+            )
+          : undefined) ||
+        store.db.substitutions.find(
+          (s) =>
+            s.detailedId === selectedRow.id ||
+            (s.originalItems || []).some((it) => it.detailedId === selectedRow.id) ||
+            (s.substituteItems || []).some((it) => it.detailedId === selectedRow.id),
+        );
+
+      const repNoForText = linkedSub?.docNo || firstRepNo || '-';
+      const noteLine = buildSubstitutionReprocurementNote(
+        repNoForText,
+        sourceShipmentNo,
+        sourcePackingQty,
+      );
+
+      // Determine Section B Detailed rows; fallback to selectedRow if Section B has no Detailed IDs
+      const sectionBIds = new Set<string>();
+      if (linkedSub?.substituteItems) {
+        for (const it of linkedSub.substituteItems) {
+          if (it.detailedId && store.db.detailed.some((d) => d.id === it.detailedId)) {
+            sectionBIds.add(it.detailedId);
+          }
+        }
+      }
+      if (sectionBIds.size === 0) {
+        sectionBIds.add(selectedRow.id);
+      }
+
+      for (const bId of sectionBIds) {
+        const bRow = store.db.detailed.find((d) => d.id === bId);
+        if (!bRow) continue;
+        trackRow(bRow);
+        bRow.repDescription = appendMultilineLine(bRow.repDescription, noteLine);
+        bRow.updatedAt = now;
+        updatedSubstitutionRowIds.add(bRow.id);
+      }
+
+      const subLineMatch = linkedSub
+        ? [...(linkedSub.substituteItems || []), ...(linkedSub.originalItems || [])].find(
+            (it) => it.detailedId === selectedRow.id,
+          )
+        : undefined;
+      const subQty = Number(subLineMatch?.qty ?? linkedSub?.qty ?? target.targetQty ?? selectedRow.packingQty ?? 0);
+      if (shouldCloseSubstitution(sourcePackingQty, subQty)) {
+        const closeIds = new Set<string>([selectedRow.id, ...sectionBIds]);
+        if (linkedSub) {
+          if (linkedSub.detailedId) closeIds.add(linkedSub.detailedId);
+          for (const it of linkedSub.originalItems || []) {
+            if (it.detailedId) closeIds.add(it.detailedId);
+          }
+        }
+        for (const cId of closeIds) {
+          const cRow = store.db.detailed.find((d) => d.id === cId);
+          if (!cRow) continue;
+          trackRow(cRow);
+          cRow.repStatus = 'بسته';
+          cRow.updatedAt = now;
+          closedSubstitutionRowIds.add(cRow.id);
+        }
+      }
+    }
+
+    // 2) Shortage re-procurement matches -> append to merDescription & auto-close merStatus if packingQty == shortage + damagedQty
+    for (const target of payload.shortageTargets || []) {
+      const row = store.db.detailed.find((d) => d.id === target.detailedId);
+      if (!row) continue;
+      const computed = computeDetailedEntry(row);
+      const unitLabel = sourceCountingUnit || normalizeCountingUnitToFa(row.countingUnit) || '';
+      const noteLine = buildShortageReprocurementNote(
+        sourcePackingQty,
+        unitLabel,
+        sourceShipmentNo,
+      );
+      trackRow(row);
+      row.merDescription = appendMultilineLine(row.merDescription, noteLine);
+      if (shouldCloseShortage(sourcePackingQty, computed.shortage, computed.damagedQty)) {
+        row.merStatus = 'بسته';
+        closedShortageRowIds.add(row.id);
+      }
+      row.updatedAt = now;
+      updatedShortageRowIds.add(row.id);
+    }
+
+    for (const [id, before] of beforeMap.entries()) {
+      const after = store.db.detailed.find((d) => d.id === id);
+      if (after) {
+        historyChanges.push({ scope: 'detailed', op: 'update', id, before, after: { ...after } });
+      }
+    }
+
+    if (historyChanges.length > 0) {
+      store.rebuildIndexes();
+      store.history.push({
+        labelFa: `تطبیق تأمین مجدد (${sourceShipmentNo}) برای ${historyChanges.length} ردیف`,
+        labelEn: `Apply Re-procurement (${sourceShipmentNo}) to ${historyChanges.length} rows`,
+        user: req.currentUser!.fullName || req.currentUser!.username,
+        changes: historyChanges,
+      });
+      store.addAudit({
+        user: sanitizeUser(req.currentUser!),
+        action: 'APPLY_REPROCUREMENT_MATCH',
+        scope: 'detailed',
+        targetId: sourceShipmentNo,
+        summary: `ثبت تأمین مجدد با پکینگ ${sourceShipmentNo} (تعداد ${sourcePackingQty}) برای ${updatedSubstitutionRowIds.size} ردیف جایگزینی و ${updatedShortageRowIds.size} ردیف کسری`,
+      });
+      store.saveImmediate();
+    }
+
+    const response: ReprocurementApplyResponse = {
+      ok: true,
+      updatedSubstitutionRowIds: Array.from(updatedSubstitutionRowIds),
+      closedSubstitutionRowIds: Array.from(closedSubstitutionRowIds),
+      updatedShortageRowIds: Array.from(updatedShortageRowIds),
+      closedShortageRowIds: Array.from(closedShortageRowIds),
+    };
+    res.json(response);
+  });
+
   app.patch('/api/detailed/bulk', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const { ids, patch } = req.body as { ids?: string[]; patch?: Partial<DetailedEntry> };
     if (!Array.isArray(ids) || ids.length === 0 || !patch || typeof patch !== 'object') {
@@ -2120,14 +2672,21 @@ async function startServer() {
     const stringFields: (keyof DetailedEntry)[] = [
       'arrivalDate', 'supplier', 'origin', 'island', 'system', 'subSystem', 'unit',
       'countingUnit', 'storageLocation', 'receiver', 'notes', 'itemCategory',
-      'chemicalType', 'productionDate', 'expirationDate', 'merStatus', 'repStatus', 'repReprocured',
-      'balanceStatus', 'mivReceiver', 'smrDeliverer',
+      'chemicalType', 'productionDate', 'expirationDate', 'merStatus', 'merDescription',
+      'repStatus', 'repReprocured', 'repDescription', 'balanceStatus', 'mivReceiver', 'smrDeliverer',
     ];
+    const multilineBulkFields = new Set<keyof DetailedEntry>(['notes', 'merDescription', 'repDescription']);
     for (const k of stringFields) {
       if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
-        cleanPatch[k] = k === 'countingUnit'
-          ? normalizeCountingUnitToFa(String(patch[k]))
-          : normKey(String(patch[k]));
+        if (k === 'countingUnit') {
+          cleanPatch[k] = normalizeCountingUnitToFa(String(patch[k]));
+        } else if (k === 'repStatus') {
+          cleanPatch[k] = normalizeRepStatus(String(patch[k]));
+        } else if (multilineBulkFields.has(k)) {
+          cleanPatch[k] = preserveMultilineText(patch[k]);
+        } else {
+          cleanPatch[k] = normKey(String(patch[k]));
+        }
       }
     }
     const now = new Date().toISOString();
@@ -2198,6 +2757,31 @@ async function startServer() {
     }
     if (patch.countingUnit !== undefined) {
       patch.countingUnit = normalizeCountingUnitToFa(patch.countingUnit);
+    }
+    if (patch.description !== undefined) {
+      patch.description = preserveMultilineText(patch.description);
+    }
+    if (patch.notes !== undefined) {
+      patch.notes = preserveMultilineText(patch.notes);
+    }
+    if (patch.repDescription !== undefined) {
+      patch.repDescription = preserveMultilineText(patch.repDescription);
+    }
+    if (patch.merDescription !== undefined) {
+      patch.merDescription = preserveMultilineText(patch.merDescription);
+    }
+    if (patch.smrContractorNote !== undefined) {
+      patch.smrContractorNote = preserveMultilineText(patch.smrContractorNote);
+    }
+    if (patch.smrMapnaNote !== undefined) {
+      patch.smrMapnaNote = preserveMultilineText(patch.smrMapnaNote);
+    }
+    if (patch.stocktakeInfo !== undefined) {
+      patch.stocktakeInfo = preserveMultilineText(patch.stocktakeInfo);
+    }
+    if (patch.repStatus !== undefined) {
+      const nextRepNo = patch.repNo !== undefined ? normKey(patch.repNo) : normKey(item.repNo);
+      patch.repStatus = normalizeRepStatus(patch.repStatus, Boolean(nextRepNo));
     }
 
     const beforeDetailed = { ...item };
@@ -4327,6 +4911,8 @@ async function startServer() {
         opiNo?: string;
         returnReason?: string;
         remark?: string;
+        userRemark?: string;
+        sourceWarehouse?: MivStockSourcePreference;
       }>;
     };
     const { docType, docNo, date, party, notes, items } = raw;
@@ -4342,6 +4928,7 @@ async function startServer() {
       return;
     }
 
+    const isMivType = docType === 'miv_contractor' || docType === 'miv_mapna';
     const lineItems: DocumentLineItem[] = [];
     for (const reqItem of items) {
       const qty = Number(reqItem.qty);
@@ -4355,7 +4942,30 @@ async function startServer() {
         return;
       }
       const comp = computeDetailedEntry(d);
-      if ((docType === 'miv_contractor' || docType === 'smr_mapna') && qty > comp.contractorInventory) {
+      let deductedFromMapna = 0;
+      let deductedFromContractor = 0;
+
+      if (isMivType) {
+        const pref: MivStockSourcePreference =
+          reqItem.sourceWarehouse === 'employer' || reqItem.sourceWarehouse === 'contractor'
+            ? reqItem.sourceWarehouse
+            : docType === 'miv_mapna'
+              ? 'employer'
+              : 'auto';
+        const deduction = computeMivStockDeduction(qty, comp.mapnaInventory, comp.contractorInventory, pref);
+        if (!deduction.valid) {
+          res.status(400).json({
+            error: errMsg(
+              req,
+              deduction.errorFa || `تعداد (${qty}) برای ${d.description || d.itemNo} از مجموع موجودی انبارهای کارفرما و پیمانکار بیشتر است.`,
+              deduction.errorEn || `Qty (${qty}) exceeds combined Employer + Contractor stock.`,
+            ),
+          });
+          return;
+        }
+        deductedFromMapna = deduction.deductedFromMapna;
+        deductedFromContractor = deduction.deductedFromContractor;
+      } else if (docType === 'smr_mapna' && qty > comp.contractorInventory) {
         res.status(400).json({
           error: errMsg(
             req,
@@ -4365,46 +4975,58 @@ async function startServer() {
         });
         return;
       }
-      if (docType === 'miv_mapna' && qty > comp.mapnaInventory) {
-        res.status(400).json({
-          error: errMsg(
-            req,
-            `تعداد (${qty}) برای ${d.description || d.itemNo} از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
-            `Qty (${qty}) for ${d.description || d.itemNo} exceeds MAPNA stock (${comp.mapnaInventory}).`,
-          ),
-        });
-        return;
-      }
+
       const reqQtyNum = Number(reqItem.requestedQty);
+      const cleanUserRemark = preserveMultilineText(reqItem.userRemark ?? '');
+      const cleanEquipNotes = preserveMultilineText(d.notes);
+      const finalRemark = isMivType
+        ? reqItem.userRemark !== undefined
+          ? buildMivLineRemark(cleanEquipNotes, cleanUserRemark)
+          : buildMivLineRemark(cleanEquipNotes, reqItem.remark)
+        : preserveMultilineText(reqItem.remark);
+
       lineItems.push({
         detailedId: d.id,
         shipmentNo: d.shipmentNo,
         packageNo: d.packageNo,
         itemNo: d.itemNo,
-        description: d.description || d.generalDescription,
+        description: preserveMultilineText(d.description || d.generalDescription),
         qty,
         requestedQty: Number.isFinite(reqQtyNum) && reqQtyNum > 0 ? reqQtyNum : qty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
         codeNo: normKey(reqItem.codeNo) || d.itemCode || '',
         location: normKey(reqItem.location) || d.storageLocation || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
         opiNo: normKey(reqItem.opiNo) || d.opiNo || '',
         returnReason: normKey(reqItem.returnReason) || '',
-        remark: normKey(reqItem.remark) || '',
+        remark: finalRemark,
+        userRemark: cleanUserRemark || undefined,
+        equipmentNotes: cleanEquipNotes || undefined,
+        sourceWarehouse: reqItem.sourceWarehouse,
+        ...(isMivType ? { deductedFromMapna, deductedFromContractor } : {}),
       });
     }
 
     const now = new Date().toISOString();
-    const cleanNotes = normKey(notes);
-    const cleanReceiver = normKey(raw.receiver);
+    const cleanNotes = preserveMultilineText(notes);
+    const cleanReceiver = normKey(raw.receiver || party);
     const cleanDeliveredBy = normKey(raw.deliveredBy);
     for (const line of lineItems) {
       const d = store.db.detailed.find((x) => x.id === line.detailedId)!;
-      if (docType === 'miv_contractor') {
-        d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
-        d.mivContractorDate = cleanDate || d.mivContractorDate;
-        d.mivContractorQty = roundQty(toNum(d.mivContractorQty) + line.qty);
+      if (isMivType) {
+        const fromC = Math.max(0, roundQty(line.deductedFromContractor || 0));
+        const fromM = Math.max(0, roundQty(line.deductedFromMapna || 0));
+        if (fromC > 0) {
+          d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
+          d.mivContractorDate = cleanDate || d.mivContractorDate;
+          d.mivContractorQty = roundQty(toNum(d.mivContractorQty) + fromC);
+        }
+        if (fromM > 0) {
+          d.mivMapnaNo = appendUniqueRef(d.mivMapnaNo, cleanNo);
+          d.mivMapnaDate = cleanDate || d.mivMapnaDate;
+          d.mivMapnaQty = roundQty(toNum(d.mivMapnaQty) + fromM);
+        }
         if (cleanReceiver) d.mivReceiver = appendUniqueRef(d.mivReceiver || '', cleanReceiver);
       } else if (docType === 'smr_contractor') {
         d.smrContractorNo = appendUniqueRef(d.smrContractorNo, cleanNo);
@@ -4418,18 +5040,21 @@ async function startServer() {
         d.smrMapnaQty = roundQty(toNum(d.smrMapnaQty) + line.qty);
         if (cleanNotes) d.smrMapnaNote = cleanNotes;
         if (cleanDeliveredBy) d.smrDeliverer = appendUniqueRef(d.smrDeliverer || '', cleanDeliveredBy);
-      } else if (docType === 'miv_mapna') {
-        d.mivMapnaNo = appendUniqueRef(d.mivMapnaNo, cleanNo);
-        d.mivMapnaDate = cleanDate || d.mivMapnaDate;
-        d.mivMapnaQty = roundQty(toNum(d.mivMapnaQty) + line.qty);
-        if (cleanReceiver) d.mivReceiver = appendUniqueRef(d.mivReceiver || '', cleanReceiver);
       }
       d.updatedAt = now;
     }
 
+    const totalMapna = lineItems.reduce((s, l) => s + (l.deductedFromMapna || 0), 0);
+    const totalContractor = lineItems.reduce((s, l) => s + (l.deductedFromContractor || 0), 0);
+    const effectiveDocType: MivDocType = isMivType
+      ? totalMapna > 0 && totalContractor === 0
+        ? 'miv_mapna'
+        : 'miv_contractor'
+      : docType;
+
     const doc: MivDocumentRecord = {
       id: makeId(),
-      docType,
+      docType: effectiveDocType,
       docNo: cleanNo,
       date: cleanDate,
       party: normKey(party),
@@ -4448,7 +5073,7 @@ async function startServer() {
       qcInspector: normKey(raw.qcInspector),
       installerRep: normKey(raw.installerRep),
       requester: normKey(raw.requester),
-      receiver: cleanReceiver,
+      receiver: normKey(raw.receiver),
       deliveredBy: cleanDeliveredBy,
       notes: cleanNotes,
       items: lineItems,
@@ -4458,10 +5083,10 @@ async function startServer() {
     store.db.mivDocuments.unshift(doc);
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
-      action: `CREATE_${docType.toUpperCase()}`,
-      scope: docType.startsWith('smr') ? 'smr' : 'miv',
+      action: `CREATE_${effectiveDocType.toUpperCase()}`,
+      scope: effectiveDocType.startsWith('smr') ? 'smr' : 'miv',
       targetId: cleanNo,
-      summary: `ثبت فرم ${docType} شماره ${cleanNo} برای ${lineItems.length} قلم کالا`,
+      summary: `ثبت فرم ${effectiveDocType} شماره ${cleanNo} برای ${lineItems.length} قلم کالا`,
     });
     store.saveImmediate();
     res.json({ document: doc });
@@ -4486,11 +5111,13 @@ async function startServer() {
         opiNo?: string;
         returnReason?: string;
         remark?: string;
+        userRemark?: string;
+        sourceWarehouse?: MivStockSourcePreference;
       }>;
     };
-    const nextDocType = (raw.docType || existing.docType) as MivDocType;
+    const requestedDocType = (raw.docType || existing.docType) as MivDocType;
     const validTypes: MivDocType[] = ['miv_contractor', 'smr_contractor', 'smr_mapna', 'miv_mapna'];
-    if (!validTypes.includes(nextDocType)) {
+    if (!validTypes.includes(requestedDocType)) {
       res.status(400).json({ error: errMsg(req, 'نوع فرم معتبر نیست', 'Invalid document type') });
       return;
     }
@@ -4504,11 +5131,31 @@ async function startServer() {
       return;
     }
 
-    const oldQtyByDetailedId = new Map<string, number>();
+    const oldReversalByDetailedId = new Map<string, { mapna: number; contractor: number; total: number }>();
     for (const oldLine of existing.items) {
-      oldQtyByDetailedId.set(oldLine.detailedId, roundQty((oldQtyByDetailedId.get(oldLine.detailedId) || 0) + oldLine.qty));
+      const prev = oldReversalByDetailedId.get(oldLine.detailedId) || { mapna: 0, contractor: 0, total: 0 };
+      if (existing.docType === 'miv_contractor' || existing.docType === 'miv_mapna') {
+        const hasSplit =
+          typeof oldLine.deductedFromMapna === 'number' ||
+          typeof oldLine.deductedFromContractor === 'number';
+        const mPart = hasSplit
+          ? Math.max(0, roundQty(oldLine.deductedFromMapna || 0))
+          : existing.docType === 'miv_mapna'
+            ? oldLine.qty
+            : 0;
+        const cPart = hasSplit
+          ? Math.max(0, roundQty(oldLine.deductedFromContractor || 0))
+          : existing.docType === 'miv_contractor'
+            ? oldLine.qty
+            : 0;
+        prev.mapna = roundQty(prev.mapna + mPart);
+        prev.contractor = roundQty(prev.contractor + cPart);
+      }
+      prev.total = roundQty(prev.total + oldLine.qty);
+      oldReversalByDetailedId.set(oldLine.detailedId, prev);
     }
 
+    const isMivType = requestedDocType === 'miv_contractor' || requestedDocType === 'miv_mapna';
     const nextLines: DocumentLineItem[] = [];
     for (const reqItem of items) {
       const qty = Number(reqItem.qty);
@@ -4521,21 +5168,43 @@ async function startServer() {
         res.status(404).json({ error: errMsg(req, 'آیتم جزئیات یافت نشد', 'Detailed item not found') });
         return;
       }
-      const oldQtyForItem = oldQtyByDetailedId.get(d.id) || 0;
+      const oldRev = oldReversalByDetailedId.get(d.id);
       const simulated: DetailedEntry = { ...d };
-      if (oldQtyForItem > 0) {
-        if (existing.docType === 'miv_contractor') {
-          simulated.mivContractorQty = Math.max(0, roundQty(toNum(simulated.mivContractorQty) - oldQtyForItem));
+      if (oldRev) {
+        if (existing.docType === 'miv_contractor' || existing.docType === 'miv_mapna') {
+          simulated.mivContractorQty = Math.max(0, roundQty(toNum(simulated.mivContractorQty) - oldRev.contractor));
+          simulated.mivMapnaQty = Math.max(0, roundQty(toNum(simulated.mivMapnaQty) - oldRev.mapna));
         } else if (existing.docType === 'smr_contractor') {
-          simulated.smrContractorQty = Math.max(0, roundQty(toNum(simulated.smrContractorQty) - oldQtyForItem));
+          simulated.smrContractorQty = Math.max(0, roundQty(toNum(simulated.smrContractorQty) - oldRev.total));
         } else if (existing.docType === 'smr_mapna') {
-          simulated.smrMapnaQty = Math.max(0, roundQty(toNum(simulated.smrMapnaQty) - oldQtyForItem));
-        } else if (existing.docType === 'miv_mapna') {
-          simulated.mivMapnaQty = Math.max(0, roundQty(toNum(simulated.mivMapnaQty) - oldQtyForItem));
+          simulated.smrMapnaQty = Math.max(0, roundQty(toNum(simulated.smrMapnaQty) - oldRev.total));
         }
       }
       const comp = computeDetailedEntry(simulated);
-      if ((nextDocType === 'miv_contractor' || nextDocType === 'smr_mapna') && qty > comp.contractorInventory) {
+      let deductedFromMapna = 0;
+      let deductedFromContractor = 0;
+
+      if (isMivType) {
+        const pref: MivStockSourcePreference =
+          reqItem.sourceWarehouse === 'employer' || reqItem.sourceWarehouse === 'contractor'
+            ? reqItem.sourceWarehouse
+            : requestedDocType === 'miv_mapna'
+              ? 'employer'
+              : 'auto';
+        const deduction = computeMivStockDeduction(qty, comp.mapnaInventory, comp.contractorInventory, pref);
+        if (!deduction.valid) {
+          res.status(400).json({
+            error: errMsg(
+              req,
+              deduction.errorFa || `تعداد (${qty}) برای ${d.description || d.itemNo} از مجموع موجودی انبارهای کارفرما و پیمانکار بیشتر است.`,
+              deduction.errorEn || `Qty (${qty}) exceeds combined Employer + Contractor stock.`,
+            ),
+          });
+          return;
+        }
+        deductedFromMapna = deduction.deductedFromMapna;
+        deductedFromContractor = deduction.deductedFromContractor;
+      } else if (requestedDocType === 'smr_mapna' && qty > comp.contractorInventory) {
         res.status(400).json({
           error: errMsg(
             req,
@@ -4545,33 +5214,36 @@ async function startServer() {
         });
         return;
       }
-      if (nextDocType === 'miv_mapna' && qty > comp.mapnaInventory) {
-        res.status(400).json({
-          error: errMsg(
-            req,
-            `تعداد (${qty}) برای ${d.description || d.itemNo} از موجودی مپنا (${comp.mapnaInventory}) بیشتر است.`,
-            `Qty (${qty}) for ${d.description || d.itemNo} exceeds MAPNA stock (${comp.mapnaInventory}).`,
-          ),
-        });
-        return;
-      }
+
       const reqQtyNum = Number(reqItem.requestedQty);
+      const cleanUserRemark = preserveMultilineText(reqItem.userRemark ?? '');
+      const cleanEquipNotes = preserveMultilineText(d.notes);
+      const finalRemark = isMivType
+        ? reqItem.userRemark !== undefined
+          ? buildMivLineRemark(cleanEquipNotes, cleanUserRemark)
+          : buildMivLineRemark(cleanEquipNotes, reqItem.remark)
+        : preserveMultilineText(reqItem.remark);
+
       nextLines.push({
         detailedId: d.id,
         shipmentNo: d.shipmentNo,
         packageNo: d.packageNo,
         itemNo: d.itemNo,
-        description: d.description || d.generalDescription,
+        description: preserveMultilineText(d.description || d.generalDescription),
         qty,
         requestedQty: Number.isFinite(reqQtyNum) && reqQtyNum > 0 ? reqQtyNum : qty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
         codeNo: normKey(reqItem.codeNo) || d.itemCode || '',
         location: normKey(reqItem.location) || d.storageLocation || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
         opiNo: normKey(reqItem.opiNo) || d.opiNo || '',
         returnReason: normKey(reqItem.returnReason) || '',
-        remark: normKey(reqItem.remark) || '',
+        remark: finalRemark,
+        userRemark: cleanUserRemark || undefined,
+        equipmentNotes: cleanEquipNotes || undefined,
+        sourceWarehouse: reqItem.sourceWarehouse,
+        ...(isMivType ? { deductedFromMapna, deductedFromContractor } : {}),
       });
     }
 
@@ -4582,11 +5254,33 @@ async function startServer() {
       const d = store.db.detailed.find((x) => x.id === oldLine.detailedId);
       if (!d) continue;
       affectedDetailedIds.add(d.id);
-      if (existing.docType === 'miv_contractor') {
-        d.mivContractorQty = Math.max(0, roundQty(toNum(d.mivContractorQty) - oldLine.qty));
-        d.mivContractorNo = removeRefToken(d.mivContractorNo, existing.docNo);
-        if (d.mivContractorQty === 0 && !otherDocs.some((od) => od.docType === 'miv_contractor' && od.items.some((it) => it.detailedId === d.id))) {
-          d.mivContractorDate = '';
+      if (existing.docType === 'miv_contractor' || existing.docType === 'miv_mapna') {
+        const hasSplit =
+          typeof oldLine.deductedFromMapna === 'number' ||
+          typeof oldLine.deductedFromContractor === 'number';
+        const revM = hasSplit
+          ? Math.max(0, roundQty(oldLine.deductedFromMapna || 0))
+          : existing.docType === 'miv_mapna'
+            ? oldLine.qty
+            : 0;
+        const revC = hasSplit
+          ? Math.max(0, roundQty(oldLine.deductedFromContractor || 0))
+          : existing.docType === 'miv_contractor'
+            ? oldLine.qty
+            : 0;
+        if (revC > 0) {
+          d.mivContractorQty = Math.max(0, roundQty(toNum(d.mivContractorQty) - revC));
+          d.mivContractorNo = removeRefToken(d.mivContractorNo, existing.docNo);
+          if (d.mivContractorQty === 0 && !otherDocs.some((od) => (od.docType === 'miv_contractor' || od.docType === 'miv_mapna') && od.items.some((it) => it.detailedId === d.id && (it.deductedFromContractor ?? (od.docType === 'miv_contractor' ? it.qty : 0)) > 0))) {
+            d.mivContractorDate = '';
+          }
+        }
+        if (revM > 0) {
+          d.mivMapnaQty = Math.max(0, roundQty(toNum(d.mivMapnaQty) - revM));
+          d.mivMapnaNo = removeRefToken(d.mivMapnaNo, existing.docNo);
+          if (d.mivMapnaQty === 0 && !otherDocs.some((od) => (od.docType === 'miv_mapna' || od.docType === 'miv_contractor') && od.items.some((it) => it.detailedId === d.id && (it.deductedFromMapna ?? (od.docType === 'miv_mapna' ? it.qty : 0)) > 0))) {
+            d.mivMapnaDate = '';
+          }
         }
       } else if (existing.docType === 'smr_contractor') {
         d.smrContractorQty = Math.max(0, roundQty(toNum(d.smrContractorQty) - oldLine.qty));
@@ -4600,26 +5294,37 @@ async function startServer() {
         if (d.smrMapnaQty === 0 && !otherDocs.some((od) => od.docType === 'smr_mapna' && od.items.some((it) => it.detailedId === d.id))) {
           d.smrMapnaDate = '';
         }
-      } else if (existing.docType === 'miv_mapna') {
-        d.mivMapnaQty = Math.max(0, roundQty(toNum(d.mivMapnaQty) - oldLine.qty));
-        d.mivMapnaNo = removeRefToken(d.mivMapnaNo, existing.docNo);
-        if (d.mivMapnaQty === 0 && !otherDocs.some((od) => od.docType === 'miv_mapna' && od.items.some((it) => it.detailedId === d.id))) {
-          d.mivMapnaDate = '';
-        }
       }
       d.updatedAt = now;
     }
 
-    const cleanNotes = normKey(raw.notes ?? existing.notes);
+    const totalMapna = nextLines.reduce((s, l) => s + (l.deductedFromMapna || 0), 0);
+    const totalContractor = nextLines.reduce((s, l) => s + (l.deductedFromContractor || 0), 0);
+    const nextDocType: MivDocType = isMivType
+      ? totalMapna > 0 && totalContractor === 0
+        ? 'miv_mapna'
+        : 'miv_contractor'
+      : requestedDocType;
+
+    const cleanNotes = preserveMultilineText(raw.notes ?? existing.notes);
     const nextReceiver = raw.receiver !== undefined ? normKey(raw.receiver) : normKey(existing.receiver);
     const nextDeliveredBy = raw.deliveredBy !== undefined ? normKey(raw.deliveredBy) : normKey(existing.deliveredBy);
     for (const line of nextLines) {
       const d = store.db.detailed.find((x) => x.id === line.detailedId)!;
       affectedDetailedIds.add(d.id);
-      if (nextDocType === 'miv_contractor') {
-        d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
-        d.mivContractorDate = cleanDate || d.mivContractorDate;
-        d.mivContractorQty = roundQty(toNum(d.mivContractorQty) + line.qty);
+      if (isMivType) {
+        const fromC = Math.max(0, roundQty(line.deductedFromContractor || 0));
+        const fromM = Math.max(0, roundQty(line.deductedFromMapna || 0));
+        if (fromC > 0) {
+          d.mivContractorNo = appendUniqueRef(d.mivContractorNo, cleanNo);
+          d.mivContractorDate = cleanDate || d.mivContractorDate;
+          d.mivContractorQty = roundQty(toNum(d.mivContractorQty) + fromC);
+        }
+        if (fromM > 0) {
+          d.mivMapnaNo = appendUniqueRef(d.mivMapnaNo, cleanNo);
+          d.mivMapnaDate = cleanDate || d.mivMapnaDate;
+          d.mivMapnaQty = roundQty(toNum(d.mivMapnaQty) + fromM);
+        }
       } else if (nextDocType === 'smr_contractor') {
         d.smrContractorNo = appendUniqueRef(d.smrContractorNo, cleanNo);
         d.smrContractorDate = cleanDate || d.smrContractorDate;
@@ -4630,10 +5335,6 @@ async function startServer() {
         d.smrMapnaDate = cleanDate || d.smrMapnaDate;
         d.smrMapnaQty = roundQty(toNum(d.smrMapnaQty) + line.qty);
         if (cleanNotes) d.smrMapnaNote = cleanNotes;
-      } else if (nextDocType === 'miv_mapna') {
-        d.mivMapnaNo = appendUniqueRef(d.mivMapnaNo, cleanNo);
-        d.mivMapnaDate = cleanDate || d.mivMapnaDate;
-        d.mivMapnaQty = roundQty(toNum(d.mivMapnaQty) + line.qty);
       }
       d.updatedAt = now;
     }
@@ -4669,7 +5370,7 @@ async function startServer() {
         new Set(
           store.db.mivDocuments
             .filter((doc) => (doc.docType === 'miv_contractor' || doc.docType === 'miv_mapna') && doc.items.some((it) => it.detailedId === detId))
-            .map((doc) => normKey(doc.receiver))
+            .map((doc) => normKey(doc.receiver || doc.party))
             .filter(Boolean),
         ),
       );
@@ -4701,71 +5402,10 @@ async function startServer() {
   });
 
   app.delete('/api/miv/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const idx = store.db.mivDocuments.findIndex((doc) => doc.id === req.params.id);
-    if (idx === -1) {
+    const removed = reverseMivDocument(store, req.params.id);
+    if (!removed) {
       res.status(404).json({ error: errMsg(req, 'سند MIV / SMR یافت نشد', 'MIV / SMR document not found') });
       return;
-    }
-    const [removed] = store.db.mivDocuments.splice(idx, 1);
-    const now = new Date().toISOString();
-    for (const oldLine of removed.items) {
-      const d = store.db.detailed.find((x) => x.id === oldLine.detailedId);
-      if (!d) continue;
-      if (removed.docType === 'miv_contractor') {
-        d.mivContractorQty = Math.max(0, roundQty(toNum(d.mivContractorQty) - oldLine.qty));
-        d.mivContractorNo = removeRefToken(d.mivContractorNo, removed.docNo);
-        const rem = store.db.mivDocuments.find((doc) => doc.docType === 'miv_contractor' && doc.items.some((it) => it.detailedId === d.id));
-        if (d.mivContractorQty === 0 && !rem) d.mivContractorDate = '';
-        else if (rem && d.mivContractorDate === removed.date) d.mivContractorDate = rem.date;
-      } else if (removed.docType === 'smr_contractor') {
-        d.smrContractorQty = Math.max(0, roundQty(toNum(d.smrContractorQty) - oldLine.qty));
-        d.smrContractorNo = removeRefToken(d.smrContractorNo, removed.docNo);
-        const rem = store.db.mivDocuments.find((doc) => doc.docType === 'smr_contractor' && doc.items.some((it) => it.detailedId === d.id));
-        if (d.smrContractorQty === 0 && !rem) {
-          d.smrContractorDate = '';
-          if (d.smrContractorNote === removed.notes) d.smrContractorNote = '';
-        } else if (rem && d.smrContractorDate === removed.date) {
-          d.smrContractorDate = rem.date;
-        }
-      } else if (removed.docType === 'smr_mapna') {
-        d.smrMapnaQty = Math.max(0, roundQty(toNum(d.smrMapnaQty) - oldLine.qty));
-        d.smrMapnaNo = removeRefToken(d.smrMapnaNo, removed.docNo);
-        const rem = store.db.mivDocuments.find((doc) => doc.docType === 'smr_mapna' && doc.items.some((it) => it.detailedId === d.id));
-        if (d.smrMapnaQty === 0 && !rem) {
-          d.smrMapnaDate = '';
-          if (d.smrMapnaNote === removed.notes) d.smrMapnaNote = '';
-        } else if (rem && d.smrMapnaDate === removed.date) {
-          d.smrMapnaDate = rem.date;
-        }
-      } else if (removed.docType === 'miv_mapna') {
-        d.mivMapnaQty = Math.max(0, roundQty(toNum(d.mivMapnaQty) - oldLine.qty));
-        d.mivMapnaNo = removeRefToken(d.mivMapnaNo, removed.docNo);
-        const rem = store.db.mivDocuments.find((doc) => doc.docType === 'miv_mapna' && doc.items.some((it) => it.detailedId === d.id));
-        if (d.mivMapnaQty === 0 && !rem) d.mivMapnaDate = '';
-        else if (rem && d.mivMapnaDate === removed.date) d.mivMapnaDate = rem.date;
-      }
-      if (removed.docType === 'miv_contractor' || removed.docType === 'miv_mapna') {
-        const remReceivers = Array.from(
-          new Set(
-            store.db.mivDocuments
-              .filter((doc) => (doc.docType === 'miv_contractor' || doc.docType === 'miv_mapna') && doc.items.some((it) => it.detailedId === d.id))
-              .map((doc) => normKey(doc.receiver))
-              .filter(Boolean),
-          ),
-        );
-        d.mivReceiver = remReceivers.join(' , ');
-      } else if (removed.docType === 'smr_contractor' || removed.docType === 'smr_mapna') {
-        const remDeliverers = Array.from(
-          new Set(
-            store.db.mivDocuments
-              .filter((doc) => (doc.docType === 'smr_contractor' || doc.docType === 'smr_mapna') && doc.items.some((it) => it.detailedId === d.id))
-              .map((doc) => normKey(doc.deliveredBy))
-              .filter(Boolean),
-          ),
-        );
-        d.smrDeliverer = remDeliverers.join(' , ');
-      }
-      d.updatedAt = now;
     }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
@@ -4779,38 +5419,80 @@ async function startServer() {
   });
 
   // ---------------- SUBSTITUTION (جایگزینی) ----------------
-  app.get('/api/substitutions', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
-    res.json({
-      records: store.db.substitutions,
-      detailedItems: [...store.getDetailedComputedList()].reverse(),
-      generalEntries: [...store.db.general].reverse(),
-      mivDocuments: store.db.mivDocuments,
-    });
-  });
+  const collectSubstitutionDetailedIds = (rec: SubstitutionRecord): Set<string> => {
+    const ids = new Set<string>();
+    if (rec.detailedId) ids.add(rec.detailedId);
+    for (const it of rec.originalItems || []) {
+      if (it.detailedId) ids.add(it.detailedId);
+    }
+    for (const it of rec.substituteItems || []) {
+      if (it.detailedId) ids.add(it.detailedId);
+    }
+    return ids;
+  };
 
-  app.post('/api/substitutions', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const raw = req.body as Partial<SubstitutionRecord>;
-    const cleanNo = normKey(raw.docNo);
-    const cleanDate = normKey(raw.date);
-    const cleanReason = normKey(raw.reason);
+  const cleanupSubstitutionFromDetailed = (rec: SubstitutionRecord, now: string): void => {
+    const targetIds = collectSubstitutionDetailedIds(rec);
+    const docLower = normKey(rec.docNo).toLowerCase();
+    for (const detRow of store.db.detailed) {
+      const hasDoc =
+        Boolean(docLower) &&
+        String(detRow.repNo || '')
+          .split(/[،,]+/)
+          .some((p) => p.trim().toLowerCase() === docLower);
+      if (!targetIds.has(detRow.id) && !hasDoc) continue;
+      detRow.repNo = removeRefTokenFromList(detRow.repNo, rec.docNo);
+      detRow.repDescription = stripSubstitutionBlockFromText(
+        detRow.repDescription,
+        rec.docNo,
+        rec.reason,
+        rec.reprocureBy,
+      );
+      if (!normKey(detRow.repNo)) {
+        detRow.repStatus = '';
+        detRow.repReprocured = '';
+      }
+      detRow.updatedAt = now;
+    }
+  };
 
-    const rawOrigItems = Array.isArray(raw.originalItems) ? raw.originalItems : [];
-    const sanitizedOrigItems: SubstitutionLineItem[] = [];
-    for (const item of rawOrigItems) {
+  const syncSubstitutionToDetailed = (rec: SubstitutionRecord, now: string): Set<string> => {
+    const affectedIds = collectSubstitutionDetailedIds(rec);
+    const exactDesc = buildReplacementDetailedDescription(rec.reason, rec.reprocureBy);
+    for (const detId of affectedIds) {
+      const detRow = store.db.detailed.find((x) => x.id === detId);
+      if (!detRow) continue;
+      detRow.repNo = appendUniqueRef(detRow.repNo, rec.docNo);
+      detRow.repStatus = detRow.repStatus === 'بسته' ? 'بسته' : 'باز';
+      if (rec.reprocureBy) detRow.repReprocured = rec.reprocureBy;
+      if (exactDesc) {
+        detRow.repDescription = appendMultilineLine(detRow.repDescription, exactDesc);
+      }
+      detRow.updatedAt = now;
+    }
+    return affectedIds;
+  };
+
+  const sanitizeSubstitutionLines = (
+    rawOrigItems: unknown,
+    rawSubItems: unknown,
+  ): { orig: SubstitutionLineItem[]; sub: SubstitutionLineItem[] } => {
+    const orig: SubstitutionLineItem[] = [];
+    for (const item of Array.isArray(rawOrigItems) ? (rawOrigItems as Partial<SubstitutionLineItem>[]) : []) {
       const targetDet = store.db.detailed.find((x) => x.id === item?.detailedId);
       const qVal = Number(item?.qty);
       if (!targetDet || !Number.isFinite(qVal) || qVal <= 0) continue;
-      sanitizedOrigItems.push({
+      orig.push({
         detailedId: targetDet.id,
         itemNo: normKey(item.itemNo) || targetDet.itemNo || '',
         shipmentNo: normKey(item.shipmentNo) || targetDet.shipmentNo || '',
         packageNo: normKey(item.packageNo) || targetDet.packageNo || '',
-        description: normKey(item.description) || targetDet.description || targetDet.generalDescription || '',
+        description: preserveMultilineText(item.description) || targetDet.description || targetDet.generalDescription || '',
         itemCode: normKey(item.itemCode) || targetDet.itemCode || '',
         qty: qVal,
         countingUnit: normalizeCountingUnitToFa(targetDet.countingUnit) || 'عدد',
         drawingNo: '',
-        remarks: normKey(item.remarks),
+        remarks: preserveMultilineText(item.remarks),
         system: targetDet.system || '',
         island: targetDet.island || '',
         unit: targetDet.unit || '',
@@ -4819,16 +5501,14 @@ async function startServer() {
         merNo: targetDet.merNo || '',
       });
     }
-
-    const rawSubItems = Array.isArray(raw.substituteItems) ? raw.substituteItems : [];
-    const sanitizedSubItems: SubstitutionLineItem[] = [];
-    for (const item of rawSubItems) {
+    const sub: SubstitutionLineItem[] = [];
+    for (const item of Array.isArray(rawSubItems) ? (rawSubItems as Partial<SubstitutionLineItem>[]) : []) {
       const targetDet = store.db.detailed.find((x) => x.id === item?.detailedId);
       const qVal = Number(item?.qty);
       if (!Number.isFinite(qVal) || qVal <= 0) continue;
-      const desc = normKey(item?.description) || targetDet?.description || targetDet?.generalDescription || '';
+      const desc = preserveMultilineText(item?.description) || targetDet?.description || targetDet?.generalDescription || '';
       if (!desc) continue;
-      sanitizedSubItems.push({
+      sub.push({
         detailedId: targetDet?.id || normKey(item?.detailedId),
         itemNo: normKey(item?.itemNo) || targetDet?.itemNo || '',
         shipmentNo: normKey(item?.shipmentNo) || targetDet?.shipmentNo || '',
@@ -4838,7 +5518,7 @@ async function startServer() {
         qty: qVal,
         countingUnit: normalizeCountingUnitToFa(targetDet?.countingUnit || item?.countingUnit || '') || 'عدد',
         drawingNo: '',
-        remarks: normKey(item?.remarks),
+        remarks: preserveMultilineText(item?.remarks),
         system: targetDet?.system || normKey(item?.system),
         island: targetDet?.island || normKey(item?.island),
         unit: targetDet?.unit || normKey(item?.unit),
@@ -4848,11 +5528,33 @@ async function startServer() {
         stockSource: item?.stockSource === 'contractor' ? 'contractor' : 'mapna',
       });
     }
+    return { orig, sub };
+  };
+
+  app.get('/api/substitutions', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
+    res.json({
+      records: [...store.db.substitutions],
+      detailedItems: [...store.getDetailedComputedList()].reverse(),
+      generalEntries: [...store.db.general].reverse(),
+      mivDocuments: [...store.db.mivDocuments],
+    });
+  });
+
+  app.post('/api/substitutions', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const raw = req.body as Partial<SubstitutionRecord>;
+    const cleanNo = normKey(raw.docNo);
+    const cleanDate = normKey(raw.date);
+    const cleanReason = preserveMultilineText(raw.reason);
+
+    const { orig: sanitizedOrigItems, sub: sanitizedSubItems } = sanitizeSubstitutionLines(
+      raw.originalItems,
+      raw.substituteItems,
+    );
 
     const primaryDetailedId = sanitizedOrigItems[0]?.detailedId || raw.detailedId;
     const d = store.db.detailed.find((x) => x.id === primaryDetailedId);
     const cleanSubDesc =
-      normKey(raw.substituteDescription) ||
+      preserveMultilineText(raw.substituteDescription) ||
       sanitizedSubItems.map((i) => i.description).filter(Boolean).join(' / ');
 
     if (!cleanNo || !cleanDate || !d || !cleanSubDesc || !cleanReason) {
@@ -4881,6 +5583,7 @@ async function startServer() {
         ? [normKey(raw.mivDocId)]
         : [];
 
+    const now = new Date().toISOString();
     const record: SubstitutionRecord = {
       id: makeId(),
       docNo: cleanNo,
@@ -4904,7 +5607,7 @@ async function startServer() {
       originalDescription: d.description || d.generalDescription,
       originalItemCode: d.itemCode,
       originalDrawingNo: normKey(raw.originalDrawingNo),
-      originalRemarks: normKey(raw.originalRemarks) || sanitizedOrigItems[0]?.remarks || '',
+      originalRemarks: preserveMultilineText(raw.originalRemarks) || sanitizedOrigItems[0]?.remarks || '',
       originalItems: sanitizedOrigItems.length > 0 ? sanitizedOrigItems : undefined,
       substitutePackageNo:
         normKey(raw.substitutePackageNo) || sanitizedSubItems[0]?.shipmentNo || '',
@@ -4913,12 +5616,12 @@ async function startServer() {
         normKey(raw.substituteItemCode) || sanitizedSubItems[0]?.itemCode || '',
       substituteSize: normKey(raw.substituteSize),
       substituteDrawingNo: normKey(raw.substituteDrawingNo),
-      substituteRemarks: normKey(raw.substituteRemarks) || sanitizedSubItems[0]?.remarks || '',
+      substituteRemarks: preserveMultilineText(raw.substituteRemarks) || sanitizedSubItems[0]?.remarks || '',
       substituteItems: sanitizedSubItems.length > 0 ? sanitizedSubItems : undefined,
       qty: numQty,
       countingUnit: normalizeCountingUnitToFa(d.countingUnit) || 'عدد',
       reason: cleanReason,
-      supplierNotes: normKey(raw.supplierNotes),
+      supplierNotes: preserveMultilineText(raw.supplierNotes),
       reprocureBy: normKey(raw.reprocureBy),
       costBorneBy: normKey(raw.costBorneBy),
       approvedBy: normKey(raw.approvedBy),
@@ -4926,43 +5629,35 @@ async function startServer() {
       installerSignatory: normKey(raw.installerSignatory),
       supplierSignatory: normKey(raw.supplierSignatory),
       status: raw.status || 'executed',
-      notes: normKey(raw.notes),
-      createdAt: new Date().toISOString(),
+      notes: preserveMultilineText(raw.notes),
+      createdAt: now,
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
     };
     store.db.substitutions.unshift(record);
 
-    const affectedOrigIds = new Set<string>([d.id, ...sanitizedOrigItems.map((i) => i.detailedId)]);
-    for (const detId of affectedOrigIds) {
-      const detRow = store.db.detailed.find((x) => x.id === detId);
-      if (!detRow) continue;
-      detRow.repNo = appendUniqueRef(detRow.repNo, cleanNo);
-      if (record.status === 'approved') detRow.repStatus = 'تأیید شده';
-      else if (record.status === 'executed') detRow.repStatus = 'اجرا شده';
-      else if (!detRow.repStatus) detRow.repStatus = 'در انتظار تأیید';
-      if (record.reprocureBy) detRow.repReprocured = record.reprocureBy;
-      if (record.substituteDescription) detRow.repDescription = record.substituteDescription;
-      detRow.updatedAt = record.createdAt;
-    }
+    const affectedIds = syncSubstitutionToDetailed(record, now);
 
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'CREATE_SUBSTITUTION',
       scope: 'substitution',
       targetId: cleanNo,
-      summary: `ثبت فرم جایگزینی شماره ${cleanNo} (${affectedOrigIds.size} قلم اصلی)`,
+      summary: `ثبت فرم جایگزینی شماره ${cleanNo} (${affectedIds.size} ردیف در ثبت جزئیات)`,
     });
     store.saveImmediate();
     res.json({ record });
   });
 
-  app.patch('/api/substitutions/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+  const handleUpdateSubstitution = (req: AuthedRequest, res: Response) => {
     const rec = store.db.substitutions.find((s) => s.id === req.params.id);
     if (!rec) {
       res.status(404).json({ error: errMsg(req, 'سند جایگزینی یافت نشد', 'Substitution record not found') });
       return;
     }
-    const raw = req.body as Partial<SubstitutionRecord>;
+    const raw = req.body as Partial<SubstitutionRecord> & { replaceMivDocs?: boolean };
+    const prevSnapshot: SubstitutionRecord = JSON.parse(JSON.stringify(rec));
+    const now = new Date().toISOString();
+
     if (raw.docNo !== undefined) {
       const cleanNo = normKey(raw.docNo);
       if (!cleanNo) {
@@ -4979,7 +5674,41 @@ async function startServer() {
       }
       rec.date = cleanDate;
     }
-    if (raw.detailedId !== undefined && raw.detailedId !== rec.detailedId) {
+
+    if (raw.originalItems !== undefined || raw.substituteItems !== undefined) {
+      const { orig, sub } = sanitizeSubstitutionLines(
+        raw.originalItems !== undefined ? raw.originalItems : rec.originalItems,
+        raw.substituteItems !== undefined ? raw.substituteItems : rec.substituteItems,
+      );
+      if (raw.originalItems !== undefined) {
+        if (orig.length === 0) {
+          res.status(400).json({ error: errMsg(req, 'حداقل یک کالای اصلی (بخش الف) الزامی است', 'At least one original item is required') });
+          return;
+        }
+        rec.originalItems = orig;
+        const primary = store.db.detailed.find((x) => x.id === orig[0].detailedId);
+        if (primary) {
+          rec.detailedId = primary.id;
+          rec.shipmentNo = primary.shipmentNo;
+          rec.packageNo = primary.packageNo;
+          rec.itemNo = primary.itemNo;
+          rec.originalDescription = primary.description || primary.generalDescription;
+          rec.originalItemCode = primary.itemCode;
+          rec.countingUnit = normalizeCountingUnitToFa(primary.countingUnit) || 'عدد';
+        }
+        rec.qty = roundQty(orig.reduce((sum, i) => sum + i.qty, 0));
+      }
+      if (raw.substituteItems !== undefined) {
+        rec.substituteItems = sub.length > 0 ? sub : undefined;
+        if (sub.length > 0) {
+          rec.substitutePackageNo = normKey(raw.substitutePackageNo) || sub[0].shipmentNo || '';
+          rec.substituteItemCode = normKey(raw.substituteItemCode) || sub[0].itemCode || '';
+          rec.substituteDescription =
+            preserveMultilineText(raw.substituteDescription) ||
+            sub.map((i) => i.description).filter(Boolean).join(' / ');
+        }
+      }
+    } else if (raw.detailedId !== undefined && raw.detailedId !== rec.detailedId) {
       const d = store.db.detailed.find((x) => x.id === raw.detailedId);
       if (!d) {
         res.status(404).json({ error: errMsg(req, 'کالای اصلی یافت نشد', 'Original detailed item not found') });
@@ -4993,7 +5722,8 @@ async function startServer() {
       rec.originalItemCode = d.itemCode;
       rec.countingUnit = normalizeCountingUnitToFa(d.countingUnit) || 'عدد';
     }
-    if (raw.qty !== undefined) {
+
+    if (raw.qty !== undefined && raw.originalItems === undefined) {
       const numQty = Number(raw.qty);
       if (!Number.isFinite(numQty) || numQty <= 0) {
         res.status(400).json({ error: errMsg(req, 'تعداد جایگزینی باید بزرگتر از صفر باشد', 'Substitution quantity must be greater than zero') });
@@ -5002,7 +5732,7 @@ async function startServer() {
       rec.qty = numQty;
     }
     if (raw.substituteDescription !== undefined) {
-      const cleanSubDesc = normKey(raw.substituteDescription);
+      const cleanSubDesc = preserveMultilineText(raw.substituteDescription);
       if (!cleanSubDesc) {
         res.status(400).json({ error: errMsg(req, 'مشخصات کالای جایگزین الزامی است', 'Substitute description is required') });
         return;
@@ -5010,7 +5740,7 @@ async function startServer() {
       rec.substituteDescription = cleanSubDesc;
     }
     if (raw.reason !== undefined) {
-      const cleanReason = normKey(raw.reason);
+      const cleanReason = preserveMultilineText(raw.reason);
       if (!cleanReason) {
         res.status(400).json({ error: errMsg(req, 'دلیل جایگزینی الزامی است', 'Reason is required') });
         return;
@@ -5026,15 +5756,33 @@ async function startServer() {
     if (raw.supplyUrgency !== undefined) rec.supplyUrgency = normKey(raw.supplyUrgency);
     if (raw.installerContractor !== undefined) rec.installerContractor = normKey(raw.installerContractor);
     if (raw.mivNo !== undefined) rec.mivNo = normKey(raw.mivNo);
+    if (raw.mivDocIds !== undefined) {
+      const nextIds = Array.isArray(raw.mivDocIds) ? raw.mivDocIds.map((x) => normKey(x)).filter(Boolean) : [];
+      if (raw.replaceMivDocs) {
+        const oldIds = new Set<string>([
+          ...(prevSnapshot.mivDocIds || []),
+          ...(prevSnapshot.mivDocId ? [prevSnapshot.mivDocId] : []),
+        ]);
+        for (const oldId of oldIds) {
+          if (!nextIds.includes(oldId)) {
+            reverseMivDocument(store, oldId);
+          }
+        }
+      }
+      rec.mivDocIds = nextIds.length > 0 ? nextIds : undefined;
+      rec.mivDocId = nextIds[0] || undefined;
+    } else if (raw.mivDocId !== undefined) {
+      rec.mivDocId = normKey(raw.mivDocId) || undefined;
+    }
     if (raw.merNcrNo !== undefined) rec.merNcrNo = normKey(raw.merNcrNo);
     if (raw.originalDrawingNo !== undefined) rec.originalDrawingNo = normKey(raw.originalDrawingNo);
-    if (raw.originalRemarks !== undefined) rec.originalRemarks = normKey(raw.originalRemarks);
+    if (raw.originalRemarks !== undefined) rec.originalRemarks = preserveMultilineText(raw.originalRemarks);
     if (raw.substitutePackageNo !== undefined) rec.substitutePackageNo = normKey(raw.substitutePackageNo);
     if (raw.substituteItemCode !== undefined) rec.substituteItemCode = normKey(raw.substituteItemCode);
     if (raw.substituteSize !== undefined) rec.substituteSize = normKey(raw.substituteSize);
     if (raw.substituteDrawingNo !== undefined) rec.substituteDrawingNo = normKey(raw.substituteDrawingNo);
-    if (raw.substituteRemarks !== undefined) rec.substituteRemarks = normKey(raw.substituteRemarks);
-    if (raw.supplierNotes !== undefined) rec.supplierNotes = normKey(raw.supplierNotes);
+    if (raw.substituteRemarks !== undefined) rec.substituteRemarks = preserveMultilineText(raw.substituteRemarks);
+    if (raw.supplierNotes !== undefined) rec.supplierNotes = preserveMultilineText(raw.supplierNotes);
     if (raw.reprocureBy !== undefined) rec.reprocureBy = normKey(raw.reprocureBy);
     if (raw.costBorneBy !== undefined) rec.costBorneBy = normKey(raw.costBorneBy);
     if (raw.approvedBy !== undefined) rec.approvedBy = normKey(raw.approvedBy);
@@ -5042,18 +5790,10 @@ async function startServer() {
     if (raw.installerSignatory !== undefined) rec.installerSignatory = normKey(raw.installerSignatory);
     if (raw.supplierSignatory !== undefined) rec.supplierSignatory = normKey(raw.supplierSignatory);
     if (raw.status) rec.status = raw.status;
-    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+    if (raw.notes !== undefined) rec.notes = preserveMultilineText(raw.notes);
 
-    const linkedDet = store.db.detailed.find((x) => x.id === rec.detailedId);
-    if (linkedDet) {
-      linkedDet.repNo = appendUniqueRef(linkedDet.repNo, rec.docNo);
-      if (rec.status === 'approved') linkedDet.repStatus = 'تأیید شده';
-      else if (rec.status === 'executed') linkedDet.repStatus = 'اجرا شده';
-      else linkedDet.repStatus = 'در انتظار تأیید';
-      if (rec.reprocureBy) linkedDet.repReprocured = rec.reprocureBy;
-      if (rec.substituteDescription) linkedDet.repDescription = rec.substituteDescription;
-      linkedDet.updatedAt = new Date().toISOString();
-    }
+    cleanupSubstitutionFromDetailed(prevSnapshot, now);
+    syncSubstitutionToDetailed(rec, now);
 
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
@@ -5064,7 +5804,10 @@ async function startServer() {
     });
     store.saveImmediate();
     res.json({ record: rec });
-  });
+  };
+
+  app.put('/api/substitutions/:id', requireRole(['admin', 'operator']), handleUpdateSubstitution);
+  app.patch('/api/substitutions/:id', requireRole(['admin', 'operator']), handleUpdateSubstitution);
 
   app.delete('/api/substitutions/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
     const idx = store.db.substitutions.findIndex((s) => s.id === req.params.id);
@@ -5073,15 +5816,41 @@ async function startServer() {
       return;
     }
     const [removed] = store.db.substitutions.splice(idx, 1);
+    const now = new Date().toISOString();
+
+    // 1) Reverse all linked auto-issued MIV documents so inventory returns to exact Mapna/Contractor pool
+    const linkedMivIds = new Set<string>();
+    if (removed.mivDocId) linkedMivIds.add(removed.mivDocId);
+    for (const mid of removed.mivDocIds || []) {
+      if (mid) linkedMivIds.add(mid);
+    }
+    if (removed.docNo) {
+      const needle = removed.docNo.toLowerCase();
+      for (const mdoc of store.db.mivDocuments) {
+        if ((mdoc.notes || '').toLowerCase().includes(needle)) {
+          linkedMivIds.add(mdoc.id);
+        }
+      }
+    }
+    let reversedMivs = 0;
+    for (const mid of linkedMivIds) {
+      if (reverseMivDocument(store, mid)) {
+        reversedMivs += 1;
+      }
+    }
+
+    // 2) Clean substitution fields from BOTH Section A & Section B Detailed rows
+    cleanupSubstitutionFromDetailed(removed, now);
+
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_SUBSTITUTION',
       scope: 'substitution',
       targetId: removed.docNo,
-      summary: `حذف فرم جایگزینی شماره ${removed.docNo}`,
+      summary: `حذف فرم جایگزینی شماره ${removed.docNo} (بازگردانی ${reversedMivs} حواله MIV و پاکسازی ثبت جزئیات)`,
     });
     store.saveImmediate();
-    res.json({ ok: true });
+    res.json({ ok: true, reversedMivs });
   });
 
   // ---------------- MATERIAL ESTIMATION (MTO) ----------------

@@ -37,6 +37,7 @@ export interface ResolvedEmployerProfile {
   docCodePrefix: string;
   address?: string;
   phone?: string;
+  secondaryPhone?: string;
   postalCode?: string;
   fax?: string;
   email?: string;
@@ -88,10 +89,11 @@ export const BUILT_IN_EMPLOYERS: EmployerProfile[] = [
     techOfficeLabel: 'دفتر فنی MD1',
     installationLabel: 'واحد نصب MD1',
     inspectorLabel: 'نماینده مپنا توسعه یک (MD1)',
-    address: 'تهران، بزرگراه نلسون ماندلا، جنوب چهارراه حقانی، نبش کوچه کیان، پلاک ۱۳',
-    phone: '0۲۱۸۲۹۸۰۰۰۰ و 0۲۱۸۲۹۸۰۰۰1',
-    postalCode: '۱۵۱۸۶۱۴۱۱۱',
-    fax: '۲۱۸۲۹۸۶۶۲۳',
+    address: 'تهران - بزرگراه نلسون ماندلا - جنوب چهارراه حقانی - نبش کوچه کیان - پلاک 13',
+    phone: '+98-21-82980000',
+    secondaryPhone: '+98-21-82980001',
+    postalCode: '1518614111',
+    fax: '+98-21-82986623',
     email: 'Info@MD1.MapnaGroup.com',
     instagram: 'Mapna_md1',
     linkedin: 'Mapna_md1',
@@ -127,9 +129,9 @@ export const BUILT_IN_EMPLOYERS: EmployerProfile[] = [
     installationLabel: 'واحد نصب MD2',
     inspectorLabel: 'نماینده مپنا توسعه دو (MD2)',
     address: 'تهران - بزرگراه آفریقا - جنوب چهارراه حقانی - شماره 15',
-    phone: '۴۵۳۵۷۰۰۰–۰۲۱',
-    postalCode: '۱۵۱۸۶۱۴۴۱۱',
-    fax: '۸۸۷۹۵۴۴۷–۰۲۱',
+    phone: '+98-21-45357000',
+    postalCode: '1518614411',
+    fax: '+98-21-8879547',
     email: 'Info@MD2.MapnaGroup.com',
     instagram: 'Mapna_md2',
     linkedin: 'Mapnamd2',
@@ -164,10 +166,11 @@ export const BUILT_IN_EMPLOYERS: EmployerProfile[] = [
     techOfficeLabel: 'دفتر فنی MD3',
     installationLabel: 'واحد نصب MD3',
     inspectorLabel: 'نماینده مپنا توسعه سه (MD3)',
-    address: 'تهران، بزرگراه نلسون ماندلا، جنوب چهار راه حقانی، نبش کوچه ژوبین، پلاک 15',
-    phone: '02184620000 و 02184620001',
+    address: 'تهران - بزرگراه نلسون ماندلا - جنوب چهار راه حقانی - نبش کوچه ژوبین - پلاک 15',
+    phone: '+98-21-84620000',
+    secondaryPhone: '+98-21-84620001',
     postalCode: '1518614411',
-    fax: '88857450 021',
+    fax: '+98-21-88857450',
     email: 'info@mapnamd3.com',
     instagram: 'Mapna_md3',
     linkedin: 'Mapnamd3',
@@ -214,8 +217,8 @@ export function cloneBuiltInEmployers(): EmployerProfile[] {
 
 /**
  * Guarantees that all 3 built-in MAPNA employers (MD1, MD2, MD3) are always present
- * in order at the top of the employers list, preserving any saved user updates
- * (e.g. modified docCodePrefix or uploaded forms) and all custom user-defined employers.
+ * in order at the top of the employers list with their canonical locked profile details,
+ * while preserving user-managed uploadedForms and all custom user-defined employers.
  */
 export function ensureDefaultEmployers(existing: EmployerProfile[] = []): EmployerProfile[] {
   const byId = new Map<string, EmployerProfile>();
@@ -227,37 +230,15 @@ export function ensureDefaultEmployers(existing: EmployerProfile[] = []): Employ
 
   const mergedBuiltIns: EmployerProfile[] = BUILT_IN_EMPLOYERS.map((seed) => {
     const saved = byId.get(seed.id);
-    if (!saved) {
-      return {
-        ...seed,
-        logos: seed.logos.map((l) => ({ ...l })),
-        formTemplates: { ...seed.formTemplates },
-        customForms: [...seed.customForms],
-        uploadedForms: [...(seed.uploadedForms || [])],
-      };
-    }
-    const logos = saved.logos && saved.logos.length > 0 ? saved.logos : seed.logos.map((l) => ({ ...l }));
     return {
       ...seed,
-      ...saved,
       id: seed.id,
       isBuiltIn: true,
-      nameFa: saved.nameFa || seed.nameFa,
-      nameEn: saved.nameEn || seed.nameEn,
-      shortName: saved.shortName || seed.shortName,
-      companyFullName: saved.companyFullName || seed.companyFullName,
-      companyFullNameEn: saved.companyFullNameEn || seed.companyFullNameEn,
-      docCodePrefix: saved.docCodePrefix !== undefined ? saved.docCodePrefix : seed.docCodePrefix,
-      imsSubtitle: saved.imsSubtitle || seed.imsSubtitle,
-      address: saved.address ?? seed.address,
-      phone: saved.phone ?? seed.phone,
-      postalCode: saved.postalCode ?? seed.postalCode,
-      fax: saved.fax ?? seed.fax,
-      email: saved.email ?? seed.email,
-      instagram: saved.instagram ?? seed.instagram,
-      linkedin: saved.linkedin ?? seed.linkedin,
-      logos,
-      uploadedForms: saved.uploadedForms || [],
+      logos: seed.logos.map((l) => ({ ...l })),
+      formTemplates: { ...seed.formTemplates },
+      customForms: [...seed.customForms],
+      uploadedForms: saved?.uploadedForms ? [...saved.uploadedForms] : [],
+      updatedAt: saved?.updatedAt || seed.updatedAt,
     };
   });
 
@@ -943,6 +924,10 @@ export function sanitizeEmployerProfile(raw: unknown): EmployerProfile | null {
         : undefined,
     address: typeof r.address === 'string' && r.address.trim() ? r.address.trim() : undefined,
     phone: typeof r.phone === 'string' && r.phone.trim() ? r.phone.trim() : undefined,
+    secondaryPhone:
+      typeof r.secondaryPhone === 'string' && r.secondaryPhone.trim()
+        ? r.secondaryPhone.trim()
+        : undefined,
     postalCode: typeof r.postalCode === 'string' && r.postalCode.trim() ? r.postalCode.trim() : undefined,
     fax: typeof r.fax === 'string' && r.fax.trim() ? r.fax.trim() : undefined,
     email: typeof r.email === 'string' && r.email.trim() ? r.email.trim() : undefined,
@@ -1040,6 +1025,7 @@ export function resolveEmployerProfile(
       docCodePrefix: matched.docCodePrefix || '',
       address: matched.address,
       phone: matched.phone,
+      secondaryPhone: matched.secondaryPhone,
       postalCode: matched.postalCode,
       fax: matched.fax,
       email: matched.email,

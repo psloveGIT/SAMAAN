@@ -14,7 +14,8 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { resolvePublicAssetUrl } from '../lib/assets.ts';
+import { resolveEmployerLogoSrc } from '../lib/employerLogoCache.ts';
+import { triggerAppPrint } from '../lib/print.ts';
 import {
   DETAILED_FILTER_FIELDS,
   type CustomFieldFilter,
@@ -222,8 +223,8 @@ const Md1StorageLabelCard: React.FC<Md1StorageLabelCardProps> = ({
             gridTemplateColumns: `${labelWidth} 1fr`,
             borderBottom: '1px solid #000000',
             fontSize,
-            minHeight: r.isMultiline ? (compact ? '30px' : '34px') : compact ? '19px' : '21px',
-            alignItems: 'center',
+            minHeight: r.isMultiline ? (compact ? '28px' : '32px') : compact ? '18px' : '20px',
+            alignItems: 'stretch',
           }}
         >
           <div
@@ -232,7 +233,6 @@ const Md1StorageLabelCard: React.FC<Md1StorageLabelCardProps> = ({
               fontWeight: 700,
               whiteSpace: 'nowrap',
               borderRight: '1px solid #000000',
-              height: '100%',
               display: 'flex',
               alignItems: 'center',
               backgroundColor: '#f8fafc',
@@ -245,14 +245,12 @@ const Md1StorageLabelCard: React.FC<Md1StorageLabelCardProps> = ({
             style={{
               padding: rowPad,
               fontWeight: 600,
-              lineHeight: 1.28,
+              lineHeight: 1.26,
               wordBreak: 'break-word',
-              overflow: 'hidden',
-              display: r.isMultiline ? '-webkit-box' : 'block',
-              WebkitLineClamp: r.isMultiline ? 2 : undefined,
-              WebkitBoxOrient: r.isMultiline ? 'vertical' : undefined,
-              textOverflow: 'ellipsis',
-              whiteSpace: r.isMultiline ? 'normal' : 'nowrap',
+              overflowWrap: 'anywhere',
+              whiteSpace: 'pre-line',
+              display: 'flex',
+              alignItems: 'center',
             }}
           >
             {r.value}
@@ -432,7 +430,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
   const logoSrc = useMemo(() => {
     const rawLogo =
       activeEmployer?.logos?.[0]?.dataUrl || DEFAULT_MD1_LOGO_PATH;
-    return resolvePublicAssetUrl(rawLogo);
+    return resolveEmployerLogoSrc(rawLogo);
   }, [activeEmployer]);
 
   const buildFilterParams = useCallback(() => {
@@ -618,7 +616,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
       );
       return;
     }
-    window.print();
+    triggerAppPrint({ title: 'Storage-Labels' });
   };
 
   const handleOpenPreview = () => {
@@ -985,34 +983,34 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
                           className="w-4 h-4 accent-[var(--accent-primary)] cursor-pointer"
                         />
                       </td>
-                      <td className="py-2 px-2 text-center font-semibold tabular-nums whitespace-nowrap" dir="ltr">
+                      <td className="py-2 px-2 text-center font-semibold tabular-nums whitespace-pre-line" dir="ltr">
                         {item.itemCode || '—'}
                       </td>
-                      <td className="py-2 px-2 text-start max-w-[180px] truncate bidi-plaintext" title={item.description}>
+                      <td className="py-2 px-2 text-start max-w-[220px] whitespace-pre-line break-words bidi-plaintext" title={item.description}>
                         {item.description || '—'}
                       </td>
-                      <td className="py-2 px-2 text-center whitespace-nowrap bidi-plaintext">
+                      <td className="py-2 px-2 text-center whitespace-pre-line bidi-plaintext">
                         {item.system || '—'}
                       </td>
-                      <td className="py-2 px-2 text-center whitespace-nowrap bidi-plaintext">
+                      <td className="py-2 px-2 text-center whitespace-pre-line bidi-plaintext">
                         {item.subSystem || '—'}
                       </td>
-                      <td className="py-2 px-2 text-center tabular-nums whitespace-nowrap" dir="ltr">
+                      <td className="py-2 px-2 text-center tabular-nums whitespace-pre-line" dir="ltr">
                         {item.shipmentNo || '—'}
                       </td>
-                      <td className="py-2 px-2 text-center tabular-nums whitespace-nowrap" dir="ltr">
+                      <td className="py-2 px-2 text-center tabular-nums whitespace-pre-line" dir="ltr">
                         {item.packageNo || '—'}
                       </td>
-                      <td className="py-2 px-2 text-center tabular-nums whitespace-nowrap" dir="ltr">
+                      <td className="py-2 px-2 text-center tabular-nums whitespace-pre-line" dir="ltr">
                         {item.itemNo || '—'}
                       </td>
-                      <td className="py-2 px-2 text-center tabular-nums whitespace-nowrap font-medium" dir="ltr">
+                      <td className="py-2 px-2 text-center tabular-nums whitespace-pre-line font-medium" dir="ltr">
                         {item.storageLocation || '—'}
                       </td>
-                      <td className="py-2 px-2 text-center whitespace-nowrap bidi-plaintext">
+                      <td className="py-2 px-2 text-center whitespace-pre-line bidi-plaintext">
                         {item.supplier || '—'}
                       </td>
-                      <td className="py-2 px-2 text-center max-w-[130px] truncate bidi-plaintext" title={item.notes}>
+                      <td className="py-2 px-2 text-center max-w-[160px] whitespace-pre-line break-words bidi-plaintext" title={item.notes}>
                         {item.notes || '—'}
                       </td>
                       <td className="py-2 px-2 text-center whitespace-nowrap">

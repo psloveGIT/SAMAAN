@@ -7,6 +7,7 @@ import {
   parseTransitCsv,
 } from './csvParser.ts';
 import { roundQty, toNum } from './formulas.ts';
+import { normalizeRepStatus, preserveMultilineText } from './docNumbering.ts';
 import { normalizeDigits, parseFlexibleDateToIso } from './jalali.ts';
 import {
   inferItemClassification,
@@ -1051,7 +1052,15 @@ function getField(row: Record<string, unknown>, aliases: string[]): unknown {
 
 function strField(row: Record<string, unknown>, aliases: string[], fallback = ''): string {
   const v = getField(row, aliases);
-  return normKey(v) || fallback;
+  if (v === null || v === undefined) return fallback;
+  const preserved = preserveMultilineText(
+    String(v)
+      .replace(/\u0640/g, '')
+      .replace(/\u200c/g, ' ')
+      .replace(/[يیى]/g, 'ی')
+      .replace(/ك/g, 'ک'),
+  );
+  return preserved || fallback;
 }
 
 function numField(row: Record<string, unknown>, aliases: string[], fallback: number | null = null): number | null {
@@ -4255,13 +4264,12 @@ export function commitOperationalFormImport(params: {
         if (d.countingUnit) raw.countingUnit = normalizeCountingUnitToFa(d.countingUnit) || raw.countingUnit;
 
         d.repNo = appendUniqueRef(d.repNo, raw.docNo);
-        d.repStatus =
-          raw.status === 'executed'
-            ? 'اجرا شده'
-            : raw.status === 'approved'
-              ? 'تایید شده'
-              : d.repStatus || 'در دست بررسی';
-        if (raw.substituteDescription) {
+        d.repStatus = normalizeRepStatus(d.repStatus, true);
+        if (raw.reason || raw.reprocureBy) {
+          d.repDescription = [raw.reason, raw.reprocureBy ? `تأمین کننده مجدد: ${raw.reprocureBy}` : '']
+            .filter(Boolean)
+            .join('\n');
+        } else if (raw.substituteDescription && !d.repDescription) {
           d.repDescription = raw.substituteDescription;
         }
         d.updatedAt = now;
@@ -4695,7 +4703,10 @@ function parseCoreStructuredDetailed(
       damagedQty: numField(r, ['damagedQty', 'آسیب دیده']),
       mtoRef: strField(r, ['mtoRef', 'mto']),
       repNo: strField(r, ['repNo', 'شماره جایگزینی', 'شماره rep']),
-      repStatus: strField(r, ['repStatus', 'وضعیت جایگزینی', 'وضعیت rep']),
+      repStatus: normalizeRepStatus(
+        strField(r, ['repStatus', 'وضعیت جایگزینی', 'وضعیت rep']),
+        Boolean(strField(r, ['repNo', 'شماره جایگزینی', 'شماره rep'])),
+      ),
       repReprocured: strField(r, ['repReprocured', 'تأمین مجدد جایگزین شده', 'تامین مجدد جایگزین شده']),
       repDescription: strField(r, ['repDescription', 'توضیحات جایگزینی', 'توضیحات rep']),
       countingUnit: normalizeCountingUnitToFa(strField(r, ['countingUnit', 'واحد شمارش'])),
@@ -4707,6 +4718,7 @@ function parseCoreStructuredDetailed(
       opiDate: dateField(r, ['opiDate', 'تاریخ دعوتنامه', 'تاریخ opi'], cal),
       merNo: strField(r, ['merNo', 'شماره کسری/مغایرت', 'شماره mer']),
       merStatus: strField(r, ['merStatus', 'وضعیت کسری/مغایرت', 'وضعیت mer']),
+      merDescription: strField(r, ['merDescription', 'توضیحات کسری/مغایرت', 'توضیحات کسری', 'توضیحات مغایرت', 'توضیحات mer']),
       notes: notesVal,
       materialBalanceNo: strField(r, ['materialBalanceNo', 'شماره بالانس متریال', 'شماره موازنه', 'موازنه مواد', 'گزارش موازنه']),
       balanceStatus: strField(r, ['balanceStatus', 'وضعیت بالانس', 'وضعیت موازنه']),

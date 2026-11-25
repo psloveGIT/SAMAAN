@@ -1,22 +1,47 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, ClipboardList, Pencil, Printer, Trash2, X } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  ClipboardList,
+  History,
+  Pencil,
+  Printer,
+  Redo2,
+  RefreshCw,
+  RotateCcw,
+  Trash2,
+  Undo2,
+  X,
+} from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { resolveEmployerLogoSrc } from '../lib/employerLogoCache.ts';
+import { triggerAppPrint } from '../lib/print.ts';
+import { formatDigitsByLang } from '../shared/docNumbering.ts';
 import { roundQty } from '../shared/formulas.ts';
-import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import {
-  BuiltInSheetHeaderRow,
-  OfficialExtraMetaStrip,
-  OfficialFormSignatures,
-} from './OfficialSheetHeader.tsx';
+  buildMivHeaderAutoFill,
+  buildMivLineRemark,
+  buildMivPlantDocConfig,
+  computeMivStockDeduction,
+  generateMivDocumentNo,
+  paginateMivRows,
+  resolveContractorAbbreviation,
+  sanitizeNumericQtyInput,
+  type MivStockSourcePreference,
+} from '../shared/miv.ts';
+import {
+  computeAutoColumnWidths,
+  type AutoColumnDescriptor,
+} from '../shared/printAutoLayout.ts';
+import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import type {
   DetailedComputed,
   DocumentLineItem,
-  GeneralEntry,
-  MivDocType,
   MivDocumentRecord,
 } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
@@ -24,14 +49,19 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { SubstitutionItemPicker } from './SubstitutionItemPicker.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
+
+const DEFAULT_MD1_LOGO_PATH = './assets/aistudio/______________8a639368.png';
+const MD1_MIV_FORM_CODE = 'MD1EX-FQP02/05-03';
+const MD1_MIV_QA_NOTICE =
+  'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمی باشد.';
+const MD1_MIV_COPY_TEXT =
+  'رونوشت: معاونت تأمین تجهیزات ، دفتر فنی مپنا، پیمانکار نصب';
 
 interface MivApiResponse {
   documents: MivDocumentRecord[];
   detailedItems: DetailedComputed[];
-  generalEntries?: GeneralEntry[];
-  packings?: string[];
-  totalDetailedCount?: number;
 }
 
 interface MivViewProps {
@@ -39,23 +69,39 @@ interface MivViewProps {
   onDataChanged: () => void;
 }
 
-type MivOnlyType = 'miv_contractor' | 'miv_mapna';
-
 export interface OfficialMivSheetProps {
   doc: MivDocumentRecord;
   detailedItems: DetailedComputed[];
   formatDate: (iso: string) => string;
 }
 
+const MIV_TABLE_COLUMNS: readonly AutoColumnDescriptor[] = [
+  { key: 'no', header: 'No', kind: 'compact', minPercent: 2.8, maxPercent: 5 },
+  { key: 'pkgNo', header: 'Package No.', kind: 'code', minPercent: 6, maxPercent: 12 },
+  { key: 'pkgItem', header: 'Package Item', kind: 'compact', minPercent: 5, maxPercent: 9 },
+  { key: 'desc', header: 'Description Of Material', kind: 'fluid', minPercent: 14, maxPercent: 28 },
+  { key: 'tech', header: 'Technical info/Size', kind: 'fluid', minPercent: 7, maxPercent: 14 },
+  { key: 'tag', header: 'Tag No.', kind: 'code', minPercent: 5, maxPercent: 10 },
+  { key: 'code', header: 'Code No.', kind: 'code', minPercent: 5.5, maxPercent: 11 },
+  { key: 'loc', header: 'Location', kind: 'code', minPercent: 5, maxPercent: 10 },
+  { key: 'reqQty', header: 'Requested Quantity', kind: 'compact', minPercent: 4.5, maxPercent: 8 },
+  { key: 'issQty', header: 'Issued Quantity', kind: 'compact', minPercent: 4.5, maxPercent: 8 },
+  { key: 'uom', header: 'UOM', kind: 'compact', minPercent: 3.5, maxPercent: 6.5 },
+  { key: 'opi', header: 'OPI No.', kind: 'compact', minPercent: 4.5, maxPercent: 8.5 },
+  { key: 'remark', header: 'Remark', kind: 'fluid', minPercent: 10, maxPercent: 24 },
+];
+
 export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
   doc,
   detailedItems,
   formatDate,
 }) => {
-  const { activeEmployer, activeProject } = useApp();
-  const design = resolveBuiltInFormDesign(activeEmployer, 'miv');
-  const formCode = design.docCode;
-  const displayProjectName = doc.projectName?.trim() || activeProject?.name || '......................';
+  const { activeEmployer, activeProject, prefs } = useApp();
+  const lang = prefs.language;
+
+  const displayProjectName = (doc.projectName || activeProject?.name || '').trim();
+  // Rule 1-3: strictly use contractRef/contractNo; leave empty if absent
+  const displayContractNo = (doc.contractNo ?? activeProject?.contractRef ?? '').trim();
 
   const detailedById = useMemo(() => {
     const map = new Map<string, DetailedComputed>();
@@ -63,485 +109,616 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
     return map;
   }, [detailedItems]);
 
-  const minRows = 9;
-  const totalDisplayRows = Math.max(minRows, doc.items.length);
-  const paddedRows: (DocumentLineItem | null)[] = [
-    ...doc.items,
-    ...Array.from({ length: Math.max(0, totalDisplayRows - doc.items.length) }, () => null),
-  ];
+  const rawLogo = activeEmployer?.logos?.[0]?.dataUrl || DEFAULT_MD1_LOGO_PATH;
+  const logoSrc = resolveEmployerLogoSrc(rawLogo);
+
+  const pages = useMemo(() => paginateMivRows(doc.items || []), [doc.items]);
+
+  // Compute content-proportional column widths across all rows in this MIV
+  const colLayout = useMemo(() => {
+    const matrix = (doc.items || []).map((row, idx) => {
+      const det = detailedById.get(row.detailedId);
+      const pkgNo = row.shipmentNo || det?.shipmentNo || '';
+      const pkgItem = row.packageNo || det?.packageNo || '';
+      const desc = row.description || det?.description || '';
+      const tech = row.technicalInfo || det?.size || '';
+      const tag = row.tagNo || row.itemNo || det?.itemNo || '';
+      const code = row.codeNo || det?.itemCode || '';
+      const loc = row.location || det?.storageLocation || '';
+      const reqQty = row.requestedQty ?? row.qty;
+      const issQty = row.qty;
+      const uom = row.uom || det?.countingUnit || '';
+      const opi = row.opiNo || det?.opiNo || '';
+      const remark =
+        row.remark ||
+        buildMivLineRemark(row.equipmentNotes ?? det?.notes, row.userRemark) ||
+        '';
+      return [
+        String(idx + 1),
+        pkgNo,
+        pkgItem,
+        desc,
+        tech,
+        tag,
+        code,
+        loc,
+        String(reqQty),
+        String(issQty),
+        uom,
+        opi,
+        remark,
+      ];
+    });
+    return computeAutoColumnWidths(MIV_TABLE_COLUMNS, matrix, { baseFontPx: 8.8, minFontPx: 7.4 });
+  }, [doc.items, detailedById]);
 
   return (
-    <div
-      dir="rtl"
-      className={design.orientation === 'portrait' ? 'samaan-a4-portrait' : 'samaan-a4-landscape'}
-      style={{
-        backgroundColor: '#ffffff',
-        color: '#000000',
-        fontFamily: '"Vazirmatn", "Plus Jakarta Sans", Tahoma, sans-serif',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
-      {/* Upper Main Frame */}
-      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
-        <BuiltInSheetHeaderRow
-          employer={activeEmployer}
-          design={design}
-          projectTitle={`پروژه ${displayProjectName}`}
-          leftMetaSlot={
+    <div data-testid="official-miv-sheet" className="space-y-6 print:space-y-0">
+      {pages.map((pg, pageIdx) => {
+        const isLastPage = pageIdx === pages.length - 1;
+        return (
+          <div
+            key={`miv-page-${pg.pageNumber}`}
+            dir="rtl"
+            data-testid={`official-miv-page-${pg.pageNumber}`}
+            className={`samaan-a4-landscape ${!isLastPage ? 'samaan-print-page-break' : ''}`}
+            style={{
+              backgroundColor: '#ffffff',
+              color: '#000000',
+              fontFamily: '"Vazirmatn", "Plus Jakarta Sans", Tahoma, sans-serif',
+              width: '100%',
+              boxSizing: 'border-box',
+              pageBreakAfter: isLastPage ? 'auto' : 'always',
+              breakAfter: isLastPage ? 'auto' : 'page',
+            }}
+          >
+            {/* Upper Main Frame */}
+            <div style={{ border: '1.8px solid #000000' }}>
+              {/* Official Header: Logo (Right) | Title & Project (Center) | DocNo, Date, Page X of Y (Left) */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.15fr 2.35fr 1.25fr',
+                  borderBottom: '1.4px solid #000000',
+                  minHeight: '72px',
+                }}
+              >
+                {/* Right: MD1 Employer Logo */}
+                <div
+                  style={{
+                    borderLeft: '1px solid #000000',
+                    padding: '6px 8px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    textAlign: 'center',
+                    gap: '3px',
+                  }}
+                >
+                  {logoSrc && (
+                    <img
+                      src={logoSrc}
+                      alt={activeEmployer?.nameFa || 'مپنا توسعه یک'}
+                      style={{ maxHeight: '44px', maxWidth: '140px', objectFit: 'contain' }}
+                    />
+                  )}
+                  <div style={{ fontSize: '8.4px', fontWeight: 700 }}>
+                    سیستم مدیریت یکپارچه
+                  </div>
+                </div>
+
+                {/* Center: Company Name, Project Name (1-1), Official Title */}
+                <div
+                  style={{
+                    borderLeft: '1px solid #000000',
+                    padding: '6px 10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    textAlign: 'center',
+                    gap: '3px',
+                  }}
+                >
+                  <div style={{ fontSize: '10.5px', fontWeight: 800 }}>
+                    شركت احداث و توسعه نيروگاه‌هاي مپنا – توسعه يك (MD1)
+                  </div>
+                  <div
+                    data-testid="miv-sheet-project-title"
+                    style={{ fontSize: '10.5px', fontWeight: 700 }}
+                  >
+                    {displayProjectName
+                      ? `پروژه ${displayProjectName}`
+                      : 'پروژه .........................................'}
+                  </div>
+                  <div style={{ fontSize: '12px', fontWeight: 800, marginTop: '1px' }}>
+                    درخواست کالا از انبار و حواله انبار
+                  </div>
+                </div>
+
+                {/* Left: Doc No (1-22), Date (1-2), Page X of Y (1-4) */}
+                <div
+                  style={{
+                    padding: '6px 9px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    fontSize: '9.8px',
+                    fontWeight: 700,
+                    textAlign: 'right',
+                    gap: '4px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      justifyContent: 'space-between',
+                      gap: '6px',
+                    }}
+                  >
+                    <span style={{ whiteSpace: 'nowrap' }}>شماره:</span>
+                    <span
+                      dir="ltr"
+                      data-testid="miv-sheet-doc-no"
+                      className="tabular-nums"
+                      style={{ fontWeight: 800 }}
+                    >
+                      {doc.docNo}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      justifyContent: 'space-between',
+                      gap: '6px',
+                    }}
+                  >
+                    <span style={{ whiteSpace: 'nowrap' }}>تاریخ:</span>
+                    <span dir="ltr" className="tabular-nums">
+                      {formatDate(doc.date)}
+                    </span>
+                  </div>
+                  <div
+                    data-testid={`miv-sheet-page-counter-${pg.pageNumber}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      justifyContent: 'space-between',
+                      gap: '6px',
+                    }}
+                  >
+                    <span>صفحه</span>
+                    <span className="tabular-nums">
+                      {formatDigitsByLang(pg.pageNumber, lang)} &nbsp; از &nbsp;{' '}
+                      {formatDigitsByLang(pg.totalPages, lang)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Metadata Strip Row (1-3, 1-5, 1-6, 1-7, 1-8) */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.35fr 1.3fr 1.05fr 0.65fr 0.95fr',
+                  alignItems: 'center',
+                  borderBottom: '1px solid #000000',
+                  padding: '5px 8px',
+                  fontSize: '9.2px',
+                  textAlign: 'right',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
+                    <div>شماره قرارداد/</div>
+                    <div>درخواست خرید:</div>
+                  </div>
+                  <span
+                    dir="ltr"
+                    data-testid="miv-sheet-contract-no"
+                    className="tabular-nums bidi-plaintext"
+                  >
+                    {displayContractNo}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
+                    <div>پیمانکار/</div>
+                    <div>درخواست کننده:</div>
+                  </div>
+                  <span data-testid="miv-sheet-party" className="bidi-plaintext">
+                    {doc.party || ''}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
+                    <div>سیستم/</div>
+                    <div>جزیره:</div>
+                  </div>
+                  <span data-testid="miv-sheet-system-island" className="bidi-plaintext">
+                    {doc.islandSystem || ''}
+                  </span>
+                </div>
+
+                <div>
+                  <strong style={{ fontWeight: 700 }}>واحد: </strong>
+                  <span data-testid="miv-sheet-unit" className="bidi-plaintext">
+                    {doc.unit || ''}
+                  </span>
+                </div>
+
+                <div>
+                  <strong style={{ fontWeight: 700 }}>شماره رسید: </strong>
+                  <span dir="ltr" data-testid="miv-sheet-receipt-no" className="tabular-nums">
+                    {doc.receiptNo || ''}
+                  </span>
+                </div>
+              </div>
+
+              {/* 13-Column LTR Table with Content-Proportional Auto-Fit Column & Row Sizing */}
+              <table
+                dir="ltr"
+                className="samaan-dynamic-table"
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  tableLayout: 'auto',
+                  fontSize: `${colLayout.recommendedFontPx}px`,
+                }}
+              >
+                <colgroup>
+                  {colLayout.widthsPercent.map((pct, i) => (
+                    <col key={MIV_TABLE_COLUMNS[i].key} style={{ width: `${pct}%` }} />
+                  ))}
+                </colgroup>
+                <thead>
+                  <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
+                    {MIV_TABLE_COLUMNS.map((col, idx) => (
+                      <th
+                        key={col.key}
+                        style={{
+                          borderBottom: '1px solid #000000',
+                          borderRight: idx < MIV_TABLE_COLUMNS.length - 1 ? '1px solid #000000' : 'none',
+                          padding: '5px 3px',
+                          textAlign: 'center',
+                          verticalAlign: 'middle',
+                          lineHeight: 1.25,
+                        }}
+                      >
+                        {col.header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(isLastPage ? pg.rows : pg.rows.filter((r) => r !== null)).map((row, rowIdx, arr) => {
+                    const detailed = row ? detailedById.get(row.detailedId) : undefined;
+                    const isLastRow = rowIdx === arr.length - 1;
+                    const rowBottomBorder = isLastRow ? 'none' : '1px solid #000000';
+                    const continuousNo = pg.startIndex + rowIdx + 1;
+
+                    // Exact field mappings per Rules 1-9 to 1-21
+                    const packageNoVal = row ? row.shipmentNo || detailed?.shipmentNo || '' : '';
+                    const packageItemVal = row ? row.packageNo || detailed?.packageNo || '' : '';
+                    const descVal = row ? row.description || detailed?.description || '' : '';
+                    const techVal = row ? row.technicalInfo || detailed?.size || '' : '';
+                    const tagVal = row ? row.tagNo || row.itemNo || detailed?.itemNo || '' : '';
+                    const codeVal = row ? row.codeNo || detailed?.itemCode || '' : '';
+                    const locVal = row ? row.location || detailed?.storageLocation || '' : '';
+                    const reqQtyVal = row ? row.requestedQty ?? row.qty : '';
+                    const issQtyVal = row ? row.qty : '';
+                    const uomVal = row ? row.uom || detailed?.countingUnit || '' : '';
+                    const opiVal = row ? row.opiNo || detailed?.opiNo || '' : '';
+                    const remarkVal = row
+                      ? row.remark ||
+                        buildMivLineRemark(row.equipmentNotes ?? detailed?.notes, row.userRemark) ||
+                        ''
+                      : '';
+
+                    const cellBase: React.CSSProperties = {
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 3px',
+                      textAlign: 'center',
+                      verticalAlign: 'middle',
+                      height: 'auto',
+                      minHeight: '22px',
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                    };
+
+                    return (
+                      <tr key={row ? `${row.detailedId}-${continuousNo}` : `empty-${pg.pageNumber}-${rowIdx}`}>
+                        <td className="tabular-nums" style={cellBase}>
+                          {row ? continuousNo : '\u00A0'}
+                        </td>
+                        <td className="tabular-nums" style={cellBase}>
+                          {packageNoVal}
+                        </td>
+                        <td className="tabular-nums" style={cellBase}>
+                          {packageItemVal}
+                        </td>
+                        <td
+                          className="bidi-plaintext"
+                          style={{
+                            ...cellBase,
+                            padding: '4px 5px',
+                            whiteSpace: 'pre-line',
+                          }}
+                        >
+                          {descVal}
+                        </td>
+                        <td
+                          className="bidi-plaintext"
+                          style={{
+                            ...cellBase,
+                            whiteSpace: 'pre-line',
+                          }}
+                        >
+                          {techVal}
+                        </td>
+                        <td className="tabular-nums" style={cellBase}>
+                          {tagVal}
+                        </td>
+                        <td className="tabular-nums" style={cellBase}>
+                          {codeVal}
+                        </td>
+                        <td className="bidi-plaintext" style={cellBase}>
+                          {locVal}
+                        </td>
+                        <td className="tabular-nums" style={cellBase}>
+                          {reqQtyVal}
+                        </td>
+                        <td className="tabular-nums" style={{ ...cellBase, fontWeight: 700 }}>
+                          {issQtyVal}
+                        </td>
+                        <td className="bidi-plaintext" style={cellBase}>
+                          {uomVal}
+                        </td>
+                        <td className="tabular-nums" style={cellBase}>
+                          {opiVal}
+                        </td>
+                        <td
+                          className="bidi-plaintext"
+                          style={{
+                            ...cellBase,
+                            borderRight: 'none',
+                            padding: '4px 5px',
+                            whiteSpace: 'pre-line',
+                          }}
+                        >
+                          {remarkVal}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Separate Lower Signature Frame matching attached MD1EX-FQP02/05-03 */}
+            <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '8px' }}>
+              <div
+                style={{
+                  backgroundColor: '#e5e7eb',
+                  borderBottom: '1px solid #000000',
+                  padding: '3px 8px',
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  textAlign: 'center',
+                }}
+              >
+                امضاء
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '0.9fr 1fr 1fr 1fr 2fr',
+                  minHeight: '72px',
+                  borderBottom: '1px solid #000000',
+                  fontSize: '9px',
+                  textAlign: 'right',
+                }}
+              >
+                <div
+                  style={{
+                    borderLeft: '1px solid #000000',
+                    padding: '5px 7px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700 }}>انباردار:</div>
+                    <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+                  </div>
+                  <div className="bidi-plaintext">{doc.storekeeper || ''}</div>
+                </div>
+
+                <div
+                  style={{
+                    borderLeft: '1px solid #000000',
+                    padding: '5px 7px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700 }}>تأمین تجهیزات مپنا:</div>
+                    <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+                  </div>
+                  <div className="bidi-plaintext">{doc.equipmentSupply || ''}</div>
+                </div>
+
+                <div
+                  style={{
+                    borderLeft: '1px solid #000000',
+                    padding: '5px 7px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700 }}>دفتر فنی مپنا:</div>
+                    <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+                  </div>
+                  <div className="bidi-plaintext">{doc.techOffice || ''}</div>
+                </div>
+
+                <div
+                  style={{
+                    borderLeft: '1px solid #000000',
+                    padding: '5px 7px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700 }}>بخش نصب مپنا:</div>
+                    <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+                  </div>
+                  <div className="bidi-plaintext">{doc.installationDept || ''}</div>
+                </div>
+
+                {/* Left Group Box: پیمانکار / درخواست کننده */}
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div
+                    style={{
+                      borderBottom: '1px solid #000000',
+                      padding: '3px 6px',
+                      fontWeight: 700,
+                      textAlign: 'center',
+                    }}
+                  >
+                    پیمانکار / درخواست کننده
+                  </div>
+                  <div
+                    style={{
+                      flex: 1,
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      padding: '5px 8px',
+                      gap: '8px',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 700 }}>درخواست کننده:</div>
+                        <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء</div>
+                      </div>
+                      <div className="bidi-plaintext">{doc.requester || doc.party || ''}</div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 700 }}>تحویل گیرنده:</div>
+                        <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء</div>
+                      </div>
+                      <div className="bidi-plaintext">{doc.receiver || ''}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* QA Control Notice */}
+              <div
+                style={{
+                  padding: '3.5px 10px',
+                  fontSize: '8.3px',
+                  fontWeight: 600,
+                  textAlign: 'left',
+                }}
+              >
+                {MD1_MIV_QA_NOTICE}
+              </div>
+            </div>
+
+            {/* Outside Bottom Footer Strip */}
             <div
               style={{
+                marginTop: '4px',
                 display: 'flex',
-                flexDirection: 'column',
+                alignItems: 'center',
                 justifyContent: 'space-between',
-                fontSize: '10px',
+                padding: '0 4px',
+                fontSize: '8.8px',
                 fontWeight: 700,
-                textAlign: 'right',
-                gap: '4px',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
-                <span>شماره:</span>
-                <span dir="ltr" className="tabular-nums">
-                  {doc.docNo}
-                </span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
-                <span>تاریخ:</span>
-                <span dir="ltr" className="tabular-nums">
-                  {formatDate(doc.date)}
-                </span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
-                <span>صفحه</span>
-                <span className="tabular-nums">1 &nbsp;&nbsp; از &nbsp;&nbsp; 1</span>
-              </div>
-            </div>
-          }
-        />
-        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
-
-        {/* Metadata Strip Row (Continuous white strip without internal vertical borders) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1.35fr 1.25fr 1fr 0.7fr 0.95fr',
-            alignItems: 'center',
-            borderBottom: '1px solid #000000',
-            padding: '5px 8px',
-            fontSize: '9.3px',
-            textAlign: 'right',
-            gap: '6px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <div style={{ fontWeight: 700, lineHeight: 1.35, flexShrink: 0 }}>
-              <div>شماره قرارداد /</div>
-              <div>درخواست خرید:</div>
-            </div>
-            <span dir="ltr" className="tabular-nums bidi-plaintext">
-              {doc.contractNo?.trim() || activeProject?.code || ''}
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <div style={{ fontWeight: 700, lineHeight: 1.35, flexShrink: 0 }}>
-              <div>پیمانکار /</div>
-              <div>درخواست کننده:</div>
-            </div>
-            <span className="bidi-plaintext">{doc.party || ''}</span>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <div style={{ fontWeight: 700, lineHeight: 1.35, flexShrink: 0 }}>
-              <div>سیستم /</div>
-              <div>جزیره:</div>
-            </div>
-            <span className="bidi-plaintext">{doc.islandSystem || ''}</span>
-          </div>
-
-          <div>
-            <strong style={{ fontWeight: 700 }}>واحد: </strong>
-            <span className="bidi-plaintext">{doc.unit || ''}</span>
-          </div>
-
-          <div>
-            <strong style={{ fontWeight: 700 }}>شماره رسید: </strong>
-            <span dir="ltr" className="tabular-nums">
-              {doc.receiptNo || ''}
-            </span>
-          </div>
-        </div>
-
-        {/* 13-Column LTR Table */}
-        <table
-          dir="ltr"
-          className="samaan-dynamic-table"
-          style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '8.8px',
-          }}
-        >
-          <thead>
-            <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 3px' }}>
-                No
-              </th>
-              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                Package No.
-              </th>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                Package Item
-              </th>
-              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 5px' }}>
-                Description Of Material
-              </th>
-              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                Technical info/Size
-              </th>
-              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                Tag No.
-              </th>
-              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                Code No.
-              </th>
-              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                Location
-              </th>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                Requested Quantity
-              </th>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                Issued Quantity
-              </th>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                UOM
-              </th>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '4px 3px' }}>
-                OPI No.
-              </th>
-              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', padding: '5px 5px' }}>
-                Remark
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {paddedRows.map((row, idx) => {
-              const detailed = row ? detailedById.get(row.detailedId) : undefined;
-              const isLast = idx === paddedRows.length - 1;
-              const rowBottomBorder = isLast ? 'none' : '1px solid #000000';
-              const pkgText = row ? row.packageNo || row.shipmentNo : '';
-              const techText = row ? row.technicalInfo || detailed?.size || '' : '';
-              const tagText = row ? row.tagNo || detailed?.itemCode || '' : '';
-              const codeText = row ? row.codeNo || detailed?.itemCode || '' : '';
-              const locText = row ? row.location || detailed?.storageLocation || '' : '';
-              const reqQty = row ? row.requestedQty ?? row.qty : '';
-              const uomText = row ? row.uom || detailed?.countingUnit || '' : '';
-              const opiText = row ? row.opiNo || detailed?.opiNo || '' : '';
-              const remarkText = row ? row.remark || (idx === 0 && doc.notes ? doc.notes : '') : '';
-
-              return (
-                <tr key={row ? `${row.detailedId}-${idx}` : `empty-${idx}`}>
-                  <td
-                    className="tabular-nums samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {row ? idx + 1 : '\u00A0'}
-                  </td>
-                  <td
-                    className="tabular-nums samaan-col-code"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {pkgText}
-                  </td>
-                  <td
-                    className="tabular-nums samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {row?.itemNo || ''}
-                  </td>
-                  <td
-                    className="bidi-plaintext samaan-col-fluid"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 5px' }}
-                  >
-                    {row?.description || ''}
-                  </td>
-                  <td
-                    className="bidi-plaintext samaan-col-fluid"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {techText}
-                  </td>
-                  <td
-                    className="tabular-nums samaan-col-code"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {tagText}
-                  </td>
-                  <td
-                    className="tabular-nums samaan-col-code"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {codeText}
-                  </td>
-                  <td
-                    className="bidi-plaintext samaan-col-code"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {locText}
-                  </td>
-                  <td
-                    className="tabular-nums samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {reqQty}
-                  </td>
-                  <td
-                    className="tabular-nums samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px', fontWeight: 700 }}
-                  >
-                    {row ? row.qty : ''}
-                  </td>
-                  <td
-                    className="bidi-plaintext samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {uomText}
-                  </td>
-                  <td
-                    className="tabular-nums samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 3px' }}
-                  >
-                    {opiText}
-                  </td>
-                  <td
-                    className="bidi-plaintext samaan-col-fluid"
-                    style={{ borderBottom: rowBottomBorder, padding: '4px 5px' }}
-                  >
-                    {remarkText}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Separate Lower Signature Frame */}
-      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '10px' }}>
-        {/* Header: امضاء */}
-        <div
-          style={{
-            backgroundColor: '#e5e7eb',
-            borderBottom: '1px solid #000000',
-            padding: '4px 8px',
-            fontSize: '10.5px',
-            fontWeight: 700,
-            textAlign: 'center',
-          }}
-        >
-          امضاء
-        </div>
-
-        {/* Signatures Row (5 sections RTL: انباردار | تأمین تجهیزات توسعه یک | دفتر فنی توسعه یک | بخش نصب توسعه یک | پیمانکار / درخواست کننده) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '0.9fr 1fr 1fr 1fr 2fr',
-            minHeight: '78px',
-            borderBottom: '1px solid #000000',
-            fontSize: '9.2px',
-            textAlign: 'right',
-          }}
-        >
-          <div
-            style={{
-              borderLeft: '1px solid #000000',
-              padding: '5px 7px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700 }}>انباردار:</div>
-              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
-            </div>
-            <div style={{ fontSize: '9px' }} className="bidi-plaintext">
-              {doc.storekeeper || ''}
-            </div>
-          </div>
-
-          <div
-            style={{
-              borderLeft: '1px solid #000000',
-              padding: '5px 7px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700 }}>{activeEmployer.equipmentSupplyLabel}:</div>
-              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
-            </div>
-            <div style={{ fontSize: '9px' }} className="bidi-plaintext">
-              {doc.equipmentSupply || ''}
-            </div>
-          </div>
-
-          <div
-            style={{
-              borderLeft: '1px solid #000000',
-              padding: '5px 7px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700 }}>{activeEmployer.techOfficeLabel}:</div>
-              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
-            </div>
-            <div style={{ fontSize: '9px' }} className="bidi-plaintext">
-              {doc.techOffice || ''}
-            </div>
-          </div>
-
-          <div
-            style={{
-              borderLeft: '1px solid #000000',
-              padding: '5px 7px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700 }}>{activeEmployer.installationLabel}:</div>
-              <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
-            </div>
-            <div style={{ fontSize: '9px' }} className="bidi-plaintext">
-              {doc.installationDept || ''}
-            </div>
-          </div>
-
-          {/* Left Group Box: پیمانکار / درخواست کننده */}
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div
-              style={{
-                borderBottom: '1px solid #000000',
-                padding: '3px 6px',
-                fontWeight: 700,
-                textAlign: 'center',
-              }}
-            >
-              پیمانکار / درخواست کننده
-            </div>
-            <div
-              style={{
-                flex: 1,
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                padding: '5px 8px',
-                gap: '8px',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 700 }}>درخواست کننده:</div>
-                  <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء</div>
-                </div>
-                <div style={{ fontSize: '9px' }} className="bidi-plaintext">
-                  {doc.requester || doc.party || ''}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 700 }}>تحویل گیرنده:</div>
-                  <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء</div>
-                </div>
-                <div style={{ fontSize: '9px' }} className="bidi-plaintext">
-                  {doc.receiver || ''}
-                </div>
+              <div>{MD1_MIV_COPY_TEXT}</div>
+              <div dir="ltr" className="tabular-nums">
+                {MD1_MIV_FORM_CODE}
               </div>
             </div>
           </div>
-        </div>
-
-        {(design.template?.signatures?.length || !design.showSignatures) && (
-          <OfficialFormSignatures
-            signatures={design.signatures}
-            showSignatures={design.showSignatures}
-            borderColor={design.accentColor}
-          />
-        )}
-
-        {/* QA Control Note inside bottom of lower frame */}
-        <div
-          style={{
-            padding: '4px 10px',
-            fontSize: '8.5px',
-            fontWeight: 600,
-            textAlign: 'left',
-          }}
-        >
-          {design.template?.introText ||
-            'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمی باشد.'}
-        </div>
-      </div>
-
-      {/* Outside Bottom Footer Strip */}
-      <div
-        style={{
-          marginTop: '4px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 4px',
-          fontSize: '9px',
-          fontWeight: 700,
-        }}
-      >
-        <div>
-          {design.template?.footerCopyText ||
-            `رونوشت: معاونت تأمین تجهیزات ، ${activeEmployer.techOfficeLabel}، پیمانکار نصب`}
-        </div>
-        {(formCode || design.revisionText) && (
-          <div dir="ltr" className="tabular-nums">
-            {[formCode, design.revisionText].filter(Boolean).join(' · ')}
-          </div>
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 };
 
 export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
+  const {
+    prefs,
+    t,
+    user,
+    notify,
+    formatDate,
+    triggerAutoSnapshot,
+    activeProject,
+    historyStatus,
+    historyBusy,
+    performUndo,
+    performRedo,
+  } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
-  const formCode = getEmployerFormCode(activeEmployer, '05-03');
 
-  const [data, setData] = useState<MivApiResponse | null>(null);
+  const [documents, setDocuments] = useState<MivDocumentRecord[]>([]);
+  const [detailedCache, setDetailedCache] = useState<Record<string, DetailedComputed>>({});
   const [loading, setLoading] = useState(true);
+  const [pickerRefresh, setPickerRefresh] = useState(0);
 
-  const [docType, setDocType] = useState<MivOnlyType>('miv_contractor');
+  // Two-step wizard: Step 1 = Filter & select in-stock rows, Step 2 = Quantities, Remarks & Header
+  const [step, setStep] = useState<1 | 2>(1);
+  const [editingDoc, setEditingDoc] = useState<MivDocumentRecord | null>(null);
+
+  // Selected Detailed rows + local selection Undo/Redo stacks
+  const [selectedMap, setSelectedMap] = useState<Record<string, DetailedComputed>>({});
+  const [selUndoStack, setSelUndoStack] = useState<Array<Record<string, DetailedComputed>>>([]);
+  const [selRedoStack, setSelRedoStack] = useState<Array<Record<string, DetailedComputed>>>([]);
+
+  // Per-row MIV inputs (strictly numeric qty, optional user remark, optional warehouse source)
+  const [qtyMap, setQtyMap] = useState<Record<string, string>>({});
+  const [userRemarkMap, setUserRemarkMap] = useState<Record<string, string>>({});
+  const [sourceWarehouseMap, setSourceWarehouseMap] = useState<Record<string, MivStockSourcePreference>>({});
+
+  // Header metadata
   const [docNo, setDocNo] = useState('');
+  const [docNoTouched, setDocNoTouched] = useState(false);
   const [date, setDate] = useState(getTodayIso());
   const [party, setParty] = useState('');
   const [islandSystem, setIslandSystem] = useState('');
@@ -553,28 +730,46 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [installationDept, setInstallationDept] = useState('');
   const [requester, setRequester] = useState('');
   const [receiver, setReceiver] = useState('');
-  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const [itemSearch, setItemSearch] = useState('');
-  const [shipmentFilter, setShipmentFilter] = useState('');
-  const [qtyMap, setQtyMap] = useState<Record<string, string>>({});
-  const [reqQtyMap, setReqQtyMap] = useState<Record<string, string>>({});
-  const [remarkMap, setRemarkMap] = useState<Record<string, string>>({});
+  // History search, print modal, delete modal
+  const [historySearch, setHistorySearch] = useState('');
   const [printDoc, setPrintDoc] = useState<MivDocumentRecord | null>(null);
+  const [printDocWasUndone, setPrintDocWasUndone] = useState(false);
   const [printReportOpen, setPrintReportOpen] = useState(false);
-
-  const [editingDoc, setEditingDoc] = useState<MivDocumentRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MivDocumentRecord | null>(null);
 
-  const loadData = useCallback(async (opts?: { packing?: string; search?: string; stockFilter?: string }) => {
+  const printDocIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    printDocIdRef.current = printDoc?.id || null;
+  }, [printDoc]);
+
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ compact: '1', limit: '80' });
-      if (opts?.packing) qs.set('packing', opts.packing);
-      if (opts?.search) qs.set('search', opts.search);
-      if (opts?.stockFilter) qs.set('stockFilter', opts.stockFilter);
-      const res = await apiRequest<MivApiResponse>(`/api/miv?${qs.toString()}`);
-      setData(res);
+      const res = await apiRequest<MivApiResponse>('/api/miv?compact=1&limit=150');
+      const mivOnly = (res.documents || []).filter((d) => d.docType.startsWith('miv_'));
+      setDocuments(mivOnly);
+      if (Array.isArray(res.detailedItems) && res.detailedItems.length > 0) {
+        setDetailedCache((prev) => {
+          const next = { ...prev };
+          for (const d of res.detailedItems) {
+            next[d.id] = d;
+          }
+          return next;
+        });
+      }
+      // Keep open printDoc synchronized when global Undo/Redo runs
+      const openId = printDocIdRef.current;
+      if (openId) {
+        const matched = mivOnly.find((d) => d.id === openId);
+        if (matched) {
+          setPrintDoc(matched);
+          setPrintDocWasUndone(false);
+        } else {
+          setPrintDocWasUndone(true);
+        }
+      }
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
@@ -583,179 +778,253 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   }, [notify]);
 
   useEffect(() => {
-    const sf = docType === 'miv_mapna' ? 'employer' : 'contractor';
-    const timer = window.setTimeout(() => {
-      loadData({ packing: shipmentFilter, search: itemSearch.trim(), stockFilter: sf });
-    }, itemSearch ? 220 : 0);
-    return () => window.clearTimeout(timer);
-  }, [loadData, refreshSignal, shipmentFilter, itemSearch, docType]);
+    void loadData();
+  }, [loadData, refreshSignal]);
 
-  const docTypeLabel = useCallback(
-    (type: MivDocType) => {
-      if (type === 'miv_contractor') {
-        return isFa ? 'حواله مصرف از انبار پیمانکار' : 'MIV Issue (Contractor Warehouse)';
-      }
-      return isFa
-        ? `حواله تحویل از انبار ${activeEmployer.isConfigured ? activeEmployer.shortName : 'کارفرما / اصلی'}`
-        : 'MIV Issue (Main/Employer Warehouse)';
+  // Listen to global Undo/Redo events so MIV view & Print Preview refresh immediately even after printing
+  useEffect(() => {
+    const onHistoryApplied = () => {
+      void loadData();
+      setPickerRefresh((n) => n + 1);
+    };
+    window.addEventListener('samaan:history-applied', onHistoryApplied);
+    return () => window.removeEventListener('samaan:history-applied', onHistoryApplied);
+  }, [loadData]);
+
+  // Local Selection Undo / Redo helpers
+  const commitSelectionChange = useCallback(
+    (updater: (prev: Record<string, DetailedComputed>) => Record<string, DetailedComputed>) => {
+      setSelectedMap((prev) => {
+        const next = updater(prev);
+        if (next === prev) return prev;
+        setSelUndoStack((u) => [...u.slice(-29), prev]);
+        setSelRedoStack([]);
+        return next;
+      });
     },
-    [isFa, activeEmployer.isConfigured, activeEmployer.shortName],
+    [],
   );
 
-  const mivDocuments = useMemo(
-    () => (data?.documents || []).filter((d) => d.docType.startsWith('miv_')),
-    [data],
+  const handleToggleRow = useCallback(
+    (item: DetailedComputed) => {
+      commitSelectionChange((prev) => {
+        const next = { ...prev };
+        if (next[item.id]) {
+          delete next[item.id];
+        } else {
+          next[item.id] = item;
+        }
+        return next;
+      });
+      setDetailedCache((prev) => ({ ...prev, [item.id]: item }));
+    },
+    [commitSelectionChange],
   );
-  const mivPagination = useClientPagination(mivDocuments, 50);
 
-  const knownPackings = useMemo(() => {
-    if (data?.packings && data.packings.length > 0) return data.packings;
-    const set = new Set<string>();
-    for (const d of data?.detailedItems || []) {
-      if (d.shipmentNo) set.add(d.shipmentNo);
-    }
-    for (const g of data?.generalEntries || []) {
-      if (g.packingListNo) set.add(g.packingListNo);
-    }
-    return Array.from(set);
-  }, [data]);
+  const handleTogglePage = useCallback(
+    (rows: DetailedComputed[], allSelected: boolean) => {
+      commitSelectionChange((prev) => {
+        const next = { ...prev };
+        if (allSelected) {
+          for (const r of rows) delete next[r.id];
+        } else {
+          for (const r of rows) next[r.id] = r;
+        }
+        return next;
+      });
+      setDetailedCache((prev) => {
+        const next = { ...prev };
+        for (const r of rows) next[r.id] = r;
+        return next;
+      });
+    },
+    [commitSelectionChange],
+  );
 
-  const oldQtyByDetailedId = useMemo(() => {
-    const map = new Map<string, number>();
-    if (editingDoc) {
-      for (const it of editingDoc.items) {
-        map.set(it.detailedId, roundQty((map.get(it.detailedId) || 0) + (it.qty || 0)));
+  const handleSelectionUndo = () => {
+    if (selUndoStack.length === 0) return;
+    const prevSnap = selUndoStack[selUndoStack.length - 1];
+    setSelUndoStack((u) => u.slice(0, -1));
+    setSelRedoStack((r) => [...r.slice(-29), selectedMap]);
+    setSelectedMap(prevSnap);
+  };
+
+  const handleSelectionRedo = () => {
+    if (selRedoStack.length === 0) return;
+    const nextSnap = selRedoStack[selRedoStack.length - 1];
+    setSelRedoStack((r) => r.slice(0, -1));
+    setSelUndoStack((u) => [...u.slice(-29), selectedMap]);
+    setSelectedMap(nextSnap);
+  };
+
+  const handleSelectionClear = () => {
+    if (Object.keys(selectedMap).length === 0) return;
+    commitSelectionChange(() => ({}));
+  };
+
+  const selectedItems = useMemo(() => Object.values(selectedMap), [selectedMap]);
+
+  // Edit mode: old deducted amounts per detailedId so available stock calculation adds them back
+  const editingOldDeductions = useMemo(() => {
+    const map = new Map<string, { mapna: number; contractor: number }>();
+    if (!editingDoc) return map;
+    for (const it of editingDoc.items) {
+      const prev = map.get(it.detailedId) || { mapna: 0, contractor: 0 };
+      const hasSplit =
+        typeof it.deductedFromMapna === 'number' || typeof it.deductedFromContractor === 'number';
+      if (hasSplit) {
+        map.set(it.detailedId, {
+          mapna: roundQty(prev.mapna + Math.max(0, it.deductedFromMapna || 0)),
+          contractor: roundQty(prev.contractor + Math.max(0, it.deductedFromContractor || 0)),
+        });
+      } else if (editingDoc.docType === 'miv_mapna') {
+        map.set(it.detailedId, {
+          mapna: roundQty(prev.mapna + (it.qty || 0)),
+          contractor: prev.contractor,
+        });
+      } else {
+        map.set(it.detailedId, {
+          mapna: prev.mapna,
+          contractor: roundQty(prev.contractor + (it.qty || 0)),
+        });
       }
     }
     return map;
   }, [editingDoc]);
 
-  const getAvailableQty = useCallback(
-    (item: DetailedComputed, type: MivOnlyType) => {
-      const oldQty = oldQtyByDetailedId.get(item.id) || 0;
-      if (type === 'miv_contractor') {
-        const extra = editingDoc?.docType === 'miv_contractor' ? oldQty : 0;
-        return roundQty(item.contractorInventory + extra);
-      }
-      const extra = editingDoc?.docType === 'miv_mapna' ? oldQty : 0;
-      return roundQty(item.mapnaInventory + extra);
+  const getEffectiveStock = useCallback(
+    (item: DetailedComputed) => {
+      const old = editingOldDeductions.get(item.id) || { mapna: 0, contractor: 0 };
+      const mapna = roundQty(Math.max(0, item.mapnaInventory) + old.mapna);
+      const contractor = roundQty(Math.max(0, item.contractorInventory) + old.contractor);
+      return { mapna, contractor, total: roundQty(mapna + contractor) };
     },
-    [editingDoc, oldQtyByDetailedId],
+    [editingOldDeductions],
   );
 
-  const eligibleItems = useMemo(() => {
-    const all = (data?.detailedItems || []).filter((d) => {
-      if (shipmentFilter && (d.shipmentNo || '').trim() !== shipmentFilter.trim()) return false;
-      const avail = getAvailableQty(d, docType);
-      const isExistingEditItem = oldQtyByDetailedId.has(d.id) || Boolean(qtyMap[d.id]);
-      if (docType === 'miv_contractor') return avail > 0 || isExistingEditItem;
-      return !d.opiPending && (avail > 0 || isExistingEditItem);
+  // Auto-computed suggested MIV document number per Rule 1-22: <PLANT>-<CONTRACTOR>-MIV-####
+  const existingDocNos = useMemo(
+    () =>
+      documents
+        .filter((d) => !editingDoc || d.id !== editingDoc.id)
+        .map((d) => d.docNo),
+    [documents, editingDoc],
+  );
+
+  const autoHeader = useMemo(
+    () => buildMivHeaderAutoFill(selectedItems, activeProject),
+    [selectedItems, activeProject],
+  );
+
+  const contractorForCode = party.trim() || autoHeader.contractorForDocNo;
+  const contractorAbbrPreview = useMemo(
+    () => resolveContractorAbbreviation(contractorForCode),
+    [contractorForCode],
+  );
+
+  const suggestedDocNo = useMemo(
+    () =>
+      generateMivDocumentNo(
+        contractorForCode,
+        existingDocNos,
+        buildMivPlantDocConfig(activeProject),
+      ),
+    [contractorForCode, existingDocNos, activeProject],
+  );
+
+  // Keep docNo auto-updated when not manually edited and not editing an existing doc
+  useEffect(() => {
+    if (!editingDoc && !docNoTouched && step === 2) {
+      setDocNo(suggestedDocNo);
+    }
+  }, [editingDoc, docNoTouched, step, suggestedDocNo]);
+
+  // Proceed from Step 1 to Step 2 and auto-populate header & default quantities
+  const handleProceedToStep2 = () => {
+    if (selectedItems.length === 0) {
+      notify(
+        'warning',
+        isFa ? 'ابتدا حداقل یک ردیف دارای موجودی انتخاب کنید.' : 'Please select at least one in-stock item first.',
+      );
+      return;
+    }
+
+    const filled = buildMivHeaderAutoFill(selectedItems, activeProject);
+    if (!editingDoc) {
+      if (!party.trim() && filled.party) setParty(filled.party);
+      if (!islandSystem.trim() && filled.islandSystem) setIslandSystem(filled.islandSystem);
+      if (!unit.trim() && filled.unit) setUnit(filled.unit);
+      if (!receiptNo.trim() && filled.receiptNo) setReceiptNo(filled.receiptNo);
+      if (!docNoTouched) {
+        const nextNo = generateMivDocumentNo(
+          (party.trim() || filled.contractorForDocNo),
+          existingDocNos,
+          buildMivPlantDocConfig(activeProject),
+        );
+        setDocNo(nextNo);
+      }
+    }
+
+    // Initialize default qty (1 or total stock if < 1) for newly selected items
+    setQtyMap((prev) => {
+      const next = { ...prev };
+      for (const item of selectedItems) {
+        if (next[item.id] === undefined) {
+          const st = getEffectiveStock(item);
+          next[item.id] = st.total >= 1 ? '1' : st.total > 0 ? String(st.total) : '';
+        }
+      }
+      return next;
     });
-    const q = itemSearch.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter((d) =>
-      [d.shipmentNo, d.packageNo, d.itemNo, d.description, d.generalDescription, d.itemCode, d.size]
-        .join(' ')
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [data, docType, itemSearch, shipmentFilter, getAvailableQty, oldQtyByDetailedId, qtyMap]);
 
-  const detailedLookup = useMemo(() => {
-    const map = new Map<string, DetailedComputed>();
-    for (const d of data?.detailedItems || []) map.set(d.id, d);
+    setStep(2);
+  };
+
+  // Validate all selected rows before submit
+  const rowValidations = useMemo(() => {
+    const map: Record<string, { valid: boolean; error?: string; mapna: number; contractor: number; total: number }> = {};
+    for (const item of selectedItems) {
+      const st = getEffectiveStock(item);
+      const rawStr = (qtyMap[item.id] || '').trim();
+      const numVal = Number(rawStr);
+      const pref = sourceWarehouseMap[item.id] || 'auto';
+      const check = computeMivStockDeduction(numVal, st.mapna, st.contractor, pref);
+      map[item.id] = {
+        valid: Boolean(rawStr) && check.valid,
+        error: !rawStr
+          ? isFa
+            ? 'مقدار عددی الزامی است.'
+            : 'Numeric quantity is required.'
+          : check.valid
+            ? undefined
+            : isFa
+              ? check.errorFa
+              : check.errorEn,
+        mapna: st.mapna,
+        contractor: st.contractor,
+        total: st.total,
+      };
+    }
     return map;
-  }, [data]);
+  }, [selectedItems, getEffectiveStock, qtyMap, sourceWarehouseMap, isFa]);
 
-  const autoFillFromPackingOrItem = useCallback(
-    (packingNo: string, item?: DetailedComputed, overwrite = false) => {
-      const targetPacking = (item?.shipmentNo || packingNo || '').trim();
-      if (!targetPacking) return;
-      const generalEntries = data?.generalEntries || [];
-      const genMatches = generalEntries.filter(
-        (g) => (g.packingListNo || '').trim() === targetPacking,
-      );
-      const genMatch =
-        (item
-          ? genMatches.find((g) => (g.packageNo || '').trim() === (item.packageNo || '').trim())
-          : undefined) || genMatches[0];
-
-      const detMatches = (data?.detailedItems || []).filter(
-        (d) => (d.shipmentNo || '').trim() === targetPacking,
-      );
-      const refDet = item || detMatches[0];
-
-      const combinedIslandSystem = Array.from(
-        new Set(
-          [
-            refDet?.system || genMatch?.system,
-            refDet?.island || genMatch?.island,
-          ]
-            .map((s) => (s || '').trim())
-            .filter(Boolean),
-        ),
-      ).join(' / ');
-      const nextUnit = (refDet?.unit || genMatch?.unit || '').trim();
-      const nextReceiptNo = (refDet?.gcvReceiptNo || genMatch?.mapnaEntryMinutesNo || '').trim();
-      const nextContractNo = (refDet?.mtoRef || '').trim();
-      const nextParty = (refDet?.receiver || '').trim();
-
-      if (combinedIslandSystem && (overwrite || !islandSystem.trim())) {
-        setIslandSystem(combinedIslandSystem);
-      }
-      if (nextUnit && (overwrite || !unit.trim())) {
-        setUnit(nextUnit);
-      }
-      if (nextReceiptNo && (overwrite || !receiptNo.trim())) {
-        setReceiptNo(nextReceiptNo);
-      }
-      if (docType === 'miv_contractor' && nextParty && (overwrite || !party.trim())) {
-        setParty(nextParty);
-      }
-    },
-    [data?.generalEntries, data?.detailedItems, islandSystem, unit, receiptNo, party, docType],
+  const hasInvalidRows = useMemo(
+    () => selectedItems.length === 0 || selectedItems.some((it) => !rowValidations[it.id]?.valid),
+    [selectedItems, rowValidations],
   );
-
-  const handlePackingFilterChange = (val: string) => {
-    setShipmentFilter(val);
-    if (val) {
-      autoFillFromPackingOrItem(val, undefined, true);
-    }
-  };
-
-  const updateIssuedQty = (item: DetailedComputed, value: string) => {
-    setQtyMap((prev) => ({ ...prev, [item.id]: value }));
-    if (Number(value) > 0) {
-      autoFillFromPackingOrItem(item.shipmentNo, item, false);
-      setReqQtyMap((prev) => (prev[item.id] ? prev : { ...prev, [item.id]: value }));
-    }
-  };
-
-  const selectedEntries = useMemo(() => {
-    return Object.entries(qtyMap)
-      .map(([detailedId, val]) => {
-        const det = detailedLookup.get(detailedId);
-        const qty = Number(val);
-        const reqRaw = Number(reqQtyMap[detailedId]);
-        return {
-          detailedId,
-          qty,
-          requestedQty: Number.isFinite(reqRaw) && reqRaw > 0 ? reqRaw : qty,
-          technicalInfo: det?.size || '',
-          tagNo: det?.itemCode || '',
-          codeNo: det?.itemCode || '',
-          location: det?.storageLocation || '',
-          uom: det?.countingUnit || '',
-          opiNo: det?.opiNo || '',
-          remark: (remarkMap[detailedId] || '').trim(),
-        };
-      })
-      .filter((x) => Number.isFinite(x.qty) && x.qty > 0);
-  }, [qtyMap, reqQtyMap, remarkMap, detailedLookup]);
 
   const resetForm = () => {
     setEditingDoc(null);
+    setStep(1);
+    setSelectedMap({});
+    setSelUndoStack([]);
+    setSelRedoStack([]);
+    setQtyMap({});
+    setUserRemarkMap({});
+    setSourceWarehouseMap({});
     setDocNo('');
+    setDocNoTouched(false);
+    setDate(getTodayIso());
     setParty('');
     setIslandSystem('');
     setUnit('');
@@ -766,17 +1035,80 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     setInstallationDept('');
     setRequester('');
     setReceiver('');
-    setNotes('');
-    setQtyMap({});
-    setReqQtyMap({});
-    setRemarkMap({});
   };
 
-  const startEdit = (doc: MivDocumentRecord) => {
+  const startEdit = async (doc: MivDocumentRecord) => {
+    // Load exact detailed items for this document so editing works even if stock is now 0
+    const nextSelected: Record<string, DetailedComputed> = {};
+    const missingIds: string[] = [];
+
+    for (const it of doc.items) {
+      const cached = detailedCache[it.detailedId];
+      if (cached) {
+        nextSelected[it.detailedId] = cached;
+      } else {
+        missingIds.push(it.detailedId);
+      }
+    }
+
+    if (missingIds.length > 0) {
+      try {
+        const res = await apiRequest<{ items: DetailedComputed[] }>(
+          `/api/detailed?page=1&pageSize=200`,
+        );
+        const byId = new Map((res.items || []).map((d) => [d.id, d]));
+        for (const it of doc.items) {
+          const found = byId.get(it.detailedId);
+          if (found) {
+            nextSelected[it.detailedId] = found;
+          } else if (!nextSelected[it.detailedId]) {
+            nextSelected[it.detailedId] = {
+              id: it.detailedId,
+              shipmentNo: it.shipmentNo,
+              packageNo: it.packageNo,
+              itemNo: it.itemNo,
+              description: it.description,
+              size: it.technicalInfo || '',
+              itemCode: it.codeNo || '',
+              storageLocation: it.location || '',
+              countingUnit: it.uom || '',
+              opiNo: it.opiNo || '',
+              notes: it.equipmentNotes || '',
+              mapnaInventory: 0,
+              contractorInventory: 0,
+            } as DetailedComputed;
+          }
+        }
+      } catch {
+        for (const it of doc.items) {
+          if (!nextSelected[it.detailedId]) {
+            nextSelected[it.detailedId] = {
+              id: it.detailedId,
+              shipmentNo: it.shipmentNo,
+              packageNo: it.packageNo,
+              itemNo: it.itemNo,
+              description: it.description,
+              size: it.technicalInfo || '',
+              itemCode: it.codeNo || '',
+              storageLocation: it.location || '',
+              countingUnit: it.uom || '',
+              opiNo: it.opiNo || '',
+              notes: it.equipmentNotes || '',
+              mapnaInventory: 0,
+              contractorInventory: 0,
+            } as DetailedComputed;
+          }
+        }
+      }
+    }
+
     setEditingDoc(doc);
-    setDocType((doc.docType === 'miv_mapna' ? 'miv_mapna' : 'miv_contractor'));
+    setSelectedMap(nextSelected);
+    setSelUndoStack([]);
+    setSelRedoStack([]);
     setDocNo(doc.docNo);
-    setDate(doc.date);
+    setDocNoTouched(true);
+    setDate(doc.date || getTodayIso());
     setParty(doc.party || '');
     setIslandSystem(doc.islandSystem || '');
     setUnit(doc.unit || '');
@@ -787,49 +1119,114 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     setInstallationDept(doc.installationDept || '');
     setRequester(doc.requester || '');
     setReceiver(doc.receiver || '');
-    setNotes(doc.notes || '');
-    setShipmentFilter('');
-    setItemSearch('');
+
     const nextQty: Record<string, string> = {};
-    const nextReqQty: Record<string, string> = {};
-    const nextRemark: Record<string, string> = {};
+    const nextUserRemark: Record<string, string> = {};
+    const nextSource: Record<string, MivStockSourcePreference> = {};
     for (const it of doc.items) {
       nextQty[it.detailedId] = String(it.qty);
-      if (it.requestedQty !== undefined) nextReqQty[it.detailedId] = String(it.requestedQty);
-      if (it.remark) nextRemark[it.detailedId] = it.remark;
+      if (it.userRemark !== undefined) {
+        nextUserRemark[it.detailedId] = it.userRemark;
+      } else if (it.remark) {
+        const baseNotes = (it.equipmentNotes || nextSelected[it.detailedId]?.notes || '').trim();
+        if (baseNotes && it.remark.startsWith(`${baseNotes}\n`)) {
+          nextUserRemark[it.detailedId] = it.remark.slice(baseNotes.length + 1);
+        } else if (baseNotes && it.remark === baseNotes) {
+          nextUserRemark[it.detailedId] = '';
+        } else {
+          nextUserRemark[it.detailedId] = it.remark;
+        }
+      }
+      if (it.sourceWarehouse) {
+        nextSource[it.detailedId] = it.sourceWarehouse;
+      }
     }
     setQtyMap(nextQty);
-    setReqQtyMap(nextReqQty);
-    setRemarkMap(nextRemark);
+    setUserRemarkMap(nextUserRemark);
+    setSourceWarehouseMap(nextSource);
+    setStep(2);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedEntries.length === 0) {
-      notify('warning', isFa ? 'برای حداقل یک قلم مقدار وارد کنید.' : 'Enter quantity for at least one item.');
+    if (selectedItems.length === 0) {
+      notify('warning', isFa ? 'حداقل یک قلم برای صدور حواله انتخاب کنید.' : 'Select at least one item.');
       return;
     }
 
+    for (const item of selectedItems) {
+      const check = rowValidations[item.id];
+      if (!check?.valid) {
+        notify(
+          'error',
+          check?.error ||
+            (isFa ? 'تعداد وارد شده برای یکی از اقلام نامعتبر است.' : 'Invalid quantity for one of the items.'),
+        );
+        return;
+      }
+    }
+
+    const finalDocNo = (docNo.trim() || suggestedDocNo).trim();
+    if (!finalDocNo) {
+      notify('error', isFa ? 'شماره حواله انبار الزامی است.' : 'MIV document number is required.');
+      return;
+    }
+
+    // Build exact per-line payload with stacked remark (equipmentNotes + userRemark)
+    let totalFromMapna = 0;
+    let totalFromContractor = 0;
+    const payloadItems = selectedItems.map((item) => {
+      const qty = roundQty(Number(qtyMap[item.id]));
+      const st = getEffectiveStock(item);
+      const pref = sourceWarehouseMap[item.id] || 'auto';
+      const ded = computeMivStockDeduction(qty, st.mapna, st.contractor, pref);
+      totalFromMapna += ded.deductedFromMapna;
+      totalFromContractor += ded.deductedFromContractor;
+
+      const userRemark = (userRemarkMap[item.id] || '').trim();
+      const mergedRemark = buildMivLineRemark(item.notes, userRemark);
+
+      return {
+        detailedId: item.id,
+        qty,
+        requestedQty: qty,
+        technicalInfo: item.size || '',
+        tagNo: item.itemNo || '',
+        codeNo: item.itemCode || '',
+        location: item.storageLocation || '',
+        uom: item.countingUnit || '',
+        opiNo: item.opiNo || '',
+        remark: mergedRemark,
+        userRemark,
+        equipmentNotes: item.notes || '',
+        sourceWarehouse: pref,
+      };
+    });
+
+    const resolvedDocType =
+      totalFromMapna > 0 && totalFromContractor === 0 ? 'miv_mapna' : 'miv_contractor';
+
+    setSubmitting(true);
     try {
       const payload = {
-        docType,
-        docNo,
+        docType: resolvedDocType,
+        docNo: finalDocNo,
         date,
-        party,
+        party: party.trim(),
         projectName: activeProject?.name || '',
-        contractNo: activeProject?.code || '',
-        islandSystem,
-        unit,
-        receiptNo,
-        storekeeper,
-        equipmentSupply,
-        techOffice,
-        installationDept,
-        requester,
-        receiver,
-        notes,
-        items: selectedEntries,
+        // Rule 1-3: strictly contractRef (empty if absent)
+        contractNo: activeProject?.contractRef?.trim() || '',
+        islandSystem: islandSystem.trim(),
+        unit: unit.trim(),
+        receiptNo: receiptNo.trim(),
+        storekeeper: storekeeper.trim(),
+        equipmentSupply: equipmentSupply.trim(),
+        techOffice: techOffice.trim(),
+        installationDept: installationDept.trim(),
+        requester: requester.trim(),
+        receiver: receiver.trim(),
+        items: payloadItems,
       };
 
       const res = editingDoc
@@ -846,19 +1243,23 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         'success',
         editingDoc
           ? isFa
-            ? `حواله انبار شماره ${res.document.docNo} ویرایش و موجودی اقلام به‌روزرسانی شد.`
-            : `MIV Document ${res.document.docNo} updated.`
+            ? `حواله انبار شماره ${res.document.docNo} ویرایش و موجودی انبار به‌روزرسانی شد.`
+            : `MIV ${res.document.docNo} updated and stock adjusted.`
           : isFa
-            ? `حواله انبار شماره ${res.document.docNo} ثبت و موجودی اقلام به‌روزرسانی شد.`
-            : `MIV Document ${res.document.docNo} saved.`,
+            ? `حواله انبار شماره ${res.document.docNo} صادر و موجودی از انبار کسر شد.`
+            : `MIV ${res.document.docNo} issued and stock deducted.`,
       );
       resetForm();
+      setPrintDocWasUndone(false);
       setPrintDoc(res.document);
       triggerAutoSnapshot(`${editingDoc ? 'Edit ' : ''}MIV ${res.document.docNo}`);
       onDataChanged();
-      loadData();
+      setPickerRefresh((n) => n + 1);
+      await loadData();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -869,46 +1270,70 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
       notify(
         'success',
         isFa
-          ? `حواله انبار شماره ${deleteTarget.docNo} حذف و موجودی اقلام بازگردانی شد.`
-          : `MIV Document ${deleteTarget.docNo} deleted.`,
+          ? `حواله انبار شماره ${deleteTarget.docNo} حذف و موجودی اقلام به انبار بازگردانی شد.`
+          : `MIV ${deleteTarget.docNo} deleted and stock restored.`,
       );
       if (editingDoc?.id === deleteTarget.id) resetForm();
+      if (printDoc?.id === deleteTarget.id) setPrintDoc(null);
       setDeleteTarget(null);
       triggerAutoSnapshot(`Delete MIV ${deleteTarget.docNo}`);
       onDataChanged();
-      loadData();
+      setPickerRefresh((n) => n + 1);
+      await loadData();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     }
   };
 
+  // Filtered History list
+  const filteredDocuments = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return documents;
+    return documents.filter((d) =>
+      [
+        d.docNo,
+        d.party,
+        d.islandSystem,
+        d.unit,
+        d.receiptNo,
+        d.contractNo,
+        d.createdBy,
+        ...d.items.map((i) => `${i.shipmentNo} ${i.packageNo} ${i.itemNo} ${i.description} ${i.codeNo || ''}`),
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [documents, historySearch]);
+
+  const mivPagination = useClientPagination(filteredDocuments, 25);
+
   const historyColumns = useMemo<PrintColumnDef<MivDocumentRecord>[]>(
     () => [
-      { key: 'docType', header: isFa ? 'نوع حواله' : 'Type', getValue: (r) => docTypeLabel(r.docType) },
-      { key: 'docNo', header: isFa ? 'شماره حواله' : 'Doc No.', getValue: (r) => r.docNo },
+      { key: 'docNo', header: isFa ? 'شماره حواله' : 'MIV Doc No.', getValue: (r) => r.docNo },
       { key: 'date', header: isFa ? 'تاریخ' : 'Date', isDate: true, getValue: (r) => r.date },
-      { key: 'projectName', header: isFa ? 'پروژه' : 'Project', getValue: (r) => r.projectName || '' },
-      { key: 'contractNo', header: isFa ? 'شماره قرارداد/درخواست' : 'Contract / Req No.', getValue: (r) => r.contractNo || '' },
-      { key: 'party', header: isFa ? 'پیمانکار / درخواست‌کننده' : 'Contractor / Party', getValue: (r) => r.party || '' },
-      { key: 'receiver', header: isFa ? 'تحویل گیرنده' : 'Receiver', getValue: (r) => r.receiver || '' },
+      { key: 'party', header: isFa ? 'پیمانکار / درخواست‌کننده' : 'Contractor / Requester', getValue: (r) => r.party || '' },
+      { key: 'islandSystem', header: isFa ? 'سیستم / جزیره' : 'System / Island', getValue: (r) => r.islandSystem || '' },
+      { key: 'unit', header: isFa ? 'واحد' : 'Unit', getValue: (r) => r.unit || '' },
       { key: 'receiptNo', header: isFa ? 'شماره رسید' : 'Receipt No.', getValue: (r) => r.receiptNo || '' },
       { key: 'itemCount', header: isFa ? 'تعداد اقلام' : 'Items', getValue: (r) => r.items.length },
       {
         key: 'itemsSummary',
-        header: isFa ? 'شرح اقلام' : 'Items Summary',
+        header: isFa ? 'خلاصه اقلام' : 'Items Summary',
         getValue: (r) =>
-          r.items.map((i) => `${i.shipmentNo}/${i.packageNo}#${i.itemNo} (${i.qty})`).join(' | '),
+          r.items.map((i) => `${i.shipmentNo}/${i.packageNo} (${i.qty})`).join(' | '),
       },
-      { key: 'createdBy', header: isFa ? 'تنظیم‌کننده' : 'Created By', getValue: (r) => r.createdBy },
-      { key: 'notes', header: t.headers.notes, getValue: (r) => r.notes || '' },
+      { key: 'createdBy', header: isFa ? 'ثبت‌کننده' : 'Created By', getValue: (r) => r.createdBy },
     ],
-    [t, isFa, docTypeLabel],
+    [isFa],
   );
 
+  const detailedItemsList = useMemo(() => Object.values(detailedCache), [detailedCache]);
+
   return (
-    <div className="space-y-6">
-      {/* Dedicated A4 Landscape Portal for Official MD1EX-FQP02/05-03 MIV Sheet */}
-      {printDoc && !printReportOpen
+    <div className="space-y-6" data-testid="miv-view">
+      {/* Dedicated A4 Landscape Print Portal for Official MD1EX-FQP02/05-03 */}
+      {printDoc && !printReportOpen && !printDocWasUndone
         ? createPortal(
             <div id="samaan-miv-print-root">
               <style>{`
@@ -916,7 +1341,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                   #samaan-miv-print-root { display: none !important; }
                 }
                 @media print {
-                  ${buildPrintPageRule('landscape', isFa, '7mm')}
+                  ${buildPrintPageRule('landscape', isFa, '6mm')}
                   body > *:not(#samaan-miv-print-root) {
                     display: none !important;
                   }
@@ -928,26 +1353,29 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                     -webkit-print-color-adjust: exact;
                     print-color-adjust: exact;
                   }
+                  #samaan-miv-print-root .samaan-print-page-break {
+                    break-after: page !important;
+                    page-break-after: always !important;
+                  }
                   #samaan-miv-print-root table {
                     width: 100% !important;
                     table-layout: auto !important;
                   }
                   #samaan-miv-print-root tr {
                     height: auto !important;
-                    break-inside: avoid;
-                    page-break-inside: avoid;
+                    break-inside: avoid !important;
+                    page-break-inside: avoid !important;
                   }
-                  #samaan-miv-print-root table th,
-                  #samaan-miv-print-root table td {
-                    text-align: center;
-                    vertical-align: middle;
+                  #samaan-miv-print-root th,
+                  #samaan-miv-print-root td {
                     height: auto !important;
+                    vertical-align: middle !important;
                   }
                 }
               `}</style>
               <OfficialMivSheet
                 doc={printDoc}
-                detailedItems={data?.detailedItems || []}
+                detailedItems={detailedItemsList}
                 formatDate={formatDate}
               />
             </div>,
@@ -955,426 +1383,639 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
           )
         : null}
 
+      {/* Main Wizard Card (Create / Edit MIV) */}
       {canEdit && (
-        <form
-          onSubmit={handleSubmit}
-          className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-sm font-bold">
-              <ClipboardList className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>
-                {editingDoc
-                  ? isFa
-                    ? `ویرایش حواله انبار (${editingDoc.docNo})`
-                    : `Edit MIV (${editingDoc.docNo})`
-                  : t.nav.miv}
-              </span>
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-sm overflow-hidden">
+          {/* Wizard Header */}
+          <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)]/55 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+                <ClipboardList className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-sm font-extrabold text-[var(--text-primary)] truncate">
+                    {editingDoc
+                      ? isFa
+                        ? `ویرایش حواله انبار (${editingDoc.docNo})`
+                        : `Edit MIV (${editingDoc.docNo})`
+                      : isFa
+                        ? 'درخواست کالا از انبار و حواله انبار'
+                        : 'Material Issue Voucher (MIV)'}
+                  </h2>
+                  <span
+                    dir="ltr"
+                    className="px-2 py-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] font-mono text-[10.5px] font-bold text-[var(--text-secondary)]"
+                  >
+                    {MD1_MIV_FORM_CODE}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                  {step === 1
+                    ? isFa
+                      ? 'مرحله ۱ از ۲: فیلتر و انتخاب اقلام دارای موجودی (انبار کارفرما و پیمانکار)'
+                      : 'Step 1 of 2: Filter & select in-stock items (Employer & Contractor stock)'
+                    : isFa
+                      ? 'مرحله ۲ از ۲: تعیین تعداد خروجی (صرفاً عددی)، توضیحات اختیاری و صدور حواله'
+                      : 'Step 2 of 2: Set numeric quantities, optional remarks, and issue MIV'}
+                </p>
+              </div>
             </div>
-            <div className="flex items-center gap-3">
+
+            <div className="flex items-center gap-2">
               {editingDoc && (
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="text-xs text-[var(--status-danger)] hover:underline"
+                  className="h-8 px-3 rounded-lg border border-[var(--status-danger)]/40 bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-semibold"
                 >
-                  {t.controls.cancel}
+                  {isFa ? 'انصراف از ویرایش' : 'Cancel Edit'}
                 </button>
               )}
-              {formCode && (
-                <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-                  {formCode}
-                </span>
-              )}
-            </div>
-          </div>
 
-          {/* Row 1: Type, Doc No, Date (Project & Contract inherited automatically) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'نوع درخواست / حواله انبار' : 'Requisition / Issue Type'} *
-              </label>
-              <select
-                value={docType}
-                onChange={(e) => {
-                  setDocType(e.target.value as MivOnlyType);
-                  setQtyMap({});
-                  setReqQtyMap({});
-                }}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
-              >
-                <option value="miv_contractor">{docTypeLabel('miv_contractor')}</option>
-                <option value="miv_mapna">{docTypeLabel('miv_mapna')}</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره حواله انبار' : 'MIV Doc No.'} *
-              </label>
-              <input
-                type="text"
-                required
-                dir={isFa && !docNo ? 'rtl' : 'ltr'}
-                value={docNo}
-                onChange={(e) => setDocNo(e.target.value)}
-                placeholder="MIV-1405-001"
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !docNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
-
-            <JalaliDateInput
-              label={`${isFa ? 'تاریخ حواله' : 'Issue Date'} *`}
-              value={date}
-              onChange={setDate}
-            />
-          </div>
-
-          {/* Row 2: Party, System/Island, Unit, Receipt No */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'پیمانکار / درخواست کننده' : 'Contractor / Requester'}
-              </label>
-              <input
-                type="text"
-                dir={!party ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={party}
-                onChange={(e) => setParty(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'سیستم / جزیره' : 'System / Island'}
-              </label>
-              <input
-                type="text"
-                dir={!islandSystem ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={islandSystem}
-                onChange={(e) => setIslandSystem(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'واحد' : 'Unit'}
-              </label>
-              <input
-                type="text"
-                dir={!unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={unit}
-                onChange={(e) => setUnit(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره رسید' : 'Receipt No.'}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !receiptNo ? 'rtl' : 'ltr'}
-                value={receiptNo}
-                onChange={(e) => setReceiptNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !receiptNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
-          </div>
-
-          {/* Row 3: Signatures */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'انباردار' : 'Storekeeper'}
-              </label>
-              <input
-                type="text"
-                dir={!storekeeper ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={storekeeper}
-                onChange={(e) => setStorekeeper(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? activeEmployer.equipmentSupplyLabel : `${activeEmployer.badgeCode} Equipment Supply`}
-              </label>
-              <input
-                type="text"
-                dir={!equipmentSupply ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={equipmentSupply}
-                onChange={(e) => setEquipmentSupply(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? activeEmployer.techOfficeLabel : `${activeEmployer.badgeCode} Tech Office`}
-              </label>
-              <input
-                type="text"
-                dir={!techOffice ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={techOffice}
-                onChange={(e) => setTechOffice(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? activeEmployer.installationLabel : `${activeEmployer.badgeCode} Installation Dept.`}
-              </label>
-              <input
-                type="text"
-                dir={!installationDept ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={installationDept}
-                onChange={(e) => setInstallationDept(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'درخواست کننده (پیمانکار)' : 'Requester'}
-              </label>
-              <input
-                type="text"
-                dir={!requester ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={requester}
-                onChange={(e) => setRequester(e.target.value)}
-                placeholder={party || ''}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-[var(--accent-primary)] mb-1">
-                {isFa ? 'تحویل گیرنده (ثبت در جزئیات تجهیزات)' : 'Receiver (Synced to Detailed)'}
-              </label>
-              <input
-                type="text"
-                dir={!receiver ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={receiver}
-                onChange={(e) => setReceiver(e.target.value)}
-                placeholder={isFa ? 'نام تحویل گیرنده...' : 'Receiver name...'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-              {isFa ? 'ملاحظات / Remark عمومی' : 'General Remark / Notes'}
-            </label>
-            <input
-              type="text"
-              dir={!notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs font-semibold text-[var(--text-secondary)]">
-                {isFa ? 'انتخاب اقلام، تعداد درخواستی و تعداد تحویل' : 'Select Items & Requested / Issued Quantities'}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={shipmentFilter}
-                  onChange={(e) => handlePackingFilterChange(e.target.value)}
-                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+              <div className="inline-flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-0.5 text-[11px] font-bold">
+                <button
+                  type="button"
+                  data-testid="miv-step-1-tab"
+                  onClick={() => setStep(1)}
+                  className={`h-7 px-3 rounded-lg transition-colors ${
+                    step === 1
+                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                  }`}
                 >
-                  <option value="">{isFa ? 'فیلتر پکینگ لیست: همه' : 'Packing List: All'}</option>
-                  {knownPackings.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-                <SearchInputWithClear
-                  value={itemSearch}
-                  onChange={setItemSearch}
-                  placeholder={t.controls.searchPlaceholder}
-                  className="w-64"
-                  inputClassName="h-8 text-xs"
-                />
+                  {isFa ? '۱. انتخاب اقلام' : '1. Select Items'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="miv-step-2-tab"
+                  onClick={handleProceedToStep2}
+                  className={`h-7 px-3 rounded-lg transition-colors ${
+                    step === 2
+                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                  }`}
+                >
+                  {isFa
+                    ? `۲. تکمیل و صدور (${selectedItems.length})`
+                    : `2. Complete & Issue (${selectedItems.length})`}
+                </button>
               </div>
             </div>
+          </div>
 
-            <div className="rounded-xl border border-[var(--border-subtle)] overflow-x-clip">
-              <StickyTableWrapper maxHeightClass="max-h-72">
-                <table className="w-full text-xs">
-                  <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                  <tr>
-                    <th className="py-2 px-3">{t.headers.shipmentNo}</th>
-                    <th className="py-2 px-3">{t.headers.packageNo}</th>
-                    <th className="py-2 px-3">{t.headers.itemNo}</th>
-                    <th className="py-2 px-3">{t.headers.description}</th>
-                    <th className="py-2 px-3">
-                      {docType === 'miv_mapna' ? t.headers.mapnaInventory : t.headers.contractorInventory}
-                    </th>
-                    <th className="py-2 px-3">{isFa ? 'مقدار درخواستی' : 'Req. Qty'}</th>
-                    <th className="py-2 px-3">{isFa ? 'مقدار تحویلی' : 'Issued Qty'}</th>
-                    <th className="py-2 px-3">{isFa ? 'ملاحظات ردیف' : 'Remark'}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {eligibleItems.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
-                        {t.controls.noData}
-                      </td>
-                    </tr>
-                  ) : (
-                    eligibleItems.slice(0, 80).map((item) => {
-                      const avail = getAvailableQty(item, docType);
-                      return (
-                        <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">
-                            {item.shipmentNo}
-                          </td>
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">
-                            {item.packageNo}
-                          </td>
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">
-                            {item.itemNo}
-                          </td>
-                          <td
-                            className="py-2 px-3 max-w-[220px] truncate bidi-plaintext"
-                            title={item.description}
-                          >
-                            {item.description || item.generalDescription}
-                          </td>
-                          <td className="py-2 px-3 font-semibold text-[var(--accent-primary)] tabular-nums">
-                            {avail} {item.countingUnit}
-                          </td>
-                          <td className="py-2 px-3 w-24">
-                            <input
-                              type="number"
-                              step="any"
-                              min="0"
-                              dir={isFa && !reqQtyMap[item.id] ? 'rtl' : 'ltr'}
-                              value={reqQtyMap[item.id] || ''}
-                              onChange={(e) =>
-                                setReqQtyMap((prev) => ({ ...prev, [item.id]: e.target.value }))
-                              }
-                              placeholder={qtyMap[item.id] || '0'}
-                              className="w-20 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
-                            />
-                          </td>
-                          <td className="py-2 px-3 w-36">
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                max={avail}
-                                dir={isFa && !qtyMap[item.id] ? 'rtl' : 'ltr'}
-                                value={qtyMap[item.id] || ''}
-                                onChange={(e) => updateIssuedQty(item, e.target.value)}
-                                placeholder="0"
-                                className="w-20 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
-                              />
-                              {avail > 0 && (
+          {step === 1 ? (
+            <div className="p-4 sm:p-5 space-y-4">
+              {/* Selection Controls Toolbar (Undo / Redo / Clear / Proceed) */}
+              <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/65 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    data-testid="miv-selected-count"
+                    className="text-xs font-bold text-[var(--text-primary)] tabular-nums"
+                  >
+                    {isFa
+                      ? `اقلام انتخاب‌شده: ${selectedItems.length} ردیف`
+                      : `Selected Items: ${selectedItems.length}`}
+                  </span>
+
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-testid="miv-sel-undo-btn"
+                      disabled={selUndoStack.length === 0}
+                      onClick={handleSelectionUndo}
+                      title={isFa ? 'بازگردانی انتخاب' : 'Undo selection'}
+                      className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 text-xs font-medium text-[var(--text-secondary)] inline-flex items-center gap-1"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'واگرد انتخاب' : 'Undo'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="miv-sel-redo-btn"
+                      disabled={selRedoStack.length === 0}
+                      onClick={handleSelectionRedo}
+                      title={isFa ? 'انجام مجدد انتخاب' : 'Redo selection'}
+                      className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 text-xs font-medium text-[var(--text-secondary)] inline-flex items-center gap-1"
+                    >
+                      <Redo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'مجدد' : 'Redo'}</span>
+                    </button>
+                    {selectedItems.length > 0 && (
+                      <button
+                        type="button"
+                        data-testid="miv-sel-clear-btn"
+                        onClick={handleSelectionClear}
+                        className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)] text-xs font-medium text-[var(--text-secondary)] inline-flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>{isFa ? 'پاک‌سازی انتخاب‌ها' : 'Clear'}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  data-testid="miv-proceed-step2-btn"
+                  disabled={selectedItems.length === 0}
+                  onClick={handleProceedToStep2}
+                  className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-45 text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <span>
+                    {isFa
+                      ? `ادامه و تعیین تعداد (${selectedItems.length} قلم)`
+                      : `Continue to Quantities (${selectedItems.length})`}
+                  </span>
+                  {isFa ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+
+              {/* Detailed-Equipment-Grade In-Stock Picker (Both Employer & Contractor Stock) */}
+              <SubstitutionItemPicker
+                stockOnly={true}
+                refreshSignal={refreshSignal + pickerRefresh}
+                selectedMap={selectedMap}
+                onToggleRow={handleToggleRow}
+                onTogglePage={handleTogglePage}
+                testIdPrefix="miv-picker"
+              />
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-5">
+              {/* Back to Step 1 Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
+                <button
+                  type="button"
+                  data-testid="miv-back-step1-btn"
+                  onClick={() => setStep(1)}
+                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-xs font-semibold text-[var(--text-primary)] inline-flex items-center gap-1.5"
+                >
+                  {isFa ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
+                  <span>{isFa ? 'بازگشت به انتخاب اقلام' : 'Back to Item Selection'}</span>
+                </button>
+
+                <div className="text-[11.5px] text-[var(--text-muted)]">
+                  {isFa ? 'پروژه:' : 'Project:'}{' '}
+                  <strong className="text-[var(--text-primary)]">{activeProject?.name || '—'}</strong>
+                  {activeProject?.contractRef ? (
+                    <>
+                      {' · '}
+                      {isFa ? 'شماره قرارداد:' : 'Contract:'}{' '}
+                      <strong dir="ltr" className="font-mono text-[var(--text-primary)]">
+                        {activeProject.contractRef}
+                      </strong>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Official Header Fields (1-2, 1-5, 1-6, 1-7, 1-8, 1-22) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label
+                      htmlFor="miv-doc-no-input"
+                      className="text-[11px] font-semibold text-[var(--text-secondary)]"
+                    >
+                      {isFa ? 'شماره حواله انبار *' : 'MIV Document No. *'}
+                    </label>
+                    <button
+                      type="button"
+                      data-testid="miv-regenerate-docno-btn"
+                      onClick={() => {
+                        setDocNoTouched(false);
+                        setDocNo(suggestedDocNo);
+                      }}
+                      title={
+                        isFa
+                          ? `تولید خودکار بر اساس کد پیمانکار (${contractorAbbrPreview})`
+                          : `Regenerate using contractor code (${contractorAbbrPreview})`
+                      }
+                      className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline inline-flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span dir="ltr">{suggestedDocNo}</span>
+                    </button>
+                  </div>
+                  <input
+                    id="miv-doc-no-input"
+                    data-testid="miv-doc-no-input"
+                    type="text"
+                    required
+                    dir="ltr"
+                    value={docNo}
+                    onChange={(e) => {
+                      setDocNo(e.target.value);
+                      setDocNoTouched(true);
+                    }}
+                    placeholder={suggestedDocNo}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono font-bold text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <JalaliDateInput
+                  label={`${isFa ? 'تاریخ حواله' : 'Date'} *`}
+                  value={date}
+                  onChange={setDate}
+                />
+
+                <div>
+                  <label
+                    htmlFor="miv-party-input"
+                    className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                  >
+                    {isFa ? 'پیمانکار / درخواست کننده (تحویل گیرنده)' : 'Contractor / Requester'}
+                  </label>
+                  <input
+                    id="miv-party-input"
+                    data-testid="miv-party-input"
+                    type="text"
+                    value={party}
+                    onChange={(e) => setParty(e.target.value)}
+                    placeholder={isFa ? 'مثلاً: نصب نیرو نصب' : 'e.g. NNE'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="miv-system-island-input"
+                    className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                  >
+                    {isFa ? 'سیستم / جزیره' : 'System / Island'}
+                  </label>
+                  <input
+                    id="miv-system-island-input"
+                    data-testid="miv-system-island-input"
+                    type="text"
+                    value={islandSystem}
+                    onChange={(e) => setIslandSystem(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="miv-unit-input"
+                    className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                  >
+                    {isFa ? 'واحد' : 'Unit'}
+                  </label>
+                  <input
+                    id="miv-unit-input"
+                    data-testid="miv-unit-input"
+                    type="text"
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="miv-receipt-input"
+                    className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                  >
+                    {isFa ? 'شماره رسید (رسید مصرف)' : 'Receipt No.'}
+                  </label>
+                  <input
+                    id="miv-receipt-input"
+                    data-testid="miv-receipt-input"
+                    type="text"
+                    dir="ltr"
+                    value={receiptNo}
+                    onChange={(e) => setReceiptNo(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'نام تحویل‌گیرنده (امضاء)' : 'Receiver Signatory'}
+                  </label>
+                  <input
+                    type="text"
+                    value={receiver}
+                    onChange={(e) => setReceiver(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'نام انباردار (امضاء)' : 'Storekeeper Signatory'}
+                  </label>
+                  <input
+                    type="text"
+                    value={storekeeper}
+                    onChange={(e) => setStorekeeper(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)]"
+                  />
+                </div>
+              </div>
+
+              {/* Selected Items Quantities & Stacked Remarks Table */}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-xs font-bold text-[var(--text-primary)]">
+                    {isFa
+                      ? `اقلام حواله (${selectedItems.length} ردیف) — تعداد صرفاً عددی و توضیحات اختیاری`
+                      : `Selected Voucher Items (${selectedItems.length}) — Numeric Qty & Optional Remarks`}
+                  </h3>
+                  <span className="text-[11px] text-[var(--text-muted)]">
+                    {isFa
+                      ? 'توضیحات جدید به‌صورت خودکار در زیر «توضیحات تجهیز» قبلی در ستون Remark درج می‌شود.'
+                      : 'New remarks are automatically stacked below any existing Equipment Notes in the Remark column.'}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-[var(--border-subtle)] overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] border-b border-[var(--border-subtle)]">
+                        <tr>
+                          <th className="px-2.5 py-2 whitespace-nowrap">#</th>
+                          <th className="px-2.5 py-2 whitespace-nowrap">{isFa ? 'محموله / نگله' : 'Pkg No / Item'}</th>
+                          <th className="px-2.5 py-2 min-w-[200px]">{isFa ? 'شرح کالا و مشخصات' : 'Description & Specs'}</th>
+                          <th className="px-2.5 py-2 whitespace-nowrap">{isFa ? 'موجودی مجاز' : 'Available Stock'}</th>
+                          <th className="px-2.5 py-2 whitespace-nowrap min-w-[140px]">
+                            {isFa ? 'تعداد خروجی (عدد) *' : 'Issue Qty (Numeric) *'}
+                          </th>
+                          <th className="px-2.5 py-2 min-w-[240px]">
+                            {isFa ? 'توضیحات حواله (Remark - اختیاری)' : 'MIV Remark (Optional)'}
+                          </th>
+                          <th className="px-2 py-2 whitespace-nowrap">{isFa ? 'حذف' : 'Remove'}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border-subtle)]">
+                        {selectedItems.map((item, idx) => {
+                          const v = rowValidations[item.id];
+                          const hasBothStocks = v.mapna > 0 && v.contractor > 0;
+                          const pref = sourceWarehouseMap[item.id] || 'auto';
+                          const existingNotes = (item.notes || '').trim();
+
+                          return (
+                            <tr
+                              key={item.id}
+                              data-testid={`miv-selected-row-${item.id}`}
+                              className={!v.valid ? 'bg-[var(--status-danger-bg)]/35' : ''}
+                            >
+                              <td className="px-2.5 py-2 tabular-nums font-bold text-[var(--text-muted)]">
+                                {idx + 1}
+                              </td>
+                              <td dir="ltr" className="px-2.5 py-2 font-mono text-[11px] whitespace-nowrap">
+                                <div className="font-bold text-[var(--text-primary)]">{item.shipmentNo}</div>
+                                <div className="text-[var(--text-muted)]">
+                                  {item.packageNo ? `Pkg: ${item.packageNo}` : '—'}
+                                  {item.itemNo ? ` · Tag: ${item.itemNo}` : ''}
+                                </div>
+                              </td>
+                              <td className="px-2.5 py-2 text-start">
+                                <div className="font-semibold text-[var(--text-primary)] whitespace-pre-line bidi-plaintext">
+                                  {item.description || item.generalDescription}
+                                </div>
+                                <div className="text-[10.5px] text-[var(--text-muted)] mt-0.5 flex flex-wrap gap-x-2">
+                                  {item.size && <span>{item.size}</span>}
+                                  {item.itemCode && <span dir="ltr" className="font-mono">{item.itemCode}</span>}
+                                  {item.storageLocation && <span>{item.storageLocation}</span>}
+                                  {item.countingUnit && <span>({item.countingUnit})</span>}
+                                </div>
+                              </td>
+                              <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">
+                                <div className="font-extrabold text-[var(--text-primary)]">
+                                  {isFa ? `مجموع: ${v.total}` : `Total: ${v.total}`}
+                                </div>
+                                <div className="text-[10.5px] text-[var(--text-muted)] space-x-1 space-x-reverse">
+                                  <span className="text-emerald-700 dark:text-emerald-400">
+                                    {isFa ? `کارفرما: ${v.mapna}` : `Emp: ${v.mapna}`}
+                                  </span>
+                                  <span>·</span>
+                                  <span className="text-sky-700 dark:text-sky-400">
+                                    {isFa ? `پیمانکار: ${v.contractor}` : `Con: ${v.contractor}`}
+                                  </span>
+                                </div>
+                                {hasBothStocks && (
+                                  <select
+                                    aria-label={isFa ? 'اولویت انبار کسر موجودی' : 'Deduction warehouse priority'}
+                                    value={pref}
+                                    onChange={(e) =>
+                                      setSourceWarehouseMap((prev) => ({
+                                        ...prev,
+                                        [item.id]: e.target.value as MivStockSourcePreference,
+                                      }))
+                                    }
+                                    className="mt-1 h-7 px-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[10.5px]"
+                                  >
+                                    <option value="auto">{isFa ? 'کسر خودکار (ابتدا پیمانکار)' : 'Auto (Contractor first)'}</option>
+                                    <option value="contractor">{isFa ? 'ابتدا انبار پیمانکار' : 'Contractor first'}</option>
+                                    <option value="employer">{isFa ? 'ابتدا انبار کارفرما' : 'Employer first'}</option>
+                                  </select>
+                                )}
+                              </td>
+                              <td className="px-2.5 py-2">
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  dir="ltr"
+                                  data-testid={`miv-qty-input-${item.id}`}
+                                  aria-label={isFa ? `تعداد برای ${item.description}` : `Quantity for ${item.description}`}
+                                  value={qtyMap[item.id] ?? ''}
+                                  onChange={(e) => {
+                                    const clean = sanitizeNumericQtyInput(e.target.value);
+                                    setQtyMap((prev) => ({ ...prev, [item.id]: clean }));
+                                  }}
+                                  placeholder="0"
+                                  className={`w-28 h-9 px-2.5 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono font-bold tabular-nums text-center focus:outline-none ${
+                                    !v.valid
+                                      ? 'border-[var(--status-danger)] text-[var(--status-danger)]'
+                                      : 'border-[var(--border-subtle)] text-[var(--text-primary)] focus:border-[var(--accent-primary)]'
+                                  }`}
+                                />
+                                {!v.valid && v.error && (
+                                  <div
+                                    data-testid={`miv-qty-error-${item.id}`}
+                                    className="mt-1 text-[10.5px] font-semibold text-[var(--status-danger)] flex items-center justify-center gap-1"
+                                  >
+                                    <AlertCircle className="w-3 h-3 shrink-0" />
+                                    <span>{v.error}</span>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-2.5 py-2 text-start">
+                                {existingNotes && (
+                                  <div
+                                    data-testid={`miv-existing-notes-${item.id}`}
+                                    className="mb-1.5 px-2 py-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-subtle)]/70 text-[10.5px] text-[var(--text-secondary)] whitespace-pre-line"
+                                  >
+                                    <span className="font-bold text-[var(--text-muted)] block text-[9.5px]">
+                                      {isFa ? 'توضیحات تجهیز قبلی (در بالا حفظ می‌شود):' : 'Existing Equipment Notes (kept above):'}
+                                    </span>
+                                    {existingNotes}
+                                  </div>
+                                )}
+                                <textarea
+                                  rows={2}
+                                  data-testid={`miv-remark-input-${item.id}`}
+                                  aria-label={isFa ? `توضیحات حواله برای ${item.description}` : `Remark for ${item.description}`}
+                                  value={userRemarkMap[item.id] ?? ''}
+                                  onChange={(e) =>
+                                    setUserRemarkMap((prev) => ({ ...prev, [item.id]: e.target.value }))
+                                  }
+                                  placeholder={
+                                    isFa
+                                      ? 'توضیحات اختیاری این حواله (در زیر توضیحات قبلی ثبت می‌شود)...'
+                                      : 'Optional MIV remark (stacked below existing notes)...'
+                                  }
+                                  className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] leading-relaxed focus:outline-none focus:border-[var(--accent-primary)]"
+                                />
+                              </td>
+                              <td className="px-2 py-2">
                                 <button
                                   type="button"
-                                  onClick={() => updateIssuedQty(item, String(avail))}
-                                  className="px-2 h-8 rounded bg-[var(--bg-subtle)] text-[10px] font-semibold hover:bg-[var(--accent-soft)]"
+                                  aria-label={isFa ? 'حذف از حواله' : 'Remove from voucher'}
+                                  onClick={() => handleToggleRow(item)}
+                                  className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
                                 >
-                                  {isFa ? 'کل' : 'Max'}
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-2 px-3 w-36">
-                            <input
-                              type="text"
-                              dir={!remarkMap[item.id] ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                              value={remarkMap[item.id] || ''}
-                              onChange={(e) =>
-                                setRemarkMap((prev) => ({ ...prev, [item.id]: e.target.value }))
-                              }
-                              placeholder={isFa ? 'اختیاری' : 'Optional'}
-                              className="w-full h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-                </table>
-              </StickyTableWrapper>
-            </div>
-          </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
 
-          <div className="flex items-center justify-between pt-2">
-            <span className="text-xs text-[var(--text-muted)] tabular-nums">
-              {isFa
-                ? `${selectedEntries.length.toLocaleString('fa-IR')} قلم انتخاب‌شده`
-                : `${selectedEntries.length} items selected`}
-            </span>
-            <button
-              type="submit"
-              className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>
-                {editingDoc
-                  ? isFa
-                    ? 'ذخیره تغییرات حواله و چاپ'
-                    : 'Save Changes & Print MIV'
-                  : isFa
-                    ? 'ثبت حواله انبار و چاپ فرم'
-                    : 'Save & Print MIV'}
-              </span>
-            </button>
-          </div>
-        </form>
+              {/* Optional Signatories Accordion Strip */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
+                    {isFa ? 'تأمین تجهیزات مپنا (اختیاری)' : 'Equipment Supply (Optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={equipmentSupply}
+                    onChange={(e) => setEquipmentSupply(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
+                    {isFa ? 'دفتر فنی مپنا (اختیاری)' : 'Tech Office (Optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={techOffice}
+                    onChange={(e) => setTechOffice(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
+                    {isFa ? 'بخش نصب مپنا (اختیاری)' : 'Installation Dept (Optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={installationDept}
+                    onChange={(e) => setInstallationDept(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
+                    {isFa ? 'درخواست‌کننده (امضاء - اختیاری)' : 'Requester Signatory (Optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={requester}
+                    onChange={(e) => setRequester(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Submit Bar */}
+              <div className="pt-2 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[11.5px] text-[var(--text-muted)]">
+                  {isFa
+                    ? 'پس از ثبت، مقادیر به‌صورت خودکار از انبار کسر شده و پیش‌نمایش چاپ حواله باز می‌شود (Undo و Redo حتی پس از چاپ فعال است).'
+                    : 'Upon issuing, stock is automatically deducted and print preview opens (Undo & Redo remain active even after printing).'}
+                </span>
+                <button
+                  type="submit"
+                  data-testid="miv-submit-btn"
+                  disabled={submitting || hasInvalidRows}
+                  className="h-10 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-45 text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-2 shadow-sm transition-colors"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>
+                    {submitting
+                      ? isFa
+                        ? 'در حال ثبت...'
+                        : 'Issuing...'
+                      : editingDoc
+                        ? isFa
+                          ? 'ذخیره تغییرات حواله و بازگشایی چاپ'
+                          : 'Save Changes & Preview'
+                        : isFa
+                          ? 'صدور حواله انبار، کسر موجودی و چاپ'
+                          : 'Issue MIV, Deduct Stock & Print'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       )}
 
-      {/* Document History */}
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
-        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-bold">
-            {isFa ? 'سوابق درخواست کالا و حواله انبار (MIV)' : 'MIV Issue History'}
-          </h3>
+      {/* Issued MIV History Table */}
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-sm overflow-hidden">
+        <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-[var(--accent-primary)]" />
+            <h3 className="text-sm font-bold text-[var(--text-primary)]" data-testid="miv-history-title">
+              {isFa
+                ? `سابقه حواله‌های انبار ثبت‌شده (${filteredDocuments.length})`
+                : `Issued MIV History (${filteredDocuments.length})`}
+            </h3>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-60">
+              <SearchInputWithClear
+                value={historySearch}
+                onChange={setHistorySearch}
+                placeholder={isFa ? 'جستجو در سابقه حواله‌ها...' : 'Search issued MIVs...'}
+              />
+            </div>
+
             <button
               type="button"
               onClick={() => setPrintReportOpen(true)}
-              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+              disabled={filteredDocuments.length === 0}
+              className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] disabled:opacity-45 text-xs font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1.5"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>{t.controls.printReport}</span>
+              <span>{isFa ? 'چاپ فهرست' : 'Print List'}</span>
             </button>
           </div>
         </div>
-        <StickyTableWrapper>
-          <table className="w-full text-xs">
-            <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
+
+        <StickyTableWrapper maxHeightClass="max-h-[420px]">
+          <table className="w-full text-xs border-collapse">
+            <thead className="sticky top-0 z-10 bg-[var(--bg-subtle)] text-[var(--text-secondary)] border-b border-[var(--border-subtle)]">
               <tr>
-                <th className="py-2.5 px-4">{isFa ? 'نوع فرم' : 'Type'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'شماره سند' : 'Doc No.'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'تاریخ' : 'Date'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'شماره قرارداد' : 'Contract'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Party'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'تحویل گیرنده' : 'Receiver'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'تعداد اقلام' : 'Items'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'شماره حواله' : 'MIV Doc No.'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'تاریخ' : 'Date'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Contractor / Party'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'سیستم / جزیره' : 'System / Island'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'واحد' : 'Unit'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'شماره رسید' : 'Receipt No.'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'تعداد اقلام' : 'Items'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -1384,55 +2025,74 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                     {t.controls.loading}
                   </td>
                 </tr>
-              ) : mivDocuments.length === 0 ? (
+              ) : mivPagination.pageItems.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
-                    {t.controls.noData}
+                    {isFa ? 'هنوز حواله انباری ثبت نشده است.' : 'No MIV documents issued yet.'}
                   </td>
                 </tr>
               ) : (
                 mivPagination.pageItems.map((doc) => (
-                  <tr key={doc.id} className="hover:bg-[var(--bg-subtle)]/50">
-                    <td className="py-2.5 px-4 font-medium">{docTypeLabel(doc.docType)}</td>
-                    <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">
+                  <tr
+                    key={doc.id}
+                    data-testid={`miv-history-row-${doc.id}`}
+                    className="hover:bg-[var(--bg-subtle)]/50 transition-colors"
+                  >
+                    <td dir="ltr" className="px-3 py-2 font-mono font-bold text-[var(--text-primary)] whitespace-nowrap">
                       {doc.docNo}
                     </td>
-                    <td className="py-2.5 px-4 tabular-nums" dir="ltr">
+                    <td dir="ltr" className="px-3 py-2 tabular-nums whitespace-nowrap text-[var(--text-secondary)]">
                       {formatDate(doc.date)}
                     </td>
-                    <td className="py-2.5 px-4 tabular-nums" dir="ltr">
-                      {doc.contractNo || '-'}
+                    <td className="px-3 py-2 text-[var(--text-primary)] bidi-plaintext">
+                      {doc.party || '—'}
                     </td>
-                    <td className="py-2.5 px-4 bidi-plaintext">{doc.party || '-'}</td>
-                    <td className="py-2.5 px-4 bidi-plaintext font-medium text-[var(--accent-primary)]">
-                      {doc.receiver || '-'}
+                    <td className="px-3 py-2 text-[var(--text-secondary)] bidi-plaintext">
+                      {doc.islandSystem || '—'}
                     </td>
-                    <td className="py-2.5 px-4 tabular-nums">{doc.items.length}</td>
-                    <td className="py-2.5 px-4">
-                      <div className="inline-flex items-center gap-1.5">
+                    <td className="px-3 py-2 text-[var(--text-secondary)]">
+                      {doc.unit || '—'}
+                    </td>
+                    <td dir="ltr" className="px-3 py-2 font-mono text-[var(--text-secondary)]">
+                      {doc.receiptNo || '—'}
+                    </td>
+                    <td className="px-3 py-2 tabular-nums font-bold text-[var(--accent-primary)]">
+                      {doc.items.length}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => setPrintDoc(doc)}
-                          className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
+                          data-testid={`miv-print-btn-${doc.id}`}
+                          onClick={() => {
+                            setPrintDocWasUndone(false);
+                            setPrintDoc(doc);
+                          }}
+                          title={isFa ? 'مشاهده و چاپ حواله' : 'Preview & Print'}
+                          className="h-7 px-2.5 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)] text-[var(--accent-primary)] text-[11px] font-semibold inline-flex items-center gap-1 transition-colors"
                         >
                           <Printer className="w-3.5 h-3.5" />
-                          <span>{t.controls.print}</span>
+                          <span>{isFa ? 'چاپ' : 'Print'}</span>
                         </button>
                         {canEdit && (
                           <>
                             <button
                               type="button"
-                              onClick={() => startEdit(doc)}
+                              data-testid={`miv-edit-btn-${doc.id}`}
+                              onClick={() => void startEdit(doc)}
+                              title={isFa ? 'ویرایش حواله' : 'Edit MIV'}
+                              aria-label={isFa ? `ویرایش ${doc.docNo}` : `Edit ${doc.docNo}`}
                               className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]"
-                              title={t.controls.edit}
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                             <button
                               type="button"
+                              data-testid={`miv-delete-btn-${doc.id}`}
                               onClick={() => setDeleteTarget(doc)}
-                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)]"
-                              title={t.controls.delete}
+                              title={isFa ? 'حذف حواله و بازگردانی موجودی' : 'Delete MIV & restore stock'}
+                              aria-label={isFa ? `حذف ${doc.docNo}` : `Delete ${doc.docNo}`}
+                              className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)]"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1446,54 +2106,113 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
             </tbody>
           </table>
         </StickyTableWrapper>
+
         <TablePaginationBar
           page={mivPagination.page}
           totalPages={mivPagination.totalPages}
-          total={mivPagination.total}
           pageSize={mivPagination.pageSize}
+          total={mivPagination.total}
           onPageChange={mivPagination.setPage}
           onPageSizeChange={mivPagination.setPageSize}
           lang={prefs.language}
         />
       </div>
 
-      {/* Printable Official MD1EX-FQP02/05-03 MIV Landscape Modal */}
+      {/* Official MIV Print Preview Modal (with Post-Print Undo & Redo Controls) */}
       {printDoc && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-6xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
-              <div>
-                <h3 className="text-sm font-bold">
-                  {isFa ? 'فرم رسمی درخواست کالا از انبار و حواله انبار' : 'Official Material Issue Voucher (MIV)'}
-                </h3>
-                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  {formCode ? `${formCode} · ` : ''}{printDoc.docNo}
-                </p>
+        <div
+          data-testid="miv-print-preview-modal"
+          className="fixed inset-0 z-[75] bg-black/65 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 print:hidden"
+        >
+          <div className="w-full max-w-[1160px] max-h-[94vh] flex flex-col rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] shadow-2xl overflow-hidden">
+            {/* Modal Toolbar */}
+            <div className="px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Printer className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                <span className="text-xs sm:text-sm font-bold text-[var(--text-primary)] truncate">
+                  {isFa
+                    ? `پیش‌نمایش چاپ حواله انبار — ${printDoc.docNo} (${MD1_MIV_FORM_CODE})`
+                    : `MIV Print Preview — ${printDoc.docNo} (${MD1_MIV_FORM_CODE})`}
+                </span>
               </div>
-              <div className="flex items-center gap-2">
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {/* Post-Print Undo & Redo Controls */}
+                {canEdit && (
+                  <div
+                    dir="ltr"
+                    className="inline-flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5"
+                  >
+                    <button
+                      type="button"
+                      data-testid="miv-preview-undo-btn"
+                      disabled={!historyStatus.canUndo || historyBusy}
+                      onClick={() => void performUndo()}
+                      title={isFa ? 'واگرد (بازگردانی حواله و موجودی)' : 'Undo (revert MIV & stock)'}
+                      className="h-8 px-2.5 rounded-lg text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] disabled:opacity-35 inline-flex items-center gap-1"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'واگرد' : 'Undo'}</span>
+                    </button>
+                    <div className="w-px h-4 bg-[var(--border-subtle)] mx-0.5" />
+                    <button
+                      type="button"
+                      data-testid="miv-preview-redo-btn"
+                      disabled={!historyStatus.canRedo || historyBusy}
+                      onClick={() => void performRedo()}
+                      title={isFa ? 'انجام مجدد (اعمال مجدد حواله)' : 'Redo (reapply MIV)'}
+                      className="h-8 px-2.5 rounded-lg text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] disabled:opacity-35 inline-flex items-center gap-1"
+                    >
+                      <Redo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'انجام مجدد' : 'Redo'}</span>
+                    </button>
+                  </div>
+                )}
+
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+                  data-testid="miv-preview-print-btn"
+                  disabled={printDocWasUndone}
+                  onClick={() => triggerAppPrint()}
+                  className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-45 text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'چاپ فرم (A4 افقی)' : 'Print Form (A4 Landscape)'}</span>
+                  <span>{isFa ? 'چاپ حواله (A4 افقی)' : 'Print MIV (A4 Landscape)'}</span>
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setPrintDoc(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
+                  data-testid="miv-preview-close-btn"
+                  aria-label={isFa ? 'بستن پیش‌نمایش' : 'Close preview'}
+                  onClick={() => {
+                    setPrintDoc(null);
+                    setPrintDocWasUndone(false);
+                  }}
+                  className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="overflow-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto w-full max-w-[283mm] bg-white p-5 shadow-lg rounded-sm">
+            {printDocWasUndone && (
+              <div
+                data-testid="miv-preview-undone-banner"
+                className="px-4 py-2.5 bg-amber-500/15 border-b border-amber-500/35 text-xs font-semibold text-amber-800 dark:text-amber-300 flex flex-wrap items-center justify-between gap-2"
+              >
+                <span>
+                  {isFa
+                    ? 'این حواله با عملیات واگرد (Undo) بازگردانی شده و موجودی به انبار برگشته است. با دکمه «انجام مجدد (Redo)» می‌توانید دوباره آن را اعمال کنید.'
+                    : 'This MIV was reverted via Undo and stock has been restored. Click Redo above to reapply it.'}
+                </span>
+              </div>
+            )}
+
+            <div className="p-4 sm:p-6 overflow-auto bg-slate-200/75 dark:bg-slate-900/70">
+              <div className={printDocWasUndone ? 'opacity-50 pointer-events-none' : ''}>
                 <OfficialMivSheet
                   doc={printDoc}
-                  detailedItems={data?.detailedItems || []}
+                  detailedItems={detailedItemsList}
                   formatDate={formatDate}
                 />
               </div>
@@ -1502,25 +2221,29 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         </div>
       )}
 
+      {/* History List Print Report Modal */}
       <PrintReportModal
         open={printReportOpen}
         onClose={() => setPrintReportOpen(false)}
-        title={t.nav.miv}
+        title={isFa ? 'گزارش سابقه حواله‌های انبار (MIV)' : 'Issued MIV Documents Report'}
+        subtitle={activeProject?.name || ''}
         columns={historyColumns}
-        rows={mivDocuments}
+        rows={filteredDocuments}
       />
 
+      {/* Delete Confirmation Modal */}
       <ConfirmActionModal
         open={Boolean(deleteTarget)}
-        title={isFa ? 'تأیید حذف حواله انبار (MIV)' : 'Confirm MIV Deletion'}
+        title={isFa ? 'حذف حواله انبار' : 'Delete MIV Document'}
         message={
           deleteTarget
             ? isFa
-              ? `آیا از حذف حواله انبار «${deleteTarget.docNo}» اطمینان دارید؟ موجودی اقلام مربوطه بازگردانی خواهد شد.`
-              : `Delete MIV document "${deleteTarget.docNo}"? Related inventories will be restored.`
+              ? `آیا از حذف حواله شماره «${deleteTarget.docNo}» اطمینان دارید؟ مقادیر کسرشده به‌طور خودکار به موجودی انبارهای کارفرما و پیمانکار بازگردانده می‌شود.`
+              : `Delete MIV "${deleteTarget.docNo}"? Deducted stock will be automatically restored to Employer/Contractor inventories.`
             : ''
         }
-        confirmLabel={t.controls.delete}
+        confirmLabel={isFa ? 'تأیید حذف و بازگردانی موجودی' : 'Delete & Restore Stock'}
+        danger
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />

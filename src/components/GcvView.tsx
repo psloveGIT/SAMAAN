@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, FileCheck2, Pencil, Printer, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
+import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { buildPrintPageRule } from '../shared/printPageCss.ts';
@@ -506,6 +508,15 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   const formCode = getEmployerFormCode(activeEmployer, '11-03');
 
   const [data, setData] = useState<GcvApiResponse | null>(null);
+  const suggestedReceiptNo = useMemo(
+    () =>
+      generateNextPlantAwareDocNo(
+        'GCV',
+        (data?.documents || []).map((d) => d.receiptNo),
+        extractPlantDocConfig(activeProject),
+      ),
+    [data?.documents, activeProject],
+  );
   const [loading, setLoading] = useState(true);
 
   const [receiptNo, setReceiptNo] = useState('');
@@ -932,16 +943,28 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
           {/* Row 1: Core Document Details */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.gcvReceiptNo} *
-              </label>
+              <div className="flex items-center justify-between gap-1 mb-1">
+                <label className="block text-[11px] text-[var(--text-secondary)]">
+                  {t.headers.gcvReceiptNo} *
+                </label>
+                {!editingDoc && (
+                  <button
+                    type="button"
+                    onClick={() => setReceiptNo(suggestedReceiptNo)}
+                    className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
+                    dir="ltr"
+                  >
+                    {suggestedReceiptNo}
+                  </button>
+                )}
+              </div>
               <input
                 type="text"
                 required
                 dir={isFa && !receiptNo ? 'rtl' : 'ltr'}
                 value={receiptNo}
                 onChange={(e) => setReceiptNo(e.target.value)}
-                placeholder="GCV-1405-001"
+                placeholder={suggestedReceiptNo}
                 className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
                   isFa && !receiptNo ? 'text-right' : 'text-left'
                 }`}
@@ -1471,7 +1494,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => triggerAppPrint()}
                   className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />

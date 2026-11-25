@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, CornerUpLeft, Pencil, Printer, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { roundQty } from '../shared/formulas.ts';
+import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { buildPrintPageRule } from '../shared/printPageCss.ts';
@@ -440,6 +442,15 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
 
   const [docType, setDocType] = useState<SmrOnlyType>('smr_contractor');
   const [docNo, setDocNo] = useState('');
+  const suggestedDocNo = useMemo(
+    () =>
+      generateNextPlantAwareDocNo(
+        'SMR',
+        (data?.documents || []).map((d) => d.docNo),
+        extractPlantDocConfig(activeProject),
+      ),
+    [data?.documents, activeProject],
+  );
   const [date, setDate] = useState(getTodayIso());
   const [purchasePackageNo, setPurchasePackageNo] = useState('');
   const [supplier, setSupplier] = useState('');
@@ -970,16 +981,28 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
           {/* Row 1: SMR No, SMR Date, Delivered By, Purchase Package */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره فرم ارجاع' : 'SMR No.'} *
-              </label>
+              <div className="flex items-center justify-between gap-1 mb-1">
+                <label className="block text-[11px] text-[var(--text-secondary)]">
+                  {isFa ? 'شماره فرم ارجاع' : 'SMR No.'} *
+                </label>
+                {!editingDoc && (
+                  <button
+                    type="button"
+                    onClick={() => setDocNo(suggestedDocNo)}
+                    className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
+                    dir="ltr"
+                  >
+                    {suggestedDocNo}
+                  </button>
+                )}
+              </div>
               <input
                 type="text"
                 required
                 dir={isFa && !docNo ? 'rtl' : 'ltr'}
                 value={docNo}
                 onChange={(e) => setDocNo(e.target.value)}
-                placeholder="SMR-1405-001"
+                placeholder={suggestedDocNo}
                 className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
                   isFa && !docNo ? 'text-right' : 'text-left'
                 }`}
@@ -1444,7 +1467,7 @@ export const SmrView: React.FC<SmrViewProps> = ({ refreshSignal, onDataChanged }
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => triggerAppPrint()}
                   className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />

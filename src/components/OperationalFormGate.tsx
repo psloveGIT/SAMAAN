@@ -1,35 +1,26 @@
 import React from 'react';
-import {
-  ArrowLeft,
-  ArrowRight,
-  Building2,
-  CheckCircle2,
-  FileUp,
-  Lock,
-} from 'lucide-react';
+import { Building2, CheckCircle2, Lock } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import {
   getEmployerFormSectionsSummary,
   getOperationalFormSectionMeta,
   type OperationalFormSectionKey,
 } from '../shared/formAccess.ts';
+import { DeveloperFormRequestPanel } from './DeveloperFormRequestPanel.tsx';
 
 interface OperationalFormGateProps {
   sectionKey: OperationalFormSectionKey;
-  onGoToUploadForms: (sectionKey: OperationalFormSectionKey) => void;
   onSelectSection: (sectionKey: OperationalFormSectionKey) => void;
 }
 
 export const OperationalFormGate: React.FC<OperationalFormGateProps> = ({
   sectionKey,
-  onGoToUploadForms,
   onSelectSection,
 }) => {
   const { prefs, activeEmployer } = useApp();
   const isFa = prefs.language === 'fa';
   const meta = getOperationalFormSectionMeta(sectionKey);
   const summary = getEmployerFormSectionsSummary(activeEmployer);
-  const isMd1 = activeEmployer.id === 'mapna-md1';
   const employerLabel = activeEmployer.shortName
     ? `${activeEmployer.nameFa} (${activeEmployer.shortName})`
     : activeEmployer.nameFa;
@@ -37,16 +28,16 @@ export const OperationalFormGate: React.FC<OperationalFormGateProps> = ({
   return (
     <div
       data-testid={`operational-form-gate-${sectionKey}`}
-      className="max-w-4xl mx-auto py-4 sm:py-8 space-y-5"
+      className="max-w-4xl mx-auto py-3 sm:py-6 space-y-5"
     >
-      {/* Main Gate Card */}
+      {/* Locked Section Notice Header */}
       <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-sm overflow-hidden">
-        <div className="p-6 sm:p-8 flex flex-col items-center text-center space-y-5">
-          <div className="w-14 h-14 rounded-2xl bg-[var(--accent-soft)] border border-[var(--accent-primary)]/20 flex items-center justify-center text-[var(--accent-primary)]">
-            <Lock className="w-6 h-6" />
+        <div className="p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-[var(--accent-soft)] border border-[var(--accent-primary)]/20 flex items-center justify-center text-[var(--accent-primary)] shrink-0">
+            <Lock className="w-5 h-5" />
           </div>
 
-          <div className="space-y-2 max-w-2xl">
+          <div className="space-y-1.5 flex-1 min-w-0">
             <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-muted)]">
               <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
               <span>{employerLabel}</span>
@@ -64,59 +55,28 @@ export const OperationalFormGate: React.FC<OperationalFormGateProps> = ({
 
             <p className="text-xs sm:text-[13px] text-[var(--text-secondary)] leading-7">
               {isFa ? (
-                isMd1 ? (
-                  <>
-                    فرم پیش‌فرض قبلی این بخش حذف شده و فرم جدید کارفرمای{' '}
-                    <strong className="text-[var(--text-primary)]">{employerLabel}</strong> برای بخش «
-                    <strong className="text-[var(--text-primary)]">{meta.titleFa}</strong>» هنوز جایگزین
-                    نشده است. برای فعال‌سازی دسترسی این بخش، ابتدا فایل فرم مورد نظر را در قسمت{' '}
-                    <strong className="text-[var(--text-primary)]">«آپلود و تعریف فرم‌ها»</strong> به
-                    برنامه وارد کنید.
-                  </>
-                ) : (
-                  <>
-                    برای کارفرمای{' '}
-                    <strong className="text-[var(--text-primary)]">{employerLabel}</strong> هنوز فرمی
-                    برای بخش «<strong className="text-[var(--text-primary)]">{meta.titleFa}</strong>»
-                    تعریف نشده است. ابتدا باید فرم مورد نظر این بخش را از قسمت{' '}
-                    <strong className="text-[var(--text-primary)]">«آپلود و تعریف فرم‌ها»</strong> به
-                    برنامه وارد کنید؛ بلافاصله پس از وارد کردن فرم، دسترسی شما به این بخش فعال می‌شود.
-                  </>
-                )
+                <>
+                  برای کارفرمای{' '}
+                  <strong className="text-[var(--text-primary)]">{employerLabel}</strong> هنوز فرم
+                  رسمی بخش «
+                  <strong className="text-[var(--text-primary)]">{meta.titleFa}</strong>» در سامانه
+                  تعریف نشده است. برای فعال‌سازی این بخش، لطفاً فرم مربوطه و مشخصات مورد نیاز را از
+                  طریق فرم زیر برای سازنده برنامه ارسال نمایید.
+                </>
               ) : (
                 <>
-                  No form template has been configured for{' '}
+                  No official form has been defined yet for{' '}
                   <strong className="text-[var(--text-primary)]">{employerLabel}</strong> in the{' '}
-                  <strong className="text-[var(--text-primary)]">{meta.titleEn}</strong> section yet.
-                  Upload this section&apos;s form in{' '}
-                  <strong className="text-[var(--text-primary)]">Upload &amp; Define Forms</strong> to
-                  immediately unlock access to this section.
+                  <strong className="text-[var(--text-primary)]">{meta.titleEn}</strong> section.
+                  Submit the form template and contact details below to request implementation by
+                  the developer.
                 </>
               )}
             </p>
           </div>
-
-          <div className="pt-1 flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              data-testid="gate-open-upload-form-btn"
-              onClick={() => onGoToUploadForms(sectionKey)}
-              className="h-10 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-2 shadow-sm transition-colors"
-            >
-              <FileUp className="w-4 h-4 shrink-0" />
-              <span>
-                {isFa ? 'ورود به بخش آپلود و تعریف فرم‌ها' : 'Go to Upload & Define Forms'}
-              </span>
-              {isFa ? (
-                <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
-              ) : (
-                <ArrowRight className="w-3.5 h-3.5 shrink-0" />
-              )}
-            </button>
-          </div>
         </div>
 
-        {/* 9-Section Activation Status Footer */}
+        {/* 9-Section Activation Status Matrix */}
         <div className="border-t border-[var(--border-subtle)] bg-[var(--bg-canvas)]/60 p-4 sm:p-5 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-bold text-[var(--text-primary)]">
@@ -138,11 +98,7 @@ export const OperationalFormGate: React.FC<OperationalFormGateProps> = ({
                 <button
                   key={sec.sectionKey}
                   type="button"
-                  onClick={() =>
-                    sec.hasAccess
-                      ? onSelectSection(sec.sectionKey)
-                      : onGoToUploadForms(sec.sectionKey)
-                  }
+                  onClick={() => onSelectSection(sec.sectionKey)}
                   className={`h-10 px-3 rounded-xl border text-start flex items-center justify-between gap-2 transition-colors ${
                     isCurrent
                       ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]/60 text-[var(--text-primary)]'
@@ -171,8 +127,8 @@ export const OperationalFormGate: React.FC<OperationalFormGateProps> = ({
                         ? 'فعال'
                         : 'Active'
                       : isFa
-                        ? 'آپلود'
-                        : 'Upload'}
+                        ? 'درخواست فرم'
+                        : 'Request'}
                   </span>
                 </button>
               );
@@ -180,6 +136,13 @@ export const OperationalFormGate: React.FC<OperationalFormGateProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Embedded Developer Contact & Form Submission Panel */}
+      <DeveloperFormRequestPanel
+        defaultRequestType="missing_form"
+        defaultEmployer={activeEmployer}
+        defaultSectionKey={sectionKey}
+      />
     </div>
   );
 };

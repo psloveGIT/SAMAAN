@@ -1,8 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import { CheckSquare, Printer, Square, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { formatDisplayNumber, formatIsoDate } from '../shared/jalali.ts';
+import {
+  computeAutoColumnWidths,
+  type AutoColumnDescriptor,
+} from '../shared/printAutoLayout.ts';
 export interface PrintColumnDef<T> {
   key: string;
   header: string;
@@ -74,6 +79,35 @@ export function PrintReportModal<T>({
     [open, columns, rows],
   );
 
+  const autoColLayout = useMemo(() => {
+    if (!open || activeColumns.length === 0) {
+      return { widthsPercent: [] as number[], recommendedFontPx: 9.5 };
+    }
+    const descriptors: AutoColumnDescriptor[] = activeColumns.map((col) => {
+      const sampleRow = rows.find((r) => {
+        const v = col.getValue(r);
+        return v !== null && v !== undefined && String(v).trim() !== '';
+      });
+      const sampleVal = sampleRow ? col.getValue(sampleRow) : '';
+      const isCompact = Boolean(col.isDate) || typeof sampleVal === 'number';
+      return {
+        key: col.key,
+        header: col.header,
+        kind: isCompact ? 'compact' : 'fluid',
+      };
+    });
+    const sampleRows = rows.slice(0, 120).map((row) =>
+      activeColumns.map((col) => {
+        const raw = col.getValue(row);
+        if (col.isDate && typeof raw === 'string' && raw.trim()) {
+          return formatIsoDate(raw, prefs.calendar);
+        }
+        return raw === null || raw === undefined ? '' : String(raw);
+      }),
+    );
+    return computeAutoColumnWidths(descriptors, sampleRows, { baseFontPx: 9.5, minFontPx: 7.4 });
+  }, [open, activeColumns, rows, prefs.calendar]);
+
   if (!open) return null;
 
   const toggleKey = (key: string) => {
@@ -87,7 +121,7 @@ export function PrintReportModal<T>({
 
   const handlePrint = () => {
     if (activeColumns.length === 0) return;
-    window.print();
+    triggerAppPrint();
   };
 
   const printPortal = createPortal(
@@ -191,7 +225,15 @@ export function PrintReportModal<T>({
         </div>
       </div>
 
-      <table className="samaan-dynamic-table">
+      <table
+        className="samaan-dynamic-table"
+        style={{ fontSize: `${autoColLayout.recommendedFontPx}px` }}
+      >
+        <colgroup>
+          {autoColLayout.widthsPercent.map((pct, i) => (
+            <col key={activeColumns[i]?.key || i} style={{ width: `${pct}%` }} />
+          ))}
+        </colgroup>
         <thead>
           <tr>
             {activeColumns.map((col) => (

@@ -21,6 +21,7 @@ import type {
   EmployerId,
   EmployerProfile,
   Language,
+  PlantAbbreviationPosition,
   ProjectInfo,
   ThemeMode,
   UserAccount,
@@ -95,6 +96,9 @@ interface AppContextValue {
   createProject: (input: {
     name: string;
     code?: string;
+    plantAbbreviation?: string;
+    usePlantAbbreviationInDocs?: boolean;
+    plantAbbreviationPosition?: PlantAbbreviationPosition;
     contractRef?: string;
     employerId?: EmployerId;
     employerConfig?: EmployerCustomConfig;
@@ -106,6 +110,9 @@ interface AppContextValue {
     input: {
       name?: string;
       code?: string;
+      plantAbbreviation?: string;
+      usePlantAbbreviationInDocs?: boolean;
+      plantAbbreviationPosition?: PlantAbbreviationPosition;
       contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
@@ -289,6 +296,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (input: {
       name: string;
       code?: string;
+      plantAbbreviation?: string;
+      usePlantAbbreviationInDocs?: boolean;
+      plantAbbreviationPosition?: PlantAbbreviationPosition;
       contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
@@ -300,6 +310,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({
           name: input.name,
           code: input.code,
+          plantAbbreviation: input.plantAbbreviation,
+          usePlantAbbreviationInDocs: input.usePlantAbbreviationInDocs,
+          plantAbbreviationPosition: input.plantAbbreviationPosition,
           contractRef: input.contractRef,
           employerId: input.employerId,
           employerConfig: input.employerConfig,
@@ -321,6 +334,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       input: {
         name?: string;
         code?: string;
+        plantAbbreviation?: string;
+        usePlantAbbreviationInDocs?: boolean;
+        plantAbbreviationPosition?: PlantAbbreviationPosition;
         contractRef?: string;
         employerId?: EmployerId;
         employerConfig?: EmployerCustomConfig;

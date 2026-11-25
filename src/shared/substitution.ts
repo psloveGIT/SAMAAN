@@ -1,4 +1,9 @@
 import type { DetailedComputed, SubstitutionLineItem } from './types.ts';
+import {
+  buildSequentialDocNoMatcher,
+  formatDocumentNumberWithPlantCode,
+  type PlantDocNumberConfig,
+} from './docNumbering.ts';
 
 function normalizeDigits(raw: string): string {
   return raw
@@ -144,18 +149,23 @@ export function resolveSupplierPrefix(supplierName?: string | null): string {
 
 /**
  * Generates the next sequential substitution number in the exact `XX-####` format
- * scoped per 2-letter supplier prefix (e.g. `TU-0001`, `TU-0002`, `ME-0001`, `PS-0001`).
+ * (or plant-abbreviation prefixed/infixed `NK-XX-####` / `XX-NK-####` when enabled)
+ * scoped per 2-letter supplier prefix.
  */
 export function generateNextSubstitutionDocNo(
   supplierName: string | undefined | null,
   existingDocNos: readonly string[],
+  plantConfig?: PlantDocNumberConfig | null,
 ): string {
   const prefix = resolveSupplierPrefix(supplierName);
-  const matcher = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+  const matcher = buildSequentialDocNoMatcher(prefix);
+  const used = new Set<string>();
   let maxSeq = 0;
 
   for (const rawNo of existingDocNos) {
-    const normalized = normalizeDigits(String(rawNo || '')).trim();
+    const normalized = normalizeDigits(String(rawNo || '')).trim().toUpperCase();
+    if (!normalized) continue;
+    used.add(normalized);
     const match = normalized.match(matcher);
     if (match) {
       const num = parseInt(match[1], 10);
@@ -165,14 +175,32 @@ export function generateNextSubstitutionDocNo(
     }
   }
 
-  return `${prefix}-${String(maxSeq + 1).padStart(4, '0')}`;
+  let next = maxSeq + 1;
+  let candidate = formatDocumentNumberWithPlantCode(
+    prefix,
+    String(next).padStart(4, '0'),
+    plantConfig,
+  );
+  while (used.has(candidate.toUpperCase())) {
+    next += 1;
+    candidate = formatDocumentNumberWithPlantCode(
+      prefix,
+      String(next).padStart(4, '0'),
+      plantConfig,
+    );
+  }
+  return candidate;
 }
 
 /**
  * Generates the next sequential auto-issued Warehouse Issue Voucher (MIV) number
- * (e.g. `MIV-0001`, `MIV-0002`, ...) avoiding collisions with any existing MIV numbers.
+ * (e.g. `MIV-0001`, `NK-MIV-0001`, or `MIV-NK-0001`), avoiding collisions with any existing MIV numbers.
  */
-export function generateNextAutoMivDocNo(existingMivDocNos: readonly string[]): string {
+export function generateNextAutoMivDocNo(
+  existingMivDocNos: readonly string[],
+  plantConfig?: PlantDocNumberConfig | null,
+): string {
+  const matcher = buildSequentialDocNoMatcher('MIV');
   const used = new Set<string>();
   let maxSeq = 0;
 
@@ -180,7 +208,7 @@ export function generateNextAutoMivDocNo(existingMivDocNos: readonly string[]): 
     const normalized = normalizeDigits(String(rawNo || '')).trim().toUpperCase();
     if (!normalized) continue;
     used.add(normalized);
-    const m = normalized.match(/^MIV-(\d+)$/);
+    const m = normalized.match(matcher);
     if (m) {
       const n = parseInt(m[1], 10);
       if (Number.isFinite(n) && n > maxSeq) {
@@ -190,10 +218,18 @@ export function generateNextAutoMivDocNo(existingMivDocNos: readonly string[]): 
   }
 
   let next = maxSeq + 1;
-  let candidate = `MIV-${String(next).padStart(4, '0')}`;
-  while (used.has(candidate)) {
+  let candidate = formatDocumentNumberWithPlantCode(
+    'MIV',
+    String(next).padStart(4, '0'),
+    plantConfig,
+  );
+  while (used.has(candidate.toUpperCase())) {
     next += 1;
-    candidate = `MIV-${String(next).padStart(4, '0')}`;
+    candidate = formatDocumentNumberWithPlantCode(
+      'MIV',
+      String(next).padStart(4, '0'),
+      plantConfig,
+    );
   }
   return candidate;
 }
@@ -265,7 +301,7 @@ export function getAvailableStockForSource(
   return source === 'mapna' ? Math.max(0, item.mapnaInventory) : Math.max(0, item.contractorInventory);
 }
 
-function uniqueJoined(values: Array<string | undefined | null>): string {
+export function uniqueJoinedValues(values: Array<string | undefined | null>, sep = ' / '): string {
   const seen = new Set<string>();
   const ordered: string[] = [];
   for (const raw of values) {
@@ -277,7 +313,11 @@ function uniqueJoined(values: Array<string | undefined | null>): string {
       ordered.push(clean);
     }
   }
-  return ordered.join(' / ');
+  return ordered.join(sep);
+}
+
+function uniqueJoined(values: Array<string | undefined | null>): string {
+  return uniqueJoinedValues(values, ' / ');
 }
 
 export interface SubstitutionHeaderMeta {
@@ -326,21 +366,85 @@ export function buildSubstitutionHeaderMeta(
 }
 
 /**
- * Builds the 2-line Cause of Replacement block (rule 1-27):
- * Line 1: دلیل تعویض قطعات
- * Line 2: تأمین کننده مجدد
+ * Builds the Cause of Replacement lines shown under «علت تعویض:»:
+ * Line 1: exact replacement reason text (without any "دلیل تعویض قطعات:" prefix)
+ * Line 2: تأمین کننده مجدد (when specified)
  */
 export function buildReplacementCauseLines(reason?: string | null, reprocureBy?: string | null): string[] {
   const lines: string[] = [];
-  const cleanReason = (reason || '').trim();
+  const cleanReason = (reason || '').replace(/\r\n/g, '\n').trim();
   const cleanReprocure = (reprocureBy || '').trim();
   if (cleanReason) {
-    lines.push(`دلیل تعویض قطعات: ${cleanReason}`);
+    lines.push(cleanReason);
   }
   if (cleanReprocure) {
     lines.push(`تأمین کننده مجدد: ${cleanReprocure}`);
   }
   return lines;
+}
+
+/**
+ * Builds the exact multiline text written to `repDescription` in Detailed Equipment
+ * (strictly the exact text printed under «علت تعویض:»).
+ */
+export function buildReplacementDetailedDescription(
+  reason?: string | null,
+  reprocureBy?: string | null,
+): string {
+  return buildReplacementCauseLines(reason, reprocureBy).join('\n');
+}
+
+/**
+ * Removes a specific reference token (e.g. a substitution docNo or MIV docNo) from a comma/Persian-comma separated field.
+ */
+export function removeRefTokenFromList(raw: string | undefined | null, tokenToRemove: string): string {
+  const target = (tokenToRemove || '').trim().toLowerCase();
+  if (!target) return (raw || '').trim();
+  const parts = String(raw || '')
+    .split(/[،,]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const remaining = parts.filter((p) => p.toLowerCase() !== target);
+  return remaining.join('، ');
+}
+
+/**
+ * Removes a multiline block (or legacy prefixed block) belonging to a deleted/edited substitution from `repDescription`.
+ */
+export function stripSubstitutionBlockFromText(
+  existing: string | undefined | null,
+  docNo: string,
+  reason?: string | null,
+  reprocureBy?: string | null,
+): string {
+  const cleanExisting = String(existing || '').replace(/\r\n/g, '\n').trim();
+  if (!cleanExisting) return '';
+
+  const exactBlock = buildReplacementDetailedDescription(reason, reprocureBy).trim();
+  const linesToRemove = new Set<string>();
+  if (exactBlock) {
+    for (const l of exactBlock.split('\n')) {
+      const t = l.trim();
+      if (t) linesToRemove.add(t);
+    }
+  }
+  const cleanReason = (reason || '').trim();
+  if (cleanReason) {
+    linesToRemove.add(`دلیل تعویض قطعات: ${cleanReason}`);
+  }
+
+  const normalizedDoc = (docNo || '').trim().toLowerCase();
+  const keptLines = cleanExisting
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((line) => {
+      if (!line) return false;
+      if (linesToRemove.has(line)) return false;
+      if (normalizedDoc && line.toLowerCase().includes(normalizedDoc)) return false;
+      return true;
+    });
+
+  return keptLines.join('\n').trim();
 }
 
 /**

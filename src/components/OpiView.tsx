@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import {
   CheckCircle2,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
@@ -637,6 +639,15 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
 
   // Invitation Form State
   const [invitationNo, setInvitationNo] = useState('');
+  const suggestedInvitationNo = useMemo(
+    () =>
+      generateNextPlantAwareDocNo(
+        'OPI',
+        (data?.invitations || []).map((i) => i.invitationNo),
+        extractPlantDocConfig(activeProject),
+      ),
+    [data?.invitations, activeProject],
+  );
   const [issueDate, setIssueDate] = useState(getTodayIso());
   const [date, setDate] = useState(getTodayIso());
   const [time, setTime] = useState('09:00');
@@ -1195,16 +1206,28 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.opiInvitationNo} *
-                  </label>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label className="block text-[11px] text-[var(--text-secondary)]">
+                      {t.headers.opiInvitationNo} *
+                    </label>
+                    {!editingInvitation && (
+                      <button
+                        type="button"
+                        onClick={() => setInvitationNo(suggestedInvitationNo)}
+                        className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
+                        dir="ltr"
+                      >
+                        {suggestedInvitationNo}
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="text"
                     required
                     dir={isFa && !invitationNo ? 'rtl' : 'ltr'}
                     value={invitationNo}
                     onChange={(e) => setInvitationNo(e.target.value)}
-                    placeholder="OPI-2026-001"
+                    placeholder={suggestedInvitationNo}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !invitationNo ? 'text-right' : 'text-left'
                     }`}
@@ -2038,7 +2061,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => triggerAppPrint()}
                   className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />

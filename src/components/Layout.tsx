@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   BarChart3,
   Boxes,
+  Bug,
   Building2,
   Calculator,
   Calendar,
@@ -16,7 +17,6 @@ import {
   DatabaseZap,
   Eye,
   FileCheck2,
-  FilePlus2,
   FileText,
   FolderTree,
   Globe,
@@ -63,9 +63,11 @@ import {
 } from '../shared/formAccess.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
+import { ErrorReportModal } from './ErrorReportModal.tsx';
 import { ProjectManagerModal } from './ProjectManagerModal.tsx';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 import { SamaanLogo } from './SamaanLogo.tsx';
+import { setDiagnosticActiveSection } from '../lib/diagnostics.ts';
 
 export type NavTabKey =
   | 'dashboard'
@@ -83,7 +85,6 @@ export type NavTabKey =
   | 'balance'
   | 'stocktake'
   | 'storageLabel'
-  | 'customForms'
   | 'employers'
   | 'search'
   | 'categories'
@@ -141,7 +142,12 @@ export const Layout: React.FC<LayoutProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [changePwOpen, setChangePwOpen] = React.useState(false);
   const [projectModalOpen, setProjectModalOpen] = React.useState(false);
+  const [errorReportOpen, setErrorReportOpen] = React.useState(false);
   const [historyMenuOpen, setHistoryMenuOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    setDiagnosticActiveSection(activeTab);
+  }, [activeTab]);
   const [navQuery, setNavQuery] = React.useState('');
   const [pendingUpdateInfo, setPendingUpdateInfo] = React.useState<{
     hasPendingUpdate: boolean;
@@ -267,7 +273,6 @@ export const Layout: React.FC<LayoutProps> = ({
         items: [
           { key: 'materialEstimation', label: t.nav.materialEstimation, icon: <Calculator className="w-4 h-4 shrink-0" /> },
           { key: 'stocktake', label: t.nav.stocktake, icon: <ClipboardCheck className="w-4 h-4 shrink-0" /> },
-          { key: 'customForms', label: t.nav.customForms, icon: <FilePlus2 className="w-4 h-4 shrink-0" /> },
         ],
       },
       {
@@ -556,7 +561,7 @@ export const Layout: React.FC<LayoutProps> = ({
                             data-testid={`nav-tab-${item.key}`}
                             title={
                               isLockedForm
-                                ? `${item.label} — ${isFa ? 'نیاز به آپلود فرم' : 'Form upload required'}`
+                                ? `${item.label} — ${isFa ? 'فرم هنوز تعریف نشده (ارسال درخواست به سازنده)' : 'Form not defined yet (Request from developer)'}`
                                 : item.label
                             }
                             onClick={() => {
@@ -585,7 +590,7 @@ export const Layout: React.FC<LayoutProps> = ({
                             </span>
                             {isLockedForm && !sidebarCollapsed && (
                               <Lock
-                                aria-label={isFa ? 'نیاز به آپلود فرم' : 'Requires form upload'}
+                                aria-label={isFa ? 'فرم تعریف نشده' : 'Form not defined'}
                                 className="w-3.5 h-3.5 shrink-0 text-[var(--text-muted)]/75"
                               />
                             )}
@@ -1034,12 +1039,31 @@ export const Layout: React.FC<LayoutProps> = ({
             >
               <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
               <span>{activeProject?.name || t.brandFull}</span>
+              {activeProject?.plantAbbreviation && (
+                <span
+                  dir="ltr"
+                  className="px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] font-mono text-[10px] font-bold"
+                >
+                  {activeProject.plantAbbreviation}
+                </span>
+              )}
             </button>
             <span aria-hidden="true" className="opacity-40">·</span>
             <span className="font-medium">{todayFormatted}</span>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="topbar-error-report-btn"
+              onClick={() => setErrorReportOpen(true)}
+              aria-label={isFa ? 'گزارش خطا و لاگ عیب‌یابی' : 'Error Report & Diagnostics'}
+              title={isFa ? 'گزارش خطا / لاگ هنگ و عیب‌یابی' : 'Error Report & Crash/Freeze Diagnostics'}
+              className="flex h-9 px-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:border-rose-300 dark:hover:border-rose-800 text-[var(--text-secondary)] hover:text-rose-600 dark:hover:text-rose-400 text-xs font-medium items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <Bug className="w-4 h-4 text-rose-500" />
+              <span className="hidden xl:inline">{isFa ? 'گزارش خطا' : 'Report Bug'}</span>
+            </button>
             {onOpenShortcuts && (
               <button
                 type="button"
@@ -1094,6 +1118,12 @@ export const Layout: React.FC<LayoutProps> = ({
           onTabChange('employers');
           setMobileMenuOpen(false);
         }}
+      />
+
+      <ErrorReportModal
+        open={errorReportOpen}
+        onClose={() => setErrorReportOpen(false)}
+        activeSection={activeTab}
       />
     </div>
   );

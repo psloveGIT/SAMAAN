@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, ClipboardList, Pencil, Printer, RotateCcw, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
@@ -1300,7 +1301,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => triggerAppPrint()}
                   className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />

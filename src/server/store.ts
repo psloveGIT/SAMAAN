@@ -28,6 +28,7 @@ import type {
   OsdrReportRecord,
   PackingStatusMeta,
   PeriodicInspectionRecord,
+  PlantAbbreviationPosition,
   ProjectInfo,
   SiteEntryMinutesRecord,
   SubstitutionRecord,
@@ -35,6 +36,7 @@ import type {
   TrashRecord,
   UserAccount,
 } from '../shared/types.ts';
+import { sanitizePlantAbbreviation } from '../shared/docNumbering.ts';
 import { computeDetailedEntry } from '../shared/formulas.ts';
 import { normalizeDigits } from '../shared/jalali.ts';
 import {
@@ -682,12 +684,20 @@ export class ProjectManager {
         const rawList = Array.isArray(parsed.projects) && parsed.projects.length > 0
           ? parsed.projects
           : [{ id: 'default', name: 'پروژه پیش‌فرض', code: '', contractRef: '', employerId: DEFAULT_EMPLOYER_ID, createdAt: new Date().toISOString() }];
-        const projects: ProjectInfo[] = rawList.map((p) => ({
-          ...p,
-          contractRef: typeof p.contractRef === 'string' && p.contractRef.trim() ? p.contractRef.trim() : undefined,
-          employerId: typeof p.employerId === 'string' && p.employerId.trim() ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
-          employerConfig: sanitizeEmployerConfig(p.employerConfig),
-        }));
+        const projects: ProjectInfo[] = rawList.map((p) => {
+          const cleanAbbr = sanitizePlantAbbreviation(p.plantAbbreviation);
+          const pos: PlantAbbreviationPosition =
+            p.plantAbbreviationPosition === 'before_number' ? 'before_number' : 'prefix';
+          return {
+            ...p,
+            contractRef: typeof p.contractRef === 'string' && p.contractRef.trim() ? p.contractRef.trim() : undefined,
+            employerId: typeof p.employerId === 'string' && p.employerId.trim() ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
+            employerConfig: sanitizeEmployerConfig(p.employerConfig),
+            plantAbbreviation: cleanAbbr || undefined,
+            usePlantAbbreviationInDocs: Boolean(p.usePlantAbbreviationInDocs && cleanAbbr),
+            plantAbbreviationPosition: pos,
+          };
+        });
         const loaded: ProjectRegistryData = {
           authSecret: parsed.authSecret || crypto.randomBytes(32).toString('hex'),
           projects,
@@ -773,11 +783,17 @@ export class ProjectManager {
     contractRef?: string;
     employerId?: EmployerId;
     employerConfig?: EmployerCustomConfig;
+    plantAbbreviation?: string;
+    usePlantAbbreviationInDocs?: boolean;
+    plantAbbreviationPosition?: PlantAbbreviationPosition;
     copyUsersFromStore?: SamaanStore | null;
   }): ProjectInfo {
     const cleanName = normKey(params.name);
     const cleanCode = normKey(params.code);
     const cleanContractRef = normKey(params.contractRef);
+    const cleanAbbr = sanitizePlantAbbreviation(params.plantAbbreviation);
+    const abbrPos: PlantAbbreviationPosition =
+      params.plantAbbreviationPosition === 'before_number' ? 'before_number' : 'prefix';
     const baseSlug =
       cleanName
         .toLowerCase()
@@ -797,6 +813,9 @@ export class ProjectManager {
       contractRef: cleanContractRef || undefined,
       employerId: empId,
       employerConfig: sanitizeEmployerConfig(params.employerConfig),
+      plantAbbreviation: cleanAbbr || undefined,
+      usePlantAbbreviationInDocs: Boolean(params.usePlantAbbreviationInDocs && cleanAbbr),
+      plantAbbreviationPosition: abbrPos,
       createdAt: new Date().toISOString(),
     };
     this.registry.projects.push(info);
@@ -818,6 +837,9 @@ export class ProjectManager {
       contractRef?: string;
       employerId?: EmployerId;
       employerConfig?: EmployerCustomConfig;
+      plantAbbreviation?: string;
+      usePlantAbbreviationInDocs?: boolean;
+      plantAbbreviationPosition?: PlantAbbreviationPosition;
     },
   ): ProjectInfo | null {
     const clean = sanitizeProjectId(id);
@@ -837,6 +859,22 @@ export class ProjectManager {
     }
     if (params.employerConfig !== undefined) {
       target.employerConfig = sanitizeEmployerConfig(params.employerConfig);
+    }
+    if (params.plantAbbreviation !== undefined) {
+      const cleanAbbr = sanitizePlantAbbreviation(params.plantAbbreviation);
+      target.plantAbbreviation = cleanAbbr || undefined;
+      if (!cleanAbbr) {
+        target.usePlantAbbreviationInDocs = false;
+      }
+    }
+    if (params.usePlantAbbreviationInDocs !== undefined) {
+      target.usePlantAbbreviationInDocs = Boolean(
+        params.usePlantAbbreviationInDocs && target.plantAbbreviation,
+      );
+    }
+    if (params.plantAbbreviationPosition !== undefined) {
+      target.plantAbbreviationPosition =
+        params.plantAbbreviationPosition === 'before_number' ? 'before_number' : 'prefix';
     }
     this.saveRegistryData(this.registry);
     return target;
@@ -888,20 +926,33 @@ export class ProjectManager {
     const idx = list.findIndex((e) => e.id === clean);
     if (idx === -1) return null;
     const prev = list[idx];
-    const merged = {
-      ...prev,
-      ...(raw as object),
-      id: prev.id,
-      isBuiltIn: Boolean(prev.isBuiltIn || isBuiltInEmployerId(prev.id)),
-      createdAt: prev.createdAt,
-      updatedAt: new Date().toISOString(),
-    };
+    const builtIn = Boolean(prev.isBuiltIn || isBuiltInEmployerId(prev.id));
+    const rawObj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    // Built-in employers are strictly read-only for profile/contact/logo fields; only uploadedForms may change.
+    const merged = builtIn
+      ? {
+          ...prev,
+          uploadedForms:
+            rawObj.uploadedForms !== undefined ? rawObj.uploadedForms : prev.uploadedForms,
+          id: prev.id,
+          isBuiltIn: true,
+          createdAt: prev.createdAt,
+          updatedAt: new Date().toISOString(),
+        }
+      : {
+          ...prev,
+          ...rawObj,
+          id: prev.id,
+          isBuiltIn: false,
+          createdAt: prev.createdAt,
+          updatedAt: new Date().toISOString(),
+        };
     const sanitized = sanitizeEmployerProfile(merged);
     if (!sanitized) return null;
     list[idx] = sanitized;
-    this.registry.employers = list;
+    this.registry.employers = ensureDefaultEmployers(list);
     this.saveRegistryData(this.registry);
-    return sanitized;
+    return this.registry.employers.find((e) => e.id === clean) || sanitized;
   }
 
   public deleteEmployer(id: string): { ok: boolean; reason?: 'not_found' | 'cannot_delete_builtin' } {

@@ -92,13 +92,14 @@ export function serializeIranFixedPhoneParts(provinceCode: string, subscriber: s
 }
 
 /**
- * Validates Iranian fixed phone / fax: +98 (fixed) + 2-digit province code without leading zero + 8-digit number.
+ * Validates Iranian fixed phone / fax: +98 (fixed) + 2-digit province code without leading zero + 8-digit (or 7-8 digit when allowSevenDigit) number.
  */
 export function validateIranFixedPhoneParts(
   provinceCode: string,
   subscriber: string,
   labelFa = 'شماره تلفن',
   labelEn = 'Phone number',
+  options?: { allowSevenDigit?: boolean },
 ): FieldValidationResult {
   const pRaw = provinceCode.trim();
   const sRaw = subscriber.trim();
@@ -118,12 +119,18 @@ export function validateIranFixedPhoneParts(
     };
   }
 
-  if (!/^[0-9]{8}$/.test(s)) {
+  const allowSeven = Boolean(options?.allowSevenDigit);
+  const subRegex = allowSeven ? /^[0-9]{7,8}$/ : /^[0-9]{8}$/;
+  if (!subRegex.test(s)) {
     return {
       valid: false,
       normalized: '',
-      errorFa: `${labelFa}: بخش شماره باید دقیقاً ۸ رقم عددی باشد.`,
-      errorEn: `${labelEn}: Subscriber number must be exactly 8 digits.`,
+      errorFa: allowSeven
+        ? `${labelFa}: بخش شماره باید ۷ یا ۸ رقم عددی باشد.`
+        : `${labelFa}: بخش شماره باید دقیقاً ۸ رقم عددی باشد.`,
+      errorEn: allowSeven
+        ? `${labelEn}: Subscriber number must be 7 or 8 digits.`
+        : `${labelEn}: Subscriber number must be exactly 8 digits.`,
     };
   }
 

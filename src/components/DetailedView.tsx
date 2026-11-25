@@ -42,6 +42,10 @@ import { ItemImageDropzone } from './ItemImageDropzone.tsx';
 import { ItemImageLightbox } from './ItemImageLightbox.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+import {
+  ReprocurementMatchModal,
+  type ReprocurementSourceSummary,
+} from './ReprocurementMatchModal.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
 import { type DetailedAiExtractionResult, SmartIntakeModal } from './SmartIntakeModal.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
@@ -140,6 +144,7 @@ function emptyDetailedDraft(): Partial<DetailedEntry> {
     opiDate: '',
     merNo: '',
     merStatus: '',
+    merDescription: '',
     notes: '',
     materialBalanceNo: '',
     balanceStatus: '',
@@ -250,6 +255,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [knownPackings, setKnownPackings] = useState<string[]>([]);
   const [knownPackages, setKnownPackages] = useState<string[]>([]);
   const [linkedGeneral, setLinkedGeneral] = useState<GeneralSharedInfo | null>(null);
+  const [isSubReprocurement, setIsSubReprocurement] = useState(false);
+  const [isShortageReprocurement, setIsShortageReprocurement] = useState(false);
+  const [reprocModalState, setReprocModalState] = useState<{
+    open: boolean;
+    sourceItem: ReprocurementSourceSummary | null;
+    enableSub: boolean;
+    enableShortage: boolean;
+  }>({ open: false, sourceItem: null, enableSub: false, enableShortage: false });
 
   // Safe Delete Confirmation
   const [deleteTarget, setDeleteTarget] = useState<DetailedComputed | null>(null);
@@ -388,6 +401,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       setItemNoTaken(false);
       setItemNoManual(false);
       setGenDescManual(false);
+      setIsSubReprocurement(false);
+      setIsShortageReprocurement(false);
 
       const base = emptyDetailedDraft();
       const targetShipment = (overrideShipment ?? shipmentFilter).trim();
@@ -701,6 +716,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'supplier', group: 'specs' as DetailedGroupId, header: t.headers.supplier, hideInTable: true, get: (r: DetailedComputed) => r.supplier },
       { key: 'origin', group: 'specs' as DetailedGroupId, header: t.headers.origin, hideInTable: true, get: (r: DetailedComputed) => r.origin },
       { key: 'mtoRef', group: 'specs' as DetailedGroupId, header: t.headers.mtoRef, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.mtoRef },
+      { key: 'notes', group: 'specs' as DetailedGroupId, header: t.headers.merNotes, hideInTable: true, get: (r: DetailedComputed) => r.notes },
 
       // 4. تعداد تجهیزات
       { key: 'packingQty', group: 'quantities' as DetailedGroupId, header: t.headers.packingQty, isNum: true, isLtr: true, get: (r: DetailedComputed) => r.packingQty },
@@ -743,7 +759,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'opiDate', group: 'opening' as DetailedGroupId, header: t.headers.opiDate, isDate: true, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.opiDate },
       { key: 'merNo', group: 'opening' as DetailedGroupId, header: t.headers.merNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.merNo },
       { key: 'merStatus', group: 'opening' as DetailedGroupId, header: t.headers.merStatus, hideInTable: true, get: (r: DetailedComputed) => r.merStatus },
-      { key: 'notes', group: 'opening' as DetailedGroupId, header: t.headers.merNotes, hideInTable: true, get: (r: DetailedComputed) => r.notes },
+      { key: 'merDescription', group: 'opening' as DetailedGroupId, header: t.headers.merDescription, hideInTable: true, get: (r: DetailedComputed) => r.merDescription },
 
       // 7. جایگزینی تجهیزات
       { key: 'repNo', group: 'substitution' as DetailedGroupId, header: t.headers.repNo, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.repNo },
@@ -823,6 +839,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     setItemNoTaken(false);
     setItemNoManual(true);
     setGenDescManual(Boolean(row.generalDescription));
+    setIsSubReprocurement(false);
+    setIsShortageReprocurement(false);
     setFormModalOpen(true);
 
     if (row.hasImage) {
@@ -935,12 +953,31 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           delete payload.itemImage;
           delete payload.itemImageThumb;
         }
-        await apiRequest(`/api/detailed/${editingId}`, {
+        const patchRes = await apiRequest<{ item?: DetailedComputed }>(`/api/detailed/${editingId}`, {
           method: 'PATCH',
           body: JSON.stringify(payload),
         });
         notify('success', isFa ? 'آیتم جزئیات ویرایش شد.' : 'Detailed item updated.');
         setFormModalOpen(false);
+        if (isSubReprocurement || isShortageReprocurement) {
+          const saved = patchRes?.item;
+          setReprocModalState({
+            open: true,
+            sourceItem: {
+              id: saved?.id || editingId,
+              shipmentNo: saved?.shipmentNo || draft.shipmentNo || '',
+              packingQty: Number(saved?.packingQty ?? draft.packingQty ?? 0),
+              countingUnit: saved?.countingUnit || draft.countingUnit || '',
+              itemCode: saved?.itemCode || draft.itemCode || '',
+              description: saved?.description || draft.description || '',
+              generalDescription: saved?.generalDescription || finalGenDesc || '',
+            },
+            enableSub: isSubReprocurement,
+            enableShortage: isShortageReprocurement,
+          });
+          setIsSubReprocurement(false);
+          setIsShortageReprocurement(false);
+        }
       } else {
         const payload: Partial<DetailedEntry> & { acknowledgeClosed: boolean } = {
           arrivalDate: draft.arrivalDate,
@@ -976,10 +1013,25 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           notes: draft.notes,
           acknowledgeClosed: ackClosed,
         };
-        await apiRequest('/api/detailed', {
+        const postRes = await apiRequest<{ item?: DetailedComputed }>('/api/detailed', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
+
+        const shouldOpenReproc = isSubReprocurement || isShortageReprocurement;
+        const reprocSource: ReprocurementSourceSummary | null = shouldOpenReproc
+          ? {
+              id: postRes?.item?.id || '',
+              shipmentNo: postRes?.item?.shipmentNo || draft.shipmentNo || '',
+              packingQty: Number(postRes?.item?.packingQty ?? draft.packingQty ?? 0),
+              countingUnit: postRes?.item?.countingUnit || draft.countingUnit || '',
+              itemCode: postRes?.item?.itemCode || draft.itemCode || '',
+              description: postRes?.item?.description || draft.description || '',
+              generalDescription: postRes?.item?.generalDescription || finalGenDesc || '',
+            }
+          : null;
+        const enableSubFlag = isSubReprocurement;
+        const enableShortageFlag = isShortageReprocurement;
 
         triggerAutoSnapshot(`Detailed ${draft.shipmentNo}`);
         onDataChanged();
@@ -1003,6 +1055,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           setGenDescManual(false);
           setItemNoManual(false);
           setItemNoTaken(false);
+          setIsSubReprocurement(false);
+          setIsShortageReprocurement(false);
           setDraft((prev) => ({
             ...emptyDetailedDraft(),
             shipmentNo: prev.shipmentNo,
@@ -1017,11 +1071,29 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             unit: prev.unit,
             countingUnit: normalizeCountingUnitToFa(prev.countingUnit) || 'عدد',
           }));
+          if (shouldOpenReproc && reprocSource) {
+            setReprocModalState({
+              open: true,
+              sourceItem: reprocSource,
+              enableSub: enableSubFlag,
+              enableShortage: enableShortageFlag,
+            });
+          }
           setSaving(false);
           return;
         } else {
           notify('success', isFa ? 'آیتم جزئیات ثبت و فرم بسته شد.' : 'Detailed item saved and closed.');
           setFormModalOpen(false);
+          setIsSubReprocurement(false);
+          setIsShortageReprocurement(false);
+          if (shouldOpenReproc && reprocSource) {
+            setReprocModalState({
+              open: true,
+              sourceItem: reprocSource,
+              enableSub: enableSubFlag,
+              enableShortage: enableShortageFlag,
+            });
+          }
         }
       }
 
@@ -2473,7 +2545,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   },
                   {
                     title: isFa ? 'مشخصات تجهیزات و محل مصرف' : 'Equipment Specs & Usage Location',
-                    keys: ['generalDescription', 'description', 'size', 'itemCode', 'storageLocation', 'receiver', 'supplier', 'origin', 'mtoRef', 'island', 'system', 'subSystem', 'unit'],
+                    keys: ['generalDescription', 'description', 'size', 'itemCode', 'storageLocation', 'receiver', 'supplier', 'origin', 'mtoRef', 'notes', 'island', 'system', 'subSystem', 'unit'],
                   },
                   {
                     title: isFa ? 'تعداد تجهیزات و موجودی انبار' : 'Quantities & Warehouse Stock',
@@ -2481,7 +2553,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   },
                   {
                     title: isFa ? 'وضعیت بازگشایی و جایگزینی تجهیزات' : 'Opening, Discrepancy & Substitution',
-                    keys: ['opiNo', 'opiDate', 'merNo', 'merStatus', 'notes', 'repNo', 'repStatus', 'repReprocured', 'repDescription'],
+                    keys: ['opiNo', 'opiDate', 'merNo', 'merStatus', 'merDescription', 'repNo', 'repStatus', 'repReprocured', 'repDescription'],
                   },
                   {
                     title: isFa ? 'بالانس متریال، رسید مصرف، حواله و برگشت متریال' : 'Balance, Consumption Receipt, MIV & SMR',
@@ -2515,7 +2587,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         <div
                           key={c.key}
                           className={`p-2.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-subtle)] ${
-                            c.key === 'description' || c.key === 'notes' || c.key === 'repDescription' ? 'sm:col-span-2' : ''
+                            c.key === 'description' || c.key === 'notes' || c.key === 'repDescription' || c.key === 'merDescription' ? 'sm:col-span-2' : ''
                           }`}
                         >
                           <div className="text-[11px] text-[var(--text-muted)]">{c.header}</div>
@@ -3101,14 +3173,14 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
                 <div className="sm:col-span-2 lg:col-span-3">
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.notes}
+                    {t.headers.merNotes}
                   </label>
-                  <input
-                    type="text"
+                  <textarea
+                    rows={2}
                     dir={!draft.notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
                     value={draft.notes || ''}
                     onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext resize-y"
                   />
                 </div>
               </div>
@@ -3216,11 +3288,69 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               </div>
 
               {editingId ? (
-                <div className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] text-[var(--text-secondary)] space-y-1">
+                <div className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs space-y-3">
                   <div className="font-semibold text-[var(--text-primary)]">
-                    {isFa ? 'خلاصه وضعیت عملیاتی (تغییر از بخش‌های اختصاصی):' : 'Operational Summary (managed via dedicated modules):'}
+                    {isFa ? 'وضعیت کسری/مغایرت و جایگزینی و خلاصه عملیاتی' : 'Discrepancy, Substitution & Operational Summary'}
                   </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {t.headers.merStatus}
+                      </label>
+                      <select
+                        value={draft.merStatus || ''}
+                        onChange={(e) => setDraft({ ...draft, merStatus: e.target.value })}
+                        data-testid="detailed-edit-mer-status"
+                        className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                      >
+                        <option value="">{isFa ? '— بدون وضعیت —' : '— None —'}</option>
+                        <option value="باز">{isFa ? 'باز' : 'Open (باز)'}</option>
+                        <option value="بسته">{isFa ? 'بسته' : 'Closed (بسته)'}</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {t.headers.repStatus}
+                      </label>
+                      <select
+                        value={draft.repStatus === 'باز' || draft.repStatus === 'بسته' ? draft.repStatus : ''}
+                        onChange={(e) => setDraft({ ...draft, repStatus: e.target.value })}
+                        data-testid="detailed-edit-rep-status"
+                        className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                      >
+                        <option value="">{isFa ? '— بدون وضعیت —' : '— None —'}</option>
+                        <option value="باز">{isFa ? 'باز' : 'Open (باز)'}</option>
+                        <option value="بسته">{isFa ? 'بسته' : 'Closed (بسته)'}</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {t.headers.merDescription}
+                      </label>
+                      <textarea
+                        rows={2}
+                        dir={!draft.merDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                        value={draft.merDescription || ''}
+                        onChange={(e) => setDraft({ ...draft, merDescription: e.target.value })}
+                        data-testid="detailed-edit-mer-description"
+                        className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext resize-y"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {t.headers.repDescription}
+                      </label>
+                      <textarea
+                        rows={2}
+                        dir={!draft.repDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                        value={draft.repDescription || ''}
+                        onChange={(e) => setDraft({ ...draft, repDescription: e.target.value })}
+                        data-testid="detailed-edit-rep-description"
+                        className="w-full px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext resize-y"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--text-secondary)] tabular-nums pt-2 border-t border-[var(--border-subtle)]/70">
                     <span>{t.headers.opiNo}: {draft.opiNo || '-'}</span>
                     <span>{t.headers.actualQty}: {draft.actualQty ?? (isFa ? 'در انتظار بازگشایی' : 'Pending Opening')}</span>
                     <span>{t.headers.repReprocured}: {draft.repReprocured || '-'}</span>
@@ -3233,6 +3363,38 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   </div>
                 </div>
               ) : null}
+
+              {/* Re-procurement matching checkboxes (side-by-side) */}
+              <div className="p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="flex items-center gap-2.5 text-xs font-medium text-[var(--text-primary)] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isSubReprocurement}
+                    onChange={(e) => setIsSubReprocurement(e.target.checked)}
+                    data-testid="detailed-reproc-sub-checkbox"
+                    className="w-4 h-4 rounded accent-[var(--accent-primary)]"
+                  />
+                  <span>
+                    {isFa
+                      ? 'این کالا، تأمین مجدد کالای جایگزین شده است'
+                      : 'This item is a re-procurement of a substituted item'}
+                  </span>
+                </label>
+                <label className="flex items-center gap-2.5 text-xs font-medium text-[var(--text-primary)] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isShortageReprocurement}
+                    onChange={(e) => setIsShortageReprocurement(e.target.checked)}
+                    data-testid="detailed-reproc-shortage-checkbox"
+                    className="w-4 h-4 rounded accent-[var(--accent-primary)]"
+                  />
+                  <span>
+                    {isFa
+                      ? 'این کالا، تأمین مجدد کسری تجهیزات است'
+                      : 'This item is a re-procurement of equipment shortage'}
+                  </span>
+                </label>
+              </div>
 
               <div className="pt-3 border-t border-[var(--border-subtle)] flex flex-wrap justify-end gap-2">
                 <button
@@ -3335,21 +3497,28 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.merStatus}</label>
-                  <input
-                    type="text"
+                  <select
                     value={bulkPatch.merStatus}
                     onChange={(e) => setBulkPatch((p) => ({ ...p, merStatus: e.target.value }))}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
-                  />
+                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  >
+                    <option value="">{isFa ? '-- بدون تغییر --' : '-- No Change --'}</option>
+                    <option value="باز">{isFa ? 'باز' : 'Open (باز)'}</option>
+                    <option value="بسته">{isFa ? 'بسته' : 'Closed (بسته)'}</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.repStatus}</label>
-                  <input
-                    type="text"
+                  <select
                     value={bulkPatch.repStatus}
                     onChange={(e) => setBulkPatch((p) => ({ ...p, repStatus: e.target.value }))}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
-                  />
+                    data-testid="detailed-bulk-rep-status"
+                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  >
+                    <option value="">{isFa ? '-- بدون تغییر --' : '-- No Change --'}</option>
+                    <option value="باز">{isFa ? 'باز' : 'Open (باز)'}</option>
+                    <option value="بسته">{isFa ? 'بسته' : 'Closed (بسته)'}</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.itemCategory}</label>
@@ -3495,6 +3664,25 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               : prev,
           );
           onDataChanged();
+        }}
+      />
+
+      <ReprocurementMatchModal
+        open={reprocModalState.open}
+        onClose={() =>
+          setReprocModalState({
+            open: false,
+            sourceItem: null,
+            enableSub: false,
+            enableShortage: false,
+          })
+        }
+        sourceItem={reprocModalState.sourceItem}
+        enableSubstitutionMatch={reprocModalState.enableSub}
+        enableShortageMatch={reprocModalState.enableShortage}
+        onApplied={() => {
+          onDataChanged();
+          loadData();
         }}
       />
     </div>

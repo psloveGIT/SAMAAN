@@ -6,15 +6,21 @@ import {
   ArrowRight,
   CheckCircle2,
   ClipboardList,
+  Edit3,
   FileText,
   History,
   Plus,
   Printer,
+  Redo2,
+  RotateCcw,
   Trash2,
+  Undo2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { triggerAppPrint } from '../lib/print.ts';
+import { extractPlantDocConfig } from '../shared/docNumbering.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { buildPrintPageRule } from '../shared/printPageCss.ts';
 import {
@@ -91,6 +97,8 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   // Step 1 state (Section A — items needing replacement + global fields)
   const [step1Rows, setStep1Rows] = useState<Record<string, Step1RowDraft>>({});
+  const [step1UndoStack, setStep1UndoStack] = useState<Array<Record<string, Step1RowDraft>>>([]);
+  const [step1RedoStack, setStep1RedoStack] = useState<Array<Record<string, Step1RowDraft>>>([]);
   const [supplyUrgency, setSupplyUrgency] = useState<SupplyUrgencyValue>(DEFAULT_SUPPLY_URGENCY);
   const [reason, setReason] = useState('');
   const [reprocureBy, setReprocureBy] = useState('');
@@ -99,6 +107,9 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   // Step 2 state (Section B — in-stock replacement items)
   const [step2Rows, setStep2Rows] = useState<Record<string, Step2RowDraft>>({});
+  const [step2UndoStack, setStep2UndoStack] = useState<Array<Record<string, Step2RowDraft>>>([]);
+  const [step2RedoStack, setStep2RedoStack] = useState<Array<Record<string, Step2RowDraft>>>([]);
+  const [editingRecord, setEditingRecord] = useState<SubstitutionRecord | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Print preview modal state (Substitution Form + Auto-Issued MIV Voucher(s))
@@ -116,9 +127,10 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     setLoading(true);
     try {
       const res = await apiRequest<SubstitutionsApiResponse>('/api/substitutions');
-      setRecords(res.records || []);
-      setDetailedItems(res.detailedItems || []);
-      setMivDocuments(res.mivDocuments || []);
+      // Always clone arrays so React state/useMemo immediately reflects mutations in offline mode
+      setRecords([...(res.records || [])]);
+      setDetailedItems([...(res.detailedItems || [])]);
+      setMivDocuments([...(res.mivDocuments || [])]);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     } finally {
@@ -150,81 +162,170 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   const step1List = useMemo(() => Object.values(step1Rows), [step1Rows]);
   const step2List = useMemo(() => Object.values(step2Rows), [step2Rows]);
 
-  const toggleStep1Row = useCallback((item: DetailedComputed) => {
-    setStep1Rows((prev) => {
-      if (prev[item.id]) {
-        const next = { ...prev };
-        delete next[item.id];
+  const commitStep1Selection = useCallback(
+    (updater: (prev: Record<string, Step1RowDraft>) => Record<string, Step1RowDraft>) => {
+      setStep1Rows((prev) => {
+        const next = updater(prev);
+        if (next === prev) return prev;
+        setStep1UndoStack((stack) => [...stack.slice(-29), prev]);
+        setStep1RedoStack([]);
         return next;
-      }
-      return {
-        ...prev,
-        [item.id]: {
-          item,
-          qtyStr: '1',
-          remarks: '',
-        },
-      };
+      });
+    },
+    [],
+  );
+
+  const handleStep1Undo = useCallback(() => {
+    setStep1UndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const previous = stack[stack.length - 1];
+      setStep1Rows((current) => {
+        setStep1RedoStack((redo) => [...redo.slice(-29), current]);
+        return previous;
+      });
+      return stack.slice(0, -1);
     });
   }, []);
 
-  const toggleStep1Page = useCallback((rows: DetailedComputed[], allSelected: boolean) => {
-    setStep1Rows((prev) => {
-      const next = { ...prev };
-      if (allSelected) {
-        for (const r of rows) delete next[r.id];
-      } else {
-        for (const r of rows) {
-          if (!next[r.id]) {
-            next[r.id] = { item: r, qtyStr: '1', remarks: '' };
+  const handleStep1Redo = useCallback(() => {
+    setStep1RedoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const next = stack[stack.length - 1];
+      setStep1Rows((current) => {
+        setStep1UndoStack((undo) => [...undo.slice(-29), current]);
+        return next;
+      });
+      return stack.slice(0, -1);
+    });
+  }, []);
+
+  const commitStep2Selection = useCallback(
+    (updater: (prev: Record<string, Step2RowDraft>) => Record<string, Step2RowDraft>) => {
+      setStep2Rows((prev) => {
+        const next = updater(prev);
+        if (next === prev) return prev;
+        setStep2UndoStack((stack) => [...stack.slice(-29), prev]);
+        setStep2RedoStack([]);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleStep2Undo = useCallback(() => {
+    setStep2UndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const previous = stack[stack.length - 1];
+      setStep2Rows((current) => {
+        setStep2RedoStack((redo) => [...redo.slice(-29), current]);
+        return previous;
+      });
+      return stack.slice(0, -1);
+    });
+  }, []);
+
+  const handleStep2Redo = useCallback(() => {
+    setStep2RedoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const next = stack[stack.length - 1];
+      setStep2Rows((current) => {
+        setStep2UndoStack((undo) => [...undo.slice(-29), current]);
+        return next;
+      });
+      return stack.slice(0, -1);
+    });
+  }, []);
+
+  const toggleStep1Row = useCallback(
+    (item: DetailedComputed) => {
+      commitStep1Selection((prev) => {
+        if (prev[item.id]) {
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        }
+        return {
+          ...prev,
+          [item.id]: {
+            item,
+            qtyStr: '1',
+            remarks: '',
+          },
+        };
+      });
+    },
+    [commitStep1Selection],
+  );
+
+  const toggleStep1Page = useCallback(
+    (rows: DetailedComputed[], allSelected: boolean) => {
+      commitStep1Selection((prev) => {
+        const next = { ...prev };
+        if (allSelected) {
+          for (const r of rows) delete next[r.id];
+        } else {
+          for (const r of rows) {
+            if (!next[r.id]) {
+              next[r.id] = { item: r, qtyStr: '1', remarks: '' };
+            }
           }
         }
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleStep2Row = useCallback((item: DetailedComputed) => {
-    setStep2Rows((prev) => {
-      if (prev[item.id]) {
-        const next = { ...prev };
-        delete next[item.id];
         return next;
-      }
-      return {
-        ...prev,
-        [item.id]: {
-          item,
-          qtyStr: '1',
-          remarks: '',
-          stockSource: getDefaultStockSource(item),
-        },
-      };
-    });
-  }, []);
+      });
+    },
+    [commitStep1Selection],
+  );
 
-  const toggleStep2Page = useCallback((rows: DetailedComputed[], allSelected: boolean) => {
-    setStep2Rows((prev) => {
-      const next = { ...prev };
-      if (allSelected) {
-        for (const r of rows) delete next[r.id];
-      } else {
-        for (const r of rows) {
-          if (!next[r.id]) {
-            next[r.id] = {
-              item: r,
-              qtyStr: '1',
-              remarks: '',
-              stockSource: getDefaultStockSource(r),
-            };
+  const toggleStep2Row = useCallback(
+    (item: DetailedComputed) => {
+      commitStep2Selection((prev) => {
+        if (prev[item.id]) {
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        }
+        return {
+          ...prev,
+          [item.id]: {
+            item,
+            qtyStr: '1',
+            remarks: '',
+            stockSource: getDefaultStockSource(item),
+          },
+        };
+      });
+    },
+    [commitStep2Selection],
+  );
+
+  const toggleStep2Page = useCallback(
+    (rows: DetailedComputed[], allSelected: boolean) => {
+      commitStep2Selection((prev) => {
+        const next = { ...prev };
+        if (allSelected) {
+          for (const r of rows) delete next[r.id];
+        } else {
+          for (const r of rows) {
+            if (!next[r.id]) {
+              next[r.id] = {
+                item: r,
+                qtyStr: '1',
+                remarks: '',
+                stockSource: getDefaultStockSource(r),
+              };
+            }
           }
         }
-      }
-      return next;
-    });
-  }, []);
+        return next;
+      });
+    },
+    [commitStep2Selection],
+  );
 
-  // Auto-calculated Substitution DocNo (XX-#### from primary Section A supplier)
+  // Plant abbreviation config for auto doc numbering
+  const plantDocConfig = useMemo(() => extractPlantDocConfig(activeProject), [activeProject]);
+
+  // Auto-calculated Substitution DocNo (XX-#### with optional plant abbreviation)
   const primarySupplier = useMemo(() => {
     for (const row of step1List) {
       if (row.item.supplier?.trim()) return row.item.supplier.trim();
@@ -232,10 +333,14 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     return '';
   }, [step1List]);
 
-  const autoSubDocNo = useMemo(
-    () => generateNextSubstitutionDocNo(primarySupplier, records.map((r) => r.docNo)),
-    [primarySupplier, records],
-  );
+  const autoSubDocNo = useMemo(() => {
+    if (editingRecord) return editingRecord.docNo;
+    return generateNextSubstitutionDocNo(
+      primarySupplier,
+      records.map((r) => r.docNo),
+      plantDocConfig,
+    );
+  }, [editingRecord, primarySupplier, records, plantDocConfig]);
 
   // Auto-calculated MIV DocNo preview(s)
   const plannedMivDocNos = useMemo(() => {
@@ -245,25 +350,25 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     const result: { mapna?: string; contractor?: string } = {};
     const used = [...existingMivNos];
     if (hasMapna) {
-      const no = generateNextAutoMivDocNo(used);
+      const no = generateNextAutoMivDocNo(used, plantDocConfig);
       result.mapna = no;
       used.push(no);
     }
     if (hasContractor) {
-      const no = generateNextAutoMivDocNo(used);
+      const no = generateNextAutoMivDocNo(used, plantDocConfig);
       result.contractor = no;
       used.push(no);
     }
     if (!hasMapna && !hasContractor) {
-      result.mapna = generateNextAutoMivDocNo(used);
+      result.mapna = generateNextAutoMivDocNo(used, plantDocConfig);
     }
     return result;
-  }, [mivDocuments, step2List]);
+  }, [mivDocuments, step2List, plantDocConfig]);
 
-  const previewMivLabel = useMemo(
-    () => [plannedMivDocNos.mapna, plannedMivDocNos.contractor].filter(Boolean).join(' / '),
-    [plannedMivDocNos],
-  );
+  const previewMivLabel = useMemo(() => {
+    if (editingRecord?.mivNo) return editingRecord.mivNo;
+    return [plannedMivDocNos.mapna, plannedMivDocNos.contractor].filter(Boolean).join(' / ');
+  }, [editingRecord, plannedMivDocNos]);
 
   const previewHeaderMeta = useMemo(
     () =>
@@ -312,6 +417,18 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     return null;
   };
 
+  const getEffectiveAvailableForStep2 = useCallback(
+    (item: DetailedComputed, source: ReplacementStockSource): number => {
+      const baseAvail = getAvailableStockForSource(item, source);
+      if (!editingRecord?.substituteItems) return baseAvail;
+      const prevAllocated = editingRecord.substituteItems
+        .filter((s) => s.detailedId === item.id && (s.stockSource || 'mapna') === source)
+        .reduce((acc, s) => acc + (Number(s.qty) || 0), 0);
+      return baseAvail + prevAllocated;
+    },
+    [editingRecord],
+  );
+
   const validateStep2 = (): string | null => {
     if (step2List.length === 0) {
       return isFa
@@ -325,7 +442,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
           ? `لطفاً تعداد معتبر (فقط عدد بزرگتر از صفر) برای کالای جایگزین «${row.item.description || row.item.shipmentNo}» وارد کنید.`
           : `Please enter a valid positive number for replacement item "${row.item.description || row.item.shipmentNo}".`;
       }
-      const maxAvail = getAvailableStockForSource(row.item, row.stockSource);
+      const maxAvail = getEffectiveAvailableForStep2(row.item, row.stockSource);
       if (parsed > maxAvail) {
         return isFa
           ? `تعداد درخواستی (${parsed}) برای «${row.item.description || row.item.shipmentNo}» از موجودی مجاز (${maxAvail}) بیشتر است.`
@@ -346,13 +463,120 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   const resetBuilder = () => {
     setStep1Rows({});
+    setStep1UndoStack([]);
+    setStep1RedoStack([]);
     setStep2Rows({});
+    setStep2UndoStack([]);
+    setStep2RedoStack([]);
+    setEditingRecord(null);
     setSupplyUrgency(DEFAULT_SUPPLY_URGENCY);
     setReason('');
     setReprocureBy('');
     setCostBorneBy('');
     setSupplierNotes('');
     setStep(1);
+  };
+
+  const makeFallbackDetailedFromLine = (line: SubstitutionLineItem): DetailedComputed => ({
+    id: line.detailedId || `legacy-${line.shipmentNo}-${line.itemNo}`,
+    shipmentNo: line.shipmentNo || '',
+    itemNo: line.itemNo || '',
+    packageNo: line.packageNo || '',
+    description: line.description || '',
+    generalDescription: line.description || '',
+    itemCode: line.itemCode || '',
+    countingUnit: line.countingUnit || 'عدد',
+    system: line.system || '',
+    island: line.island || '',
+    unit: line.unit || '',
+    supplier: line.supplier || '',
+    receiver: line.receiver || '',
+    merNo: line.merNo || '',
+    packingQty: line.qty || 1,
+    actualQty: line.qty || 1,
+    shortage: 0,
+    surplus: 0,
+    damagedQty: 0,
+    mapnaInventory: line.stockSource === 'contractor' ? 0 : line.qty || 0,
+    contractorInventory: line.stockSource === 'contractor' ? line.qty || 0 : 0,
+    totalInventory: line.qty || 0,
+    issuedToContractorQty: 0,
+    returnedFromContractorQty: 0,
+    returnedToMapnaQty: 0,
+    issuedByMapnaQty: 0,
+    createdAt: '',
+    updatedAt: '',
+  } as unknown as DetailedComputed);
+
+  const handleStartEdit = (rec: SubstitutionRecord) => {
+    const detailedById = new Map(detailedItems.map((d) => [d.id, d]));
+
+    const origSource: SubstitutionLineItem[] =
+      rec.originalItems && rec.originalItems.length > 0
+        ? rec.originalItems
+        : [
+            {
+              detailedId: rec.detailedId,
+              itemNo: rec.itemNo || '',
+              shipmentNo: rec.shipmentNo || '',
+              packageNo: rec.packageNo || '',
+              description: rec.originalDescription || '',
+              itemCode: rec.originalItemCode || '',
+              qty: rec.qty || 1,
+              countingUnit: rec.countingUnit || 'عدد',
+              drawingNo: rec.originalDrawingNo || '',
+              remarks: rec.originalRemarks || '',
+              system: rec.system || '',
+              island: rec.island || '',
+              unit: rec.unit || '',
+              supplier: rec.supplier || '',
+              receiver: rec.installerContractor || '',
+              merNo: rec.merNcrNo || '',
+            },
+          ];
+
+    const subSource: SubstitutionLineItem[] =
+      rec.substituteItems && rec.substituteItems.length > 0
+        ? rec.substituteItems
+        : [];
+
+    const nextStep1: Record<string, Step1RowDraft> = {};
+    for (const line of origSource) {
+      const item = detailedById.get(line.detailedId) || makeFallbackDetailedFromLine(line);
+      nextStep1[item.id] = {
+        item,
+        qtyStr: String(line.qty || 1),
+        remarks: line.remarks || '',
+      };
+    }
+
+    const nextStep2: Record<string, Step2RowDraft> = {};
+    for (const line of subSource) {
+      const item = detailedById.get(line.detailedId) || makeFallbackDetailedFromLine(line);
+      nextStep2[item.id] = {
+        item,
+        qtyStr: String(line.qty || 1),
+        remarks: line.remarks || '',
+        stockSource: line.stockSource || getDefaultStockSource(item),
+      };
+    }
+
+    setEditingRecord(rec);
+    setStep1Rows(nextStep1);
+    setStep1UndoStack([]);
+    setStep1RedoStack([]);
+    setStep2Rows(nextStep2);
+    setStep2UndoStack([]);
+    setStep2RedoStack([]);
+    setSupplyUrgency(
+      (rec.supplyUrgency === 'اضطراری' ? 'اضطراری' : DEFAULT_SUPPLY_URGENCY) as SupplyUrgencyValue,
+    );
+    setReason(rec.reason || '');
+    setReprocureBy(rec.reprocureBy || '');
+    setCostBorneBy(rec.costBorneBy || '');
+    setSupplierNotes(rec.supplierNotes || '');
+    setStep(1);
+    setViewMode('create');
   };
 
   const handleSubmitSubstitution = async () => {
@@ -371,59 +595,10 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
     setSubmitting(true);
     try {
-      const todayIso = getTodayIso();
+      const docDate = editingRecord?.date || getTodayIso();
+      const targetDocNo = editingRecord?.docNo || autoSubDocNo;
       const mapnaItems = step2List.filter((r) => r.stockSource === 'mapna');
       const contractorItems = step2List.filter((r) => r.stockSource === 'contractor');
-
-      const issuedMivDocs: MivDocumentRecord[] = [];
-      const usedMivNos = mivDocuments.map((m) => m.docNo);
-      const islandSystem = [previewHeaderMeta.island, previewHeaderMeta.system].filter(Boolean).join(' / ');
-
-      const issueMivGroup = async (
-        docType: 'miv_mapna' | 'miv_contractor',
-        groupRows: Step2RowDraft[],
-      ) => {
-        if (groupRows.length === 0) return;
-        const mivNo = generateNextAutoMivDocNo(usedMivNos);
-        usedMivNos.push(mivNo);
-        const res = await apiRequest<{ document: MivDocumentRecord }>('/api/miv', {
-          method: 'POST',
-          body: JSON.stringify({
-            docType,
-            docNo: mivNo,
-            date: todayIso,
-            projectName: previewHeaderMeta.projectName,
-            contractNo: previewHeaderMeta.contractNo,
-            party: previewHeaderMeta.installerContractor,
-            islandSystem,
-            unit: previewHeaderMeta.unit,
-            receiver: previewHeaderMeta.installerContractor,
-            notes: `صدور خودکار بابت فرم جایگزینی شماره ${autoSubDocNo}`,
-            items: groupRows.map((row) => {
-              const qtyVal = parseStrictPositiveNumber(row.qtyStr)!;
-              return {
-                detailedId: row.item.id,
-                qty: qtyVal,
-                requestedQty: qtyVal,
-                technicalInfo: row.item.size || '',
-                tagNo: row.item.itemCode || '',
-                codeNo: row.item.itemCode || '',
-                location: row.item.storageLocation || '',
-                uom: row.item.countingUnit || '',
-                opiNo: row.item.opiNo || '',
-                remark: row.remarks.trim() || `جایگزینی ${autoSubDocNo}`,
-              };
-            }),
-          }),
-        });
-        issuedMivDocs.push(res.document);
-      };
-
-      await issueMivGroup('miv_mapna', mapnaItems);
-      await issueMivGroup('miv_contractor', contractorItems);
-
-      const combinedMivNo = issuedMivDocs.map((d) => d.docNo).join(', ');
-      const mivDocIds = issuedMivDocs.map((d) => d.id);
 
       const originalItems: SubstitutionLineItem[] = step1List.map((row) => ({
         detailedId: row.item.id,
@@ -465,57 +640,144 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
       }));
 
       const totalOrigQty = originalItems.reduce((acc, i) => acc + i.qty, 0);
+      const islandSystem = [previewHeaderMeta.island, previewHeaderMeta.system].filter(Boolean).join(' / ');
 
-      const subRes = await apiRequest<{ record: SubstitutionRecord }>('/api/substitutions', {
-        method: 'POST',
-        body: JSON.stringify({
-          docNo: autoSubDocNo,
-          date: todayIso,
-          detailedId: originalItems[0].detailedId,
-          projectName: previewHeaderMeta.projectName,
-          contractNo: previewHeaderMeta.contractNo,
-          system: previewHeaderMeta.system,
-          island: previewHeaderMeta.island,
-          unit: previewHeaderMeta.unit,
-          supplier: previewHeaderMeta.supplier,
-          supplyUrgency: previewHeaderMeta.supplyUrgency,
-          installerContractor: previewHeaderMeta.installerContractor,
-          mivNo: combinedMivNo,
-          mivDocId: mivDocIds[0],
-          mivDocIds,
-          merNcrNo: previewHeaderMeta.merNcrNo,
-          originalDrawingNo: '',
-          originalRemarks: originalItems[0].remarks || '',
-          originalItems,
-          substitutePackageNo: substituteItems[0].shipmentNo,
-          substituteDescription: substituteItems.map((i) => i.description).join(' / '),
-          substituteItemCode: substituteItems[0].itemCode,
-          substituteDrawingNo: '',
-          substituteRemarks: substituteItems[0].remarks || '',
-          substituteItems,
-          qty: totalOrigQty,
-          reason: reason.trim(),
-          reprocureBy: reprocureBy.trim(),
-          costBorneBy: costBorneBy.trim(),
-          supplierNotes: supplierNotes.trim(),
-          status: 'executed',
-        }),
-      });
+      // Determine whether linked MIV documents need to be created / re-issued
+      const prevSubSig = (editingRecord?.substituteItems || [])
+        .map((s) => `${s.detailedId}:${s.qty}:${s.stockSource || 'mapna'}`)
+        .sort()
+        .join('|');
+      const nextSubSig = substituteItems
+        .map((s) => `${s.detailedId}:${s.qty}:${s.stockSource || 'mapna'}`)
+        .sort()
+        .join('|');
+      const needsMivReissue = !editingRecord || prevSubSig !== nextSubSig;
+
+      let issuedMivDocs: MivDocumentRecord[] = [];
+      let combinedMivNo = editingRecord?.mivNo || '';
+      let mivDocIds: string[] = editingRecord?.mivDocIds || (editingRecord?.mivDocId ? [editingRecord.mivDocId] : []);
+
+      if (needsMivReissue) {
+        const oldLinkedMivs = editingRecord ? resolveLinkedMivDocs(editingRecord) : [];
+        // Reverse old MIVs first so stock is cleanly restored before issuing updated MIVs
+        for (const oldDoc of oldLinkedMivs) {
+          await apiRequest(`/api/miv/${oldDoc.id}`, { method: 'DELETE' });
+        }
+
+        const remainingMivNos = mivDocuments
+          .filter((m) => !oldLinkedMivs.some((old) => old.id === m.id))
+          .map((m) => m.docNo);
+        const usedMivNos = [...remainingMivNos];
+
+        const issueMivGroup = async (
+          docType: 'miv_mapna' | 'miv_contractor',
+          groupRows: Step2RowDraft[],
+        ) => {
+          if (groupRows.length === 0) return;
+          const mivNo = generateNextAutoMivDocNo(usedMivNos, plantDocConfig);
+          usedMivNos.push(mivNo);
+          const res = await apiRequest<{ document: MivDocumentRecord }>('/api/miv', {
+            method: 'POST',
+            body: JSON.stringify({
+              docType,
+              docNo: mivNo,
+              date: docDate,
+              projectName: previewHeaderMeta.projectName,
+              contractNo: previewHeaderMeta.contractNo,
+              party: previewHeaderMeta.installerContractor,
+              islandSystem,
+              unit: previewHeaderMeta.unit,
+              receiver: previewHeaderMeta.installerContractor,
+              notes: `صدور خودکار بابت فرم جایگزینی شماره ${targetDocNo}`,
+              items: groupRows.map((row) => {
+                const qtyVal = parseStrictPositiveNumber(row.qtyStr)!;
+                return {
+                  detailedId: row.item.id,
+                  qty: qtyVal,
+                  requestedQty: qtyVal,
+                  technicalInfo: row.item.size || '',
+                  tagNo: row.item.itemCode || '',
+                  codeNo: row.item.itemCode || '',
+                  location: row.item.storageLocation || '',
+                  uom: row.item.countingUnit || '',
+                  opiNo: row.item.opiNo || '',
+                  remark: row.remarks.trim() || `جایگزینی ${targetDocNo}`,
+                };
+              }),
+            }),
+          });
+          issuedMivDocs.push(res.document);
+        };
+
+        await issueMivGroup('miv_mapna', mapnaItems);
+        await issueMivGroup('miv_contractor', contractorItems);
+        combinedMivNo = issuedMivDocs.map((d) => d.docNo).join(', ');
+        mivDocIds = issuedMivDocs.map((d) => d.id);
+      } else if (editingRecord) {
+        issuedMivDocs = resolveLinkedMivDocs(editingRecord);
+      }
+
+      const payload = {
+        docNo: targetDocNo,
+        date: docDate,
+        detailedId: originalItems[0].detailedId,
+        projectName: previewHeaderMeta.projectName,
+        contractNo: previewHeaderMeta.contractNo,
+        system: previewHeaderMeta.system,
+        island: previewHeaderMeta.island,
+        unit: previewHeaderMeta.unit,
+        supplier: previewHeaderMeta.supplier,
+        supplyUrgency: previewHeaderMeta.supplyUrgency,
+        installerContractor: previewHeaderMeta.installerContractor,
+        mivNo: combinedMivNo,
+        mivDocId: mivDocIds[0],
+        mivDocIds,
+        merNcrNo: previewHeaderMeta.merNcrNo,
+        originalDrawingNo: '',
+        originalRemarks: originalItems[0].remarks || '',
+        originalItems,
+        substitutePackageNo: substituteItems[0].shipmentNo,
+        substituteDescription: substituteItems.map((i) => i.description).join(' / '),
+        substituteItemCode: substituteItems[0].itemCode,
+        substituteDrawingNo: '',
+        substituteRemarks: substituteItems[0].remarks || '',
+        substituteItems,
+        qty: totalOrigQty,
+        reason: reason.trim(),
+        reprocureBy: reprocureBy.trim(),
+        costBorneBy: costBorneBy.trim(),
+        supplierNotes: supplierNotes.trim(),
+        status: 'executed',
+      };
+
+      const subRes = editingRecord
+        ? await apiRequest<{ record: SubstitutionRecord }>(`/api/substitutions/${editingRecord.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          })
+        : await apiRequest<{ record: SubstitutionRecord }>('/api/substitutions', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
 
       notify(
         'success',
-        isFa
-          ? `فرم جایگزینی ${subRes.record.docNo} ثبت شد و حواله خروج از انبار (${combinedMivNo}) به صورت خودکار صادر گردید.`
-          : `Substitution ${subRes.record.docNo} saved and MIV (${combinedMivNo}) issued automatically.`,
+        editingRecord
+          ? isFa
+            ? `فرم جایگزینی ${subRes.record.docNo} با موفقیت ویرایش و اطلاعات جدول جزئیات به‌روزرسانی شد.`
+            : `Substitution ${subRes.record.docNo} updated.`
+          : isFa
+            ? `فرم جایگزینی ${subRes.record.docNo} ثبت شد و حواله خروج از انبار (${combinedMivNo}) به صورت خودکار صادر گردید.`
+            : `Substitution ${subRes.record.docNo} saved and MIV (${combinedMivNo}) issued automatically.`,
       );
-      void triggerAutoSnapshot(`ثبت فرم جایگزینی ${subRes.record.docNo}`);
+      void triggerAutoSnapshot(`${editingRecord ? 'ویرایش' : 'ثبت'} فرم جایگزینی ${subRes.record.docNo}`);
 
       resetBuilder();
       onDataChanged();
       await loadData();
 
       // Open simultaneous preview modal right away
-      setPrintMode('both');
+      setPrintMode(issuedMivDocs.length > 0 ? 'both' : 'substitution');
       setPrintBundle({
         record: subRes.record,
         mivDocs: issuedMivDocs,
@@ -607,10 +869,10 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     );
   }, [records, historySearch]);
 
-  const historyPagination = useClientPagination(filteredRecords, 20);
+  const historyPagination = useClientPagination(filteredRecords, 25);
 
   const handleTriggerPrint = () => {
-    window.print();
+    triggerAppPrint({ title: printBundle?.record.docNo || 'Substitution' });
   };
 
   return (
@@ -676,9 +938,36 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         </div>
       </div>
 
-      {/* CREATE MODE — 2-STEP GUIDED WORKFLOW */}
+      {/* CREATE / EDIT MODE — 2-STEP GUIDED WORKFLOW */}
       {viewMode === 'create' && canEdit && (
         <div className="space-y-4">
+          {editingRecord && (
+            <div
+              data-testid="sub-editing-banner"
+              className="rounded-xl border border-amber-500/45 bg-amber-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs"
+            >
+              <div className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
+                <Edit3 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>
+                  {isFa
+                    ? `در حال ویرایش فرم جایگزینی شماره ${editingRecord.docNo} (امکان ویرایش کامل بخش الف، بخش ب و مشخصات فرم)`
+                    : `Editing Substitution Form ${editingRecord.docNo} (all sections editable)`}
+                </span>
+              </div>
+              <button
+                type="button"
+                data-testid="sub-cancel-edit-btn"
+                onClick={() => {
+                  resetBuilder();
+                  setViewMode('history');
+                }}
+                className="h-7 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[11px] font-semibold"
+              >
+                {isFa ? 'انصراف از ویرایش و بازگشت' : 'Cancel Edit'}
+              </button>
+            </div>
+          )}
+
           {/* Stepper Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <button
@@ -770,8 +1059,59 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                         : 'Filter just like Detailed Equipment and check one or more rows.'}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-[var(--text-muted)]">{isFa ? 'شماره جایگزینی خودکار:' : 'Auto Doc No:'}</span>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {/* Selection Undo / Redo / Reset / Back toolbar */}
+                    <div className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5">
+                      <button
+                        type="button"
+                        data-testid="sub-step1-undo-btn"
+                        disabled={step1UndoStack.length === 0}
+                        onClick={handleStep1Undo}
+                        title={isFa ? 'بازگردانی آخرین انتخاب (Undo)' : 'Undo selection'}
+                        className="h-7 px-2 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] disabled:opacity-40"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" />
+                        <span>{isFa ? 'بازگردانی' : 'Undo'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="sub-step1-redo-btn"
+                        disabled={step1RedoStack.length === 0}
+                        onClick={handleStep1Redo}
+                        title={isFa ? 'انجام مجدد انتخاب (Redo)' : 'Redo selection'}
+                        className="h-7 px-2 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] disabled:opacity-40"
+                      >
+                        <Redo2 className="w-3.5 h-3.5" />
+                        <span>{isFa ? 'انجام مجدد' : 'Redo'}</span>
+                      </button>
+                      {step1List.length > 0 && (
+                        <button
+                          type="button"
+                          data-testid="sub-step1-clear-btn"
+                          onClick={() => commitStep1Selection(() => ({}))}
+                          title={isFa ? 'پاک‌سازی انتخاب‌های مرحله ۱' : 'Clear Step 1 selection'}
+                          className="h-7 px-2 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>{isFa ? 'بازنشانی انتخاب' : 'Reset'}</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      data-testid="sub-step1-back-history-btn"
+                      onClick={() => {
+                        if (editingRecord) resetBuilder();
+                        setViewMode('history');
+                      }}
+                      className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[11px] font-semibold inline-flex items-center gap-1 text-[var(--text-secondary)]"
+                    >
+                      {isFa ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
+                      <span>{isFa ? 'بازگشت به سابقه' : 'Back to History'}</span>
+                    </button>
+
+                    <span className="text-[var(--text-muted)]">{isFa ? 'شماره جایگزینی:' : 'Doc No:'}</span>
                     <span
                       dir="ltr"
                       data-testid="sub-auto-docno"
@@ -803,7 +1143,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                     </h3>
                     <button
                       type="button"
-                      onClick={() => setStep1Rows({})}
+                      onClick={() => commitStep1Selection(() => ({}))}
                       className="text-[11px] font-semibold text-[var(--status-danger)] hover:underline"
                     >
                       {isFa ? 'حذف همه انتخاب‌ها' : 'Clear selection'}
@@ -1057,7 +1397,55 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                         : 'Only items with positive Employer or Contractor stock are shown. Submitting automatically issues an MIV.'}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {/* Step 2 Selection Undo / Redo / Reset / Back toolbar */}
+                    <div className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5">
+                      <button
+                        type="button"
+                        data-testid="sub-step2-undo-btn"
+                        disabled={step2UndoStack.length === 0}
+                        onClick={handleStep2Undo}
+                        title={isFa ? 'بازگردانی آخرین انتخاب (Undo)' : 'Undo selection'}
+                        className="h-7 px-2 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] disabled:opacity-40"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" />
+                        <span>{isFa ? 'بازگردانی' : 'Undo'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="sub-step2-redo-btn"
+                        disabled={step2RedoStack.length === 0}
+                        onClick={handleStep2Redo}
+                        title={isFa ? 'انجام مجدد انتخاب (Redo)' : 'Redo selection'}
+                        className="h-7 px-2 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] disabled:opacity-40"
+                      >
+                        <Redo2 className="w-3.5 h-3.5" />
+                        <span>{isFa ? 'انجام مجدد' : 'Redo'}</span>
+                      </button>
+                      {step2List.length > 0 && (
+                        <button
+                          type="button"
+                          data-testid="sub-step2-clear-btn"
+                          onClick={() => commitStep2Selection(() => ({}))}
+                          title={isFa ? 'پاک‌سازی انتخاب‌های مرحله ۲' : 'Clear Step 2 selection'}
+                          className="h-7 px-2 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>{isFa ? 'بازنشانی' : 'Reset'}</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      data-testid="sub-step2-top-back-btn"
+                      onClick={() => setStep(1)}
+                      className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[11px] font-semibold inline-flex items-center gap-1 text-[var(--text-secondary)]"
+                    >
+                      {isFa ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
+                      <span>{isFa ? 'بازگشت به مرحله ۱' : 'Back to Step 1'}</span>
+                    </button>
+
                     <span className="text-[var(--text-muted)]">{isFa ? 'شماره حواله خودکار:' : 'Auto MIV No:'}</span>
                     <span
                       dir="ltr"
@@ -1090,7 +1478,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                     </h3>
                     <button
                       type="button"
-                      onClick={() => setStep2Rows({})}
+                      onClick={() => commitStep2Selection(() => ({}))}
                       className="text-[11px] font-semibold text-[var(--status-danger)] hover:underline"
                     >
                       {isFa ? 'حذف همه انتخاب‌ها' : 'Clear selection'}
@@ -1115,7 +1503,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                       <tbody className="divide-y divide-[var(--border-subtle)]">
                         {step2List.map((row) => {
                           const hasBoth = row.item.mapnaInventory > 0 && row.item.contractorInventory > 0;
-                          const maxAvail = getAvailableStockForSource(row.item, row.stockSource);
+                          const maxAvail = getEffectiveAvailableForStep2(row.item, row.stockSource);
                           const parsedQty = parseStrictPositiveNumber(row.qtyStr);
                           const qtyValid = parsedQty !== null && parsedQty <= maxAvail;
 
@@ -1250,11 +1638,19 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                   <span>
                     {submitting
                       ? isFa
-                        ? 'در حال صدور حواله و ثبت فرم جایگزینی...'
-                        : 'Issuing MIV & saving...'
-                      : isFa
-                        ? 'ثبت فرم جایگزینی، صدور خودکار حواله و پیش‌نمایش چاپ'
-                        : 'Save Substitution, Auto-Issue MIV & Print Preview'}
+                        ? editingRecord
+                          ? 'در حال ذخیره تغییرات فرم جایگزینی...'
+                          : 'در حال صدور حواله و ثبت فرم جایگزینی...'
+                        : editingRecord
+                          ? 'Saving changes...'
+                          : 'Issuing MIV & saving...'
+                      : editingRecord
+                        ? isFa
+                          ? 'ذخیره تغییرات فرم جایگزینی و پیش‌نمایش چاپ'
+                          : 'Save Substitution Changes & Print Preview'
+                        : isFa
+                          ? 'ثبت فرم جایگزینی، صدور خودکار حواله و پیش‌نمایش چاپ'
+                          : 'Save Substitution, Auto-Issue MIV & Print Preview'}
                   </span>
                 </button>
               </div>
@@ -1371,6 +1767,20 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                               {canEdit && (
                                 <button
                                   type="button"
+                                  data-testid={`sub-edit-btn-${rec.docNo}`}
+                                  aria-label={isFa ? `ویرایش ${rec.docNo}` : `Edit ${rec.docNo}`}
+                                  title={isFa ? `ویرایش فرم ${rec.docNo}` : `Edit ${rec.docNo}`}
+                                  onClick={() => handleStartEdit(rec)}
+                                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[11px] font-semibold inline-flex items-center gap-1 transition-colors"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                                  <span>{isFa ? 'ویرایش' : 'Edit'}</span>
+                                </button>
+                              )}
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  data-testid={`sub-delete-btn-${rec.docNo}`}
                                   aria-label={isFa ? `حذف ${rec.docNo}` : `Delete ${rec.docNo}`}
                                   onClick={() => setDeleteTarget(rec)}
                                   className="p-1.5 rounded-lg text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
@@ -1584,8 +1994,8 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         message={
           deleteTarget
             ? isFa
-              ? `آیا از حذف فرم جایگزینی شماره «${deleteTarget.docNo}» اطمینان دارید؟`
-              : `Are you sure you want to delete substitution "${deleteTarget.docNo}"?`
+              ? `آیا از حذف فرم جایگزینی شماره «${deleteTarget.docNo}» اطمینان دارید؟ با حذف این فرم، حواله خروج مرتبط نیز ابطال شده، موجودی کالاهای بخش ب به انبار بازمی‌گردد و اطلاعات جایگزینی از جدول ثبت جزئیات پاک خواهد شد.`
+              : `Are you sure you want to delete substitution "${deleteTarget.docNo}"? Linked MIV vouchers will be reversed to restore stock and substitution details will be cleared from Detailed Equipment.`
             : ''
         }
         confirmLabel={isFa ? 'حذف فرم' : 'Delete'}

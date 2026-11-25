@@ -16,11 +16,53 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.13.0';
-export const APP_BUILD_ID = '2026.05.29-1';
-export const APP_RELEASED_AT = '2026-05-29';
+export const APP_VERSION = '2.15.0';
+export const APP_BUILD_ID = '2026.05.31-1';
+export const APP_RELEASED_AT = '2026-05-31';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.15.0',
+    buildId: '2026.05.31-1',
+    releasedAt: '2026-05-31',
+    titleFa: 'فرم رسمی حواله انبار MD1 (MD1EX-FQP02/05-03)، قفل هوشمند فرم‌های تعریف‌نشده با سامانه درخواست توسعه‌دهنده و تنظیم خودکار ابعاد جداول چاپی',
+    titleEn: 'Official MD1 MIV Form (MD1EX-FQP02/05-03), Strict Form Gating with Developer Request System & Auto-Fit Print Tables',
+    changesFa: [
+      'راه‌اندازی فرم رسمی «درخواست کالا از انبار و حواله انبار (MD1EX-FQP02/05-03)» به‌عنوان سومین فرم پیش‌فرض کارفرمای مپنا توسعه یک با فیلتر اقلام دارای موجودی (کارفرما و پیمانکار)، ورود صرفاً عددی تعداد با کنترل سقف موجودی، درج چندخطی توضیحات زیر توضیحات تجهیز، شماره‌گذاری خودکار پیمانکار (<نیروگاه>-<پیمانکار>-MIV-####)، صفحه‌بندی هوشمند «صفحه X از Y»، و فعال ماندن Undo/Redo حتی پس از چاپ',
+      'اعمال قفل قطعی دسترسی فرم «جایگزینی» و «حواله انبار» برای کارفرماهایی که فرم آن‌ها در سامانه تعریف نشده است (مانند توسعه دو و توسعه سه)',
+      'حذف کامل گزینه‌های «تعریف کارفرمای جدید» و «آپلود فرم» از سراسر نرم‌افزار و جایگزینی آن‌ها با سامانه رسمی ارسال درخواست و فایل فرم به توسعه‌دهنده (با قابلیت پیوست فایل، ذخیره، دانلود بسته درخواست و ارسال ایمیل)',
+      'تنظیم خودکار عرض ستون‌ها و ارتفاع سطرها بر اساس محتوای واقعی در تمام فرم‌ها و گزارش‌های چاپی سامانه برای جلوگیری از بریدگی متن یا نمایش ناقص هنگام چاپ',
+    ],
+    changesEn: [
+      'Launched the official MD1 Material Issue Voucher (MD1EX-FQP02/05-03) with combined Employer/Contractor in-stock filtering, strictly numeric quantity validation, stacked multiline Remarks beneath existing Equipment Notes, automatic contractor-coded numbering (<PLANT>-<CONTRACTOR>-MIV-####), multi-page "Page X of Y" pagination, and post-print Undo/Redo',
+      'Enforced strict access locking for Substitution and MIV sections when not defined for the active employer (e.g. MD2 and MD3)',
+      'Removed "Define New Employer" and "Upload Forms" across the entire application and replaced them with the official Developer Contact & Form Request workflow supporting file attachments, submission history, JSON bundle download, and email fallback',
+      'Implemented dynamic content-proportional column widths and auto-fit row heights across all printable forms and reports',
+    ],
+  },
+  {
+    version: '2.14.0',
+    buildId: '2026.05.30-1',
+    releasedAt: '2026-05-30',
+    titleFa: 'رفع چاپ PWA آیفون و تم سامسونگ، سامانه گزارش خطا و هنگ، مخفف نیروگاه، ویرایش/حذف کامل جایگزینی و تطبیق تأمین مجدد در جزئیات تجهیزات',
+    titleEn: 'iOS PWA Printing & Samsung Theme Fix, Crash/Bug Reporting, Plant Abbreviation Numbering, Full Substitution Edit/Delete & Detailed Re-procurement Matching',
+    changesFa: [
+      'رفع کامل کار نکردن دکمه‌های چاپ در اپلیکیشن نصب‌شده روی آیفون (iOS Standalone PWA) با پیاده‌سازی موتور چاپ یکپارچه در تمام ۱۴ بخش چاپی برنامه و رفع مشکل سبز/تیره شدن حالت روز و شب در گوشی‌های اندرویدی سامسونگ (S21FE)',
+      'افزودن مکانیزم جامع گزارش خطا و تشخیص خودکار هنگ/فریز و خطاهای اجرایی با ثبت محلی در حافظه، امکان دانلود فایل لاگ، ارسال مستقیم به سرور و فرم گزارش باگ توسط کاربر',
+      'اصلاح دقیق مشخصات تماس، آدرس، کدپستی، تلفن و فکس کارفرماهای پیش‌فرض مپنا توسعه ۱، ۲ و ۳ با نمایش دوزبانه ارقام (فارسی در زبان فارسی و انگلیسی در انگلیسی)، قفل فقط‌خواندنی مشخصات کارفرماهای پیش‌فرض، یکسان‌سازی قوانین ورودی تماس و کش کامل لوگوها در حالت آفلاین',
+      'افزودن فیلد اختیاری «مخفف نیروگاه» (۲ تا ۳ حرف انگلیسی) در راه‌اندازی اولیه و تنظیمات پروژه با قابلیت درج خودکار در ابتدای شماره فرم یا قبل از شماره عددی در سراسر فرم‌های عملیاتی و جایگزینی',
+      'ارتقای بخش جایگزینی: رفع نمایش سابقه فرم بلافاصله پس از ثبت، افزودن Undo/Redo، ریست و بازگشت در مراحل انتخاب، افزودن ویرایش و حذف کامل با بازگردانی خودکار حواله و موجودی، اصلاح دقیق تیترهای واحد بخش الف و ب و همگام‌سازی هر دو بخش در جدول جزئیات',
+      'حفظ نمایش چندخطی (زیرهم) متون در برچسب انبارش کالا، جداول و بازیابی فایل‌ها، انتقال «توضیحات تجهیز» به گروه مشخصات تجهیزات، افزودن «توضیحات کسری/مغایرت» پس از «وضعیت کسری/مغایرت»، محدودسازی وضعیت جایگزینی به «باز/بسته» و افزودن پنجره هوشمند تطبیق تأمین مجدد جایگزینی و کسری در ثبت جزئیات تجهیزات',
+    ],
+    changesEn: [
+      'Fixed broken printing across all 14 print portals in iOS Standalone PWA and eliminated Android/Samsung S21FE light-mode forced-dark green tinting',
+      'Added automatic crash, freeze, and runtime error diagnostic logging with local ring buffer, log file download, server upload, and user bug report modal',
+      'Updated built-in MAPNA MD1/MD2/MD3 contact data with bilingual digits, strict read-only profile locks for built-in employers, unified Iranian phone rules, and offline logo caching',
+      'Added optional 2–3 letter Power Plant Abbreviation in onboarding and Project Settings with configurable placement (prefix or before sequence number) across operational forms',
+      'Upgraded Substitution workflow: immediate history display, Step 1 & Step 2 selection Undo/Redo/Reset/Back controls, full Edit & full-reversal Delete, exact Section A/B unit headings, and dual-section Detailed sync',
+      'Preserved multiline line breaks across Storage Labels, tables, and imports; moved Equipment Notes to Specs group, added Shortage/Discrepancy Notes after MER Status, locked Substitution Status to Open/Closed, and added smart Re-procurement matching in Detailed Equipment',
+    ],
+  },
   {
     version: '2.13.0',
     buildId: '2026.05.29-1',

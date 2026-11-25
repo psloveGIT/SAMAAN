@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext.tsx';
-import { resolvePublicAssetUrl } from '../lib/assets.ts';
+import { resolveEmployerLogoSrc } from '../lib/employerLogoCache.ts';
 import {
   DEFAULT_SUPPLY_URGENCY,
   MD1_SUBSTITUTION_COPY_TEXT,
@@ -9,10 +9,25 @@ import {
   MD1_SUBSTITUTION_TITLE_FA,
   buildReplacementAgreementText,
   buildReplacementCauseLines,
+  uniqueJoinedValues,
 } from '../shared/substitution.ts';
+import {
+  computeAutoColumnWidths,
+  type AutoColumnDescriptor,
+} from '../shared/printAutoLayout.ts';
 import type { SubstitutionLineItem, SubstitutionRecord } from '../shared/types.ts';
 
 const DEFAULT_MD1_LOGO_PATH = './assets/aistudio/______________8a639368.png';
+
+const SUB_TABLE_COLUMNS: readonly AutoColumnDescriptor[] = [
+  { key: 'itemNo', header: 'Item No.', kind: 'compact', minPercent: 6, maxPercent: 11 },
+  { key: 'pn', header: 'شماره بسته (PN)', kind: 'code', minPercent: 9, maxPercent: 16 },
+  { key: 'desc', header: 'شرح مواد/ تجهیزات', kind: 'fluid', minPercent: 22, maxPercent: 40 },
+  { key: 'tag', header: 'Tag No.', kind: 'code', minPercent: 8, maxPercent: 16 },
+  { key: 'qty', header: 'تعداد', kind: 'compact', minPercent: 5, maxPercent: 9 },
+  { key: 'drawing', header: 'شماره نقشه', kind: 'compact', minPercent: 7, maxPercent: 12 },
+  { key: 'remarks', header: 'توضیحات', kind: 'fluid', minPercent: 12, maxPercent: 28 },
+];
 
 export interface OfficialSubstitutionSheetProps {
   rec: SubstitutionRecord;
@@ -68,11 +83,13 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
   const unitText = (rec.unit || '').trim();
   const sectionARows = getSectionARows(rec);
   const sectionBRows = getSectionBRows(rec);
+  const unitA = uniqueJoinedValues(sectionARows.map((r) => r.unit)) || unitText;
+  const unitB = uniqueJoinedValues(sectionBRows.map((r) => r.unit)) || unitText;
   const causeLines = buildReplacementCauseLines(rec.reason, rec.reprocureBy);
   const agreementText = buildReplacementAgreementText(rec.reprocureBy, rec.costBorneBy);
 
   const rawLogo = activeEmployer?.logos?.[0]?.dataUrl || DEFAULT_MD1_LOGO_PATH;
-  const logoSrc = resolvePublicAssetUrl(rawLogo);
+  const logoSrc = resolveEmployerLogoSrc(rawLogo);
 
   const renderSectionTable = (rows: SubstitutionLineItem[], keyPrefix: string) => {
     const minRows = Math.max(rows.length, 3);
@@ -81,24 +98,35 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
       ...Array.from({ length: Math.max(0, minRows - rows.length) }, () => null),
     ];
 
+    const matrix = rows.map((r) => [
+      r.itemNo || '',
+      r.shipmentNo || '',
+      r.description || '',
+      r.itemCode || '',
+      String(r.qty ?? ''),
+      '',
+      r.remarks || '',
+    ]);
+    const layout = computeAutoColumnWidths(SUB_TABLE_COLUMNS, matrix, {
+      baseFontPx: 9.3,
+      minFontPx: 7.8,
+    });
+
     return (
       <table
         dir="rtl"
+        className="samaan-dynamic-table"
         style={{
           width: '100%',
           borderCollapse: 'collapse',
-          fontSize: '9.3px',
-          tableLayout: 'fixed',
+          fontSize: `${layout.recommendedFontPx}px`,
+          tableLayout: 'auto',
         }}
       >
         <colgroup>
-          <col style={{ width: '8%' }} />
-          <col style={{ width: '13%' }} />
-          <col style={{ width: '31%' }} />
-          <col style={{ width: '13%' }} />
-          <col style={{ width: '7%' }} />
-          <col style={{ width: '11%' }} />
-          <col style={{ width: '17%' }} />
+          {layout.widthsPercent.map((pct, i) => (
+            <col key={SUB_TABLE_COLUMNS[i].key} style={{ width: `${pct}%` }} />
+          ))}
         </colgroup>
         <thead>
           <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700, textAlign: 'center' }}>
@@ -138,7 +166,8 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
                   padding: '5px 3px',
                   textAlign: 'center',
                   wordBreak: 'break-word',
-                  height: '24px',
+                  height: 'auto',
+                  minHeight: '24px',
                 }}
               >
                 {row ? row.itemNo || '' : '\u00A0'}
@@ -164,6 +193,7 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
                   padding: '5px 5px',
                   textAlign: 'right',
                   wordBreak: 'break-word',
+                  whiteSpace: 'pre-line',
                 }}
               >
                 {row ? row.description || '' : ''}
@@ -212,6 +242,7 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
                   padding: '5px 5px',
                   textAlign: 'right',
                   wordBreak: 'break-word',
+                  whiteSpace: 'pre-line',
                 }}
               >
                 {row ? row.remarks || '' : ''}
@@ -385,6 +416,7 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
 
         {/* Section A Header & Table (Rules 1-13 to 1-19) */}
         <div
+          data-testid="sub-sheet-section-a-heading"
           style={{
             backgroundColor: '#f3f4f6',
             borderBottom: '1px solid #000000',
@@ -393,16 +425,17 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
             fontWeight: 700,
           }}
         >
-          الف- مشخصات مواد/ تجهیزات معیوب، مفقود و یا نامنطبق مربوط به واحد شماره{' '}
-          <span className="bidi-plaintext" style={{ textDecoration: unitText ? 'none' : undefined }}>
-            {unitText || '...............'}
+          مواد / تجهیزات مشخص شده در ذیل مربوط به واحد شماره{' '}
+          <span className="bidi-plaintext">
+            {unitA || '...............'}
           </span>{' '}
-          که بایستی جایگزین شود:
+          نیازمند تعویض می باشند:
         </div>
         {renderSectionTable(sectionARows, 'secA')}
 
         {/* Section B Header & Table (Rules 1-20 to 1-26) */}
         <div
+          data-testid="sub-sheet-section-b-heading"
           style={{
             backgroundColor: '#f3f4f6',
             borderBottom: '1px solid #000000',
@@ -411,14 +444,16 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
             fontWeight: 700,
           }}
         >
-          ب- مشخصات مواد/ تجهیزات جایگزین شده جهت واحد شماره{' '}
-          <span className="bidi-plaintext">{unitText || '...............'}</span>:
+          مواد / تجهیزات مشخص شده ما فوق با اقلام ذیل جهت واحد شماره{' '}
+          <span className="bidi-plaintext">{unitB || '...............'}</span>{' '}
+          تعویض شدند:
         </div>
         {renderSectionTable(sectionBRows, 'secB')}
 
-        {/* Rule 1-27: Cause of Replacement (Reason + Re-supplier on separate lines) */}
+        {/* Rule 1-27: Cause of Replacement (Reason + Re-supplier on separate lines, without extra prefix) */}
         <div
           dir="rtl"
+          data-testid="sub-sheet-cause-box"
           style={{
             borderBottom: '1px solid #000000',
             padding: '7px 9px',
@@ -430,7 +465,7 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
         >
           <div style={{ fontWeight: 800, marginBottom: '2px' }}>علت تعویض:</div>
           {causeLines.map((line, idx) => (
-            <div key={idx} dir="rtl" style={{ textAlign: 'right', paddingRight: '6px' }}>
+            <div key={idx} dir="rtl" style={{ textAlign: 'right', paddingRight: '6px', whiteSpace: 'pre-line' }}>
               {line}
             </div>
           ))}

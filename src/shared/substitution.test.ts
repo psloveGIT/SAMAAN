@@ -133,10 +133,10 @@ test('buildSubstitutionHeaderMeta maps rules 1-1 through 1-12 accurately with bl
   assert.equal(blankMeta.supplyUrgency, 'اضطراری');
 });
 
-test('buildReplacementCauseLines and buildReplacementAgreementText match rules 1-27 and 1-29 exactly', () => {
+test('buildReplacementCauseLines omits old prefix and buildReplacementAgreementText matches official wording', () => {
   const lines = buildReplacementCauseLines('آسیب‌دیدگی واشر در زمان نصب', 'شرکت توگا');
   assert.deepEqual(lines, [
-    'دلیل تعویض قطعات: آسیب‌دیدگی واشر در زمان نصب',
+    'آسیب‌دیدگی واشر در زمان نصب',
     'تأمین کننده مجدد: شرکت توگا',
   ]);
 
@@ -144,6 +144,31 @@ test('buildReplacementCauseLines and buildReplacementAgreementText match rules 1
   assert.equal(
     agreement,
     'امضاء کنندگان ذیل توافق و تایید نمودند که مواد/ تجهیزات تعیین شده در(ب) می توانند به جای اقلام قید شده در(الف) مورد استفاده قرار بگیرند، از سوی دیگر مواد/ تجهیزات جایگزین می بایست توسط شرکت توگا مجددا تهیه شده و هزینه های ذیربط توسط پیمانکار نصب می بایست پرداخت شوند.',
+  );
+
+  assert.equal(
+    generateNextSubstitutionDocNo('TUGA', ['TU-0001'], {
+      plantAbbreviation: 'NK',
+      usePlantAbbreviationInDocs: true,
+      plantAbbreviationPosition: 'prefix',
+    }),
+    'NK-TU-0002',
+  );
+  assert.equal(
+    generateNextSubstitutionDocNo('TUGA', ['NK-TU-0002'], {
+      plantAbbreviation: 'NK',
+      usePlantAbbreviationInDocs: true,
+      plantAbbreviationPosition: 'before_number',
+    }),
+    'TU-NK-0003',
+  );
+  assert.equal(
+    generateNextAutoMivDocNo(['MIV-0001'], {
+      plantAbbreviation: 'NK',
+      usePlantAbbreviationInDocs: true,
+      plantAbbreviationPosition: 'prefix',
+    }),
+    'NK-MIV-0002',
   );
 
   assert.equal(MD1_SUBSTITUTION_FORM_CODE, 'MD1EX-FQP02/10-03');

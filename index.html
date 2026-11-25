@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="color-scheme" content="only light" />
+    <meta name="color-scheme" content="light only" />
+    <meta name="supported-color-schemes" content="light only" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -26,12 +27,21 @@
           var isEye = Boolean(parsed && parsed.eyeComfort);
           var root = document.documentElement;
           root.classList.toggle('dark', isDark);
+          root.classList.toggle('light', !isDark);
           root.classList.toggle('eye-comfort', isEye);
-          var scheme = isDark ? 'only dark' : 'only light';
+          root.dataset.theme = isDark ? 'dark' : 'light';
+          var cssScheme = isDark ? 'only dark' : 'only light';
+          var metaScheme = isDark ? 'dark only' : 'light only';
           var themeColor = isDark ? (isEye ? '#171410' : '#0b111b') : (isEye ? '#f5efe3' : '#ffffff');
-          root.style.colorScheme = scheme;
+          var bgColor = isDark ? (isEye ? '#171410' : '#0b111b') : (isEye ? '#f5efe3' : '#f8fafc');
+          var txtColor = isDark ? (isEye ? '#f3ebd8' : '#e6edf6') : (isEye ? '#2c251c' : '#0f172a');
+          root.style.colorScheme = cssScheme;
+          root.style.backgroundColor = bgColor;
+          root.style.color = txtColor;
           var csMeta = document.querySelector('meta[name="color-scheme"]');
-          if (csMeta) csMeta.setAttribute('content', scheme);
+          if (csMeta) csMeta.setAttribute('content', metaScheme);
+          var scsMeta = document.querySelector('meta[name="supported-color-schemes"]');
+          if (scsMeta) scsMeta.setAttribute('content', metaScheme);
           var tcMeta = document.querySelector('meta[name="theme-color"]');
           if (tcMeta) tcMeta.setAttribute('content', themeColor);
         } catch (e) {}

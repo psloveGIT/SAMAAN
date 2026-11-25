@@ -5,6 +5,7 @@ import { resolveDocumentThemeMeta } from './themeMeta.ts';
 test('resolveDocumentThemeMeta uses only light and crisp white theme-color in Light Mode', () => {
   const meta = resolveDocumentThemeMeta('light', false);
   assert.equal(meta.colorScheme, 'only light');
+  assert.equal(meta.metaColorScheme, 'light only');
   assert.equal(meta.themeColor, '#ffffff');
   assert.equal(meta.backgroundColor, '#f8fafc');
   assert.equal(meta.isDark, false);
@@ -14,6 +15,7 @@ test('resolveDocumentThemeMeta uses only light and crisp white theme-color in Li
 test('resolveDocumentThemeMeta uses only dark and dark navy theme-color in Dark Mode', () => {
   const meta = resolveDocumentThemeMeta('dark', false);
   assert.equal(meta.colorScheme, 'only dark');
+  assert.equal(meta.metaColorScheme, 'dark only');
   assert.equal(meta.themeColor, '#0b111b');
   assert.equal(meta.backgroundColor, '#0b111b');
   assert.equal(meta.isDark, true);

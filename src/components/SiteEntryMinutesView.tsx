@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import {
   CheckCircle2,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { buildPrintPageRule } from '../shared/printPageCss.ts';
@@ -838,6 +840,15 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   const minutesPagination = useClientPagination(minutesList, 50);
 
   const [minutesNo, setMinutesNo] = useState('');
+  const suggestedMinutesNo = useMemo(
+    () =>
+      generateNextPlantAwareDocNo(
+        'AN',
+        minutesList.map((m) => m.minutesNo),
+        extractPlantDocConfig(activeProject),
+      ),
+    [minutesList, activeProject],
+  );
   const [releaseNoteNo, setReleaseNoteNo] = useState('');
   const [entryType, setEntryType] = useState<'permanent' | 'temporary'>('permanent');
   const [goodsUsage, setGoodsUsage] = useState<'project' | 'site_equip' | 'general'>('project');
@@ -1545,16 +1556,28 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
           {/* Row 1: Core Notice Header & Dates */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره صورتجلسه (Arrival Notice No.)' : 'Arrival Notice No.'} *
-              </label>
+              <div className="flex items-center justify-between gap-1 mb-1">
+                <label className="block text-[11px] text-[var(--text-secondary)]">
+                  {isFa ? 'شماره صورتجلسه (Arrival Notice No.)' : 'Arrival Notice No.'} *
+                </label>
+                {!editingRecord && (
+                  <button
+                    type="button"
+                    onClick={() => setMinutesNo(suggestedMinutesNo)}
+                    className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
+                    dir="ltr"
+                  >
+                    {suggestedMinutesNo}
+                  </button>
+                )}
+              </div>
               <input
                 type="text"
                 required
                 dir={isFa && !minutesNo ? 'rtl' : 'ltr'}
                 value={minutesNo}
                 onChange={(e) => setMinutesNo(e.target.value)}
-                placeholder="AN-1405-001"
+                placeholder={suggestedMinutesNo}
                 className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
                   isFa && !minutesNo ? 'text-right' : 'text-left'
                 }`}
@@ -2119,7 +2142,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => triggerAppPrint()}
                   className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
