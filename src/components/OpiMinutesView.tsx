@@ -18,7 +18,11 @@ import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/do
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
+import {
+  OperationalViewModeTabs,
+  type OperationalViewMode,
+} from './OperationalViewModeTabs.tsx';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -914,6 +918,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const formCode = getEmployerFormCode(activeEmployer, '06-03');
 
   const [subTab, setSubTab] = useState<'minutes' | 'osdr'>('minutes');
+  const [minutesViewMode, setMinutesViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
+  const [osdrViewMode, setOsdrViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
   const [data, setData] = useState<OpiMinutesApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const minutesList = useMemo(() => data?.minutes || [], [data]);
@@ -1106,6 +1112,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   };
 
   const startEditMinutes = (rec: OpiMinutesRecord) => {
+    setMinutesViewMode('create');
     setEditingMinutes(rec);
     setMinutesNo(rec.minutesNo || '');
     setInvitationNo(rec.invitationNo || '');
@@ -1333,6 +1340,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   };
 
   const startEditOsdr = (rep: OsdrReportRecord) => {
+    setOsdrViewMode('create');
     setEditingOsdr(rep);
     setOsdrReportNo(rep.reportNo || '');
     setOsdrDate(rep.date || getTodayIso());
@@ -1495,24 +1503,12 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const minutesPrintPortal =
     printMinutes && !printMinutesTableOpen && !printOsdrTableOpen
       ? createPortal(
-          <div id="samaan-mom-print-root">
-            <style>{`
-              @media screen {
-                #samaan-mom-print-root { display: none !important; }
-              }
-              @media print {
-                ${buildPrintPageRule('portrait', isFa, '7mm')}
-                body > *:not(#samaan-mom-print-root) {
-                  display: none !important;
-                }
-                #samaan-mom-print-root {
-                  display: block !important;
-                  background: #ffffff !important;
-                  color: #000000 !important;
-                  width: 100%;
-                  -webkit-print-color-adjust: exact;
-                  print-color-adjust: exact;
-                }
+          <div id="samaan-mom-print-root" data-samaan-print-portal="true">
+            <style>{buildIsolatedPrintPortalCss('samaan-mom-print-root', {
+              orientation: 'portrait',
+              isFa,
+              marginMm: 12,
+              extraPrintCss: `
                 #samaan-mom-print-root table {
                   width: 100% !important;
                   table-layout: auto !important;
@@ -1528,8 +1524,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                   vertical-align: middle;
                   height: auto !important;
                 }
-              }
-            `}</style>
+              `,
+            })}</style>
             <OfficialOpiMinutesSheet
               record={printMinutes}
               detailedItems={data?.detailedItems || []}
@@ -1544,24 +1540,12 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const merPrintPortal =
     printOsdr && !printMinutes && !printMinutesTableOpen && !printOsdrTableOpen
       ? createPortal(
-          <div id="samaan-mer-print-root">
-            <style>{`
-              @media screen {
-                #samaan-mer-print-root { display: none !important; }
-              }
-              @media print {
-                ${buildPrintPageRule('portrait', isFa, '7mm')}
-                body > *:not(#samaan-mer-print-root) {
-                  display: none !important;
-                }
-                #samaan-mer-print-root {
-                  display: block !important;
-                  background: #ffffff !important;
-                  color: #000000 !important;
-                  width: 100%;
-                  -webkit-print-color-adjust: exact;
-                  print-color-adjust: exact;
-                }
+          <div id="samaan-mer-print-root" data-samaan-print-portal="true">
+            <style>{buildIsolatedPrintPortalCss('samaan-mer-print-root', {
+              orientation: 'portrait',
+              isFa,
+              marginMm: 12,
+              extraPrintCss: `
                 #samaan-mer-print-root table {
                   width: 100% !important;
                   table-layout: auto !important;
@@ -1577,8 +1561,8 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                   vertical-align: middle;
                   height: auto !important;
                 }
-              }
-            `}</style>
+              `,
+            })}</style>
             <OfficialMerSheet
               report={printOsdr}
               isFa={isFa}
@@ -1597,38 +1581,62 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       {merPrintPortal}
 
       {/* Sub-navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setSubTab('minutes')}
-          className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-            subTab === 'minutes'
-              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-          }`}
-        >
-          <ClipboardCheck className="w-4 h-4" />
-          <span>{isFa ? 'صورتجلسه گشایش و بازرسی بسته‌ها' : 'Opening & Inspection Minutes'}</span>
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSubTab('minutes')}
+            className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+              subTab === 'minutes'
+                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            <span>{isFa ? 'صورتجلسه گشایش و بازرسی بسته‌ها' : 'Opening & Inspection Minutes'}</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setSubTab('osdr')}
-          className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-            subTab === 'osdr'
-              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-          }`}
-        >
-          <FileWarning className="w-4 h-4" />
-          <span>{isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Discrepancy, Shortage & Damage Report (MER)'}</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('osdr')}
+            className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+              subTab === 'osdr'
+                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
+            }`}
+          >
+            <FileWarning className="w-4 h-4" />
+            <span>{isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Discrepancy, Shortage & Damage Report (MER)'}</span>
+          </button>
+        </div>
+
+        {subTab === 'minutes' ? (
+          <OperationalViewModeTabs
+            viewMode={minutesViewMode}
+            onChange={setMinutesViewMode}
+            historyCount={minutesList.length}
+            isFa={isFa}
+            canCreate={canEdit}
+            isEditing={Boolean(editingMinutes)}
+            testIdPrefix="opi-minutes"
+          />
+        ) : (
+          <OperationalViewModeTabs
+            viewMode={osdrViewMode}
+            onChange={setOsdrViewMode}
+            historyCount={osdrList.length}
+            isFa={isFa}
+            canCreate={canEdit}
+            isEditing={Boolean(editingOsdr)}
+            testIdPrefix="mer"
+          />
+        )}
       </div>
 
       {/* SUB-TAB 1: OPI MINUTES */}
       {subTab === 'minutes' && (
         <div className="space-y-6">
-          {canEdit && (
+          {canEdit && minutesViewMode === 'create' && (
             <form
               onSubmit={handleSaveMinutes}
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
@@ -2104,6 +2112,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
           )}
 
           {/* Minutes History Table */}
+          {(minutesViewMode === 'history' || !canEdit) && (
           <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
             <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold">
@@ -2228,13 +2237,14 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               lang={prefs.language}
             />
           </div>
+          )}
         </div>
       )}
 
       {/* SUB-TAB 2: MER DISCREPANCY REPORT */}
       {subTab === 'osdr' && (
         <div className="space-y-6">
-          {canEdit && (
+          {canEdit && osdrViewMode === 'create' && (
             <form
               onSubmit={handleSaveOsdr}
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
@@ -2477,6 +2487,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
           )}
 
           {/* MER History Table */}
+          {(osdrViewMode === 'history' || !canEdit) && (
           <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
             <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold">
@@ -2576,6 +2587,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               lang={prefs.language}
             />
           </div>
+          )}
         </div>
       )}
 

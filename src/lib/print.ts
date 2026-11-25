@@ -63,12 +63,30 @@ function buildStandalonePrintableHtml(title?: string): string {
   const lang = document.documentElement.getAttribute('lang') || 'fa';
   const styles = collectHeadStylesHtml();
 
-  // Prefer explicit print-sheet / print-container / visible print area if present, else body clone
-  const rootClone = document.body.cloneNode(true) as HTMLElement;
-  rootClone.querySelectorAll('script, noscript, iframe, .no-print, [data-ios-print-overlay="true"]').forEach((el) => el.remove());
+  // Prefer explicit active print portal mounted on document.body so app UI never leaks into printed output
+  const explicitPortal = document.body.querySelector(
+    '[data-samaan-print-portal="true"], #samaan-substitution-print-root, #samaan-miv-print-root, #samaan-label-print-root, #samaan-print-root, [id$="-print-root"]',
+  ) as HTMLElement | null;
+
+  let bodyHtml = '';
+  if (explicitPortal) {
+    const portalClone = explicitPortal.cloneNode(true) as HTMLElement;
+    portalClone.classList.remove('hidden');
+    portalClone.style.display = 'block';
+    bodyHtml = portalClone.outerHTML;
+  } else {
+    const rootClone = document.body.cloneNode(true) as HTMLElement;
+    rootClone
+      .querySelectorAll('script, noscript, iframe, .no-print, [data-ios-print-overlay="true"]')
+      .forEach((el) => el.remove());
+    bodyHtml = rootClone.innerHTML;
+  }
 
   const printOverrideCss = `
     <style>
+      @page {
+        margin: 12mm;
+      }
       @media screen, print {
         html, body {
           background: #ffffff !important;
@@ -76,6 +94,20 @@ function buildStandalonePrintableHtml(title?: string): string {
           color-scheme: only light !important;
           margin: 0 !important;
           padding: 0 !important;
+        }
+        body {
+          padding: 6mm !important;
+          box-sizing: border-box !important;
+        }
+        @media print {
+          body {
+            padding: 1.5mm !important;
+          }
+        }
+        [data-samaan-print-portal="true"],
+        [id$="-print-root"] {
+          display: block !important;
+          width: 100% !important;
         }
         .no-print, .print\\:hidden { display: none !important; }
         .print\\:block { display: block !important; }
@@ -100,7 +132,7 @@ function buildStandalonePrintableHtml(title?: string): string {
   ${printOverrideCss}
 </head>
 <body class="bg-white text-slate-900">
-  ${rootClone.innerHTML}
+  ${bodyHtml}
 </body>
 </html>`;
 }

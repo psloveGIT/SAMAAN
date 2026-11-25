@@ -16,11 +16,32 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.15.0';
-export const APP_BUILD_ID = '2026.05.31-1';
-export const APP_RELEASED_AT = '2026-05-31';
+export const APP_VERSION = '2.15.1';
+export const APP_BUILD_ID = '2026.06.01-1';
+export const APP_RELEASED_AT = '2026-06-01';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.15.1',
+    buildId: '2026.06.01-1',
+    releasedAt: '2026-06-01',
+    titleFa: 'حاشیه استاندارد چاپ در تمام فرم‌ها، رفع چاپ جایگزینی، یکپارچه‌سازی دکمه سابقه فرم‌ها، پاکسازی فرم حواله و یکسان‌سازی حواله خودکار جایگزینی',
+    titleEn: 'Standard Print Safe Margins Across All Forms, Fixed Substitution Printing, Unified Form History Toggle, Cleaner MIV Step 2 & Auto-MIV Parity',
+    changesFa: [
+      'اعمال حاشیه خالی استاندارد (۱۲ میلی‌متر) در هنگام پرینت برای تمام فرم‌های فعلی و فرم‌های آینده سامانه جهت جلوگیری از لب‌به‌لب شدن فرم با لبه کاغذ در چاپ',
+      'رفع کامل باگ چاپ در بخش جایگزینی: حذف چاپ اسکرین‌شات برنامه و چاپ تمیز و مجزای فرم جایگزینی (عمودی) و حواله خروج خودکار (افقی) با حاشیه استاندارد',
+      'پاکسازی بخش اقلام حواله انبار: ساده شدن راهنمای کادر توضیحات به «توضیحات» و جایگزینی کادرهای شلوغ سربرگ (شماره رسید، واحد، سیستم/جزیره و...) با نوار خلاصه خودکار و بخش اختیاری جمع‌شونده',
+      'افزودن دکمه یکپارچه «سابقه فرم‌ها» مشابه بخش جایگزینی در تمام فرم‌های عملیاتی فعلی و آینده جهت جابه‌جایی سریع میان ثبت فرم و سوابق ثبت‌شده',
+      'اعمال دقیق قوانین شماره‌گذاری (<نیروگاه>-<پیمانکار>-MIV-####) و تمام ۱۳ ستون رسمی حواله انبار (شامل Tag No، Code No، شماره رسید و توضیحات چندخطی) برای حواله‌های خودکار صادرشده در بخش جایگزینی',
+    ],
+    changesEn: [
+      'Applied standard 12mm safe print margins across all current and future forms so printed sheets never clip against paper edges',
+      'Fixed Substitution printing: completely eliminated app-UI screenshot capture and isolated clean Portrait Substitution + Landscape auto-issued MIV sheets',
+      'Cleaned up MIV Step 2: simplified Remark placeholder to "Remark" and replaced bulky always-visible header boxes with a compact auto-filled summary and collapsible optional overrides',
+      'Added unified "Form History" mode toggle button matching Substitution across all current and future operational forms',
+      'Applied exact MD1 MIV numbering (<PLANT>-<CONTRACTOR>-MIV-####) and all 13 official column rules (including Tag No., Code No., Receipt No., and stacked Remarks) to auto-issued MIVs in Substitution',
+    ],
+  },
   {
     version: '2.15.0',
     buildId: '2026.05.31-1',

@@ -125,7 +125,7 @@ export function PrintReportModal<T>({
   };
 
   const printPortal = createPortal(
-    <div id="samaan-print-root" dir={isFa ? 'rtl' : 'ltr'}>
+    <div id="samaan-print-root" data-samaan-print-portal="true" dir={isFa ? 'rtl' : 'ltr'}>
       <style>{`
         @media screen {
           #samaan-print-root { display: none !important; }
@@ -133,7 +133,7 @@ export function PrintReportModal<T>({
         @media print {
           @page {
             size: A4 ${orientation};
-            margin: 8mm 8mm 13mm 8mm;
+            margin: 12mm 12mm 15mm 12mm;
             @bottom-center {
               content: ${isFa ? '"صفحه: " counter(page) " از " counter(pages)' : '"Page: " counter(page) " of " counter(pages)'};
               font-family: 'Vazirmatn', 'Plus Jakarta Sans', system-ui, sans-serif;
@@ -152,6 +152,8 @@ export function PrintReportModal<T>({
             overflow: visible !important;
             height: auto !important;
             max-height: none !important;
+            padding: 1.5mm !important;
+            box-sizing: border-box !important;
             background: #ffffff !important;
             color: #111827 !important;
             font-family: 'Vazirmatn', system-ui, sans-serif;

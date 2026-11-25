@@ -15,7 +15,7 @@ import {
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest } from '../lib/api.ts';
 import { DEFAULT_UPLOADED_FORM_PRINT_SETTINGS } from '../shared/employers.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
 import type {
   DetailedComputed,
   EmployerUploadedForm,
@@ -253,26 +253,14 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
   const printPortal =
     effectiveUploadedForm.fileType !== 'pdf'
       ? createPortal(
-          <div id="samaan-form-print-root">
-            <style>{`
-              @media screen {
-                #samaan-form-print-root { display: none !important; }
-              }
-              @media print {
-                ${buildPrintPageRule(effectiveUploadedForm.printSettings.orientation, isFa, '6mm')}
-                body > *:not(#samaan-form-print-root) {
-                  display: none !important;
-                }
-                #samaan-form-print-root {
-                  display: block !important;
-                  background: #ffffff !important;
-                  color: #000000 !important;
-                  width: 100%;
-                  -webkit-print-color-adjust: exact;
-                  print-color-adjust: exact;
-                }
-              }
-            `}</style>
+          <div id="samaan-custom-form-print-root" data-samaan-print-portal="true">
+            <style>
+              {buildIsolatedPrintPortalCss('samaan-custom-form-print-root', {
+                orientation: effectiveUploadedForm.printSettings.orientation,
+                isFa,
+                marginMm: 12,
+              })}
+            </style>
             <UploadedFormA4Sheet
               form={effectiveUploadedForm}
               employer={activeEmployer}

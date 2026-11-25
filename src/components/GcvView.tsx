@@ -8,7 +8,11 @@ import { roundQty } from '../shared/formulas.ts';
 import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
+import {
+  OperationalViewModeTabs,
+  type OperationalViewMode,
+} from './OperationalViewModeTabs.tsx';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -507,6 +511,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
   const formCode = getEmployerFormCode(activeEmployer, '11-03');
 
+  const [viewMode, setViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
   const [data, setData] = useState<GcvApiResponse | null>(null);
   const suggestedReceiptNo = useMemo(
     () =>
@@ -698,6 +703,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   };
 
   const startEdit = (doc: GcvDocumentRecord) => {
+    setViewMode('create');
     setEditingDoc(doc);
     setReceiptNo(doc.receiptNo || '');
     setDate(doc.date || getTodayIso());
@@ -861,24 +867,12 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
       {/* Dedicated A4 Landscape Portal for Official MD1EX-FQP02/11-03 GCV Sheet */}
       {printDoc && !printReportOpen
         ? createPortal(
-            <div id="samaan-gcv-print-root">
-              <style>{`
-                @media screen {
-                  #samaan-gcv-print-root { display: none !important; }
-                }
-                @media print {
-                  ${buildPrintPageRule('landscape', isFa, '7mm')}
-                  body > *:not(#samaan-gcv-print-root) {
-                    display: none !important;
-                  }
-                  #samaan-gcv-print-root {
-                    display: block !important;
-                    background: #ffffff !important;
-                    color: #000000 !important;
-                    width: 100%;
-                    -webkit-print-color-adjust: exact;
-                    print-color-adjust: exact;
-                  }
+            <div id="samaan-gcv-print-root" data-samaan-print-portal="true">
+              <style>{buildIsolatedPrintPortalCss('samaan-gcv-print-root', {
+                orientation: 'landscape',
+                isFa,
+                marginMm: 12,
+                extraPrintCss: `
                   #samaan-gcv-print-root table {
                     width: 100% !important;
                     table-layout: auto !important;
@@ -894,8 +888,8 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                     vertical-align: middle;
                     height: auto !important;
                   }
-                }
-              `}</style>
+                `,
+              })}</style>
               <OfficialGcvSheet
                 doc={printDoc}
                 detailedItems={data?.detailedItems || []}
@@ -906,7 +900,29 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
           )
         : null}
 
-      {canEdit && (
+      {/* Top Mode Bar: Form vs History */}
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 flex flex-wrap items-center justify-between gap-3 print:hidden">
+        <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+          <FileCheck2 className="w-4 h-4 text-[var(--accent-primary)]" />
+          <span>{isFa ? 'رسید مصرف مستقیم کالا (GCV)' : 'Direct Consumption Voucher (GCV)'}</span>
+          {formCode && (
+            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+              {formCode}
+            </span>
+          )}
+        </div>
+        <OperationalViewModeTabs
+          viewMode={viewMode}
+          onChange={setViewMode}
+          historyCount={documentsList.length}
+          isFa={isFa}
+          canCreate={canEdit}
+          isEditing={Boolean(editingDoc)}
+          testIdPrefix="gcv"
+        />
+      </div>
+
+      {canEdit && viewMode === 'create' && (
         <form
           onSubmit={handleSubmit}
           className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
@@ -1370,6 +1386,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
       )}
 
       {/* GCV Document History */}
+      {(viewMode === 'history' || !canEdit) && (
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
         <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold">
@@ -1477,6 +1494,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
           lang={prefs.language}
         />
       </div>
+      )}
 
       {/* Printable Official MD1EX-FQP02/11-03 Landscape Modal */}
       {printDoc && (

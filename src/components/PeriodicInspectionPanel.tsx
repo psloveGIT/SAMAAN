@@ -10,7 +10,11 @@ import {
   type ResolvedEmployerProfile,
 } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
+import {
+  OperationalViewModeTabs,
+  type OperationalViewMode,
+} from './OperationalViewModeTabs.tsx';
 import type { PeriodicInspectionAnswer, PeriodicInspectionRecord } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
@@ -648,6 +652,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
     [activeEmployer],
   );
 
+  const [viewMode, setViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
   const [records, setRecords] = useState<PeriodicInspectionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -730,6 +735,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   };
 
   const startEdit = (rec: PeriodicInspectionRecord) => {
+    setViewMode('create');
     setEditingRecord(rec);
     setInspectionDate(rec.inspectionDate);
     setSupervisorName(rec.supervisorName || '');
@@ -856,24 +862,12 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
       {/* Dedicated A4 Landscape 5-Page Print Portal */}
       {printRec
         ? createPortal(
-            <div id="samaan-periodic-print-root" dir="rtl">
-              <style>{`
-                @media screen {
-                  #samaan-periodic-print-root { display: none !important; }
-                }
-                @media print {
-                  ${buildPrintPageRule('landscape', isFa, '6mm')}
-                  body > *:not(#samaan-periodic-print-root) {
-                    display: none !important;
-                  }
-                  #samaan-periodic-print-root {
-                    display: block !important;
-                    background: #ffffff !important;
-                    color: #000000 !important;
-                    width: 100%;
-                    -webkit-print-color-adjust: exact;
-                    print-color-adjust: exact;
-                  }
+            <div id="samaan-periodic-print-root" data-samaan-print-portal="true" dir="rtl">
+              <style>{buildIsolatedPrintPortalCss('samaan-periodic-print-root', {
+                orientation: 'landscape',
+                isFa,
+                marginMm: 12,
+                extraPrintCss: `
                   #samaan-periodic-print-root .samaan-periodic-page {
                     margin-bottom: 0 !important;
                   }
@@ -895,16 +889,38 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                     vertical-align: middle;
                     height: auto !important;
                   }
-                }
-              `}</style>
+                `,
+              })}</style>
               <OfficialPeriodicInspectionSheet record={printRec} formatDate={formatDate} />
             </div>,
             document.body,
           )
         : null}
 
+      {/* Top Mode Bar: Checklist Form vs History */}
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 flex flex-wrap items-center justify-between gap-3 print:hidden">
+        <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+          <ClipboardList className="w-4 h-4 text-[var(--accent-primary)]" />
+          <span>{isFa ? 'چک‌لیست بازدید ادواری انبار' : 'Periodic Warehouse Inspection Checklist'}</span>
+          {formCode && (
+            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+              {formCode}
+            </span>
+          )}
+        </div>
+        <OperationalViewModeTabs
+          viewMode={viewMode}
+          onChange={setViewMode}
+          historyCount={records.length}
+          isFa={isFa}
+          canCreate={canEdit}
+          isEditing={Boolean(editingRecord)}
+          testIdPrefix="periodic"
+        />
+      </div>
+
       {/* New Checklist Entry Form */}
-      {canEdit && (
+      {canEdit && viewMode === 'create' && (
         <form
           onSubmit={handleSubmit}
           className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-5"
@@ -1172,6 +1188,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
       )}
 
       {/* Saved Inspections History */}
+      {(viewMode === 'history' || !canEdit) && (
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
         <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
           <h3 className="text-sm font-bold">
@@ -1281,6 +1298,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
           lang={prefs.language}
         />
       </div>
+      )}
 
       {/* 5-Page Official A4 Landscape Print Preview Modal */}
       {printRec && (

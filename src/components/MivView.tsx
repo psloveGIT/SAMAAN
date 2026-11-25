@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   History,
   Pencil,
@@ -38,7 +40,7 @@ import {
   computeAutoColumnWidths,
   type AutoColumnDescriptor,
 } from '../shared/printAutoLayout.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
 import type {
   DetailedComputed,
   DocumentLineItem,
@@ -46,6 +48,7 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { OperationalViewModeTabs, type OperationalViewMode } from './OperationalViewModeTabs.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
@@ -732,6 +735,10 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [receiver, setReceiver] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // View mode switcher (New MIV vs History) & optional collapsible header overrides
+  const [viewMode, setViewMode] = useState<OperationalViewMode>(() => (canEdit ? 'create' : 'history'));
+  const [showHeaderOverrides, setShowHeaderOverrides] = useState(false);
+
   // History search, print modal, delete modal
   const [historySearch, setHistorySearch] = useState('');
   const [printDoc, setPrintDoc] = useState<MivDocumentRecord | null>(null);
@@ -1144,6 +1151,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     setQtyMap(nextQty);
     setUserRemarkMap(nextUserRemark);
     setSourceWarehouseMap(nextSource);
+    setViewMode('create');
     setStep(2);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -1332,47 +1340,18 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
 
   return (
     <div className="space-y-6" data-testid="miv-view">
-      {/* Dedicated A4 Landscape Print Portal for Official MD1EX-FQP02/05-03 */}
+      {/* Dedicated A4 Landscape Print Portal for Official MD1EX-FQP02/05-03 with standard 12mm safe margins */}
       {printDoc && !printReportOpen && !printDocWasUndone
         ? createPortal(
-            <div id="samaan-miv-print-root">
-              <style>{`
-                @media screen {
-                  #samaan-miv-print-root { display: none !important; }
-                }
-                @media print {
-                  ${buildPrintPageRule('landscape', isFa, '6mm')}
-                  body > *:not(#samaan-miv-print-root) {
-                    display: none !important;
-                  }
-                  #samaan-miv-print-root {
-                    display: block !important;
-                    background: #ffffff !important;
-                    color: #000000 !important;
-                    width: 100%;
-                    -webkit-print-color-adjust: exact;
-                    print-color-adjust: exact;
-                  }
-                  #samaan-miv-print-root .samaan-print-page-break {
-                    break-after: page !important;
-                    page-break-after: always !important;
-                  }
-                  #samaan-miv-print-root table {
-                    width: 100% !important;
-                    table-layout: auto !important;
-                  }
-                  #samaan-miv-print-root tr {
-                    height: auto !important;
-                    break-inside: avoid !important;
-                    page-break-inside: avoid !important;
-                  }
-                  #samaan-miv-print-root th,
-                  #samaan-miv-print-root td {
-                    height: auto !important;
-                    vertical-align: middle !important;
-                  }
-                }
-              `}</style>
+            <div id="samaan-miv-print-root" data-samaan-print-portal="true">
+              <style>
+                {buildIsolatedPrintPortalCss('samaan-miv-print-root', {
+                  orientation: 'landscape',
+                  isFa,
+                  marginMm: 12,
+                  showBrowserPageFooter: false,
+                })}
+              </style>
               <OfficialMivSheet
                 doc={printDoc}
                 detailedItems={detailedItemsList}
@@ -1383,85 +1362,102 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
           )
         : null}
 
+      {/* Top Header Bar with Standardized Create / History Mode Toggle */}
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+            <ClipboardList className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-sm sm:text-base font-extrabold text-[var(--text-primary)] truncate">
+                {editingDoc && viewMode === 'create'
+                  ? isFa
+                    ? `ویرایش حواله انبار (${editingDoc.docNo})`
+                    : `Edit MIV (${editingDoc.docNo})`
+                  : isFa
+                    ? 'درخواست کالا از انبار و حواله انبار'
+                    : 'Material Issue Voucher (MIV)'}
+              </h1>
+              <span
+                dir="ltr"
+                className="px-2 py-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] font-mono text-[11px] font-bold text-[var(--accent-primary)]"
+              >
+                {MD1_MIV_FORM_CODE}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              {viewMode === 'history'
+                ? isFa
+                  ? 'مشاهده، چاپ مجدد، ویرایش و حذف حواله‌های انبار صادرشده'
+                  : 'View, reprint, edit, and delete issued Material Issue Vouchers'
+                : step === 1
+                  ? isFa
+                    ? 'مرحله ۱ از ۲: فیلتر و انتخاب اقلام دارای موجودی (انبار کارفرما و پیمانکار)'
+                    : 'Step 1 of 2: Filter & select in-stock items (Employer & Contractor stock)'
+                  : isFa
+                    ? 'مرحله ۲ از ۲: تعیین تعداد خروجی (صرفاً عددی)، توضیحات اختیاری و صدور حواله'
+                    : 'Step 2 of 2: Set numeric quantities, optional remarks, and issue MIV'}
+            </p>
+          </div>
+        </div>
+
+        <OperationalViewModeTabs
+          mode={viewMode}
+          onChange={setViewMode}
+          historyCount={documents.length}
+          canEdit={canEdit}
+          createLabelFa="ثبت حواله جدید"
+          createLabelEn="New MIV"
+          historyLabelFa="سابقه فرم‌ها"
+          historyLabelEn="History"
+          testIdPrefix="miv"
+        />
+      </div>
+
       {/* Main Wizard Card (Create / Edit MIV) */}
-      {canEdit && (
+      {viewMode === 'create' && canEdit && (
         <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-sm overflow-hidden">
-          {/* Wizard Header */}
-          <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)]/55 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
-                <ClipboardList className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-sm font-extrabold text-[var(--text-primary)] truncate">
-                    {editingDoc
-                      ? isFa
-                        ? `ویرایش حواله انبار (${editingDoc.docNo})`
-                        : `Edit MIV (${editingDoc.docNo})`
-                      : isFa
-                        ? 'درخواست کالا از انبار و حواله انبار'
-                        : 'Material Issue Voucher (MIV)'}
-                  </h2>
-                  <span
-                    dir="ltr"
-                    className="px-2 py-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] font-mono text-[10.5px] font-bold text-[var(--text-secondary)]"
-                  >
-                    {MD1_MIV_FORM_CODE}
-                  </span>
-                </div>
-                <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                  {step === 1
-                    ? isFa
-                      ? 'مرحله ۱ از ۲: فیلتر و انتخاب اقلام دارای موجودی (انبار کارفرما و پیمانکار)'
-                      : 'Step 1 of 2: Filter & select in-stock items (Employer & Contractor stock)'
-                    : isFa
-                      ? 'مرحله ۲ از ۲: تعیین تعداد خروجی (صرفاً عددی)، توضیحات اختیاری و صدور حواله'
-                      : 'Step 2 of 2: Set numeric quantities, optional remarks, and issue MIV'}
-                </p>
-              </div>
+          {/* Step Switcher Bar */}
+          <div className="px-4 sm:px-5 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)]/55 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="inline-flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-0.5 text-[11px] font-bold">
+              <button
+                type="button"
+                data-testid="miv-step-1-tab"
+                onClick={() => setStep(1)}
+                className={`h-7 px-3 rounded-lg transition-colors ${
+                  step === 1
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                }`}
+              >
+                {isFa ? '۱. انتخاب اقلام' : '1. Select Items'}
+              </button>
+              <button
+                type="button"
+                data-testid="miv-step-2-tab"
+                onClick={handleProceedToStep2}
+                className={`h-7 px-3 rounded-lg transition-colors ${
+                  step === 2
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                }`}
+              >
+                {isFa
+                  ? `۲. تکمیل و صدور (${selectedItems.length})`
+                  : `2. Complete & Issue (${selectedItems.length})`}
+              </button>
             </div>
 
-            <div className="flex items-center gap-2">
-              {editingDoc && (
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="h-8 px-3 rounded-lg border border-[var(--status-danger)]/40 bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-semibold"
-                >
-                  {isFa ? 'انصراف از ویرایش' : 'Cancel Edit'}
-                </button>
-              )}
-
-              <div className="inline-flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-0.5 text-[11px] font-bold">
-                <button
-                  type="button"
-                  data-testid="miv-step-1-tab"
-                  onClick={() => setStep(1)}
-                  className={`h-7 px-3 rounded-lg transition-colors ${
-                    step === 1
-                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                  }`}
-                >
-                  {isFa ? '۱. انتخاب اقلام' : '1. Select Items'}
-                </button>
-                <button
-                  type="button"
-                  data-testid="miv-step-2-tab"
-                  onClick={handleProceedToStep2}
-                  className={`h-7 px-3 rounded-lg transition-colors ${
-                    step === 2
-                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                  }`}
-                >
-                  {isFa
-                    ? `۲. تکمیل و صدور (${selectedItems.length})`
-                    : `2. Complete & Issue (${selectedItems.length})`}
-                </button>
-              </div>
-            </div>
+            {editingDoc && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="h-8 px-3 rounded-lg border border-[var(--status-danger)]/40 bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs font-semibold"
+              >
+                {isFa ? 'انصراف از ویرایش' : 'Cancel Edit'}
+              </button>
+            )}
           </div>
 
           {step === 1 ? (
@@ -1570,149 +1566,252 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                 </div>
               </div>
 
-              {/* Official Header Fields (1-2, 1-5, 1-6, 1-7, 1-8, 1-22) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div>
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <label
-                      htmlFor="miv-doc-no-input"
-                      className="text-[11px] font-semibold text-[var(--text-secondary)]"
-                    >
-                      {isFa ? 'شماره حواله انبار *' : 'MIV Document No. *'}
-                    </label>
-                    <button
-                      type="button"
-                      data-testid="miv-regenerate-docno-btn"
-                      onClick={() => {
-                        setDocNoTouched(false);
-                        setDocNo(suggestedDocNo);
-                      }}
-                      title={
-                        isFa
-                          ? `تولید خودکار بر اساس کد پیمانکار (${contractorAbbrPreview})`
-                          : `Regenerate using contractor code (${contractorAbbrPreview})`
-                      }
-                      className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline inline-flex items-center gap-1"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                      <span dir="ltr">{suggestedDocNo}</span>
-                    </button>
+              {/* Compact Auto-Filled Header Summary Bar (values auto-populated from Project & Detailed Equipment) */}
+              <div
+                data-testid="miv-auto-header-summary"
+                className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 p-3 space-y-2.5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+                    <div className="inline-flex items-center gap-1.5">
+                      <span className="text-[var(--text-muted)]">{isFa ? 'شماره حواله:' : 'MIV No.:'}</span>
+                      <strong
+                        dir="ltr"
+                        data-testid="miv-doc-no-preview"
+                        className="font-mono text-[var(--accent-primary)]"
+                      >
+                        {docNo.trim() || suggestedDocNo}
+                      </strong>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5">
+                      <span className="text-[var(--text-muted)]">{isFa ? 'تاریخ:' : 'Date:'}</span>
+                      <strong className="tabular-nums text-[var(--text-primary)]">{formatDate(date)}</strong>
+                    </div>
+                    {party && (
+                      <div className="inline-flex items-center gap-1.5">
+                        <span className="text-[var(--text-muted)]">{isFa ? 'پیمانکار:' : 'Contractor:'}</span>
+                        <strong className="text-[var(--text-primary)] bidi-plaintext">{party}</strong>
+                      </div>
+                    )}
+                    {islandSystem && (
+                      <div className="inline-flex items-center gap-1.5">
+                        <span className="text-[var(--text-muted)]">{isFa ? 'سیستم/جزیره:' : 'System/Island:'}</span>
+                        <strong className="text-[var(--text-primary)] bidi-plaintext">{islandSystem}</strong>
+                      </div>
+                    )}
+                    {unit && (
+                      <div className="inline-flex items-center gap-1.5">
+                        <span className="text-[var(--text-muted)]">{isFa ? 'واحد:' : 'Unit:'}</span>
+                        <strong className="text-[var(--text-primary)] bidi-plaintext">{unit}</strong>
+                      </div>
+                    )}
+                    {receiptNo && (
+                      <div className="inline-flex items-center gap-1.5">
+                        <span className="text-[var(--text-muted)]">{isFa ? 'شماره رسید:' : 'Receipt No.:'}</span>
+                        <strong dir="ltr" className="font-mono text-[var(--text-primary)]">{receiptNo}</strong>
+                      </div>
+                    )}
                   </div>
-                  <input
-                    id="miv-doc-no-input"
-                    data-testid="miv-doc-no-input"
-                    type="text"
-                    required
-                    dir="ltr"
-                    value={docNo}
-                    onChange={(e) => {
-                      setDocNo(e.target.value);
-                      setDocNoTouched(true);
-                    }}
-                    placeholder={suggestedDocNo}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono font-bold text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
 
-                <JalaliDateInput
-                  label={`${isFa ? 'تاریخ حواله' : 'Date'} *`}
-                  value={date}
-                  onChange={setDate}
-                />
-
-                <div>
-                  <label
-                    htmlFor="miv-party-input"
-                    className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                  <button
+                    type="button"
+                    data-testid="miv-toggle-header-overrides-btn"
+                    onClick={() => setShowHeaderOverrides((prev) => !prev)}
+                    className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1"
                   >
-                    {isFa ? 'پیمانکار / درخواست کننده (تحویل گیرنده)' : 'Contractor / Requester'}
-                  </label>
-                  <input
-                    id="miv-party-input"
-                    data-testid="miv-party-input"
-                    type="text"
-                    value={party}
-                    onChange={(e) => setParty(e.target.value)}
-                    placeholder={isFa ? 'مثلاً: نصب نیرو نصب' : 'e.g. NNE'}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
+                    <span>{isFa ? 'تنظیمات اختیاری سربرگ' : 'Optional Header Details'}</span>
+                    {showHeaderOverrides ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
                 </div>
 
-                <div>
-                  <label
-                    htmlFor="miv-system-island-input"
-                    className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
-                  >
-                    {isFa ? 'سیستم / جزیره' : 'System / Island'}
-                  </label>
-                  <input
-                    id="miv-system-island-input"
-                    data-testid="miv-system-island-input"
-                    type="text"
-                    value={islandSystem}
-                    onChange={(e) => setIslandSystem(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
+                {showHeaderOverrides && (
+                  <div className="pt-2.5 border-t border-[var(--border-subtle)] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <label
+                          htmlFor="miv-doc-no-input"
+                          className="text-[11px] font-semibold text-[var(--text-secondary)]"
+                        >
+                          {isFa ? 'شماره حواله انبار *' : 'MIV Document No. *'}
+                        </label>
+                        <button
+                          type="button"
+                          data-testid="miv-regenerate-docno-btn"
+                          onClick={() => {
+                            setDocNoTouched(false);
+                            setDocNo(suggestedDocNo);
+                          }}
+                          title={
+                            isFa
+                              ? `تولید خودکار بر اساس کد پیمانکار (${contractorAbbrPreview})`
+                              : `Regenerate using contractor code (${contractorAbbrPreview})`
+                          }
+                          className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span dir="ltr">{suggestedDocNo}</span>
+                        </button>
+                      </div>
+                      <input
+                        id="miv-doc-no-input"
+                        data-testid="miv-doc-no-input"
+                        type="text"
+                        required
+                        dir="ltr"
+                        value={docNo}
+                        onChange={(e) => {
+                          setDocNo(e.target.value);
+                          setDocNoTouched(true);
+                        }}
+                        placeholder={suggestedDocNo}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono font-bold text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
 
-                <div>
-                  <label
-                    htmlFor="miv-unit-input"
-                    className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
-                  >
-                    {isFa ? 'واحد' : 'Unit'}
-                  </label>
-                  <input
-                    id="miv-unit-input"
-                    data-testid="miv-unit-input"
-                    type="text"
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
+                    <JalaliDateInput
+                      label={`${isFa ? 'تاریخ حواله' : 'Date'} *`}
+                      value={date}
+                      onChange={setDate}
+                    />
 
-                <div>
-                  <label
-                    htmlFor="miv-receipt-input"
-                    className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
-                  >
-                    {isFa ? 'شماره رسید (رسید مصرف)' : 'Receipt No.'}
-                  </label>
-                  <input
-                    id="miv-receipt-input"
-                    data-testid="miv-receipt-input"
-                    type="text"
-                    dir="ltr"
-                    value={receiptNo}
-                    onChange={(e) => setReceiptNo(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
+                    <div>
+                      <label
+                        htmlFor="miv-party-input"
+                        className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                      >
+                        {isFa ? 'پیمانکار / درخواست کننده' : 'Contractor / Requester'}
+                      </label>
+                      <input
+                        id="miv-party-input"
+                        data-testid="miv-party-input"
+                        type="text"
+                        value={party}
+                        onChange={(e) => setParty(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
 
-                <div>
-                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'نام تحویل‌گیرنده (امضاء)' : 'Receiver Signatory'}
-                  </label>
-                  <input
-                    type="text"
-                    value={receiver}
-                    onChange={(e) => setReceiver(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)]"
-                  />
-                </div>
+                    <div>
+                      <label
+                        htmlFor="miv-system-island-input"
+                        className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                      >
+                        {isFa ? 'سیستم / جزیره' : 'System / Island'}
+                      </label>
+                      <input
+                        id="miv-system-island-input"
+                        data-testid="miv-system-island-input"
+                        type="text"
+                        value={islandSystem}
+                        onChange={(e) => setIslandSystem(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
 
-                <div>
-                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'نام انباردار (امضاء)' : 'Storekeeper Signatory'}
-                  </label>
-                  <input
-                    type="text"
-                    value={storekeeper}
-                    onChange={(e) => setStorekeeper(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)]"
-                  />
-                </div>
+                    <div>
+                      <label
+                        htmlFor="miv-unit-input"
+                        className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                      >
+                        {isFa ? 'واحد' : 'Unit'}
+                      </label>
+                      <input
+                        id="miv-unit-input"
+                        data-testid="miv-unit-input"
+                        type="text"
+                        value={unit}
+                        onChange={(e) => setUnit(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="miv-receipt-input"
+                        className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                      >
+                        {isFa ? 'شماره رسید' : 'Receipt No.'}
+                      </label>
+                      <input
+                        id="miv-receipt-input"
+                        data-testid="miv-receipt-input"
+                        type="text"
+                        dir="ltr"
+                        value={receiptNo}
+                        onChange={(e) => setReceiptNo(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'تحویل‌گیرنده (امضاء)' : 'Receiver Signatory'}
+                      </label>
+                      <input
+                        type="text"
+                        value={receiver}
+                        onChange={(e) => setReceiver(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'انباردار (امضاء)' : 'Storekeeper Signatory'}
+                      </label>
+                      <input
+                        type="text"
+                        value={storekeeper}
+                        onChange={(e) => setStorekeeper(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'تأمین تجهیزات مپنا (اختیاری)' : 'Equipment Supply (Optional)'}
+                      </label>
+                      <input
+                        type="text"
+                        value={equipmentSupply}
+                        onChange={(e) => setEquipmentSupply(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'دفتر فنی مپنا (اختیاری)' : 'Tech Office (Optional)'}
+                      </label>
+                      <input
+                        type="text"
+                        value={techOffice}
+                        onChange={(e) => setTechOffice(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'بخش نصب مپنا (اختیاری)' : 'Installation Dept (Optional)'}
+                      </label>
+                      <input
+                        type="text"
+                        value={installationDept}
+                        onChange={(e) => setInstallationDept(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'درخواست‌کننده (امضاء - اختیاری)' : 'Requester Signatory (Optional)'}
+                      </label>
+                      <input
+                        type="text"
+                        value={requester}
+                        onChange={(e) => setRequester(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)]"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Selected Items Quantities & Stacked Remarks Table */}
@@ -1862,11 +1961,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                                   onChange={(e) =>
                                     setUserRemarkMap((prev) => ({ ...prev, [item.id]: e.target.value }))
                                   }
-                                  placeholder={
-                                    isFa
-                                      ? 'توضیحات اختیاری این حواله (در زیر توضیحات قبلی ثبت می‌شود)...'
-                                      : 'Optional MIV remark (stacked below existing notes)...'
-                                  }
+                                  placeholder={isFa ? 'توضیحات' : 'Remark'}
                                   className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-[var(--text-primary)] leading-relaxed focus:outline-none focus:border-[var(--accent-primary)]"
                                 />
                               </td>
@@ -1886,54 +1981,6 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                       </tbody>
                     </table>
                   </div>
-                </div>
-              </div>
-
-              {/* Optional Signatories Accordion Strip */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
-                <div>
-                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
-                    {isFa ? 'تأمین تجهیزات مپنا (اختیاری)' : 'Equipment Supply (Optional)'}
-                  </label>
-                  <input
-                    type="text"
-                    value={equipmentSupply}
-                    onChange={(e) => setEquipmentSupply(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
-                    {isFa ? 'دفتر فنی مپنا (اختیاری)' : 'Tech Office (Optional)'}
-                  </label>
-                  <input
-                    type="text"
-                    value={techOffice}
-                    onChange={(e) => setTechOffice(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
-                    {isFa ? 'بخش نصب مپنا (اختیاری)' : 'Installation Dept (Optional)'}
-                  </label>
-                  <input
-                    type="text"
-                    value={installationDept}
-                    onChange={(e) => setInstallationDept(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
-                    {isFa ? 'درخواست‌کننده (امضاء - اختیاری)' : 'Requester Signatory (Optional)'}
-                  </label>
-                  <input
-                    type="text"
-                    value={requester}
-                    onChange={(e) => setRequester(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  />
                 </div>
               </div>
 
@@ -1971,7 +2018,8 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         </div>
       )}
 
-      {/* Issued MIV History Table */}
+      {/* Issued MIV History Table (shown when user switches to Form History tab) */}
+      {viewMode === 'history' && (
       <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-sm overflow-hidden">
         <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -2117,6 +2165,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
           lang={prefs.language}
         />
       </div>
+      )}
 
       {/* Official MIV Print Preview Modal (with Post-Print Undo & Redo Controls) */}
       {printDoc && (

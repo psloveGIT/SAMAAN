@@ -412,7 +412,7 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
 @media print {
   @page {
     size: A4 portrait;
-    margin: 8mm 8mm 13mm 8mm;
+    margin: 12mm 12mm 15mm 12mm;
     @bottom-center {
       content: "صفحه: " counter(page) " از " counter(pages);
       font-family: "Vazirmatn", "Plus Jakarta Sans", system-ui, sans-serif;
@@ -427,7 +427,7 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
   }
   @page samaan-en-page {
     size: A4 portrait;
-    margin: 8mm 8mm 13mm 8mm;
+    margin: 12mm 12mm 15mm 12mm;
     @bottom-center {
       content: "Page: " counter(page) " of " counter(pages);
       font-family: "Plus Jakarta Sans", system-ui, sans-serif;
@@ -436,6 +436,23 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
       color: #334155;
       direction: ltr;
     }
+  }
+  /* Global fail-safe: whenever any dedicated print portal is mounted on body,
+     NEVER print the live application UI (#root, modals, sidebars, toasts). */
+  body:has(> [data-samaan-print-portal="true"]) > *:not([data-samaan-print-portal="true"]) {
+    display: none !important;
+  }
+  [data-samaan-print-portal="true"] {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 1.5mm !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   html, body {
     margin: 0 !important;
@@ -486,15 +503,17 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
     box-shadow: none !important;
     background: #ffffff !important;
     color: #000000 !important;
-    padding: 0 !important;
+    padding: 1.5mm !important;
     margin: 0 !important;
     width: 100% !important;
+    box-sizing: border-box !important;
   }
   .samaan-a4-portrait,
   .samaan-a4-landscape {
     width: 100% !important;
     max-width: 100% !important;
     margin: 0 !important;
+    box-sizing: border-box !important;
   }
   /* Enforce repeating column headers across every printed page in ALL sections */
   table {

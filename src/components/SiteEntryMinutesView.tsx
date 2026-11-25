@@ -15,7 +15,11 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
+import {
+  OperationalViewModeTabs,
+  type OperationalViewMode,
+} from './OperationalViewModeTabs.tsx';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -834,6 +838,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
   const formCode = getEmployerFormCode(activeEmployer, '15-01');
 
+  const [viewMode, setViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
   const [data, setData] = useState<SiteEntryApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const minutesList = useMemo(() => data?.minutes || [], [data]);
@@ -1121,6 +1126,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   };
 
   const startEdit = (rec: SiteEntryMinutesRecord) => {
+    setViewMode('create');
     setEditingRecord(rec);
     setMinutesNo(rec.minutesNo || '');
     setReleaseNoteNo(rec.releaseNoteNo || 'تأیید صورتجلسه‌ی ورود');
@@ -1310,24 +1316,12 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   const formPrintPortal =
     printSheet && !printReportOpen
       ? createPortal(
-          <div id="samaan-form-print-root">
-            <style>{`
-              @media screen {
-                #samaan-form-print-root { display: none !important; }
-              }
-              @media print {
-                ${buildPrintPageRule('portrait', isFa, '7mm')}
-                body > *:not(#samaan-form-print-root) {
-                  display: none !important;
-                }
-                #samaan-form-print-root {
-                  display: block !important;
-                  background: #ffffff !important;
-                  color: #000000 !important;
-                  width: 100%;
-                  -webkit-print-color-adjust: exact;
-                  print-color-adjust: exact;
-                }
+          <div id="samaan-form-print-root" data-samaan-print-portal="true">
+            <style>{buildIsolatedPrintPortalCss('samaan-form-print-root', {
+              orientation: 'portrait',
+              isFa,
+              marginMm: 12,
+              extraPrintCss: `
                 #samaan-form-print-root table {
                   width: 100% !important;
                   table-layout: auto !important;
@@ -1343,8 +1337,8 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                   vertical-align: middle;
                   height: auto !important;
                 }
-              }
-            `}</style>
+              `,
+            })}</style>
             <OfficialSiteEntrySheet
               record={printSheet}
               generalEntries={data?.generalEntries || []}
@@ -1359,7 +1353,29 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
     <div className="space-y-6">
       {formPrintPortal}
 
-      {canEdit && (
+      {/* Top Mode Bar: Form vs History */}
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 flex flex-wrap items-center justify-between gap-3 print:hidden">
+        <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+          <ClipboardSignature className="w-4 h-4 text-[var(--accent-primary)]" />
+          <span>{t.nav.siteEntry}</span>
+          {formCode && (
+            <span dir="ltr" className="text-[11px] font-mono text-[var(--text-muted)]">
+              {formCode}
+            </span>
+          )}
+        </div>
+        <OperationalViewModeTabs
+          viewMode={viewMode}
+          onChange={setViewMode}
+          historyCount={minutesList.length}
+          isFa={isFa}
+          canCreate={canEdit}
+          isEditing={Boolean(editingRecord)}
+          testIdPrefix="site-entry"
+        />
+      </div>
+
+      {canEdit && viewMode === 'create' && (
         <form
           onSubmit={handleSubmit}
           className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-5"
@@ -2012,6 +2028,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
       )}
 
       {/* Recorded History */}
+      {(viewMode === 'history' || !canEdit) && (
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
         <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold">
@@ -2127,6 +2144,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
           lang={prefs.language}
         />
       </div>
+      )}
 
       {/* Printable Official MD1EX-FQP02/15-01 Preview Modal */}
       {printSheet && (

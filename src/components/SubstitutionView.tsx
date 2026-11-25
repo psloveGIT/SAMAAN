@@ -22,13 +22,17 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { triggerAppPrint } from '../lib/print.ts';
 import { extractPlantDocConfig } from '../shared/docNumbering.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
+import {
+  buildMivHeaderAutoFill,
+  buildMivLineRemark,
+  generateMivDocumentNo,
+} from '../shared/miv.ts';
 import {
   DEFAULT_SUPPLY_URGENCY,
   MD1_SUBSTITUTION_FORM_CODE,
   SUPPLY_URGENCY_OPTIONS,
   buildSubstitutionHeaderMeta,
-  generateNextAutoMivDocNo,
   generateNextSubstitutionDocNo,
   getAvailableStockForSource,
   getDefaultStockSource,
@@ -46,6 +50,7 @@ import type {
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { OfficialMivSheet } from './MivView.tsx';
 import { OfficialSubstitutionSheet } from './OfficialSubstitutionSheet.tsx';
+import { OperationalViewModeTabs } from './OperationalViewModeTabs.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SubstitutionItemPicker } from './SubstitutionItemPicker.tsx';
@@ -342,28 +347,54 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     );
   }, [editingRecord, primarySupplier, records, plantDocConfig]);
 
-  // Auto-calculated MIV DocNo preview(s)
+  // Auto-calculated MIV DocNo preview(s) using exact MD1EX-FQP02/05-03 contractor-coded numbering
   const plannedMivDocNos = useMemo(() => {
     const existingMivNos = mivDocuments.map((m) => m.docNo);
-    const hasMapna = step2List.some((r) => r.stockSource === 'mapna');
-    const hasContractor = step2List.some((r) => r.stockSource === 'contractor');
+    const mapnaGroup = step2List.filter((r) => r.stockSource === 'mapna');
+    const contractorGroup = step2List.filter((r) => r.stockSource === 'contractor');
+    const fallbackContractor =
+      step1List.find((r) => r.item.receiver?.trim())?.item.receiver?.trim() ||
+      step2List.find((r) => r.item.receiver?.trim())?.item.receiver?.trim() ||
+      primarySupplier ||
+      '';
+
+    const resolveGroupContractor = (rows: Step2RowDraft[]): string => {
+      const hdr = buildMivHeaderAutoFill(
+        rows.map((r) => r.item),
+        activeProject,
+      );
+      return hdr.party || fallbackContractor;
+    };
+
     const result: { mapna?: string; contractor?: string } = {};
     const used = [...existingMivNos];
-    if (hasMapna) {
-      const no = generateNextAutoMivDocNo(used, plantDocConfig);
+    if (mapnaGroup.length > 0) {
+      const no = generateMivDocumentNo(
+        resolveGroupContractor(mapnaGroup),
+        used,
+        plantDocConfig,
+      );
       result.mapna = no;
       used.push(no);
     }
-    if (hasContractor) {
-      const no = generateNextAutoMivDocNo(used, plantDocConfig);
+    if (contractorGroup.length > 0) {
+      const no = generateMivDocumentNo(
+        resolveGroupContractor(contractorGroup),
+        used,
+        plantDocConfig,
+      );
       result.contractor = no;
       used.push(no);
     }
-    if (!hasMapna && !hasContractor) {
-      result.mapna = generateNextAutoMivDocNo(used, plantDocConfig);
+    if (mapnaGroup.length === 0 && contractorGroup.length === 0) {
+      result.mapna = generateMivDocumentNo(
+        fallbackContractor,
+        used,
+        plantDocConfig,
+      );
     }
     return result;
-  }, [mivDocuments, step2List, plantDocConfig]);
+  }, [mivDocuments, step2List, step1List, activeProject, primarySupplier, plantDocConfig]);
 
   const previewMivLabel = useMemo(() => {
     if (editingRecord?.mivNo) return editingRecord.mivNo;
@@ -674,34 +705,58 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
           groupRows: Step2RowDraft[],
         ) => {
           if (groupRows.length === 0) return;
-          const mivNo = generateNextAutoMivDocNo(usedMivNos, plantDocConfig);
+          // Apply exact MD1EX-FQP02/05-03 MIV header, numbering, and 13-column rules
+          const mivHeader = buildMivHeaderAutoFill(
+            groupRows.map((r) => r.item),
+            activeProject,
+          );
+          const mivParty = mivHeader.party || previewHeaderMeta.installerContractor;
+          const mivSystemIsland =
+            mivHeader.islandSystem ||
+            [previewHeaderMeta.system, previewHeaderMeta.island].filter(Boolean).join('/');
+          const mivUnit = mivHeader.unit || previewHeaderMeta.unit;
+          const mivReceiptNo = mivHeader.receiptNo || '';
+          const mivNo = generateMivDocumentNo(
+            mivParty || primarySupplier,
+            usedMivNos,
+            plantDocConfig,
+          );
           usedMivNos.push(mivNo);
+
           const res = await apiRequest<{ document: MivDocumentRecord }>('/api/miv', {
             method: 'POST',
             body: JSON.stringify({
               docType,
               docNo: mivNo,
               date: docDate,
-              projectName: previewHeaderMeta.projectName,
-              contractNo: previewHeaderMeta.contractNo,
-              party: previewHeaderMeta.installerContractor,
-              islandSystem,
-              unit: previewHeaderMeta.unit,
-              receiver: previewHeaderMeta.installerContractor,
+              projectName: mivHeader.projectName || previewHeaderMeta.projectName,
+              contractNo: mivHeader.contractNo || previewHeaderMeta.contractNo,
+              party: mivParty,
+              islandSystem: mivSystemIsland,
+              unit: mivUnit,
+              receiptNo: mivReceiptNo,
+              receiver: mivParty,
               notes: `صدور خودکار بابت فرم جایگزینی شماره ${targetDocNo}`,
               items: groupRows.map((row) => {
                 const qtyVal = parseStrictPositiveNumber(row.qtyStr)!;
+                const userRemark = row.remarks.trim() || `جایگزینی ${targetDocNo}`;
+                const stackedRemark = buildMivLineRemark(row.item.notes, userRemark);
                 return {
                   detailedId: row.item.id,
                   qty: qtyVal,
                   requestedQty: qtyVal,
+                  shipmentNo: row.item.shipmentNo || '',
+                  packageNo: row.item.packageNo || '',
                   technicalInfo: row.item.size || '',
-                  tagNo: row.item.itemCode || '',
+                  tagNo: row.item.itemNo || '',
                   codeNo: row.item.itemCode || '',
                   location: row.item.storageLocation || '',
                   uom: row.item.countingUnit || '',
                   opiNo: row.item.opiNo || '',
-                  remark: row.remarks.trim() || `جایگزینی ${targetDocNo}`,
+                  equipmentNotes: row.item.notes || '',
+                  userRemark,
+                  remark: stackedRemark,
+                  sourceWarehouse: docType === 'miv_mapna' ? 'employer' : 'contractor',
                 };
               }),
             }),
@@ -904,38 +959,17 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         </div>
 
         {/* Mode Switcher */}
-        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-subtle)] shrink-0">
-          {canEdit && (
-            <button
-              type="button"
-              data-testid="sub-tab-create"
-              onClick={() => setViewMode('create')}
-              className={`h-8 px-3.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                viewMode === 'create'
-                  ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>{isFa ? 'ثبت فرم جایگزینی جدید' : 'New Substitution'}</span>
-            </button>
-          )}
-          <button
-            type="button"
-            data-testid="sub-tab-history"
-            onClick={() => setViewMode('history')}
-            className={`h-8 px-3.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-              viewMode === 'history'
-                ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" />
-            <span>
-              {isFa ? `سابقه فرم‌ها (${records.length})` : `History (${records.length})`}
-            </span>
-          </button>
-        </div>
+        <OperationalViewModeTabs
+          mode={viewMode}
+          onChange={setViewMode}
+          historyCount={records.length}
+          canEdit={canEdit}
+          createLabelFa="ثبت فرم جایگزینی جدید"
+          createLabelEn="New Substitution"
+          historyLabelFa="سابقه فرم‌ها"
+          historyLabelEn="History"
+          testIdPrefix="sub"
+        />
       </div>
 
       {/* CREATE / EDIT MODE — 2-STEP GUIDED WORKFLOW */}
@@ -1949,20 +1983,31 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         </div>
       )}
 
-      {/* DEDICATED PRINT PORTAL — Prints Replacement Form + Auto-Issued MIV Voucher(s) on separate pages in one print job */}
+      {/* DEDICATED ISOLATED PRINT PORTAL — Hides live app UI completely and prints Replacement Form (A4 Portrait) + Auto-Issued MIV Voucher(s) (A4 Landscape) with safe 12mm margins */}
       {printBundle &&
         typeof document !== 'undefined' &&
         createPortal(
-          <div id="samaan-print-portal" className="hidden print:block">
-            <style>{buildPrintPageRule('portrait')}</style>
+          <div id="samaan-substitution-print-root" data-samaan-print-portal="true">
+            <style>
+              {buildIsolatedPrintPortalCss('samaan-substitution-print-root', {
+                orientation:
+                  printMode === 'miv'
+                    ? 'landscape'
+                    : printMode === 'substitution'
+                      ? 'portrait'
+                      : 'mixed',
+                isFa,
+                marginMm: 12,
+                showBrowserPageFooter: false,
+              })}
+            </style>
             {(printMode === 'both' || printMode === 'substitution') && (
               <div
-                style={{
-                  pageBreakAfter:
-                    printMode === 'both' && printBundle.mivDocs.length > 0 ? 'always' : 'auto',
-                  breakAfter:
-                    printMode === 'both' && printBundle.mivDocs.length > 0 ? 'page' : 'auto',
-                }}
+                className={`samaan-print-sheet-portrait ${
+                  printMode === 'both' && printBundle.mivDocs.length > 0
+                    ? 'samaan-print-page-break'
+                    : ''
+                }`}
               >
                 <OfficialSubstitutionSheet rec={printBundle.record} formatDate={formatDate} />
               </div>
@@ -1971,10 +2016,9 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
               printBundle.mivDocs.map((mivDoc, idx) => (
                 <div
                   key={mivDoc.id}
-                  style={{
-                    pageBreakAfter: idx < printBundle.mivDocs.length - 1 ? 'always' : 'auto',
-                    breakAfter: idx < printBundle.mivDocs.length - 1 ? 'page' : 'auto',
-                  }}
+                  className={`samaan-print-sheet-landscape ${
+                    idx < printBundle.mivDocs.length - 1 ? 'samaan-print-page-break' : ''
+                  }`}
                 >
                   <OfficialMivSheet
                     doc={mivDoc}

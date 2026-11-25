@@ -17,7 +17,11 @@ import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/do
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
+import {
+  OperationalViewModeTabs,
+  type OperationalViewMode,
+} from './OperationalViewModeTabs.tsx';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
@@ -634,6 +638,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const formCode = getEmployerFormCode(activeEmployer, '02-03');
 
   const [tab, setTab] = useState<'invitation' | 'results'>('invitation');
+  const [invViewMode, setInvViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
   const [data, setData] = useState<OpiApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -804,6 +809,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   };
 
   const startEditInvitation = (inv: OpiInvitationRecord) => {
+    setInvViewMode('create');
     setEditingInvitation(inv);
     setInvitationNo(inv.invitationNo || '');
     setIssueDate(inv.issueDate || getTodayIso());
@@ -1087,24 +1093,12 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const opiPrintPortal =
     printInvitation && !printInvTableOpen && !printItemsTableOpen
       ? createPortal(
-          <div id="samaan-opi-print-root">
-            <style>{`
-              @media screen {
-                #samaan-opi-print-root { display: none !important; }
-              }
-              @media print {
-                ${buildPrintPageRule('portrait', isFa, '7mm')}
-                body > *:not(#samaan-opi-print-root) {
-                  display: none !important;
-                }
-                #samaan-opi-print-root {
-                  display: block !important;
-                  background: #ffffff !important;
-                  color: #000000 !important;
-                  width: 100%;
-                  -webkit-print-color-adjust: exact;
-                  print-color-adjust: exact;
-                }
+          <div id="samaan-opi-print-root" data-samaan-print-portal="true">
+            <style>{buildIsolatedPrintPortalCss('samaan-opi-print-root', {
+              orientation: 'portrait',
+              isFa,
+              marginMm: 12,
+              extraPrintCss: `
                 #samaan-opi-print-root table {
                   width: 100% !important;
                   table-layout: auto !important;
@@ -1120,8 +1114,8 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                   vertical-align: middle;
                   height: auto !important;
                 }
-              }
-            `}</style>
+              `,
+            })}</style>
             <OfficialOpiInvitationSheet
               record={printInvitation}
               detailedItems={data?.detailedItems || []}
@@ -1138,38 +1132,52 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       {opiPrintPortal}
 
       {/* Sub-navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setTab('invitation')}
-          className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-            tab === 'invitation'
-              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-          }`}
-        >
-          <FileText className="w-4 h-4" />
-          <span>{isFa ? 'دعوتنامه گشایش و بازرسی بسته‌ها' : 'Package Opening & Inspection Invitation'}</span>
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTab('invitation')}
+            className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+              tab === 'invitation'
+                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>{isFa ? 'دعوتنامه گشایش و بازرسی بسته‌ها' : 'Package Opening & Inspection Invitation'}</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setTab('results')}
-          className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-            tab === 'results'
-              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-          }`}
-        >
-          <ClipboardCheck className="w-4 h-4" />
-          <span>{isFa ? 'ثبت نتایج بازرسی (مقدار واقعی و آسیب‌دیده)' : 'Record Inspection Results'}</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setTab('results')}
+            className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+              tab === 'results'
+                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            <span>{isFa ? 'ثبت نتایج بازرسی (مقدار واقعی و آسیب‌دیده)' : 'Record Inspection Results'}</span>
+          </button>
+        </div>
+
+        {tab === 'invitation' && (
+          <OperationalViewModeTabs
+            viewMode={invViewMode}
+            onChange={setInvViewMode}
+            historyCount={invitationsList.length}
+            isFa={isFa}
+            canCreate={canEdit}
+            isEditing={Boolean(editingInvitation)}
+            testIdPrefix="opi-invitation"
+          />
+        )}
       </div>
 
       {/* TAB 1: Issue OPI Invitation */}
       {tab === 'invitation' && (
         <div className="space-y-6">
-          {canEdit && (
+          {canEdit && invViewMode === 'create' && (
             <form
               onSubmit={handleIssueInvitation}
               className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
@@ -1612,6 +1620,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
           )}
 
           {/* Issued Invitations History */}
+          {(invViewMode === 'history' || !canEdit) && (
           <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
             <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold">
@@ -1746,6 +1755,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               lang={prefs.language}
             />
           </div>
+          )}
         </div>
       )}
 

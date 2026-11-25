@@ -20,7 +20,7 @@ import {
   DETAILED_FILTER_FIELDS,
   type CustomFieldFilter,
 } from '../shared/customFilters.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
 import {
   MD1_STORAGE_LABEL_FORM_CODE,
   MD1_STORAGE_LABEL_QA_NOTICE,
@@ -327,12 +327,13 @@ const QuadA4PageSheet: React.FC<QuadA4PageSheetProps> = ({
       style={
         isPrint
           ? {
-              width: '198mm',
-              height: '283mm',
+              width: '100%',
+              maxWidth: '184mm',
+              height: '266mm',
               display: 'grid',
               gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
               gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
-              gap: '6mm',
+              gap: '5mm',
               boxSizing: 'border-box',
               backgroundColor: '#ffffff',
             }
@@ -636,25 +637,16 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
   // Dedicated Print Portal (Strict 2x2 A4 pages, 4 labels per A4 sheet whether 1 or 1,000 rows)
   const printPortal =
     quadPages.length > 0
-      ? createPortal(
-          <div id="samaan-label-print-root" dir="ltr">
+        ? createPortal(
+          <div id="samaan-label-print-root" data-samaan-print-portal="true" dir="ltr">
             <style>{`
-              @media screen {
-                #samaan-label-print-root { display: none !important; }
-              }
+              ${buildIsolatedPrintPortalCss('samaan-label-print-root', {
+                orientation: 'portrait',
+                isFa,
+                marginMm: 12,
+                showBrowserPageFooter: false,
+              })}
               @media print {
-                ${buildPrintPageRule('portrait', isFa, '6mm')}
-                body > *:not(#samaan-label-print-root) {
-                  display: none !important;
-                }
-                #samaan-label-print-root {
-                  display: block !important;
-                  background: #ffffff !important;
-                  color: #000000 !important;
-                  width: 100% !important;
-                  margin: 0 !important;
-                  padding: 0 !important;
-                }
                 .samaan-label-quad-page {
                   page-break-after: always;
                   break-after: page;

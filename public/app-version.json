@@ -1,27 +1,50 @@
 {
-  "version": "2.15.0",
-  "buildId": "2026.05.31-1",
-  "releasedAt": "2026-05-31",
+  "version": "2.15.1",
+  "buildId": "2026.06.01-1",
+  "releasedAt": "2026-06-01",
   "latestRelease": {
-    "version": "2.15.0",
-    "buildId": "2026.05.31-1",
-    "releasedAt": "2026-05-31",
-    "titleFa": "فرم رسمی حواله انبار MD1 (MD1EX-FQP02/05-03)، قفل هوشمند فرم‌های تعریف‌نشده با سامانه درخواست توسعه‌دهنده و تنظیم خودکار ابعاد جداول چاپی",
-    "titleEn": "Official MD1 MIV Form (MD1EX-FQP02/05-03), Strict Form Gating with Developer Request System & Auto-Fit Print Tables",
+    "version": "2.15.1",
+    "buildId": "2026.06.01-1",
+    "releasedAt": "2026-06-01",
+    "titleFa": "حاشیه استاندارد چاپ در تمام فرم‌ها، رفع چاپ جایگزینی، یکپارچه‌سازی دکمه سابقه فرم‌ها، پاکسازی فرم حواله و یکسان‌سازی حواله خودکار جایگزینی",
+    "titleEn": "Standard Print Safe Margins Across All Forms, Fixed Substitution Printing, Unified Form History Toggle, Cleaner MIV Step 2 & Auto-MIV Parity",
     "changesFa": [
-      "راه‌اندازی فرم رسمی «درخواست کالا از انبار و حواله انبار (MD1EX-FQP02/05-03)» به‌عنوان سومین فرم پیش‌فرض کارفرمای مپنا توسعه یک با فیلتر اقلام دارای موجودی (کارفرما و پیمانکار)، ورود صرفاً عددی تعداد با کنترل سقف موجودی، درج چندخطی توضیحات زیر توضیحات تجهیز، شماره‌گذاری خودکار پیمانکار (<نیروگاه>-<پیمانکار>-MIV-####)، صفحه‌بندی هوشمند «صفحه X از Y»، و فعال ماندن Undo/Redo حتی پس از چاپ",
-      "اعمال قفل قطعی دسترسی فرم «جایگزینی» و «حواله انبار» برای کارفرماهایی که فرم آن‌ها در سامانه تعریف نشده است (مانند توسعه دو و توسعه سه)",
-      "حذف کامل گزینه‌های «تعریف کارفرمای جدید» و «آپلود فرم» از سراسر نرم‌افزار و جایگزینی آن‌ها با سامانه رسمی ارسال درخواست و فایل فرم به توسعه‌دهنده (با قابلیت پیوست فایل، ذخیره، دانلود بسته درخواست و ارسال ایمیل)",
-      "تنظیم خودکار عرض ستون‌ها و ارتفاع سطرها بر اساس محتوای واقعی در تمام فرم‌ها و گزارش‌های چاپی سامانه برای جلوگیری از بریدگی متن یا نمایش ناقص هنگام چاپ"
+      "اعمال حاشیه خالی استاندارد (۱۲ میلی‌متر) در هنگام پرینت برای تمام فرم‌های فعلی و فرم‌های آینده سامانه جهت جلوگیری از لب‌به‌لب شدن فرم با لبه کاغذ در چاپ",
+      "رفع کامل باگ چاپ در بخش جایگزینی: حذف چاپ اسکرین‌شات برنامه و چاپ تمیز و مجزای فرم جایگزینی (عمودی) و حواله خروج خودکار (افقی) با حاشیه استاندارد",
+      "پاکسازی بخش اقلام حواله انبار: ساده شدن راهنمای کادر توضیحات به «توضیحات» و جایگزینی کادرهای شلوغ سربرگ (شماره رسید، واحد، سیستم/جزیره و...) با نوار خلاصه خودکار و بخش اختیاری جمع‌شونده",
+      "افزودن دکمه یکپارچه «سابقه فرم‌ها» مشابه بخش جایگزینی در تمام فرم‌های عملیاتی فعلی و آینده جهت جابه‌جایی سریع میان ثبت فرم و سوابق ثبت‌شده",
+      "اعمال دقیق قوانین شماره‌گذاری (<نیروگاه>-<پیمانکار>-MIV-####) و تمام ۱۳ ستون رسمی حواله انبار (شامل Tag No، Code No، شماره رسید و توضیحات چندخطی) برای حواله‌های خودکار صادرشده در بخش جایگزینی"
     ],
     "changesEn": [
-      "Launched the official MD1 Material Issue Voucher (MD1EX-FQP02/05-03) with combined Employer/Contractor in-stock filtering, strictly numeric quantity validation, stacked multiline Remarks beneath existing Equipment Notes, automatic contractor-coded numbering (<PLANT>-<CONTRACTOR>-MIV-####), multi-page \"Page X of Y\" pagination, and post-print Undo/Redo",
-      "Enforced strict access locking for Substitution and MIV sections when not defined for the active employer (e.g. MD2 and MD3)",
-      "Removed \"Define New Employer\" and \"Upload Forms\" across the entire application and replaced them with the official Developer Contact & Form Request workflow supporting file attachments, submission history, JSON bundle download, and email fallback",
-      "Implemented dynamic content-proportional column widths and auto-fit row heights across all printable forms and reports"
+      "Applied standard 12mm safe print margins across all current and future forms so printed sheets never clip against paper edges",
+      "Fixed Substitution printing: completely eliminated app-UI screenshot capture and isolated clean Portrait Substitution + Landscape auto-issued MIV sheets",
+      "Cleaned up MIV Step 2: simplified Remark placeholder to \"Remark\" and replaced bulky always-visible header boxes with a compact auto-filled summary and collapsible optional overrides",
+      "Added unified \"Form History\" mode toggle button matching Substitution across all current and future operational forms",
+      "Applied exact MD1 MIV numbering (<PLANT>-<CONTRACTOR>-MIV-####) and all 13 official column rules (including Tag No., Code No., Receipt No., and stacked Remarks) to auto-issued MIVs in Substitution"
     ]
   },
   "changelog": [
+    {
+      "version": "2.15.1",
+      "buildId": "2026.06.01-1",
+      "releasedAt": "2026-06-01",
+      "titleFa": "حاشیه استاندارد چاپ در تمام فرم‌ها، رفع چاپ جایگزینی، یکپارچه‌سازی دکمه سابقه فرم‌ها، پاکسازی فرم حواله و یکسان‌سازی حواله خودکار جایگزینی",
+      "titleEn": "Standard Print Safe Margins Across All Forms, Fixed Substitution Printing, Unified Form History Toggle, Cleaner MIV Step 2 & Auto-MIV Parity",
+      "changesFa": [
+        "اعمال حاشیه خالی استاندارد (۱۲ میلی‌متر) در هنگام پرینت برای تمام فرم‌های فعلی و فرم‌های آینده سامانه جهت جلوگیری از لب‌به‌لب شدن فرم با لبه کاغذ در چاپ",
+        "رفع کامل باگ چاپ در بخش جایگزینی: حذف چاپ اسکرین‌شات برنامه و چاپ تمیز و مجزای فرم جایگزینی (عمودی) و حواله خروج خودکار (افقی) با حاشیه استاندارد",
+        "پاکسازی بخش اقلام حواله انبار: ساده شدن راهنمای کادر توضیحات به «توضیحات» و جایگزینی کادرهای شلوغ سربرگ (شماره رسید، واحد، سیستم/جزیره و...) با نوار خلاصه خودکار و بخش اختیاری جمع‌شونده",
+        "افزودن دکمه یکپارچه «سابقه فرم‌ها» مشابه بخش جایگزینی در تمام فرم‌های عملیاتی فعلی و آینده جهت جابه‌جایی سریع میان ثبت فرم و سوابق ثبت‌شده",
+        "اعمال دقیق قوانین شماره‌گذاری (<نیروگاه>-<پیمانکار>-MIV-####) و تمام ۱۳ ستون رسمی حواله انبار (شامل Tag No، Code No، شماره رسید و توضیحات چندخطی) برای حواله‌های خودکار صادرشده در بخش جایگزینی"
+      ],
+      "changesEn": [
+        "Applied standard 12mm safe print margins across all current and future forms so printed sheets never clip against paper edges",
+        "Fixed Substitution printing: completely eliminated app-UI screenshot capture and isolated clean Portrait Substitution + Landscape auto-issued MIV sheets",
+        "Cleaned up MIV Step 2: simplified Remark placeholder to \"Remark\" and replaced bulky always-visible header boxes with a compact auto-filled summary and collapsible optional overrides",
+        "Added unified \"Form History\" mode toggle button matching Substitution across all current and future operational forms",
+        "Applied exact MD1 MIV numbering (<PLANT>-<CONTRACTOR>-MIV-####) and all 13 official column rules (including Tag No., Code No., Receipt No., and stacked Remarks) to auto-issued MIVs in Substitution"
+      ]
+    },
     {
       "version": "2.15.0",
       "buildId": "2026.05.31-1",

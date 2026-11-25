@@ -7,7 +7,7 @@ import { apiRequest, ApiError } from '../lib/api.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { roundQty, toNum } from '../shared/formulas.ts';
 import { formatCountingUnit } from '../shared/normalizers.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
 import type { DetailedComputed, GeneralEntry, MaterialEstimateRecord } from '../shared/types.ts';
 import {
   BuiltInSheetHeaderRow,
@@ -769,24 +769,12 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
       {/* Dedicated A4 Landscape Portal for Official MD1EX-FQP02/09-03 BMR Sheet */}
       {bmrModalOpen && !printOpen
         ? createPortal(
-            <div id="samaan-bmr-print-root">
-              <style>{`
-                @media screen {
-                  #samaan-bmr-print-root { display: none !important; }
-                }
-                @media print {
-                  ${buildPrintPageRule('landscape', isFa, '7mm')}
-                  body > *:not(#samaan-bmr-print-root) {
-                    display: none !important;
-                  }
-                  #samaan-bmr-print-root {
-                    display: block !important;
-                    background: #ffffff !important;
-                    color: #000000 !important;
-                    width: 100%;
-                    -webkit-print-color-adjust: exact;
-                    print-color-adjust: exact;
-                  }
+            <div id="samaan-bmr-print-root" data-samaan-print-portal="true">
+              <style>{buildIsolatedPrintPortalCss('samaan-bmr-print-root', {
+                orientation: 'landscape',
+                isFa,
+                marginMm: 12,
+                extraPrintCss: `
                   #samaan-bmr-print-root table {
                     width: 100% !important;
                     table-layout: auto !important;
@@ -802,8 +790,8 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
                     vertical-align: middle;
                     height: auto !important;
                   }
-                }
-              `}</style>
+                `,
+              })}</style>
               <OfficialBmrSheet rows={printRows} estimates={estimates} meta={bmrMeta} />
             </div>,
             document.body,

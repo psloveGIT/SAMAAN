@@ -16,7 +16,7 @@ import {
   getOperationalFormSectionMeta,
   type OperationalFormSectionKey,
 } from '../shared/formAccess.ts';
-import { buildPrintPageRule } from '../shared/printPageCss.ts';
+import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
 import type {
   DetailedComputed,
   EmployerUploadedForm,
@@ -244,8 +244,18 @@ export const UploadedSectionWorkspace: React.FC<UploadedSectionWorkspaceProps> =
   const printPortal =
     typeof document !== 'undefined'
       ? createPortal(
-          <div className="hidden print:block samaan-custom-print-root">
-            <style>{buildPrintPageRule(isLandscape ? 'landscape' : 'portrait', true)}</style>
+          <div
+            id="samaan-uploaded-section-print-root"
+            data-samaan-print-portal="true"
+            className="samaan-custom-print-root"
+          >
+            <style>
+              {buildIsolatedPrintPortalCss('samaan-uploaded-section-print-root', {
+                orientation: isLandscape ? 'landscape' : 'portrait',
+                isFa,
+                marginMm: 12,
+              })}
+            </style>
             <UploadedFormA4Sheet
               form={effectiveForm}
               employer={activeEmployer}
