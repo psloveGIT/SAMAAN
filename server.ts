@@ -59,6 +59,9 @@ import {
   normalizeTransitStatus,
 } from './src/shared/normalizers.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
+import { inferSizeFromDescription } from './src/shared/sizeExtractor.ts';
+import { combineGcvRemark, GCV_PURCHASE_BY_OPTIONS } from './src/shared/gcv.ts';
+import { buildDetailedMerDescription } from './src/shared/opiMinutes.ts';
 import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
 import { getLocalVersionPayload } from './src/shared/appVersion.ts';
 import { computeOpenOpiInvitations } from './src/shared/opiInvitation.ts';
@@ -157,6 +160,7 @@ import {
 } from './src/shared/miv.ts';
 import {
   assertUniqueDocNo,
+  getAllUsedDocNumbers,
   validateSignedScanPayload,
 } from './src/shared/docUniqueness.ts';
 import type {
@@ -2303,6 +2307,8 @@ async function startServer() {
     const hasEmployerStock = String(req.query.hasEmployerStock || '') === 'true';
     const hasContractorStock = String(req.query.hasContractorStock || '') === 'true';
     const hasAnyStock = String(req.query.hasAnyStock || '') === 'true';
+    const noGcvOnly = String(req.query.noGcvOnly || '') === 'true';
+    const allowGcvReceiptNo = normKey(String(req.query.allowGcvReceiptNo || '')).toUpperCase();
     const chemicalExpiry = String(req.query.chemicalExpiry || '').trim();
     const fromDate = String(req.query.fromDate || '');
     const toDate = String(req.query.toDate || '');
@@ -2411,6 +2417,18 @@ async function startServer() {
       if (hasEmployerStock && (comp.opiPending || comp.mapnaInventory <= 0)) continue;
       if (hasContractorStock && (comp.opiPending || comp.contractorInventory <= 0)) continue;
       if (hasAnyStock && (comp.opiPending || (comp.mapnaInventory <= 0 && comp.contractorInventory <= 0))) continue;
+      if (noGcvOnly) {
+        const existingGcv = normKey(d.gcvReceiptNo);
+        if (existingGcv) {
+          const allowed =
+            Boolean(allowGcvReceiptNo) &&
+            existingGcv
+              .split(/[\n,،;؛|]+/)
+              .map((tok) => normKey(tok).toUpperCase())
+              .includes(allowGcvReceiptNo);
+          if (!allowed) continue;
+        }
+      }
       if (chemicalExpiry === 'expired' && !expiredChemIds.has(comp.id)) continue;
       if (chemicalExpiry === 'expiring_soon' && !expiringSoonChemIds.has(comp.id)) continue;
       if (chemicalExpiry === 'all' && !expiredChemIds.has(comp.id) && !expiringSoonChemIds.has(comp.id)) continue;
@@ -2581,10 +2599,13 @@ async function startServer() {
       itemNo,
       generalDescription: resolvedGeneralDesc,
       description: cleanDescription,
-      size: normKey(raw.size),
+      size: normKey(raw.size) || inferSizeFromDescription(cleanDescription),
       itemCode: normKey(raw.itemCode),
       packingQty: raw.packingQty ?? null,
-      actualQty: raw.actualQty ?? null,
+      actualQty:
+        raw.actualQty !== null && raw.actualQty !== undefined && Number.isFinite(Number(raw.actualQty))
+          ? Number(raw.actualQty)
+          : (raw.packingQty ?? null),
       damagedQty: raw.damagedQty ?? null,
       mtoRef: normKey(raw.mtoRef),
       repNo: cleanRepNo,
@@ -4205,6 +4226,10 @@ async function startServer() {
               it.uom ||
               it.remarks,
           )
+          .map((it, idx) => ({
+            ...it,
+            itemNo: it.itemNo || String(idx + 1),
+          }))
       : undefined;
 
     const record: OpiInvitationRecord = {
@@ -4368,7 +4393,11 @@ async function startServer() {
             it.description ||
             it.uom ||
             it.remarks,
-        );
+        )
+        .map((it, idx) => ({
+          ...it,
+          itemNo: it.itemNo || String(idx + 1),
+        }));
     }
 
     rec.invitationNo = cleanNo;
@@ -4440,67 +4469,62 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  app.post('/api/opi/results', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { invitationId, opiNo, opiDate, results } = req.body as {
-      invitationId?: string;
-      opiNo?: string;
-      opiDate?: string;
-      results?: Array<{
-        detailedId: string;
-        actualQty: number | null;
-        damagedQty?: number | null;
-        repNo?: string;
-        repStatus?: string;
-        repDescription?: string;
-        notes?: string;
-      }>;
-    };
-    if (!Array.isArray(results) || results.length === 0) {
-      res.status(400).json({ error: errMsg(req, 'حداقل یک قلم جهت ثبت نتیجه OPI انتخاب کنید', 'Select at least one item to record OPI results') });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const cleanOpiNo = normKey(opiNo);
-    const cleanOpiDate = normKey(opiDate);
-    let updatedCount = 0;
-
-    for (const r of results) {
-      const d = store.db.detailed.find((x) => x.id === r.detailedId);
-      if (!d) continue;
-      if (r.actualQty !== undefined && r.actualQty !== null && Number.isFinite(r.actualQty)) {
-        d.actualQty = r.actualQty;
-      }
-      if (r.damagedQty !== undefined && r.damagedQty !== null && Number.isFinite(r.damagedQty)) {
-        d.damagedQty = r.damagedQty;
-      }
-      if (cleanOpiNo) d.opiNo = cleanOpiNo;
-      if (cleanOpiDate) d.opiDate = cleanOpiDate;
-      if (r.repNo !== undefined) d.repNo = normKey(r.repNo);
-      if (r.repStatus !== undefined) d.repStatus = normKey(r.repStatus);
-      if (r.repDescription !== undefined) d.repDescription = normKey(r.repDescription);
-      if (r.notes !== undefined && normKey(r.notes)) d.notes = normKey(r.notes);
-      d.updatedAt = now;
-      updatedCount += 1;
-    }
-
-    if (invitationId) {
-      const inv = store.db.opiInvitations.find((x) => x.id === invitationId);
-      if (inv) inv.status = 'completed';
-    }
-
-    store.addAudit({
-      user: sanitizeUser(req.currentUser!),
-      action: 'RECORD_OPI_RESULTS',
-      scope: 'opi',
-      targetId: cleanOpiNo || 'OPI',
-      summary: `ثبت نتایج بازرسی OPI (${cleanOpiNo || '-'}) برای ${updatedCount} قلم کالا`,
-    });
-    store.saveImmediate();
-    res.json({ ok: true, updatedCount });
-  });
-
   // ---------------- OPI MINUTES & OSDR DISCREPANCY REPORTS ----------------
+  const collectMinutePackingKeys = (packingListNo: string, packingNos?: string[], items?: Array<{ packingListNo?: string }>): Set<string> => {
+    const out = new Set<string>();
+    const add = (raw?: string) => {
+      const clean = normKey(raw);
+      if (!clean) return;
+      for (const tok of clean.split(/[,،;؛|\n]+/)) {
+        const k = normDupPart(tok);
+        if (k) out.add(k);
+      }
+    };
+    add(packingListNo);
+    for (const pk of packingNos || []) add(pk);
+    for (const it of items || []) add(it?.packingListNo);
+    return out;
+  };
+
+  const applyMerSyncToDetailed = (mer: OsdrReportRecord, now: string) => {
+    for (const merItem of mer.items || []) {
+      const d = store.db.detailed.find((x) => x.id === merItem.detailedId);
+      if (!d) continue;
+      d.merNo = appendUniqueRef(d.merNo, mer.reportNo);
+      const desc = buildDetailedMerDescription(merItem);
+      if (desc) d.merDescription = desc;
+      d.merStatus = 'باز';
+      if (merItem.discrepancyType === 'shortage') {
+        d.actualQty = merItem.actualQty;
+      } else if (merItem.discrepancyType === 'damaged') {
+        d.damagedQty = merItem.damagedQty;
+      }
+      d.updatedAt = now;
+    }
+  };
+
+  const revertMerSyncFromDetailed = (mer: OsdrReportRecord, excludeMerId: string, now: string) => {
+    const otherMers = store.db.osdrReports.filter((r) => r.id !== excludeMerId);
+    for (const merItem of mer.items || []) {
+      const d = store.db.detailed.find((x) => x.id === merItem.detailedId);
+      if (!d) continue;
+      d.merNo = removeRefToken(d.merNo, mer.reportNo);
+      const otherRef = otherMers.find((r) => (r.items || []).some((it) => it.detailedId === d.id));
+      if (!otherRef) {
+        if (!d.merNo) {
+          d.merStatus = '';
+          d.merDescription = '';
+        }
+        if (merItem.discrepancyType === 'shortage' && d.packingQty !== null && d.packingQty !== undefined) {
+          d.actualQty = d.packingQty;
+        } else if (merItem.discrepancyType === 'damaged') {
+          d.damagedQty = 0;
+        }
+      }
+      d.updatedAt = now;
+    }
+  };
+
   app.get('/api/opi-minutes', requireRole(['admin', 'operator', 'viewer']), (_req: AuthedRequest, res: Response) => {
     const packingsSet = new Set<string>();
     for (const g of store.db.general) {
@@ -4518,15 +4542,20 @@ async function startServer() {
       detailedItems: [...store.getDetailedComputedList()].reverse(),
       generalEntries: [...store.db.general].reverse(),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
+      allUsedDocNos: getAllUsedDocNumbers(store.db),
     });
   });
 
   app.post('/api/opi-minutes', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const raw = req.body as Partial<OpiMinutesRecord>;
+    const raw = req.body as Partial<OpiMinutesRecord> & {
+      merPayload?: Partial<OsdrReportRecord>;
+    };
 
-    const cleanNo = normKey(raw.minutesNo);
+    const cleanInvNo = normKey(raw.invitationNo);
+    const cleanNo = normKey(raw.minutesNo) || cleanInvNo;
     const cleanDate = normKey(raw.date);
-    const cleanPacking = normKey(raw.packingListNo);
+    const rawPackingNos = Array.from(new Set((raw.packingNos || []).map(normKey).filter(Boolean)));
+    const cleanPacking = normKey(raw.packingListNo) || rawPackingNos.join(' ، ');
     if (!cleanNo || !cleanDate || !cleanPacking) {
       res.status(400).json({
         error: errMsg(
@@ -4537,10 +4566,43 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, {
+      allowPairedOpiInvitationNo: cleanInvNo || undefined,
+    });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
+    }
+
+    const merPayload = raw.resultStatus === 'has_discrepancy' ? raw.merPayload : undefined;
+    let cleanMerNo = normKey(merPayload?.reportNo || raw.merNo);
+    if (merPayload) {
+      const merItems = Array.isArray(merPayload.items) ? merPayload.items : [];
+      if (!cleanMerNo || merItems.length === 0) {
+        res.status(400).json({
+          error: errMsg(
+            req,
+            'برای صدور گزارش مغایرت (MER)، شماره گزارش و حداقل یک قلم مغایرت الزامی است',
+            'MER Report No. and at least one discrepant item are required',
+          ),
+        });
+        return;
+      }
+      const merUniq = assertUniqueDocNo(store.db, cleanMerNo);
+      if (!merUniq.ok) {
+        res.status(409).json({ error: errMsg(req, merUniq.errorFa!, merUniq.errorEn!) });
+        return;
+      }
+      if (normKey(cleanMerNo).toUpperCase() === normKey(cleanNo).toUpperCase()) {
+        res.status(409).json({
+          error: errMsg(
+            req,
+            'شماره گزارش مغایرت (MER) نمی‌تواند با شماره صورتجلسه OPI یکسان باشد.',
+            'MER Report No. cannot be identical to the OPI Minutes No.',
+          ),
+        });
+        return;
+      }
     }
 
     const cleanItems = Array.isArray(raw.items)
@@ -4549,9 +4611,9 @@ async function startServer() {
             itemNo: normKey(it?.itemNo),
             packingListNo: normKey(it?.packingListNo),
             packageNo: normKey(it?.packageNo),
-            description: normKey(it?.description),
+            description: preserveMultilineText(it?.description),
             uom: normKey(it?.uom),
-            remarks: normKey(it?.remarks),
+            remarks: preserveMultilineText(it?.remarks),
           }))
           .filter(
             (it) =>
@@ -4564,13 +4626,17 @@ async function startServer() {
           )
       : undefined;
 
+    const now = new Date().toISOString();
+    const minutesId = makeId();
     const record: OpiMinutesRecord = {
-      id: makeId(),
+      id: minutesId,
       minutesNo: cleanNo,
-      invitationNo: normKey(raw.invitationNo),
+      invitationId: normKey(raw.invitationId),
+      invitationNo: cleanInvNo,
       date: cleanDate,
       time: normKey(raw.time),
       packingListNo: cleanPacking,
+      packingNos: rawPackingNos.length > 0 ? rawPackingNos : [cleanPacking],
       packageNos: Array.from(new Set((raw.packageNos || []).map(normKey).filter(Boolean))),
       projectName: normKey(raw.projectName),
       supplier: normKey(raw.supplier),
@@ -4580,7 +4646,7 @@ async function startServer() {
       contractNo: normKey(raw.contractNo),
       purchasePackageNo: normKey(raw.purchasePackageNo),
       items: cleanItems,
-      merNo: normKey(raw.merNo),
+      merNo: cleanMerNo,
       location: normKey(raw.location),
       storekeeper: normKey(raw.storekeeper),
       mapnaInspector: normKey(raw.mapnaInspector),
@@ -4589,8 +4655,8 @@ async function startServer() {
       contractorInspector: normKey(raw.contractorInspector) || normKey(raw.sellerRep),
       qcInspector: normKey(raw.qcInspector),
       resultStatus: raw.resultStatus || 'compliant',
-      notes: normKey(raw.notes),
-      createdAt: new Date().toISOString(),
+      notes: preserveMultilineText(raw.notes),
+      createdAt: now,
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
     };
 
@@ -4599,16 +4665,59 @@ async function startServer() {
       if (inv) inv.status = 'completed';
     }
 
+    // Sync OPI Invitation No. & Date into ALL Detailed Equipment rows belonging to the invitation's packings
+    const opiTokenToSync = cleanInvNo || cleanNo;
+    const pkKeys = collectMinutePackingKeys(cleanPacking, record.packingNos, cleanItems);
+    for (const d of store.db.detailed) {
+      if (!pkKeys.has(normDupPart(d.shipmentNo))) continue;
+      d.opiNo = appendUniqueRef(d.opiNo, opiTokenToSync);
+      d.opiDate = cleanDate;
+      if ((d.actualQty === null || d.actualQty === undefined) && d.packingQty !== null && d.packingQty !== undefined) {
+        d.actualQty = d.packingQty;
+      }
+      d.updatedAt = now;
+    }
+
+    let createdMer: OsdrReportRecord | undefined;
+    if (merPayload && cleanMerNo && Array.isArray(merPayload.items) && merPayload.items.length > 0) {
+      createdMer = {
+        id: makeId(),
+        reportNo: cleanMerNo,
+        date: normKey(merPayload.date) || cleanDate,
+        opiMinutesNo: cleanNo,
+        opiMinutesId: minutesId,
+        opiNo: cleanInvNo || cleanNo,
+        opiDate: cleanDate,
+        packingListNo: normKey(merPayload.packingListNo) || cleanPacking,
+        projectName: normKey(merPayload.projectName) || record.projectName,
+        contractNo: normKey(merPayload.contractNo) || record.contractNo,
+        system: normKey(merPayload.system) || record.system,
+        island: normKey(merPayload.island) || record.island,
+        unit: normKey(merPayload.unit) || record.unit,
+        supplier: normKey(merPayload.supplier) || record.supplier,
+        items: merPayload.items,
+        notes: preserveMultilineText(merPayload.notes),
+        createdAt: now,
+        createdBy: req.currentUser!.fullName || req.currentUser!.username,
+      };
+      record.linkedMerId = createdMer.id;
+      record.merNo = createdMer.reportNo;
+      store.db.osdrReports.unshift(createdMer);
+      applyMerSyncToDetailed(createdMer, now);
+    }
+
     store.db.opiMinutes.unshift(record);
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'CREATE_OPI_MINUTES',
       scope: 'opiMinutes',
       targetId: cleanNo,
-      summary: `ثبت صورتجلسه گشایش و بازرسی بسته‌ها شماره ${cleanNo} (پکینگ ${cleanPacking})`,
+      summary: createdMer
+        ? `ثبت صورتجلسه گشایش و بازرسی شماره ${cleanNo} همراه با گزارش مغایرت MER شماره ${createdMer.reportNo}`
+        : `ثبت صورتجلسه گشایش و بازرسی بسته‌ها شماره ${cleanNo} (پکینگ ${cleanPacking})`,
     });
     store.saveImmediate();
-    res.json({ record });
+    res.json({ record, merReport: createdMer });
   });
 
   app.patch('/api/opi-minutes/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
@@ -4617,10 +4726,16 @@ async function startServer() {
       res.status(404).json({ error: errMsg(req, 'صورتجلسه گشایش و بازرسی یافت نشد', 'OPI minutes record not found') });
       return;
     }
-    const raw = req.body as Partial<OpiMinutesRecord>;
+    const raw = req.body as Partial<OpiMinutesRecord> & {
+      merPayload?: Partial<OsdrReportRecord> | null;
+    };
+    const nextInvNo = raw.invitationNo !== undefined ? normKey(raw.invitationNo) : normKey(rec.invitationNo);
     const cleanNo = normKey(raw.minutesNo ?? rec.minutesNo);
     const cleanDate = normKey(raw.date ?? rec.date);
-    const cleanPacking = normKey(raw.packingListNo ?? rec.packingListNo);
+    const nextPackingNos = Array.isArray(raw.packingNos)
+      ? Array.from(new Set(raw.packingNos.map(normKey).filter(Boolean)))
+      : rec.packingNos;
+    const cleanPacking = normKey(raw.packingListNo ?? rec.packingListNo) || (nextPackingNos || []).join(' ، ');
     if (!cleanNo || !cleanDate || !cleanPacking) {
       res.status(400).json({
         error: errMsg(
@@ -4631,20 +4746,63 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'opiMinutes', excludeId: rec.id });
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, {
+      excludeScope: 'opiMinutes',
+      excludeId: rec.id,
+      allowPairedOpiInvitationNo: nextInvNo || undefined,
+    });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
+
+    const existingMer =
+      (rec.linkedMerId ? store.db.osdrReports.find((m) => m.id === rec.linkedMerId) : undefined) ||
+      store.db.osdrReports.find((m) => m.opiMinutesId === rec.id) ||
+      (rec.merNo ? store.db.osdrReports.find((m) => normKey(m.reportNo) === normKey(rec.merNo)) : undefined);
+
+    const nextResultStatus =
+      raw.resultStatus === 'compliant' || raw.resultStatus === 'has_discrepancy'
+        ? raw.resultStatus
+        : rec.resultStatus;
+
+    const merPayload = nextResultStatus === 'has_discrepancy' ? raw.merPayload : null;
+    if (merPayload) {
+      const nextMerNo = normKey(merPayload.reportNo || raw.merNo || existingMer?.reportNo);
+      const nextMerItems = Array.isArray(merPayload.items) ? merPayload.items : [];
+      if (!nextMerNo || nextMerItems.length === 0) {
+        res.status(400).json({
+          error: errMsg(
+            req,
+            'برای صدور گزارش مغایرت (MER)، شماره گزارش و حداقل یک قلم مغایرت الزامی است',
+            'MER Report No. and at least one discrepant item are required',
+          ),
+        });
+        return;
+      }
+      const merUniq = assertUniqueDocNo(store.db, nextMerNo, {
+        excludeScope: 'osdr',
+        excludeId: existingMer?.id,
+      });
+      if (!merUniq.ok) {
+        res.status(409).json({ error: errMsg(req, merUniq.errorFa!, merUniq.errorEn!) });
+        return;
+      }
+    }
+
+    const now = new Date().toISOString();
+    const oldToken = normKey(rec.invitationNo) || normKey(rec.minutesNo);
+    const oldPkKeys = collectMinutePackingKeys(rec.packingListNo, rec.packingNos, rec.items);
+
     if (Array.isArray(raw.items)) {
       rec.items = raw.items
         .map((it) => ({
           itemNo: normKey(it?.itemNo),
           packingListNo: normKey(it?.packingListNo),
           packageNo: normKey(it?.packageNo),
-          description: normKey(it?.description),
+          description: preserveMultilineText(it?.description),
           uom: normKey(it?.uom),
-          remarks: normKey(it?.remarks),
+          remarks: preserveMultilineText(it?.remarks),
         }))
         .filter(
           (it) =>
@@ -4657,10 +4815,12 @@ async function startServer() {
         );
     }
     rec.minutesNo = cleanNo;
-    if (raw.invitationNo !== undefined) rec.invitationNo = normKey(raw.invitationNo);
+    if (raw.invitationId !== undefined) rec.invitationId = normKey(raw.invitationId);
+    rec.invitationNo = nextInvNo;
     rec.date = cleanDate;
     if (raw.time !== undefined) rec.time = normKey(raw.time);
     rec.packingListNo = cleanPacking;
+    if (nextPackingNos) rec.packingNos = nextPackingNos;
     if (Array.isArray(raw.packageNos)) {
       rec.packageNos = Array.from(new Set(raw.packageNos.map(normKey).filter(Boolean)));
     }
@@ -4683,8 +4843,83 @@ async function startServer() {
     }
     if (raw.employerInspector !== undefined) rec.employerInspector = normKey(raw.employerInspector);
     if (raw.qcInspector !== undefined) rec.qcInspector = normKey(raw.qcInspector);
-    if (raw.resultStatus === 'compliant' || raw.resultStatus === 'has_discrepancy') rec.resultStatus = raw.resultStatus;
-    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+    rec.resultStatus = nextResultStatus;
+    if (raw.notes !== undefined) rec.notes = preserveMultilineText(raw.notes);
+
+    // Re-sync Detailed OPI No & Date
+    const nextToken = nextInvNo || cleanNo;
+    const nextPkKeys = collectMinutePackingKeys(rec.packingListNo, rec.packingNos, rec.items);
+    for (const d of store.db.detailed) {
+      const pk = normDupPart(d.shipmentNo);
+      if (oldPkKeys.has(pk) && (!nextPkKeys.has(pk) || oldToken !== nextToken)) {
+        d.opiNo = removeRefToken(d.opiNo, oldToken);
+        if (!d.opiNo) d.opiDate = '';
+        d.updatedAt = now;
+      }
+      if (nextPkKeys.has(pk)) {
+        d.opiNo = appendUniqueRef(d.opiNo, nextToken);
+        d.opiDate = cleanDate;
+        d.updatedAt = now;
+      }
+    }
+
+    let updatedMer: OsdrReportRecord | undefined = existingMer;
+    if (nextResultStatus === 'compliant') {
+      if (existingMer) {
+        revertMerSyncFromDetailed(existingMer, existingMer.id, now);
+        store.db.osdrReports = store.db.osdrReports.filter((m) => m.id !== existingMer.id);
+      }
+      rec.merNo = '';
+      rec.linkedMerId = '';
+      updatedMer = undefined;
+    } else if (merPayload && Array.isArray(merPayload.items) && merPayload.items.length > 0) {
+      const nextMerNo = normKey(merPayload.reportNo || rec.merNo || existingMer?.reportNo);
+      if (existingMer) {
+        revertMerSyncFromDetailed(existingMer, existingMer.id, now);
+        existingMer.reportNo = nextMerNo;
+        existingMer.date = normKey(merPayload.date) || cleanDate;
+        existingMer.opiMinutesNo = cleanNo;
+        existingMer.opiMinutesId = rec.id;
+        existingMer.opiNo = nextToken;
+        existingMer.opiDate = cleanDate;
+        existingMer.packingListNo = normKey(merPayload.packingListNo) || cleanPacking;
+        existingMer.projectName = normKey(merPayload.projectName) || rec.projectName;
+        existingMer.contractNo = normKey(merPayload.contractNo) || rec.contractNo;
+        existingMer.system = normKey(merPayload.system) || rec.system;
+        existingMer.island = normKey(merPayload.island) || rec.island;
+        existingMer.unit = normKey(merPayload.unit) || rec.unit;
+        existingMer.supplier = normKey(merPayload.supplier) || rec.supplier;
+        existingMer.items = merPayload.items;
+        existingMer.notes = preserveMultilineText(merPayload.notes);
+        applyMerSyncToDetailed(existingMer, now);
+        updatedMer = existingMer;
+      } else {
+        updatedMer = {
+          id: makeId(),
+          reportNo: nextMerNo,
+          date: normKey(merPayload.date) || cleanDate,
+          opiMinutesNo: cleanNo,
+          opiMinutesId: rec.id,
+          opiNo: nextToken,
+          opiDate: cleanDate,
+          packingListNo: normKey(merPayload.packingListNo) || cleanPacking,
+          projectName: normKey(merPayload.projectName) || rec.projectName,
+          contractNo: normKey(merPayload.contractNo) || rec.contractNo,
+          system: normKey(merPayload.system) || rec.system,
+          island: normKey(merPayload.island) || rec.island,
+          unit: normKey(merPayload.unit) || rec.unit,
+          supplier: normKey(merPayload.supplier) || rec.supplier,
+          items: merPayload.items,
+          notes: preserveMultilineText(merPayload.notes),
+          createdAt: now,
+          createdBy: req.currentUser!.fullName || req.currentUser!.username,
+        };
+        store.db.osdrReports.unshift(updatedMer);
+        applyMerSyncToDetailed(updatedMer, now);
+      }
+      rec.merNo = updatedMer.reportNo;
+      rec.linkedMerId = updatedMer.id;
+    }
 
     if (rec.invitationNo) {
       const inv = store.db.opiInvitations.find((x) => normKey(x.invitationNo) === rec.invitationNo);
@@ -4698,7 +4933,7 @@ async function startServer() {
       summary: `ویرایش صورتجلسه گشایش و بازرسی بسته‌ها شماره ${cleanNo} (پکینگ ${cleanPacking})`,
     });
     store.saveImmediate();
-    res.json({ record: rec });
+    res.json({ record: rec, merReport: updatedMer });
   });
 
   app.delete('/api/opi-minutes/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
@@ -4708,6 +4943,41 @@ async function startServer() {
       return;
     }
     const [removed] = store.db.opiMinutes.splice(idx, 1);
+    const now = new Date().toISOString();
+
+    // Revert Detailed OPI No. & Date for this minute's packings
+    const tokenToRemove = normKey(removed.invitationNo) || normKey(removed.minutesNo);
+    const pkKeys = collectMinutePackingKeys(removed.packingListNo, removed.packingNos, removed.items);
+    for (const d of store.db.detailed) {
+      if (!pkKeys.has(normDupPart(d.shipmentNo))) continue;
+      d.opiNo = removeRefToken(d.opiNo, tokenToRemove);
+      if (!d.opiNo) d.opiDate = '';
+      d.updatedAt = now;
+    }
+
+    // Revert invitation status back to 'issued' if no other minute references it
+    if (removed.invitationNo) {
+      const stillHasMinute = store.db.opiMinutes.some(
+        (m) => normKey(m.invitationNo) === normKey(removed.invitationNo),
+      );
+      if (!stillHasMinute) {
+        const inv = store.db.opiInvitations.find((x) => normKey(x.invitationNo) === normKey(removed.invitationNo));
+        if (inv) inv.status = 'issued';
+      }
+    }
+
+    // Also delete & revert linked MER report if present
+    const linkedMerIdx = store.db.osdrReports.findIndex(
+      (m) =>
+        (removed.linkedMerId && m.id === removed.linkedMerId) ||
+        m.opiMinutesId === removed.id ||
+        (removed.merNo && normKey(m.reportNo) === normKey(removed.merNo)),
+    );
+    if (linkedMerIdx !== -1) {
+      const [removedMer] = store.db.osdrReports.splice(linkedMerIdx, 1);
+      revertMerSyncFromDetailed(removedMer, removedMer.id, now);
+    }
+
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_OPI_MINUTES',
@@ -4720,18 +4990,11 @@ async function startServer() {
   });
 
   app.post('/api/osdr', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
-    const { reportNo, date, opiMinutesNo, packingListNo, supplier, items, notes } = req.body as {
-      reportNo?: string;
-      date?: string;
-      opiMinutesNo?: string;
-      packingListNo?: string;
-      supplier?: string;
-      items?: OsdrReportItem[];
-      notes?: string;
-    };
-    const cleanNo = normKey(reportNo);
-    const cleanDate = normKey(date);
-    const cleanPacking = normKey(packingListNo);
+    const raw = req.body as Partial<OsdrReportRecord>;
+    const cleanNo = normKey(raw.reportNo);
+    const cleanDate = normKey(raw.date);
+    const cleanPacking = normKey(raw.packingListNo);
+    const items = raw.items;
     if (!cleanNo || !cleanDate || !cleanPacking || !Array.isArray(items) || items.length === 0) {
       res.status(400).json({
         error: errMsg(
@@ -4748,19 +5011,29 @@ async function startServer() {
       return;
     }
 
+    const now = new Date().toISOString();
     const record: OsdrReportRecord = {
       id: makeId(),
       reportNo: cleanNo,
       date: cleanDate,
-      opiMinutesNo: normKey(opiMinutesNo),
+      opiMinutesNo: normKey(raw.opiMinutesNo),
+      opiMinutesId: normKey(raw.opiMinutesId),
+      opiNo: normKey(raw.opiNo),
+      opiDate: normKey(raw.opiDate),
       packingListNo: cleanPacking,
-      supplier: normKey(supplier),
+      projectName: normKey(raw.projectName),
+      contractNo: normKey(raw.contractNo),
+      system: normKey(raw.system),
+      island: normKey(raw.island),
+      unit: normKey(raw.unit),
+      supplier: normKey(raw.supplier),
       items,
-      notes: normKey(notes),
-      createdAt: new Date().toISOString(),
+      notes: preserveMultilineText(raw.notes),
+      createdAt: now,
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
     };
     store.db.osdrReports.unshift(record);
+    applyMerSyncToDetailed(record, now);
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'CREATE_OSDR_REPORT',
@@ -4798,13 +5071,23 @@ async function startServer() {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
+    const now = new Date().toISOString();
+    revertMerSyncFromDetailed(rec, rec.id, now);
     rec.reportNo = cleanNo;
     rec.date = cleanDate;
     if (raw.opiMinutesNo !== undefined) rec.opiMinutesNo = normKey(raw.opiMinutesNo);
+    if (raw.opiNo !== undefined) rec.opiNo = normKey(raw.opiNo);
+    if (raw.opiDate !== undefined) rec.opiDate = normKey(raw.opiDate);
     rec.packingListNo = cleanPacking;
+    if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
+    if (raw.contractNo !== undefined) rec.contractNo = normKey(raw.contractNo);
+    if (raw.system !== undefined) rec.system = normKey(raw.system);
+    if (raw.island !== undefined) rec.island = normKey(raw.island);
+    if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
     if (raw.supplier !== undefined) rec.supplier = normKey(raw.supplier);
     rec.items = nextItems;
-    if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
+    if (raw.notes !== undefined) rec.notes = preserveMultilineText(raw.notes);
+    applyMerSyncToDetailed(rec, now);
 
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
@@ -4824,6 +5107,15 @@ async function startServer() {
       return;
     }
     const [removed] = store.db.osdrReports.splice(idx, 1);
+    const now = new Date().toISOString();
+    revertMerSyncFromDetailed(removed, removed.id, now);
+    for (const min of store.db.opiMinutes) {
+      if (min.linkedMerId === removed.id || (min.merNo && normKey(min.merNo) === normKey(removed.reportNo))) {
+        min.linkedMerId = '';
+        min.merNo = '';
+        min.resultStatus = 'compliant';
+      }
+    }
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_OSDR_REPORT',
@@ -4841,6 +5133,7 @@ async function startServer() {
       documents: store.db.gcvDocuments,
       detailedItems: [...store.getDetailedComputedList()].reverse(),
       generalEntries: [...store.db.general].reverse(),
+      allUsedDocNos: getAllUsedDocNumbers(store.db),
     });
   });
 
@@ -4848,22 +5141,30 @@ async function startServer() {
     const raw = req.body as Partial<GcvDocumentRecord> & {
       items?: Array<{
         detailedId: string;
-        qty: number;
+        qty?: number;
         technicalInfo?: string;
         tagNo?: string;
         uom?: string;
         remark?: string;
+        userRemark?: string;
+        equipmentNotes?: string;
       }>;
     };
     const cleanNo = normKey(raw.receiptNo);
-    const cleanReceiver = normKey(raw.receiver);
+    const purchaseByValid =
+      raw.purchaseBy === 'site_admin' || raw.purchaseBy === 'contractor_supplier' || raw.purchaseBy === 'tehran_proc'
+        ? raw.purchaseBy
+        : undefined;
+    const purchaseByLabel =
+      GCV_PURCHASE_BY_OPTIONS.find((o) => o.value === purchaseByValid)?.labelFa || '';
+    const cleanReceiver = normKey(raw.receiver) || normKey(raw.supplier) || purchaseByLabel || 'مصرف مستقیم';
     const items = raw.items;
-    if (!cleanNo || !cleanReceiver || !Array.isArray(items) || items.length === 0) {
+    if (!cleanNo || !Array.isArray(items) || items.length === 0) {
       res.status(400).json({
         error: errMsg(
           req,
-          'شماره رسید، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است',
-          'Receipt No., receiver, and at least one item are required',
+          'شماره رسید مصرف و حداقل یک قلم کالا الزامی است',
+          'Receipt No. and at least one item are required',
         ),
       });
       return;
@@ -4876,57 +5177,53 @@ async function startServer() {
 
     const lineItems: DocumentLineItem[] = [];
     for (const reqItem of items) {
-      const qty = Number(reqItem.qty);
-      if (!Number.isFinite(qty) || qty <= 0) {
-        res.status(400).json({ error: errMsg(req, 'تعداد تحویلی باید بزرگتر از صفر باشد', 'Delivered quantity must be greater than zero') });
-        return;
-      }
       const d = store.db.detailed.find((x) => x.id === reqItem.detailedId);
       if (!d) {
         res.status(404).json({ error: errMsg(req, 'آیتم جزئیات یافت نشد', 'Detailed item not found') });
         return;
       }
-      const comp = computeDetailedEntry(d);
-      if (comp.opiPending) {
-        res.status(400).json({
-          error: errMsg(
-            req,
-            `برای آیتم ${d.itemNo || d.rowNo} (${d.description}) هنوز OPI و مقدار واقعی ثبت نشده است.`,
-            `Item ${d.itemNo || d.rowNo} (${d.description}) is pending OPI / Actual Qty.`,
-          ),
-        });
-        return;
-      }
-      if (qty > comp.mapnaInventory) {
-        res.status(400).json({
-          error: errMsg(
-            req,
-            `مقدار تحویلی (${qty}) برای آیتم ${d.description || d.itemNo} بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`,
-            `Delivered qty (${qty}) for item ${d.description || d.itemNo} exceeds MAPNA stock (${comp.mapnaInventory}).`,
-          ),
-        });
-        return;
-      }
+      const hasActual = d.actualQty !== null && d.actualQty !== undefined && Number.isFinite(Number(d.actualQty));
+      const hasPacking = d.packingQty !== null && d.packingQty !== undefined && Number.isFinite(Number(d.packingQty));
+      const reqQtyNum = Number(reqItem.qty);
+      const formQty =
+        Number.isFinite(reqQtyNum) && reqQtyNum > 0
+          ? reqQtyNum
+          : hasActual
+            ? Number(d.actualQty)
+            : hasPacking
+              ? Number(d.packingQty)
+              : 0;
+      const syncDeliveredQty = hasPacking ? Number(d.packingQty) : formQty;
+      const eqNotes = preserveMultilineText(reqItem.equipmentNotes ?? d.notes);
+      const usrRem = preserveMultilineText(reqItem.userRemark);
+      const combinedRem = combineGcvRemark(eqNotes, usrRem) || preserveMultilineText(reqItem.remark);
+
       lineItems.push({
         detailedId: d.id,
         shipmentNo: d.shipmentNo,
         packageNo: d.packageNo,
         itemNo: d.itemNo,
         description: d.description || d.generalDescription,
-        qty,
+        qty: formQty,
+        syncDeliveredQty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
-        remark: normKey(reqItem.remark) || '',
+        equipmentNotes: eqNotes,
+        userRemark: usrRem,
+        remark: combinedRem,
       });
     }
 
     const now = new Date().toISOString();
     for (const line of lineItems) {
       const d = store.db.detailed.find((x) => x.id === line.detailedId)!;
+      if ((d.actualQty === null || d.actualQty === undefined) && d.packingQty !== null && d.packingQty !== undefined) {
+        d.actualQty = d.packingQty;
+      }
       d.gcvReceiptNo = appendUniqueRef(d.gcvReceiptNo, cleanNo);
-      d.receiver = cleanReceiver;
-      d.gcvDeliveredQty = roundQty(toNum(d.gcvDeliveredQty) + line.qty);
+      if (normKey(raw.receiver)) d.receiver = normKey(raw.receiver);
+      d.gcvDeliveredQty = roundQty(toNum(d.gcvDeliveredQty) + (line.syncDeliveredQty ?? line.qty));
       d.updatedAt = now;
     }
 
@@ -4941,19 +5238,14 @@ async function startServer() {
       buyerName: normKey(raw.buyerName),
       purchasePackageNo: normKey(raw.purchasePackageNo),
       releaseNoteNo: normKey(raw.releaseNoteNo),
-      purchaseBy:
-        raw.purchaseBy === 'site_admin' || raw.purchaseBy === 'contractor_supplier'
-          ? raw.purchaseBy
-          : raw.purchaseBy === 'tehran_proc'
-            ? 'tehran_proc'
-            : undefined,
+      purchaseBy: purchaseByValid,
       islandSystem: normKey(raw.islandSystem),
       waybillNo: normKey(raw.waybillNo),
       storekeeper: normKey(raw.storekeeper),
-      receiverManager: normKey(raw.receiverManager) || cleanReceiver,
+      receiverManager: normKey(raw.receiverManager),
       equipmentSupply: normKey(raw.equipmentSupply),
       mapnaSiteManager: normKey(raw.mapnaSiteManager),
-      notes: normKey(raw.notes),
+      notes: preserveMultilineText(raw.notes),
       items: lineItems,
       createdAt: now,
       createdBy: req.currentUser!.fullName || req.currentUser!.username,
@@ -4964,7 +5256,7 @@ async function startServer() {
       action: 'CREATE_GCV_RECEIPT',
       scope: 'gcv',
       targetId: cleanNo,
-      summary: `ثبت رسید مصرف مستقیم کالا شماره ${cleanNo} برای ${cleanReceiver} (${lineItems.length} قلم کالا)`,
+      summary: `ثبت رسید مصرف مستقیم کالا شماره ${cleanNo} (${lineItems.length} قلم کالا)`,
     });
     store.saveImmediate();
     res.json({ document: doc });
@@ -4979,22 +5271,31 @@ async function startServer() {
     const raw = req.body as Partial<GcvDocumentRecord> & {
       items?: Array<{
         detailedId: string;
-        qty: number;
+        qty?: number;
         technicalInfo?: string;
         tagNo?: string;
         uom?: string;
         remark?: string;
+        userRemark?: string;
+        equipmentNotes?: string;
       }>;
     };
     const cleanNo = normKey(raw.receiptNo ?? existing.receiptNo);
-    const cleanReceiver = normKey(raw.receiver ?? existing.receiver);
+    const purchaseByValid =
+      raw.purchaseBy === 'site_admin' || raw.purchaseBy === 'contractor_supplier' || raw.purchaseBy === 'tehran_proc'
+        ? raw.purchaseBy
+        : existing.purchaseBy;
+    const purchaseByLabel =
+      GCV_PURCHASE_BY_OPTIONS.find((o) => o.value === purchaseByValid)?.labelFa || '';
+    const cleanReceiver =
+      normKey(raw.receiver ?? existing.receiver) || normKey(raw.supplier ?? existing.supplier) || purchaseByLabel || 'مصرف مستقیم';
     const items = raw.items;
-    if (!cleanNo || !cleanReceiver || !Array.isArray(items) || items.length === 0) {
+    if (!cleanNo || !Array.isArray(items) || items.length === 0) {
       res.status(400).json({
         error: errMsg(
           req,
-          'شماره رسید، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است',
-          'Receipt No., receiver, and at least one item are required',
+          'شماره رسید مصرف و حداقل یک قلم کالا الزامی است',
+          'Receipt No. and at least one item are required',
         ),
       });
       return;
@@ -5005,82 +5306,61 @@ async function startServer() {
       return;
     }
 
-    const oldQtyByDetailedId = new Map<string, number>();
-    for (const oldLine of existing.items) {
-      oldQtyByDetailedId.set(oldLine.detailedId, roundQty((oldQtyByDetailedId.get(oldLine.detailedId) || 0) + oldLine.qty));
-    }
-
     const nextLines: DocumentLineItem[] = [];
     for (const reqItem of items) {
-      const qty = Number(reqItem.qty);
-      if (!Number.isFinite(qty) || qty <= 0) {
-        res.status(400).json({ error: errMsg(req, 'تعداد تحویلی باید بزرگتر از صفر باشد', 'Delivered quantity must be greater than zero') });
-        return;
-      }
       const d = store.db.detailed.find((x) => x.id === reqItem.detailedId);
       if (!d) {
         res.status(404).json({ error: errMsg(req, 'آیتم جزئیات یافت نشد', 'Detailed item not found') });
         return;
       }
-      const oldQtyForItem = oldQtyByDetailedId.get(d.id) || 0;
-      const revertedItem: DetailedEntry = {
-        ...d,
-        gcvDeliveredQty: Math.max(0, roundQty(toNum(d.gcvDeliveredQty) - oldQtyForItem)),
-      };
-      const comp = computeDetailedEntry(revertedItem);
-      if (comp.opiPending) {
-        res.status(400).json({
-          error: errMsg(
-            req,
-            `برای آیتم ${d.itemNo || d.rowNo} (${d.description}) هنوز OPI و مقدار واقعی ثبت نشده است.`,
-            `Item ${d.itemNo || d.rowNo} (${d.description}) is pending OPI / Actual Qty.`,
-          ),
-        });
-        return;
-      }
-      if (qty > comp.mapnaInventory) {
-        res.status(400).json({
-          error: errMsg(
-            req,
-            `مقدار تحویلی (${qty}) برای آیتم ${d.description || d.itemNo} بیشتر از موجودی مپنا (${comp.mapnaInventory}) است.`,
-            `Delivered qty (${qty}) for item ${d.description || d.itemNo} exceeds MAPNA stock (${comp.mapnaInventory}).`,
-          ),
-        });
-        return;
-      }
+      const hasActual = d.actualQty !== null && d.actualQty !== undefined && Number.isFinite(Number(d.actualQty));
+      const hasPacking = d.packingQty !== null && d.packingQty !== undefined && Number.isFinite(Number(d.packingQty));
+      const reqQtyNum = Number(reqItem.qty);
+      const formQty =
+        Number.isFinite(reqQtyNum) && reqQtyNum > 0
+          ? reqQtyNum
+          : hasActual
+            ? Number(d.actualQty)
+            : hasPacking
+              ? Number(d.packingQty)
+              : 0;
+      const syncDeliveredQty = hasPacking ? Number(d.packingQty) : formQty;
+      const eqNotes = preserveMultilineText(reqItem.equipmentNotes ?? d.notes);
+      const usrRem = preserveMultilineText(reqItem.userRemark);
+      const combinedRem = combineGcvRemark(eqNotes, usrRem) || preserveMultilineText(reqItem.remark);
+
       nextLines.push({
         detailedId: d.id,
         shipmentNo: d.shipmentNo,
         packageNo: d.packageNo,
         itemNo: d.itemNo,
         description: d.description || d.generalDescription,
-        qty,
+        qty: formQty,
+        syncDeliveredQty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
-        remark: normKey(reqItem.remark) || '',
+        equipmentNotes: eqNotes,
+        userRemark: usrRem,
+        remark: combinedRem,
       });
     }
 
     const now = new Date().toISOString();
-    const otherDocs = store.db.gcvDocuments.filter((doc) => doc.id !== existing.id);
     for (const oldLine of existing.items) {
       const d = store.db.detailed.find((x) => x.id === oldLine.detailedId);
       if (!d) continue;
-      d.gcvDeliveredQty = Math.max(0, roundQty(toNum(d.gcvDeliveredQty) - oldLine.qty));
+      const revertQty = oldLine.syncDeliveredQty ?? oldLine.qty;
+      const nextVal = Math.max(0, roundQty(toNum(d.gcvDeliveredQty) - revertQty));
+      d.gcvDeliveredQty = nextVal === 0 ? null : nextVal;
       d.gcvReceiptNo = removeRefToken(d.gcvReceiptNo, existing.receiptNo);
-      if (d.gcvDeliveredQty === 0) {
-        const remainingDoc = otherDocs.find((doc) => doc.items.some((it) => it.detailedId === d.id));
-        d.receiver = remainingDoc ? remainingDoc.receiver : '';
-      }
       d.updatedAt = now;
     }
 
     for (const line of nextLines) {
       const d = store.db.detailed.find((x) => x.id === line.detailedId)!;
       d.gcvReceiptNo = appendUniqueRef(d.gcvReceiptNo, cleanNo);
-      d.receiver = cleanReceiver;
-      d.gcvDeliveredQty = roundQty(toNum(d.gcvDeliveredQty) + line.qty);
+      d.gcvDeliveredQty = roundQty(toNum(d.gcvDeliveredQty) + (line.syncDeliveredQty ?? line.qty));
       d.updatedAt = now;
     }
 
@@ -5093,19 +5373,14 @@ async function startServer() {
     if (raw.buyerName !== undefined) existing.buyerName = normKey(raw.buyerName);
     if (raw.purchasePackageNo !== undefined) existing.purchasePackageNo = normKey(raw.purchasePackageNo);
     if (raw.releaseNoteNo !== undefined) existing.releaseNoteNo = normKey(raw.releaseNoteNo);
-    if (raw.purchaseBy !== undefined) {
-      existing.purchaseBy =
-        raw.purchaseBy === 'site_admin' || raw.purchaseBy === 'contractor_supplier' || raw.purchaseBy === 'tehran_proc'
-          ? raw.purchaseBy
-          : undefined;
-    }
+    existing.purchaseBy = purchaseByValid;
     if (raw.islandSystem !== undefined) existing.islandSystem = normKey(raw.islandSystem);
     if (raw.waybillNo !== undefined) existing.waybillNo = normKey(raw.waybillNo);
     if (raw.storekeeper !== undefined) existing.storekeeper = normKey(raw.storekeeper);
-    existing.receiverManager = normKey(raw.receiverManager) || cleanReceiver;
+    if (raw.receiverManager !== undefined) existing.receiverManager = normKey(raw.receiverManager);
     if (raw.equipmentSupply !== undefined) existing.equipmentSupply = normKey(raw.equipmentSupply);
     if (raw.mapnaSiteManager !== undefined) existing.mapnaSiteManager = normKey(raw.mapnaSiteManager);
-    if (raw.notes !== undefined) existing.notes = normKey(raw.notes);
+    if (raw.notes !== undefined) existing.notes = preserveMultilineText(raw.notes);
     existing.items = nextLines;
 
     store.addAudit({
@@ -5130,14 +5405,10 @@ async function startServer() {
     for (const oldLine of removed.items) {
       const d = store.db.detailed.find((x) => x.id === oldLine.detailedId);
       if (!d) continue;
-      d.gcvDeliveredQty = Math.max(0, roundQty(toNum(d.gcvDeliveredQty) - oldLine.qty));
+      const revertQty = oldLine.syncDeliveredQty ?? oldLine.qty;
+      const nextVal = Math.max(0, roundQty(toNum(d.gcvDeliveredQty) - revertQty));
+      d.gcvDeliveredQty = nextVal === 0 ? null : nextVal;
       d.gcvReceiptNo = removeRefToken(d.gcvReceiptNo, removed.receiptNo);
-      const remainingDoc = store.db.gcvDocuments.find((doc) => doc.items.some((it) => it.detailedId === d.id));
-      if (d.gcvDeliveredQty === 0 && !remainingDoc) {
-        d.receiver = '';
-      } else if (remainingDoc && d.receiver === removed.receiver) {
-        d.receiver = remainingDoc.receiver;
-      }
       d.updatedAt = now;
     }
     store.addAudit({

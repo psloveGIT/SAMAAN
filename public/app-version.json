@@ -1,29 +1,69 @@
 {
-  "version": "2.16.1",
-  "buildId": "2026.06.03-1",
-  "releasedAt": "2026-06-03",
+  "version": "2.17.0",
+  "buildId": "2026.06.05-1",
+  "releasedAt": "2026-06-05",
   "latestRelease": {
-    "version": "2.16.1",
-    "buildId": "2026.06.03-1",
-    "releasedAt": "2026-06-03",
-    "titleFa": "رفع کامل حاشیه خاکستری چاپ، اصلاح خطوط و کادر فرم حواله، یکتایی سراسری شماره فرم‌ها، آرشیو اسکن امضاشده فرم‌ها و حذف ایمیل شخصی از رابط کاربری",
-    "titleEn": "Eliminated Gray Print Borders & Tightened Margins, Fixed MIV Dividers/Footer/QA Alignment, Global Unique Form Numbering, Signed Form Scan Archive & Hidden Developer Email",
+    "version": "2.17.0",
+    "buildId": "2026.06.05-1",
+    "releasedAt": "2026-06-05",
+    "titleFa": "فرم رسمی رسید مصرف مستقیم کالا (MD1EX-FQP02/11-03)، صورتجلسه گشایش و گزارش مغایرت MER هم‌زمان (MD1EX-FQP02/06-03 و MD1EX-FQP02/12-03) و رفع باگ‌های ثبت جزئیات",
+    "titleEn": "Official MD1 Direct Consumption Voucher (GCV), OPI Minutes + Simultaneous Linked MER Forms & Detailed Equipment Fixes",
     "changesFa": [
-      "حذف کامل حاشیه خاکستری دور صفحه در چاپ تمامی فرم‌های فعلی و آینده (در هر دو حالت روشن و تاریک) و تنظیم حاشیه سفید استاندارد و متعادل ۸ میلی‌متری روی کاغذ",
-      "اصلاح دقیق ساختار فرم حواله انبار (در هر دو بخش درخواست کالا و حواله خودکار جایگزینی): افزودن خطوط عمودی جداکننده میان «درخواست‌کننده» و «تحویل‌گیرنده» و میان فیلدهای سربرگ (شماره قرارداد، پیمانکار، سیستم/جزیره، واحد و شماره رسید)، افزودن کادر کامل دور بخش «رونوشت» و کد فرم پایین صفحه، و انتقال متن کنترل واحد QA به سمت راست",
-      "اعمال یکتایی سراسری و قطعی شماره تمام فرم‌ها در سراسر پروژه به‌طوری که هیچ شماره فرمی در هیچ بخشی تکرار یا مجدداً استفاده نشود",
-      "افزودن امکان اسکن مستقیم یا بارگذاری فایل اسکن امضاشده (PDF و تصویر) در سابقه تمام فرم‌های سامانه (به‌جز برچسب انبارش کالا) همراه با مشاهده فوری فایل با کلیک بر روی ردیف سابقه",
-      "حذف کامل نمایش آدرس ایمیل شخصی از تمام بخش‌های رابط کاربری و ارسال خودکار و داخلی درخواست‌های فرم و گزارش خطا از طریق سرور برنامه"
+      "فعال‌سازی و بازطراحی کامل پنجمین فرم پیش‌فرض مپنا توسعه یک (MD1): «رسید مصرف مستقیم کالا (MD1EX-FQP02/11-03)» با فیلتر اقلام فاقد شماره رسید مصرف، دریافت اطلاعات خرید، تکمیل خودکار فیلدها از جزئیات و ثبت کلی، همگام‌سازی خودکار شماره و تعداد رسید مصرف، چاپ A4 افقی، Undo/Redo پس از چاپ و آرشیو اسکن امضاشده",
+      "فعال‌سازی و بازطراحی کامل ششمین فرم پیش‌فرض مپنا توسعه یک (MD1): «صورتجلسه گشایش و بازرسی بسته‌ها (MD1EX-FQP02/06-03)» متصل به دعوتنامه‌های باز OPI با صدور و چاپ هم‌زمان «گزارش مغایرت، کسری و آسیب‌دیدگی (MD1EX-FQP02/12-03)» در صورت وجود کسری یا آسیب‌دیدگی و همگام‌سازی خودکار جدول جزئیات تجهیزات",
+      "رفع باگ ثبت قلم جدید در جزئیات تجهیزات: استخراج خودکار «اندازه» از «شرح» با قابلیت ویرایش دستی و حذف هایلایت/متن نمونه فیلد «شرح کلی»",
+      "رفع باگ مقدار اولیه اقلام جدید در جزئیات تجهیزات: ثبت خودکار «مقدار واقعی» و «موجودی کارفرما» برابر «مقدار پکینگ» و «موجودی پیمانکار» برابر صفر از لحظه ثبت"
     ],
     "changesEn": [
-      "Completely eliminated gray printed borders across all current and future forms (in both Light and Dark themes) and tightened safe print margins to a crisp 8mm pure-white frame",
-      "Refined the official MIV sheet (shared by both MIV Issuance and Substitution Auto-MIV): added vertical dividers between Requester/Receiver and all 5 metadata strip cells, enclosed the bottom Copy/Form-Code footer in a solid black border, and right-aligned the QA control notice",
-      "Enforced project-wide unique form document numbering across all form collections and Trash so assigned numbers can never be duplicated",
-      "Added signed scan capture/upload (PDF/images up to 10 MB) and row-click viewer across Form History in every operational form section (except Storage Labels)",
-      "Removed personal email visibility from all client UI screens and routed form requests and error reports internally via the backend"
+      "Activated and redesigned the fifth built-in MAPNA MD1 default form: Not-Stored Goods Consumption Voucher (MD1EX-FQP02/11-03) with no-GCV filtering, procurement inputs, auto-filled header/items, Detailed table sync, Landscape A4 print, post-print Undo/Redo, and signed scan archive",
+      "Activated and redesigned the sixth built-in MAPNA MD1 default form: OPI Minutes of Meeting (MD1EX-FQP02/06-03) linked to open OPI invitations with simultaneous conditional Material Exceptions Report (MD1EX-FQP02/12-03) issuance, mixed Portrait+Landscape printing, and full Detailed Equipment sync",
+      "Fixed Detailed Equipment new-item modal: automatically infers Size from Description while keeping it editable, and removed placeholder highlight from General Description",
+      "Fixed initial quantities for newly registered Detailed Equipment rows: Actual Qty and Employer Inventory immediately equal Packing Qty and Contractor Inventory equals 0"
     ]
   },
   "changelog": [
+    {
+      "version": "2.17.0",
+      "buildId": "2026.06.05-1",
+      "releasedAt": "2026-06-05",
+      "titleFa": "فرم رسمی رسید مصرف مستقیم کالا (MD1EX-FQP02/11-03)، صورتجلسه گشایش و گزارش مغایرت MER هم‌زمان (MD1EX-FQP02/06-03 و MD1EX-FQP02/12-03) و رفع باگ‌های ثبت جزئیات",
+      "titleEn": "Official MD1 Direct Consumption Voucher (GCV), OPI Minutes + Simultaneous Linked MER Forms & Detailed Equipment Fixes",
+      "changesFa": [
+        "فعال‌سازی و بازطراحی کامل پنجمین فرم پیش‌فرض مپنا توسعه یک (MD1): «رسید مصرف مستقیم کالا (MD1EX-FQP02/11-03)» با فیلتر اقلام فاقد شماره رسید مصرف، دریافت اطلاعات خرید، تکمیل خودکار فیلدها از جزئیات و ثبت کلی، همگام‌سازی خودکار شماره و تعداد رسید مصرف، چاپ A4 افقی، Undo/Redo پس از چاپ و آرشیو اسکن امضاشده",
+        "فعال‌سازی و بازطراحی کامل ششمین فرم پیش‌فرض مپنا توسعه یک (MD1): «صورتجلسه گشایش و بازرسی بسته‌ها (MD1EX-FQP02/06-03)» متصل به دعوتنامه‌های باز OPI با صدور و چاپ هم‌زمان «گزارش مغایرت، کسری و آسیب‌دیدگی (MD1EX-FQP02/12-03)» در صورت وجود کسری یا آسیب‌دیدگی و همگام‌سازی خودکار جدول جزئیات تجهیزات",
+        "رفع باگ ثبت قلم جدید در جزئیات تجهیزات: استخراج خودکار «اندازه» از «شرح» با قابلیت ویرایش دستی و حذف هایلایت/متن نمونه فیلد «شرح کلی»",
+        "رفع باگ مقدار اولیه اقلام جدید در جزئیات تجهیزات: ثبت خودکار «مقدار واقعی» و «موجودی کارفرما» برابر «مقدار پکینگ» و «موجودی پیمانکار» برابر صفر از لحظه ثبت"
+      ],
+      "changesEn": [
+        "Activated and redesigned the fifth built-in MAPNA MD1 default form: Not-Stored Goods Consumption Voucher (MD1EX-FQP02/11-03) with no-GCV filtering, procurement inputs, auto-filled header/items, Detailed table sync, Landscape A4 print, post-print Undo/Redo, and signed scan archive",
+        "Activated and redesigned the sixth built-in MAPNA MD1 default form: OPI Minutes of Meeting (MD1EX-FQP02/06-03) linked to open OPI invitations with simultaneous conditional Material Exceptions Report (MD1EX-FQP02/12-03) issuance, mixed Portrait+Landscape printing, and full Detailed Equipment sync",
+        "Fixed Detailed Equipment new-item modal: automatically infers Size from Description while keeping it editable, and removed placeholder highlight from General Description",
+        "Fixed initial quantities for newly registered Detailed Equipment rows: Actual Qty and Employer Inventory immediately equal Packing Qty and Contractor Inventory equals 0"
+      ]
+    },
+    {
+      "version": "2.16.2",
+      "buildId": "2026.06.04-1",
+      "releasedAt": "2026-06-04",
+      "titleFa": "رفع باگ دعوتنامه‌های باز چندخطی، اصلاح دقیق فرم چاپی و مکان OPI، حذف بخش اضافی نتایج بازرسی، راست‌چین متن QA در تمام فرم‌ها و نمایش پیام اختیاری آپدیت پس از بازگشایی برنامه",
+      "titleEn": "Multiline Open OPI Fix, Exact MD1 OPI Form Copy & Persian Locations, Removed Redundant OPI Results Tab, Universal Right-Aligned QA Notices & User-Confirmed Cold-Launch Updates",
+      "changesFa": [
+        "رفع باگ بخش «دعوتنامه‌های باز» در داشبورد تحلیلی: پشتیبانی کامل از ردیف‌های جزئیات دارای چند شماره دعوتنامه زیرهم (چندخطی) و جلوگیری از نمایش اشتباه آن‌ها به‌عنوان دعوتنامه باز",
+        "اصلاح لیست «مکان OPI» در بخش صدور دعوتنامه گشایش بسته‌ها جهت نمایش معادل فارسی نام انبارها بر اساس ۲۰ شرط استاندارد برچسب انبارش کالا (به‌جای کدهای خام محل نگهداری)",
+        "اصلاح دقیق عبارات و چیدمان فرم چاپی دعوتنامه گشایش و بازرسی بسته‌ها مطابق فرم اصلی MD1: انتقال «OPI Invitation» به مرکز سربرگ و حذف «OPI Inspection Invitation»، بازگردانی عنوان دقیق «دعوتنامه گشایش و بازرسی بسته ها»، بازگردانی عبارت امضاء «تامین تجهیزات توسعه یک» و تکمیل خودکار ستون «Item No.» هنگام چاپ مجدد از سابقه فرم‌ها",
+        "حذف کامل بخش اضافی «ثبت نتایج بازرسی (مقدار واقعی و آسیب‌دیده)» و موارد مرتبط با آن از بخش دعوتنامه گشایش بسته‌ها",
+        "راست‌چین کردن قطعی عبارت «توجه: این فرم تحت کنترل واحد QA می‌باشد...» در تمام فرم‌های چاپی سامانه",
+        "اصلاح مکانیزم بروزرسانی هنگام بسته بودن برنامه: باز شدن ابتدا با همان نسخه نصب‌شده روی سیستم کاربر، بررسی فوری نسخه جدید و نمایش پیغام بروزرسانی تا کاربر در صورت تمایل آن را آپدیت کند"
+      ],
+      "changesEn": [
+        "Fixed Dashboard \"Open OPI Invitations\" so Detailed rows containing multiple stacked (multiline) invitation numbers are properly matched and never falsely flagged as open",
+        "Updated the \"OPI Location\" options in OPI Invitation issuance to strictly show Persian Warehouse equivalents mapped from the 20 Storage Label warehouse rules instead of raw storage location codes",
+        "Restored exact official MD1EX-FQP02/02-03 wording and header layout: moved \"OPI Invitation\" to the center header (removing \"OPI Inspection Invitation\"), restored exact title \"دعوتنامه گشایش و بازرسی بسته ها\" and signatory label \"تامین تجهیزات توسعه یک\", and fixed blank \"Item No.\" on History re-prints",
+        "Removed the redundant \"Record Inspection Results (Actual & Damaged)\" tab and related handlers from OPI Invitation",
+        "Enforced right-aligned RTL layout for the QA control notice across every printable form in the application",
+        "Refined closed-app reopen updates: opens the currently installed version first without forced reload, immediately checks for updates, and prompts the user to update only if they choose to"
+      ]
+    },
     {
       "version": "2.16.1",
       "buildId": "2026.06.03-1",

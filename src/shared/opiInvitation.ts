@@ -8,6 +8,10 @@ import type {
 import type { PlantDocNumberConfig } from './docNumbering.ts';
 import { validatePlantAbbreviation } from './docNumbering.ts';
 import { resolveSupplierPrefix } from './substitution.ts';
+import {
+  resolveWarehouseFromLocation,
+  WAREHOUSE_LOCATION_RULES,
+} from './storageLabel.ts';
 
 function toAsciiDigitsOnly(raw: string): string {
   return raw
@@ -213,20 +217,123 @@ export function filterEligibleGeneralForOpi(
   });
 }
 
-function splitDocumentTokens(raw: string | undefined | null): string[] {
-  return String(raw || '')
-    .split(/[\n\r,،;؛/]+/)
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+function normalizeDocToken(raw: string | undefined | null): string {
+  return toAsciiDigitsOnly(String(raw || ''))
+    .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF\u00A0]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+/**
+ * Splits a cell that may contain 1 or more invitation numbers stacked on separate lines
+ * (or separated by commas / semicolons / pipes / spaced slashes) WITHOUT breaking slashes
+ * that are part of a single document number (e.g. "OPI/1404/01").
+ */
+export function splitOpiDocumentTokens(raw: string | undefined | null): string[] {
+  const text = String(raw || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const pushToken = (candidate: string) => {
+    const norm = normalizeDocToken(candidate);
+    if (!norm || seen.has(norm)) return;
+    seen.add(norm);
+    out.push(norm);
+  };
+
+  for (const rawLine of text.split('\n')) {
+    const lineTrimmed = rawLine.trim();
+    if (!lineTrimmed) continue;
+    // Split line by comma / Persian comma / semicolon / pipe
+    const chunks = lineTrimmed.split(/[,،;؛|]+/);
+    for (const chunk of chunks) {
+      const cleanChunk = chunk.trim();
+      if (!cleanChunk) continue;
+      // Keep the chunk intact (preserves codes like OPI/1404/01)
+      pushToken(cleanChunk);
+      // Also support explicit spaced-slash separators like "NK-TU-0001 / NK-TU-0002"
+      if (/\s+\/\s+/.test(cleanChunk)) {
+        for (const sub of cleanChunk.split(/\s+\/\s+/)) {
+          pushToken(sub);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Builds the Persian "مکان OPI" location list strictly using the 20-rule Warehouse
+ * mapping defined for Storage Labels (MD1EX-FQP02/14-01), never exposing raw storage
+ * location codes (e.g. W1-A2, CA-03, CR-1, S-12) from Detailed Equipment.
+ */
+export function buildOpiLocationOptions(
+  detailedItems: readonly Pick<DetailedEntry, 'shipmentNo' | 'storageLocation'>[] = [],
+  existingInvitations: readonly Pick<OpiInvitationRecord, 'location'>[] = [],
+  selectedPackingNos: readonly string[] = [],
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (label: string | undefined | null) => {
+    const clean = String(label || '').trim();
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(clean);
+    }
+  };
+
+  const selectedPkSet = new Set(
+    selectedPackingNos.map((p) => normalizeDocToken(p)).filter(Boolean),
+  );
+
+  // 1) Prioritize Persian Warehouse names mapped from the currently selected packings' Detailed rows
+  if (selectedPkSet.size > 0) {
+    for (const d of detailedItems) {
+      if (!selectedPkSet.has(normalizeDocToken(d.shipmentNo))) continue;
+      const whFa = resolveWarehouseFromLocation(d.storageLocation);
+      if (whFa) add(whFa);
+    }
+  }
+
+  // 2) Then Persian Warehouse names mapped from all other Detailed Equipment storage locations
+  for (const d of detailedItems) {
+    const whFa = resolveWarehouseFromLocation(d.storageLocation);
+    if (whFa) add(whFa);
+  }
+
+  // 3) Then all 20 canonical Persian Warehouse names from Storage Label rules
+  for (const rule of WAREHOUSE_LOCATION_RULES) {
+    add(rule.warehouseFa);
+  }
+
+  // 4) Include previously entered custom Persian locations (mapping any legacy raw codes to Persian too)
+  for (const inv of existingInvitations) {
+    const rawLoc = String(inv.location || '').trim();
+    if (!rawLoc) continue;
+    const mapped = resolveWarehouseFromLocation(rawLoc);
+    if (mapped) {
+      add(mapped);
+    } else if (/[\u0600-\u06FF]/.test(rawLoc)) {
+      add(rawLoc);
+    }
+  }
+
+  return out;
 }
 
 /**
  * تبصره (Note) — Open OPI Invitations computation for Dashboard:
  * If a packing list in General Equipment has an OPI Invitation No. issued,
- * and NOT ALL Detailed Equipment rows for that packing list contain that exact
- * OPI Invitation No. in their `opiNo` ("شماره دعوتنامه") column (including when
- * zero Detailed rows exist yet for that packing list), then the invitation is OPEN
- * and must be listed under "دعوتنامه‌های باز" with its invitation number & date.
+ * and NOT ALL Detailed Equipment rows for that packing list have an OPI Invitation No.
+ * (including when zero Detailed rows exist yet, or when zero Detailed rows match that
+ * invitation number), then the invitation is OPEN and listed under "دعوتنامه‌های باز".
+ *
+ * Correctly supports multiline / stacked invitation numbers in Detailed's `opiNo`
+ * column (e.g. "NK-TU-0001\nNK-TU-0002"), slash-containing numbers ("OPI/1404/01"),
+ * Persian/Arabic digits, and multi-invitation split packings without false positives.
  */
 export function computeOpenOpiInvitations(
   generalEntries: readonly Pick<GeneralEntry, 'packingListNo' | 'opiInvitationNo' | 'opiInvitationDate'>[],
@@ -236,17 +343,17 @@ export function computeOpenOpiInvitations(
   // Index detailed rows by normalized packingListNo / shipmentNo
   const detailedByPacking = new Map<string, Array<{ opiTokens: Set<string> }>>();
   for (const d of detailedItems) {
-    const pk = (d.shipmentNo || '').trim().toUpperCase();
+    const pk = normalizeDocToken(d.shipmentNo);
     if (!pk) continue;
     let bucket = detailedByPacking.get(pk);
     if (!bucket) {
       bucket = [];
       detailedByPacking.set(pk, bucket);
     }
-    bucket.push({ opiTokens: new Set(splitDocumentTokens(d.opiNo)) });
+    bucket.push({ opiTokens: new Set(splitOpiDocumentTokens(d.opiNo)) });
   }
 
-  // Build map of invitationNoKey -> { invitationNo, date, packingNosMap (upper -> display) }
+  // Build map of invitationNoKey -> { invitationNo, date, packings (norm -> display) }
   const invMap = new Map<
     string,
     {
@@ -256,27 +363,52 @@ export function computeOpenOpiInvitations(
     }
   >();
 
-  // Helper to register an invitation + packing pair
+  // Helper to register an invitation + packing pair (supports multiline values in General too)
   const register = (invNoRaw: string | undefined, dateRaw: string | undefined, pkRaw: string | undefined) => {
-    const invNo = (invNoRaw || '').trim();
-    const pk = (pkRaw || '').trim();
-    if (!invNo || !pk) return;
-    const invKey = invNo.toUpperCase();
-    const pkKey = pk.toUpperCase();
-    let entry = invMap.get(invKey);
-    if (!entry) {
-      entry = {
-        invitationNo: invNo,
-        date: (dateRaw || '').trim(),
-        packings: new Map<string, string>(),
-      };
-      invMap.set(invKey, entry);
-    } else if (!entry.date && (dateRaw || '').trim()) {
-      entry.date = (dateRaw || '').trim();
-    }
-    if (!entry.packings.has(pkKey)) {
-      entry.packings.set(pkKey, pk);
-    }
+    const pk = String(pkRaw || '').trim();
+    const pkKey = normalizeDocToken(pk);
+    if (!pkKey) return;
+
+    const rawInvLines = String(invNoRaw || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (rawInvLines.length === 0) return;
+
+    const rawDateLines = String(dateRaw || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    rawInvLines.forEach((lineInv, idx) => {
+      // Split inline comma/semicolon/spaced-slash lists if present
+      const parts = /\s+\/\s+|[,،;؛|]/.test(lineInv)
+        ? lineInv.split(/\s+\/\s+|[,،;؛|]+/).map((s) => s.trim()).filter(Boolean)
+        : [lineInv];
+      const lineDate = rawDateLines[idx] || rawDateLines[0] || '';
+      for (const invNo of parts) {
+        const invKey = normalizeDocToken(invNo);
+        if (!invKey) continue;
+        let entry = invMap.get(invKey);
+        if (!entry) {
+          entry = {
+            invitationNo: invNo,
+            date: lineDate,
+            packings: new Map<string, string>(),
+          };
+          invMap.set(invKey, entry);
+        } else if (!entry.date && lineDate) {
+          entry.date = lineDate;
+        }
+        if (!entry.packings.has(pkKey)) {
+          entry.packings.set(pkKey, pk);
+        }
+      }
+    });
   };
 
   // Source 1: General Equipment rows that have opiInvitationNo
@@ -284,9 +416,9 @@ export function computeOpenOpiInvitations(
     register(g.opiInvitationNo, g.opiInvitationDate, g.packingListNo);
   }
 
-  // Fill missing dates from opiInvitations records when available (do not invent entries absent from general)
+  // Fill missing dates from opiInvitations records when available
   for (const inv of opiInvitations) {
-    const key = (inv.invitationNo || '').trim().toUpperCase();
+    const key = normalizeDocToken(inv.invitationNo);
     if (!key) continue;
     const existing = invMap.get(key);
     if (existing && !existing.date && inv.date) {
@@ -309,15 +441,22 @@ export function computeOpenOpiInvitations(
         continue;
       }
       totalDetailedRows += detRows.length;
-      let matchedInPacking = 0;
+      let exactMatched = 0;
+      let rowsWithAnyOpi = 0;
       for (const row of detRows) {
+        if (row.opiTokens.size > 0) {
+          rowsWithAnyOpi += 1;
+        }
         if (row.opiTokens.has(invKey)) {
-          matchedInPacking += 1;
+          exactMatched += 1;
         }
       }
-      linkedDetailedRows += matchedInPacking;
-      if (matchedInPacking < detRows.length) {
-        // Not all Detailed rows for this packing have this invitationNo in opiNo -> OPEN
+      // A packing is closed for this invitation when:
+      //  - at least one Detailed row explicitly carries this invitationNo (including inside stacked multiline values), AND
+      //  - EVERY Detailed row in the packing already has at least one invitationNo assigned (no blank rows remaining).
+      const isClosedForPacking = exactMatched > 0 && rowsWithAnyOpi === detRows.length;
+      linkedDetailedRows += isClosedForPacking ? detRows.length : exactMatched;
+      if (!isClosedForPacking) {
         missingDetailedPackings.push(pkDisplay);
       }
     }

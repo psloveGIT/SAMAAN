@@ -270,11 +270,12 @@ const Md1StorageLabelCard: React.FC<Md1StorageLabelCardProps> = ({
 
       {/* Row 18: Q.A Notice */}
       <div
+        dir="rtl"
         style={{
           padding: compact ? '2px 5px' : '2.5px 6px',
           fontSize: compact ? '6.5px' : '7px',
           lineHeight: 1.25,
-          textAlign: 'center',
+          textAlign: 'right',
           borderBottom: '1px solid #000000',
           fontWeight: 600,
         }}

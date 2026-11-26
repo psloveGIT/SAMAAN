@@ -1883,7 +1883,7 @@ export function parseOperationalFormInput(params: {
           if (it && typeof it === 'object') {
             const obj = it as Record<string, unknown>;
             parsedItems.push({
-              itemNo: normKey(obj.itemNo),
+              itemNo: normKey(obj.itemNo) || String(parsedItems.length + 1),
               packingListNo: normKey(obj.packingListNo),
               packageNo: normKey(obj.packageNo),
               description: normKey(obj.description),
@@ -1898,7 +1898,7 @@ export function parseOperationalFormInput(params: {
         const itemNo = strField(row, ['itemNo', 'شماره آیتم']);
         if (desc || pkg || itemNo) {
           parsedItems.push({
-            itemNo,
+            itemNo: itemNo || String(parsedItems.length + 1),
             packingListNo: packings[0] || '',
             packageNo: pkg,
             description: desc,
@@ -3819,8 +3819,13 @@ export function commitOperationalFormImport(params: {
             packingListNo: g.packingListNo,
             packageNo: g.packageNo,
             description: g.itemDescription,
-            uom: 'بسته',
+            uom: (g.packageType || '').trim() || 'بسته',
             remarks: '',
+          }));
+        } else if (raw.items && raw.items.length > 0) {
+          raw.items = raw.items.map((it, idx) => ({
+            ...it,
+            itemNo: normKey(it.itemNo) || String(idx + 1),
           }));
         }
         for (const d of idx.detailedByPacking.get(k) || []) {

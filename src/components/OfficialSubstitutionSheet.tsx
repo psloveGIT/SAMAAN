@@ -570,7 +570,7 @@ export const OfficialSubstitutionSheet: React.FC<OfficialSubstitutionSheetProps>
           color: '#111827',
         }}
       >
-        <div style={{ fontWeight: 600 }}>{MD1_SUBSTITUTION_QA_NOTICE}</div>
+        <div dir="rtl" style={{ fontWeight: 600, textAlign: 'right' }}>{MD1_SUBSTITUTION_QA_NOTICE}</div>
         <div
           style={{
             display: 'flex',

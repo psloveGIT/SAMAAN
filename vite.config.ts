@@ -60,7 +60,8 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          clientsClaim: true,
+          skipWaiting: false,
+          clientsClaim: false,
           cleanupOutdatedCaches: true,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
           globIgnores: ['**/app-version.json'],

@@ -1,35 +1,46 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   ClipboardCheck,
   FileWarning,
   Pencil,
-  Plus,
   Printer,
+  Redo2,
   Trash2,
+  Undo2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
+import { triggerAppPrint } from '../lib/print.ts';
+import { extractPlantDocConfig } from '../shared/docNumbering.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
-import { getTodayIso } from '../shared/jalali.ts';
-import { formatCountingUnit } from '../shared/normalizers.ts';
+import { formatHeaderProjectTitle, stripProjectWord } from '../shared/opiInvitation.ts';
+import {
+  buildMerReportItem,
+  buildOpiMinutesAutoFill,
+  filterOpenInvitationsForMinutes,
+  findDetailedRowsForInvitation,
+  generateMerReportNo,
+  MD1_MER_COPY_TEXT,
+  MD1_MER_FORM_CODE,
+  MD1_MER_TITLE_EN,
+  MD1_MER_TITLE_FA,
+  MD1_OPI_MINUTES_COMPANY_NAME,
+  MD1_OPI_MINUTES_COMPLIANT_LABEL,
+  MD1_OPI_MINUTES_COPY_TEXT,
+  MD1_OPI_MINUTES_FORM_CODE,
+  MD1_OPI_MINUTES_QA_NOTICE,
+  MD1_OPI_MINUTES_STATEMENT,
+  MD1_OPI_MINUTES_TITLE_EN,
+  MD1_OPI_MINUTES_TITLE_FA,
+  type MerDiscrepancyCategory,
+} from '../shared/opiMinutes.ts';
 import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
-import {
-  OperationalViewModeTabs,
-  type OperationalViewMode,
-} from './OperationalViewModeTabs.tsx';
-import {
-  BuiltInSheetHeaderRow,
-  OfficialExtraMetaStrip,
-  OfficialFormSignatures,
-} from './OfficialSheetHeader.tsx';
-import type { PrintColumnDef } from './PrintReportModal.tsx';
-import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import type {
   DetailedComputed,
   GeneralEntry,
@@ -40,47 +51,39 @@ import type {
   OsdrReportRecord,
 } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
-import { JalaliDateInput } from './JalaliDateInput.tsx';
-import { PrintReportModal } from './PrintReportModal.tsx';
+import { BuiltInSheetHeaderRow, OfficialExtraMetaStrip } from './OfficialSheetHeader.tsx';
+import {
+  OperationalViewModeTabs,
+  type OperationalViewMode,
+} from './OperationalViewModeTabs.tsx';
+import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
+import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
-const buildMomItemsForPacking = (
-  packingListNo: string,
-  selectedPackages: string[],
-  detailedItems: DetailedComputed[],
-  generalEntries: GeneralEntry[],
-): OpiInvitationLineItem[] => {
-  if (!packingListNo) return [];
-  const detMatches = detailedItems.filter((d) => {
-    if ((d.shipmentNo || '').trim() !== packingListNo) return false;
-    if (selectedPackages.length > 0 && !selectedPackages.includes(d.packageNo)) return false;
-    return true;
-  });
-  if (detMatches.length > 0) {
-    return detMatches.map((d) => ({
-      itemNo: d.itemNo || '',
-      packingListNo: d.shipmentNo || packingListNo,
-      packageNo: d.packageNo || '',
-      description: d.description || d.generalDescription || '',
-      uom: d.countingUnit || '',
-      remarks: d.notes || '',
-    }));
-  }
-  const genMatches = generalEntries.filter((g) => {
-    if ((g.packingListNo || '').trim() !== packingListNo) return false;
-    if (selectedPackages.length > 0 && !selectedPackages.includes(g.packageNo)) return false;
-    return true;
-  });
-  return genMatches.map((g, idx) => ({
-    itemNo: String(idx + 1),
-    packingListNo: g.packingListNo || packingListNo,
-    packageNo: g.packageNo || '',
-    description: g.itemDescription || '',
-    uom: 'بسته',
-    remarks: '',
-  }));
-};
+interface OpiMinutesApiResponse {
+  minutes: OpiMinutesRecord[];
+  osdrReports: OsdrReportRecord[];
+  invitations: OpiInvitationRecord[];
+  detailedItems: DetailedComputed[];
+  generalEntries?: GeneralEntry[];
+  packings?: string[];
+  allUsedDocNos?: string[];
+}
+
+interface OpiMinutesViewProps {
+  refreshSignal: number;
+  onDataChanged: () => void;
+}
+
+interface MerRowDraft {
+  checked: boolean;
+  category: MerDiscrepancyCategory;
+  discrepantQty: string;
+  discrepancyText: string;
+  remark: string;
+}
 
 const MomCheckSquare: React.FC<{ checked?: boolean }> = ({ checked }) => (
   <span
@@ -88,8 +91,8 @@ const MomCheckSquare: React.FC<{ checked?: boolean }> = ({ checked }) => (
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
-      width: '12px',
-      height: '12px',
+      width: '13px',
+      height: '13px',
       border: '1.3px solid #000000',
       backgroundColor: '#ffffff',
       flexShrink: 0,
@@ -109,37 +112,50 @@ const MomCheckSquare: React.FC<{ checked?: boolean }> = ({ checked }) => (
   </span>
 );
 
+/* ============================================================================
+ * OFFICIAL MD1EX-FQP02/06-03 SHEET — OPI MINUTES OF MEETING (PORTRAIT A4)
+ * ============================================================================ */
 interface OfficialOpiMinutesSheetProps {
   record: OpiMinutesRecord;
-  detailedItems: DetailedComputed[];
-  generalEntries: GeneralEntry[];
   formatDate: (iso: string) => string;
+  pageBreakAfter?: boolean;
 }
 
-const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
+export const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
   record,
-  detailedItems,
-  generalEntries,
   formatDate,
+  pageBreakAfter = false,
 }) => {
   const { activeEmployer, activeProject } = useApp();
   const design = resolveBuiltInFormDesign(activeEmployer, 'opiMinutes');
-  const formCode = design.docCode;
-  const displayProjectName = record.projectName?.trim() || activeProject?.name || '..................';
+  const isMd1Default = activeEmployer.id === 'mapna-md1' && !design.template;
+  const formCode = isMd1Default
+    ? MD1_OPI_MINUTES_FORM_CODE
+    : design.docCode || MD1_OPI_MINUTES_FORM_CODE;
 
-  const resolvedItems = useMemo(() => {
-    if (record.items && record.items.length > 0) return record.items;
-    return buildMomItemsForPacking(
-      record.packingListNo,
-      record.packageNos || [],
-      detailedItems,
-      generalEntries,
-    );
-  }, [record, detailedItems, generalEntries]);
+  const effectiveDesign = useMemo(
+    () =>
+      isMd1Default
+        ? {
+            ...design,
+            companyTitle: MD1_OPI_MINUTES_COMPANY_NAME,
+            titleFa: MD1_OPI_MINUTES_TITLE_FA,
+            titleEn: MD1_OPI_MINUTES_TITLE_EN,
+            docCode: MD1_OPI_MINUTES_FORM_CODE,
+            footerCopyText: MD1_OPI_MINUTES_COPY_TEXT,
+          }
+        : design,
+    [design, isMd1Default],
+  );
 
+  const rawProjectName = record.projectName?.trim() || activeProject?.name || '';
+  const projectHeaderTitle = formatHeaderProjectTitle(rawProjectName);
+  const projectBareName = stripProjectWord(rawProjectName);
+
+  const resolvedItems: OpiInvitationLineItem[] = record.items || [];
   const minRows = 8;
   const totalDisplayRows = Math.max(minRows, resolvedItems.length);
-  const paddedRows: (OpiInvitationLineItem | null)[] = [
+  const paddedRows: Array<OpiInvitationLineItem | null> = [
     ...resolvedItems,
     ...Array.from({ length: Math.max(0, totalDisplayRows - resolvedItems.length) }, () => null),
   ];
@@ -149,7 +165,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
   return (
     <div
       dir="rtl"
-      className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
+      data-testid="official-opi-minutes-sheet"
+      className={`samaan-a4-portrait samaan-print-sheet-portrait${pageBreakAfter ? ' samaan-print-page-break' : ''}`}
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -159,11 +176,11 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
       }}
     >
       {/* Upper Main Frame */}
-      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+      <div style={{ border: `1.8px solid ${effectiveDesign.accentColor || '#000000'}` }}>
         <BuiltInSheetHeaderRow
           employer={activeEmployer}
-          design={design}
-          projectTitle={`پروژه ${displayProjectName}`}
+          design={effectiveDesign}
+          projectTitle={projectHeaderTitle}
           leftMetaSlot={
             <div
               style={{
@@ -178,28 +195,40 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
             >
               <div>
                 <div>شماره OPI :</div>
-                <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
-                  {record.minutesNo}
+                <div
+                  dir="ltr"
+                  className="tabular-nums"
+                  style={{ marginTop: '2px', textAlign: 'left' }}
+                >
+                  {record.minutesNo || record.invitationNo}
                 </div>
               </div>
               <div>
                 <div>تاریخ OPI :</div>
-                <div dir="ltr" className="tabular-nums" style={{ marginTop: '2px', textAlign: 'left' }}>
+                <div
+                  dir="ltr"
+                  className="tabular-nums"
+                  style={{ marginTop: '2px', textAlign: 'left' }}
+                >
                   {formatDate(record.date)}
                 </div>
               </div>
             </div>
           }
         />
-        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
+        <OfficialExtraMetaStrip
+          design={effectiveDesign}
+          inset
+          borderColor={effectiveDesign.accentColor}
+        />
 
-        {/* Metadata Strip Row 1 (Exact PDF RTL order: تامین کننده | سیستم | جزیره | واحد | پروژه) */}
+        {/* Metadata Strip Row 1 (5 columns RTL: تامین کننده | سیستم | جزیره | واحد | پروژه) */}
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: '1.2fr 1fr 1fr 1fr 1fr',
             borderBottom: '1px solid #000000',
-            fontSize: '9.8px',
+            fontSize: '9.6px',
             textAlign: 'right',
           }}
         >
@@ -221,30 +250,30 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           </div>
           <div style={{ padding: '5px 7px' }}>
             <strong style={{ fontWeight: 700 }}>پروژه: </strong>
-            <span className="bidi-plaintext">{record.projectName?.trim() || activeProject?.name || ''}</span>
+            <span className="bidi-plaintext">{projectBareName}</span>
           </div>
         </div>
 
-        {/* Metadata Strip Row 2 (RTL: شماره قرارداد/درخواست خرید | شماره دعوتنامه OPI | شماره بسته خرید) */}
+        {/* Metadata Strip Row 2 (3 columns RTL: شماره قرارداد/درخواست خرید | شماره دعوتنامه OPI | شماره بسته خرید) */}
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1.2fr 1fr 1fr',
+            gridTemplateColumns: '1.25fr 1fr 1fr',
             borderBottom: '1px solid #000000',
-            fontSize: '9.8px',
+            fontSize: '9.6px',
             textAlign: 'right',
           }}
         >
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
             <strong style={{ fontWeight: 700 }}>شماره قرارداد/درخواست خرید: </strong>
             <span dir="ltr" className="tabular-nums">
-              {record.contractNo?.trim() || activeProject?.code || ''}
+              {record.contractNo || ''}
             </span>
           </div>
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 7px' }}>
             <strong style={{ fontWeight: 700 }}>شماره دعوتنامه OPI: </strong>
             <span dir="ltr" className="tabular-nums">
-              {record.invitationNo || ''}
+              {record.invitationNo || record.minutesNo || ''}
             </span>
           </div>
           <div style={{ padding: '5px 7px' }}>
@@ -255,14 +284,14 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           </div>
         </div>
 
-        {/* Items Table (LTR column order matching PDF: Item No., Packing List No., Package No., شرح (کالا/تجهیز), واحد (UOM), توضیحات) */}
+        {/* 6-Column LTR Items Table */}
         <table
           dir="ltr"
           className="samaan-dynamic-table"
           style={{
             width: '100%',
             borderCollapse: 'collapse',
-            fontSize: '9.5px',
+            fontSize: '9.4px',
           }}
         >
           <thead>
@@ -274,7 +303,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                   borderRight: '1px solid #000000',
                   padding: '5px 4px',
                   fontWeight: 700,
-                  lineHeight: 1.35,
+                  textAlign: 'center',
+                  lineHeight: 1.3,
                 }}
               >
                 Item
@@ -288,7 +318,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                   borderRight: '1px solid #000000',
                   padding: '5px 5px',
                   fontWeight: 700,
-                  lineHeight: 1.35,
+                  textAlign: 'center',
+                  lineHeight: 1.3,
                 }}
               >
                 Packing List
@@ -302,7 +333,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                   borderRight: '1px solid #000000',
                   padding: '5px 5px',
                   fontWeight: 700,
-                  lineHeight: 1.35,
+                  textAlign: 'center',
+                  lineHeight: 1.3,
                 }}
               >
                 Package
@@ -317,6 +349,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                   borderRight: '1px solid #000000',
                   padding: '5px 6px',
                   fontWeight: 700,
+                  textAlign: 'center',
                 }}
               >
                 شرح (کالا/تجهیز)
@@ -329,7 +362,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                   borderRight: '1px solid #000000',
                   padding: '5px 4px',
                   fontWeight: 700,
-                  lineHeight: 1.35,
+                  textAlign: 'center',
+                  lineHeight: 1.3,
                 }}
               >
                 واحد
@@ -343,6 +377,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                   borderBottom: '1px solid #000000',
                   padding: '5px 6px',
                   fontWeight: 700,
+                  textAlign: 'center',
                 }}
               >
                 توضیحات
@@ -358,9 +393,10 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
                     padding: '4px 4px',
+                    textAlign: 'center',
                   }}
                 >
-                  {row?.itemNo || '\u00A0'}
+                  {row ? row.itemNo || String(idx + 1) : '\u00A0'}
                 </td>
                 <td
                   className="tabular-nums samaan-col-code"
@@ -368,6 +404,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
                     padding: '4px 5px',
+                    textAlign: 'center',
                   }}
                 >
                   {row?.packingListNo || ''}
@@ -378,6 +415,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
                     padding: '4px 5px',
+                    textAlign: 'center',
                   }}
                 >
                   {row?.packageNo || ''}
@@ -389,6 +427,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
                     padding: '4px 6px',
+                    textAlign: 'center',
+                    whiteSpace: 'pre-line',
                   }}
                 >
                   {row?.description || ''}
@@ -400,6 +440,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                     borderBottom: '1px solid #000000',
                     borderRight: '1px solid #000000',
                     padding: '4px 4px',
+                    textAlign: 'center',
                   }}
                 >
                   {row?.uom || ''}
@@ -410,6 +451,8 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
                   style={{
                     borderBottom: '1px solid #000000',
                     padding: '4px 6px',
+                    textAlign: 'center',
+                    whiteSpace: 'pre-line',
                   }}
                 >
                   {row?.remarks || ''}
@@ -419,14 +462,14 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           </tbody>
         </table>
 
-        {/* Time / Date / Location Strip (RTL: ساعت | تاریخ | محل انجام OPI) */}
+        {/* 3-Cell Schedule Strip (RTL: ساعت | تاریخ | محل انجام OPI) */}
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: '1fr 1fr 1fr',
             backgroundColor: '#e5e7eb',
             borderBottom: '1px solid #000000',
-            fontSize: '10.2px',
+            fontSize: '10px',
             fontWeight: 700,
             textAlign: 'center',
           }}
@@ -439,7 +482,7 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           style={{
             display: 'grid',
             gridTemplateColumns: '1fr 1fr 1fr',
-            minHeight: '30px',
+            minHeight: '28px',
             borderBottom: '1px solid #000000',
             fontSize: '10px',
             fontWeight: 600,
@@ -489,18 +532,16 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           </div>
         </div>
 
-        {/* Statement, Discrepancy Checkboxes & Other Notes */}
+        {/* Official Statement, Checkboxes & Other Notes */}
         <div
           style={{
-            padding: '10px 14px 16px',
+            padding: '10px 14px 14px',
             fontSize: '10px',
-            lineHeight: 2,
+            lineHeight: 1.95,
             textAlign: 'right',
           }}
         >
-          <div style={{ fontWeight: 600 }}>
-            بسته (Package) های بالا در حضور نمایندگان کارفرما، مشاور، {activeEmployer.shortName} و انباردار OPI شد و اقلام موجود برابر با Packing List های پیوست، تحویل انبارگردید.
-          </div>
+          <div style={{ fontWeight: 600 }}>{MD1_OPI_MINUTES_STATEMENT}</div>
 
           <div
             style={{
@@ -511,36 +552,58 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
               paddingRight: '8px',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-              <span>محموله ی بالا فاقد هرگونه مغایرت و آسیب دیدگی می باشد.</span>
+            <div
+              data-testid="opi-minutes-sheet-compliant"
+              data-checked={record.resultStatus === 'compliant' ? 'true' : 'false'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+              }}
+            >
+              <span>{MD1_OPI_MINUTES_COMPLIANT_LABEL}</span>
               <MomCheckSquare checked={record.resultStatus === 'compliant'} />
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+
+            <div
+              data-testid="opi-minutes-sheet-discrepancy"
+              data-checked={record.resultStatus === 'has_discrepancy' ? 'true' : 'false'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+              }}
+            >
               <span>
-                محموله ی بالا دارای مغایرت، برابر فرم{' '}
+                محموله ي بالا داراي مغايرت، برابر فرم{' '}
                 <span
                   dir="ltr"
                   className="tabular-nums"
                   style={{
                     fontWeight: 700,
                     display: 'inline-block',
-                    minWidth: '100px',
+                    minWidth: '105px',
                     textAlign: 'center',
-                    borderBottom: record.merNo ? '1px dotted #000' : 'none',
+                    borderBottom: record.merNo ? '1px dotted #000000' : 'none',
                   }}
                 >
                   {record.merNo?.trim() || '........................'}
                 </span>{' '}
-                <span dir="ltr">MER No.</span> می باشد.
+                <span dir="ltr">MER No.</span> مي باشد.
               </span>
               <MomCheckSquare checked={record.resultStatus === 'has_discrepancy'} />
             </div>
           </div>
 
-          <div style={{ marginTop: '12px', minHeight: '72px' }}>
-            <div style={{ fontWeight: 700 }}>سایر توضیحات:</div>
+          <div style={{ marginTop: '10px', minHeight: '62px' }}>
+            <div style={{ fontWeight: 700 }}>ساير توضيحات:</div>
             {record.notes && (
-              <div className="bidi-plaintext" style={{ marginTop: '4px', fontSize: '9.8px' }}>
+              <div
+                className="bidi-plaintext"
+                style={{ marginTop: '4px', fontSize: '9.6px', whiteSpace: 'pre-line' }}
+              >
                 {record.notes}
               </div>
             )}
@@ -548,13 +611,19 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
         </div>
       </div>
 
-      {/* Separate Lower Signature Frame */}
-      <div className="samaan-keep-together" style={{ border: `1.8px solid ${design.accentColor}`, marginTop: '12px' }}>
+      {/* Lower Signature, QA Notice & Enclosed Footer Frame */}
+      <div
+        className="samaan-keep-together"
+        style={{
+          border: `1.8px solid ${effectiveDesign.accentColor || '#000000'}`,
+          marginTop: '10px',
+        }}
+      >
         <div
           style={{
             backgroundColor: '#e5e7eb',
             borderBottom: '1px solid #000000',
-            padding: '5px 8px',
+            padding: '4px 8px',
             fontSize: '10.5px',
             fontWeight: 700,
             textAlign: 'center',
@@ -563,19 +632,13 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
           امضا
         </div>
 
-        {(design.template?.signatures?.length || !design.showSignatures) ? (
-          <OfficialFormSignatures
-            signatures={design.signatures}
-            showSignatures={design.showSignatures}
-            borderColor={design.accentColor}
-          />
-        ) : (
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: '1fr 1fr 1fr 1fr',
-            minHeight: '80px',
-            fontSize: '9.5px',
+            minHeight: '76px',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.4px',
             textAlign: 'right',
           }}
         >
@@ -605,7 +668,9 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>{activeEmployer.equipmentSupplyLabel} :</div>
+              <div style={{ fontWeight: 700 }}>
+                {isMd1Default ? 'تأمین تجهیزات توسعه یک :' : `${activeEmployer.equipmentSupplyLabel} :`}
+              </div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }}>{record.mapnaInspector || ''}</div>
@@ -642,24 +707,27 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
             <div style={{ fontSize: '9px' }}>{record.employerInspector || ''}</div>
           </div>
         </div>
-        )}
 
+        {/* Right-Aligned QA Control Notice */}
         <div
+          dir="rtl"
+          data-testid="opi-minutes-qa-notice"
           style={{
-            padding: '2px 8px 4px',
+            padding: '4px 10px',
             fontSize: '8.3px',
             fontWeight: 600,
-            textAlign: 'left',
+            textAlign: 'right',
+            borderBottom: '1px solid #000000',
           }}
         >
-          {design.template?.introText ||
-            'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.'}
+          {effectiveDesign.template?.introText || MD1_OPI_MINUTES_QA_NOTICE}
         </div>
 
+        {/* Enclosed Footer */}
         <div
+          dir="rtl"
           style={{
-            borderTop: '1px solid #000000',
-            padding: '4px 8px',
+            padding: '4px 10px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -667,336 +735,613 @@ const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = ({
             fontWeight: 700,
           }}
         >
-          <div>{design.footerCopyText || 'رونوشت: معاونت تأمین تجهیزات، فروشنده، دستگاه نظارت، کارفرما'}</div>
-          {(formCode || design.revisionText) && (
-            <div dir="ltr" className="tabular-nums">
-              {[formCode, design.revisionText].filter(Boolean).join(' · ')}
-            </div>
-          )}
+          <span>{effectiveDesign.footerCopyText || MD1_OPI_MINUTES_COPY_TEXT}</span>
+          <span dir="ltr" className="tabular-nums">
+            {[formCode, effectiveDesign.revisionText].filter(Boolean).join(' · ')}
+          </span>
         </div>
       </div>
     </div>
   );
 };
 
+/* ============================================================================
+ * OFFICIAL MD1EX-FQP02/12-03 SHEET — MATERIAL EXCEPTIONS REPORT (LANDSCAPE A4)
+ * ============================================================================ */
 interface OfficialMerSheetProps {
   report: OsdrReportRecord;
-  isFa: boolean;
-  brandFull: string;
   formatDate: (iso: string) => string;
-  discrepancyTypeLabel: (type: OsdrReportItem['discrepancyType']) => string;
 }
 
-const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({
-  report,
-  isFa,
-  brandFull,
-  formatDate,
-  discrepancyTypeLabel,
-}) => {
+export const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({ report, formatDate }) => {
   const { activeEmployer, activeProject } = useApp();
   const design = resolveBuiltInFormDesign(activeEmployer, 'mer');
-  const merFormCode = design.docCode;
-  const displayProjectName = activeProject?.name || '';
+  const isMd1Default = activeEmployer.id === 'mapna-md1' && !design.template;
+  const merFormCode = isMd1Default ? MD1_MER_FORM_CODE : design.docCode || MD1_MER_FORM_CODE;
+
+  const effectiveDesign = useMemo(
+    () =>
+      isMd1Default
+        ? {
+            ...design,
+            companyTitle: MD1_OPI_MINUTES_COMPANY_NAME,
+            titleFa: MD1_MER_TITLE_FA,
+            titleEn: MD1_MER_TITLE_EN,
+            docCode: MD1_MER_FORM_CODE,
+            footerCopyText: MD1_MER_COPY_TEXT,
+          }
+        : design,
+    [design, isMd1Default],
+  );
+
+  const rawProjectName = report.projectName?.trim() || activeProject?.name || '';
+  const projectHeaderTitle = formatHeaderProjectTitle(rawProjectName);
+  const projectBareName = stripProjectWord(rawProjectName);
+
+  const minRows = 6;
+  const totalDisplayRows = Math.max(minRows, report.items.length);
+  const paddedRows: Array<OsdrReportItem | null> = [
+    ...report.items,
+    ...Array.from({ length: Math.max(0, totalDisplayRows - report.items.length) }, () => null),
+  ];
+
   return (
-  <div
-    dir={isFa ? 'rtl' : 'ltr'}
-    className={design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'}
-    style={{
-      backgroundColor: '#ffffff',
-      color: '#000000',
-      fontFamily: '"Vazirmatn", "Plus Jakarta Sans", Tahoma, sans-serif',
-      width: '100%',
-      boxSizing: 'border-box',
-    }}
-  >
-    <div style={{ border: `1.8px solid ${design.accentColor}`, padding: '12px', fontSize: '10.5px' }}>
-      <div style={{ marginBottom: '10px' }}>
+    <div
+      dir="rtl"
+      data-testid="official-mer-sheet"
+      className="samaan-a4-landscape samaan-print-sheet-landscape"
+      style={{
+        backgroundColor: '#ffffff',
+        color: '#000000',
+        fontFamily: '"Vazirmatn", "Plus Jakarta Sans", Tahoma, sans-serif',
+        width: '100%',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* Upper Main Frame */}
+      <div style={{ border: `1.8px solid ${effectiveDesign.accentColor || '#000000'}` }}>
         <BuiltInSheetHeaderRow
           employer={activeEmployer}
-          design={design}
-          projectTitle={displayProjectName ? (isFa ? `پروژه ${displayProjectName}` : `Project: ${displayProjectName}`) : undefined}
+          design={effectiveDesign}
+          projectTitle={projectHeaderTitle}
           compact
           leftMetaSlot={
-            <div className="tabular-nums" style={{ textAlign: isFa ? 'left' : 'right', lineHeight: 1.7, fontSize: '10px' }}>
-              <div>
-                <strong>{isFa ? 'شماره گزارش MER:' : 'MER Report No.:'} </strong>
-                <span dir="ltr">{report.reportNo}</span>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                fontSize: '10px',
+                fontWeight: 700,
+                textAlign: 'right',
+                gap: '6px',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
+                <span>شماره MER:</span>
+                <span dir="ltr" className="tabular-nums">
+                  {report.reportNo}
+                </span>
               </div>
-              <div>
-                <strong>{isFa ? 'تاریخ:' : 'Date:'} </strong>
-                <span dir="ltr">{formatDate(report.date)}</span>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
+                <span>تاریخ MER:</span>
+                <span dir="ltr" className="tabular-nums">
+                  {formatDate(report.date)}
+                </span>
               </div>
             </div>
           }
         />
-        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
-      </div>
+        <OfficialExtraMetaStrip
+          design={effectiveDesign}
+          inset
+          borderColor={effectiveDesign.accentColor}
+        />
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: '8px',
-          border: '1px solid #000000',
-          padding: '6px 8px',
-          marginBottom: '10px',
-          fontSize: '10px',
-        }}
-      >
-        <div>
-          <strong>{isFa ? 'شماره پکینگ لیست:' : 'Packing List No.:'} </strong>
-          <span dir="ltr" className="tabular-nums">{report.packingListNo}</span>
+        {/* Metadata Strip Row 1 (5 columns RTL: شماره قرارداد/ درخواست خرید | سیستم | جزیره | واحد | پروژه) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.35fr 1fr 1fr 0.9fr 1fr',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.5px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
+            <strong style={{ fontWeight: 700 }}>شماره قرارداد/ درخواست خرید: </strong>
+            <span dir="ltr" className="tabular-nums">
+              {report.contractNo || ''}
+            </span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
+            <strong style={{ fontWeight: 700 }}>سیستم: </strong>
+            <span className="bidi-plaintext">{report.system || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
+            <strong style={{ fontWeight: 700 }}>جزیره: </strong>
+            <span className="bidi-plaintext">{report.island || ''}</span>
+          </div>
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
+            <strong style={{ fontWeight: 700 }}>واحد: </strong>
+            <span className="bidi-plaintext">{report.unit || ''}</span>
+          </div>
+          <div style={{ padding: '5px 8px' }}>
+            <strong style={{ fontWeight: 700 }}>پروژه: </strong>
+            <span className="bidi-plaintext">{projectBareName}</span>
+          </div>
         </div>
-        <div>
-          <strong>{isFa ? 'صورتجلسه گشایش:' : 'OPI Minutes:'} </strong>
-          <span dir="ltr" className="tabular-nums">{report.opiMinutesNo || '-'}</span>
-        </div>
-        <div>
-          <strong>{isFa ? 'تأمین‌کننده:' : 'Supplier:'} </strong>
-          <span className="bidi-plaintext">{report.supplier || '-'}</span>
-        </div>
-      </div>
 
-      <table
-        className="samaan-dynamic-table"
-        style={{
-          width: '100%',
-          borderCollapse: 'collapse',
-          fontSize: '9.8px',
-          border: '1px solid #000000',
-        }}
-      >
-        <thead>
-          <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
-            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>#</th>
-            <th className="samaan-col-code" style={{ border: '1px solid #000000', padding: '5px 5px' }}>
-              {isFa ? 'شماره بسته' : 'Package No.'}
-            </th>
-            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
-              {isFa ? 'شماره قلم' : 'Item No.'}
-            </th>
-            <th className="samaan-col-fluid" style={{ border: '1px solid #000000', padding: '5px 6px' }}>
-              {isFa ? 'شرح کالا / تجهیز' : 'Description'}
-            </th>
-            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
-              {isFa ? 'پکینگ' : 'Packing'}
-            </th>
-            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
-              {isFa ? 'واقعی' : 'Actual'}
-            </th>
-            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
-              {isFa ? 'کسری' : 'Shortage'}
-            </th>
-            <th className="samaan-col-compact" style={{ border: '1px solid #000000', padding: '5px 4px' }}>
-              {isFa ? 'آسیب‌دیده' : 'Damaged'}
-            </th>
-            <th className="samaan-col-fluid" style={{ border: '1px solid #000000', padding: '5px 6px' }}>
-              {isFa ? 'توضیحات' : 'Remarks'}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {report.items.map((line, i) => (
-            <tr key={`${line.detailedId}-${i}`}>
-              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px' }}>
-                {i + 1}
-              </td>
-              <td className="samaan-col-code tabular-nums" dir="ltr" style={{ border: '1px solid #000000', padding: '4px 5px' }}>
-                {line.packageNo}
-              </td>
-              <td className="samaan-col-compact tabular-nums" dir="ltr" style={{ border: '1px solid #000000', padding: '4px 4px' }}>
-                {line.itemNo}
-              </td>
-              <td className="samaan-col-fluid bidi-plaintext" style={{ border: '1px solid #000000', padding: '4px 6px' }}>
-                {line.description}
-              </td>
-              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px' }}>
-                {line.packingQty}
-              </td>
-              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px' }}>
-                {line.actualQty}
-              </td>
-              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px', fontWeight: 700 }}>
-                {line.shortage || '-'}
-              </td>
-              <td className="samaan-col-compact tabular-nums" style={{ border: '1px solid #000000', padding: '4px 4px', fontWeight: 700 }}>
-                {line.damagedQty || '-'}
-              </td>
-              <td className="samaan-col-fluid bidi-plaintext" style={{ border: '1px solid #000000', padding: '4px 6px' }}>
-                {discrepancyTypeLabel(line.discrepancyType)}
-                {line.remarks ? ` - ${line.remarks}` : ''}
-              </td>
+        {/* Metadata Strip Row 2 (4 columns RTL: تامین کننده | Packing List No. | OPI Date | OPI No.) */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.25fr 1.35fr 1fr 1fr',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.5px',
+            textAlign: 'right',
+          }}
+        >
+          <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
+            <strong style={{ fontWeight: 700 }}>تامین کننده: </strong>
+            <span className="bidi-plaintext">{report.supplier || ''}</span>
+          </div>
+          <div dir="ltr" style={{ borderLeft: '1px solid #000000', padding: '5px 8px', textAlign: 'left' }}>
+            <strong style={{ fontWeight: 700 }}>Packing List No.: </strong>
+            <span className="tabular-nums">{report.packingListNo || ''}</span>
+          </div>
+          <div dir="ltr" style={{ borderLeft: '1px solid #000000', padding: '5px 8px', textAlign: 'left' }}>
+            <strong style={{ fontWeight: 700 }}>OPI Date: </strong>
+            <span className="tabular-nums">{formatDate(report.opiDate || report.date)}</span>
+          </div>
+          <div dir="ltr" style={{ padding: '5px 8px', textAlign: 'left' }}>
+            <strong style={{ fontWeight: 700 }}>OPI No.: </strong>
+            <span className="tabular-nums">{report.opiNo || report.opiMinutesNo || ''}</span>
+          </div>
+        </div>
+
+        {/* 10-Column LTR MER Table (Rules 1-12..1-21) */}
+        <table
+          dir="ltr"
+          className="samaan-dynamic-table"
+          style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            fontSize: '9px',
+          }}
+        >
+          <thead>
+            <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
+                Package Item
+              </th>
+              <th
+                className="samaan-col-code"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
+                Tag No.
+              </th>
+              <th
+                className="samaan-col-code"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
+                PL/Package No.
+              </th>
+              <th
+                className="samaan-col-fluid"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 6px',
+                  textAlign: 'center',
+                }}
+              >
+                Description
+              </th>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
+                UOM
+              </th>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
+                Package Quantity
+              </th>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
+                Received Quantity
+              </th>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
+                Discrepant Quantity
+              </th>
+              <th
+                className="samaan-col-fluid"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 5px',
+                  textAlign: 'center',
+                }}
+              >
+                Discrepancy
+              </th>
+              <th
+                className="samaan-col-fluid"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  padding: '5px 5px',
+                  textAlign: 'center',
+                }}
+              >
+                Remark
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {paddedRows.map((line, idx) => {
+              const isLast = idx === paddedRows.length - 1;
+              const rowBottomBorder = isLast ? 'none' : '1px solid #000000';
+              const plPkgText = line
+                ? [line.shipmentNo, line.packageNo].filter(Boolean).join(' / ')
+                : '';
+              const discQty = line
+                ? line.discrepantQty !== undefined
+                  ? line.discrepantQty
+                  : line.discrepancyType === 'shortage'
+                    ? line.shortage
+                    : line.damagedQty
+                : '';
+              const discReason = line
+                ? line.discrepancyReason ||
+                  (line.discrepancyType === 'shortage' ? 'کسری' : 'مغایرت/آسیب‌دیدگی')
+                : '';
 
-      {report.notes && (
-        <div style={{ marginTop: '10px', border: '1px solid #000000', padding: '6px 8px', fontSize: '10px' }}>
-          <strong>{isFa ? 'توضیحات تکمیلی:' : 'Notes:'} </strong>
-          <span className="bidi-plaintext">{report.notes}</span>
-        </div>
-      )}
+              return (
+                <tr key={line ? `${line.detailedId}-${idx}` : `empty-mer-${idx}`}>
+                  <td
+                    className="tabular-nums samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {line ? line.itemNo || String(idx + 1) : '\u00A0'}
+                  </td>
+                  <td
+                    className="tabular-nums samaan-col-code"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {line?.itemCode || ''}
+                  </td>
+                  <td
+                    className="tabular-nums samaan-col-code"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {plPkgText}
+                  </td>
+                  <td
+                    dir="auto"
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 6px',
+                      textAlign: 'center',
+                      whiteSpace: 'pre-line',
+                    }}
+                  >
+                    {line?.description || ''}
+                  </td>
+                  <td
+                    dir="auto"
+                    className="samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {line?.countingUnit || ''}
+                  </td>
+                  <td
+                    className="tabular-nums samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {line !== null ? line.packingQty : ''}
+                  </td>
+                  <td
+                    className="tabular-nums samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {line !== null ? line.actualQty : ''}
+                  </td>
+                  <td
+                    className="tabular-nums samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {line !== null ? discQty : ''}
+                  </td>
+                  <td
+                    dir="auto"
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 5px',
+                      textAlign: 'center',
+                      whiteSpace: 'pre-line',
+                    }}
+                  >
+                    {discReason}
+                  </td>
+                  <td
+                    dir="auto"
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      padding: '4px 5px',
+                      textAlign: 'center',
+                      whiteSpace: 'pre-line',
+                    }}
+                  >
+                    {line?.remarks || ''}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
-      {(design.template?.signatures?.length || !design.showSignatures) ? (
-        <div className="samaan-keep-together" style={{ marginTop: '20px' }}>
-          <OfficialFormSignatures
-            signatures={design.signatures}
-            showSignatures={design.showSignatures}
-            borderColor={design.accentColor}
-          />
-        </div>
-      ) : (
+      {/* Lower 5-Box Signatures, QA Notice & Enclosed Footer Frame */}
       <div
         className="samaan-keep-together"
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: '16px',
-          marginTop: '28px',
-          textAlign: 'center',
-          fontSize: '10px',
-          fontWeight: 700,
+          border: `1.8px solid ${effectiveDesign.accentColor || '#000000'}`,
+          marginTop: '10px',
         }}
       >
-        <div style={{ borderTop: '1px solid #000000', paddingTop: '6px' }}>
-          {isFa ? 'مسئول انبار' : 'Warehouse Supervisor'}
-        </div>
-        <div style={{ borderTop: '1px solid #000000', paddingTop: '6px' }}>
-          {isFa ? 'کنترل کیفیت / بازرسی' : 'QA / QC Inspector'}
-        </div>
-        <div style={{ borderTop: '1px solid #000000', paddingTop: '6px' }}>
-          {isFa ? activeEmployer.inspectorLabel : `${activeEmployer.badgeCode} / Client Rep.`}
-        </div>
-      </div>
-      )}
-      {(design.footerCopyText || merFormCode || design.revisionText) && (
         <div
           style={{
-            marginTop: '10px',
+            backgroundColor: '#e5e7eb',
+            borderBottom: '1px solid #000000',
+            padding: '4px 8px',
+            fontSize: '10.5px',
+            fontWeight: 700,
+            textAlign: 'center',
+          }}
+        >
+          امضاء
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            minHeight: '74px',
+            borderBottom: '1px solid #000000',
+            fontSize: '9.2px',
+            textAlign: 'right',
+          }}
+        >
+          {[
+            'انباردار:',
+            isMd1Default ? 'تأمین تجهیزات توسعه یک :' : `${activeEmployer.equipmentSupplyLabel} :`,
+            'فروشنده:',
+            'دستگاه نظارت:',
+            'كارفرما:',
+          ].map((label, idx, arr) => (
+            <div
+              key={label}
+              style={{
+                borderLeft: idx < arr.length - 1 ? '1px solid #000000' : 'none',
+                padding: '6px 8px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700 }}>{label}</div>
+                <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
+              </div>
+              <div style={{ height: '14px' }} />
+            </div>
+          ))}
+        </div>
+
+        {/* Right-Aligned QA Control Notice */}
+        <div
+          dir="rtl"
+          data-testid="mer-qa-notice"
+          style={{
+            padding: '4px 10px',
+            fontSize: '8.3px',
+            fontWeight: 600,
+            textAlign: 'right',
+            borderBottom: '1px solid #000000',
+          }}
+        >
+          {effectiveDesign.template?.introText || MD1_OPI_MINUTES_QA_NOTICE}
+        </div>
+
+        {/* Enclosed Copy & Form Code Footer */}
+        <div
+          dir="rtl"
+          style={{
+            padding: '4px 10px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            fontSize: '8.5px',
+            fontSize: '8.8px',
             fontWeight: 700,
           }}
         >
-          <span>{design.footerCopyText || ''}</span>
-          {(merFormCode || design.revisionText) && (
-            <span dir="ltr" className="tabular-nums">
-              {[merFormCode, design.revisionText].filter(Boolean).join(' · ')}
-            </span>
-          )}
+          <span>{effectiveDesign.footerCopyText || MD1_MER_COPY_TEXT}</span>
+          <span dir="ltr" className="tabular-nums">
+            {[merFormCode, effectiveDesign.revisionText].filter(Boolean).join(' · ')}
+          </span>
         </div>
-      )}
+      </div>
     </div>
-  </div>
   );
 };
 
-interface OpiMinutesApiResponse {
-  minutes: OpiMinutesRecord[];
-  osdrReports: OsdrReportRecord[];
-  invitations: OpiInvitationRecord[];
-  detailedItems: DetailedComputed[];
-  generalEntries?: GeneralEntry[];
-  packings: string[];
-}
-
-interface OpiMinutesViewProps {
-  refreshSignal: number;
-  onDataChanged: () => void;
-}
-
+/* ============================================================================
+ * MAIN VIEW — OPI MINUTES (MD1EX-FQP02/06-03) + LINKED MER (MD1EX-FQP02/12-03)
+ * ============================================================================ */
 export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   refreshSignal,
   onDataChanged,
 }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
+  const {
+    prefs,
+    t,
+    user,
+    notify,
+    formatDate,
+    triggerAutoSnapshot,
+    activeEmployer,
+    activeProject,
+    historyStatus,
+    historyBusy,
+    performUndo,
+    performRedo,
+  } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
-  const formCode = getEmployerFormCode(activeEmployer, '06-03');
+  const formCode = getEmployerFormCode(activeEmployer, '06-03') || MD1_OPI_MINUTES_FORM_CODE;
 
-  const [subTab, setSubTab] = useState<'minutes' | 'osdr'>('minutes');
-  const [minutesViewMode, setMinutesViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
-  const [osdrViewMode, setOsdrViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
+  const [viewMode, setViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
+  const [historySubTab, setHistorySubTab] = useState<'minutes' | 'mer'>('minutes');
   const [data, setData] = useState<OpiMinutesApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Create / Edit workflow state
+  const [invSearch, setInvSearch] = useState('');
+  const [selectedInvId, setSelectedInvId] = useState<string>('');
+  const [rowRemarks, setRowRemarks] = useState<Record<number, string>>({});
+  const [otherNotes, setOtherNotes] = useState('');
+  const [resultStatus, setResultStatus] = useState<'compliant' | 'has_discrepancy'>('compliant');
+
+  // Conditional MER state (when resultStatus === 'has_discrepancy')
+  const [merReportNo, setMerReportNo] = useState('');
+  const [merReportNoTouched, setMerReportNoTouched] = useState(false);
+  const [merRowSearch, setMerRowSearch] = useState('');
+  const [merDrafts, setMerDrafts] = useState<Record<string, MerRowDraft>>({});
+
+  // Edit / Delete / Print / Scan state
+  const [editingMinutes, setEditingMinutes] = useState<OpiMinutesRecord | null>(null);
+  const [deleteMinutesTarget, setDeleteMinutesTarget] = useState<OpiMinutesRecord | null>(null);
+  const [deleteMerTarget, setDeleteMerTarget] = useState<OsdrReportRecord | null>(null);
+  const [printBundle, setPrintBundle] = useState<{
+    minutes: OpiMinutesRecord | null;
+    mer: OsdrReportRecord | null;
+  } | null>(null);
+  const [printBundleWasUndone, setPrintBundleWasUndone] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [printReportOpen, setPrintReportOpen] = useState(false);
   const [scanTarget, setScanTarget] = useState<{
     collection: 'opiMinutes' | 'osdr';
     id: string;
     label: string;
     signedScan?: OpiMinutesRecord['signedScan'];
   } | null>(null);
-  const minutesList = useMemo(() => data?.minutes || [], [data]);
-  const minutesPagination = useClientPagination(minutesList, 50);
-  const osdrList = useMemo(() => data?.osdrReports || [], [data]);
-  const osdrPagination = useClientPagination(osdrList, 50);
-
-  // OPI Minutes Form
-  const [minutesNo, setMinutesNo] = useState('');
-  const suggestedMinutesNo = useMemo(
-    () =>
-      generateNextPlantAwareDocNo(
-        'OPM',
-        minutesList.map((m) => m.minutesNo),
-        extractPlantDocConfig(activeProject),
-      ),
-    [minutesList, activeProject],
-  );
-  const suggestedMerNo = useMemo(
-    () =>
-      generateNextPlantAwareDocNo(
-        'MER',
-        osdrList.map((o) => o.reportNo),
-        extractPlantDocConfig(activeProject),
-      ),
-    [osdrList, activeProject],
-  );
-  const [invitationNo, setInvitationNo] = useState('');
-  const [date, setDate] = useState(getTodayIso());
-  const [time, setTime] = useState('09:00');
-  const [packingListNo, setPackingListNo] = useState('');
-  const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
-  const [supplier, setSupplier] = useState('');
-  const [system, setSystem] = useState('');
-  const [island, setIsland] = useState('');
-  const [unit, setUnit] = useState('');
-  const [purchasePackageNo, setPurchasePackageNo] = useState('');
-  const [merNo, setMerNo] = useState('');
-  const [items, setItems] = useState<OpiInvitationLineItem[]>([]);
-  const [location, setLocation] = useState('');
-  const [storekeeper, setStorekeeper] = useState('');
-  const [mapnaInspector, setMapnaInspector] = useState('');
-  const [sellerRep, setSellerRep] = useState('');
-  const [employerInspector, setEmployerInspector] = useState('');
-  const [qcInspector, setQcInspector] = useState('');
-  const [resultStatus, setResultStatus] = useState<'compliant' | 'has_discrepancy'>('compliant');
-  const [notes, setNotes] = useState('');
-  const [editingMinutes, setEditingMinutes] = useState<OpiMinutesRecord | null>(null);
-  const [deleteMinutesTarget, setDeleteMinutesTarget] = useState<OpiMinutesRecord | null>(null);
-  const [printMinutes, setPrintMinutes] = useState<OpiMinutesRecord | null>(null);
-  const [printMinutesTableOpen, setPrintMinutesTableOpen] = useState(false);
-
-  // OSDR Form
-  const [osdrReportNo, setOsdrReportNo] = useState('');
-  const [osdrDate, setOsdrDate] = useState(getTodayIso());
-  const [osdrMinutesNo, setOsdrMinutesNo] = useState('');
-  const [osdrPackingNo, setOsdrPackingNo] = useState('');
-  const [osdrSupplier, setOsdrSupplier] = useState('');
-  const [osdrNotes, setOsdrNotes] = useState('');
-  const [osdrSelectedIds, setOsdrSelectedIds] = useState<Record<string, boolean>>({});
-  const [osdrRemarks, setOsdrRemarks] = useState<Record<string, string>>({});
-  const [editingOsdr, setEditingOsdr] = useState<OsdrReportRecord | null>(null);
-  const [deleteOsdrTarget, setDeleteOsdrTarget] = useState<OsdrReportRecord | null>(null);
-  const [printOsdr, setPrintOsdr] = useState<OsdrReportRecord | null>(null);
-  const [printOsdrTableOpen, setPrintOsdrTableOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiRequest<OpiMinutesApiResponse>('/api/opi-minutes?compact=1&limit=100&onlyDiscrepancy=1');
+      const res = await apiRequest<OpiMinutesApiResponse>('/api/opi-minutes');
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -1006,267 +1351,444 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   }, [notify]);
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, [loadData, refreshSignal]);
 
-  // Fetch specific packing items on demand for OPI Minutes or OSDR filter
+  // Keep Print Preview modal synced with Post-Print Undo/Redo
   useEffect(() => {
-    const targetPk = packingListNo || osdrPackingNo;
-    if (!targetPk) return;
-    let active = true;
-    apiRequest<OpiMinutesApiResponse>(`/api/opi-minutes?compact=1&packing=${encodeURIComponent(targetPk)}`)
-      .then((fetched) => {
-        if (!active) return;
-        setData((prev) => {
-          if (!prev) return fetched;
-          const detIds = new Set(prev.detailedItems.map((d) => d.id));
-          const genIds = new Set((prev.generalEntries || []).map((g) => g.id));
-          return {
-            ...prev,
-            detailedItems: [...prev.detailedItems, ...(fetched.detailedItems || []).filter((d) => !detIds.has(d.id))],
-            generalEntries: [...(prev.generalEntries || []), ...(fetched.generalEntries || []).filter((g) => !genIds.has(g.id))],
-          };
-        });
-      })
-      .catch(() => {});
-    return () => { active = false; };
-  }, [packingListNo, osdrPackingNo]);
-
-  const syncFromPacking = useCallback(
-    (pk: string, pkgs: string[]) => {
-      if (!pk) {
-        setItems([]);
-        setSupplier('');
-        setSystem('');
-        setIsland('');
-        setUnit('');
-        setLocation('');
-        setMerNo('');
-        return;
-      }
-      const detItems = data?.detailedItems || [];
-      const genEntries = data?.generalEntries || [];
-      const genMatch = genEntries.find((g) => (g.packingListNo || '').trim() === pk);
-      const detMatch = detItems.find((d) => (d.shipmentNo || '').trim() === pk);
-
-      setSupplier(genMatch?.supplier || detMatch?.supplier || '');
-      setSystem(genMatch?.system || detMatch?.system || '');
-      setIsland(genMatch?.island || detMatch?.island || '');
-      setUnit(genMatch?.unit || detMatch?.unit || '');
-      setLocation(detMatch?.storageLocation || genMatch?.dispatchLocation || '');
-      setMerNo(detMatch?.merNo || '');
-      if (!editingMinutes) {
-        const autoInv = genMatch?.opiInvitationNo || detMatch?.opiNo || '';
-        if (autoInv) setInvitationNo(autoInv);
-      }
-      setItems(buildMomItemsForPacking(pk, pkgs, detItems, genEntries));
-    },
-    [data, editingMinutes],
-  );
-
-  // Auto-fill packingListNo / location / date / metadata when linking an invitation
-  const handleInvitationChange = (invNo: string) => {
-    setInvitationNo(invNo);
-    if (!invNo) return;
-    const inv = (data?.invitations || []).find((i) => i.invitationNo === invNo);
-    if (inv) {
-      if (inv.location) setLocation(inv.location);
-      if (inv.date) setDate(inv.date);
-      if (inv.time) setTime(inv.time);
-      if (inv.supplier) setSupplier(inv.supplier);
-      if (inv.system) setSystem(inv.system);
-      if (inv.island) setIsland(inv.island);
-      if (inv.unit) setUnit(inv.unit);
-      if (inv.purchasePackageNo) setPurchasePackageNo(inv.purchasePackageNo);
-      if (inv.packingNos.length > 0) {
-        const pk = inv.packingNos[0];
-        setPackingListNo(pk);
-        setSelectedPackages([]);
-        if (inv.items && inv.items.length > 0) {
-          setItems(inv.items);
-        } else {
-          syncFromPacking(pk, []);
+    if (!printBundle || !data) return;
+    if (printBundle.minutes) {
+      const foundMin = (data.minutes || []).find((m) => m.id === printBundle.minutes?.id);
+      const foundMer = foundMin?.linkedMerId
+        ? (data.osdrReports || []).find((r) => r.id === foundMin.linkedMerId) || null
+        : foundMin?.merNo
+          ? (data.osdrReports || []).find((r) => r.reportNo === foundMin.merNo) || null
+          : null;
+      if (foundMin) {
+        setPrintBundleWasUndone(false);
+        if (foundMin !== printBundle.minutes || foundMer !== printBundle.mer) {
+          setPrintBundle({ minutes: foundMin, mer: foundMer });
         }
-      } else if (inv.items && inv.items.length > 0) {
-        setItems(inv.items);
+      } else {
+        setPrintBundleWasUndone(true);
+      }
+    } else if (printBundle.mer) {
+      const foundMer = (data.osdrReports || []).find((r) => r.id === printBundle.mer?.id);
+      if (foundMer) {
+        setPrintBundleWasUndone(false);
+        if (foundMer !== printBundle.mer) setPrintBundle({ minutes: null, mer: foundMer });
+      } else {
+        setPrintBundleWasUndone(true);
       }
     }
+  }, [data, printBundle]);
+
+  // Keep scanTarget synced
+  useEffect(() => {
+    if (!scanTarget || !data) return;
+    if (scanTarget.collection === 'opiMinutes') {
+      const updated = (data.minutes || []).find((m) => m.id === scanTarget.id);
+      if (updated && updated.signedScan !== scanTarget.signedScan) {
+        setScanTarget({ ...scanTarget, signedScan: updated.signedScan });
+      }
+    } else {
+      const updated = (data.osdrReports || []).find((r) => r.id === scanTarget.id);
+      if (updated && updated.signedScan !== scanTarget.signedScan) {
+        setScanTarget({ ...scanTarget, signedScan: updated.signedScan });
+      }
+    }
+  }, [data, scanTarget]);
+
+  const openInvitations = useMemo(
+    () =>
+      filterOpenInvitationsForMinutes(
+        data?.invitations || [],
+        data?.minutes || [],
+        editingMinutes?.id,
+      ),
+    [data?.invitations, data?.minutes, editingMinutes?.id],
+  );
+
+  const filteredOpenInvitations = useMemo(() => {
+    const q = invSearch.trim().toLowerCase();
+    if (!q) return openInvitations;
+    return openInvitations.filter((inv) =>
+      [
+        inv.invitationNo,
+        inv.date,
+        inv.location,
+        inv.supplier,
+        inv.system,
+        inv.island,
+        ...(inv.packingNos || []),
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [openInvitations, invSearch]);
+
+  const selectedInvitation = useMemo<OpiInvitationRecord | null>(() => {
+    if (!selectedInvId) return null;
+    const found = (data?.invitations || []).find(
+      (i) => i.id === selectedInvId || i.invitationNo === selectedInvId,
+    );
+    if (found) return found;
+    // Fallback synthesis when editing an older/imported OPI Minutes whose invitation record was deleted
+    if (editingMinutes && selectedInvId === editingMinutes.id) {
+      return {
+        id: editingMinutes.id,
+        invitationNo: editingMinutes.invitationNo || editingMinutes.minutesNo,
+        date: editingMinutes.date,
+        time: editingMinutes.time || '',
+        location: editingMinutes.location || '',
+        packingNos: editingMinutes.packingNos || [editingMinutes.packingListNo].filter(Boolean),
+        projectName: editingMinutes.projectName,
+        supplier: editingMinutes.supplier,
+        system: editingMinutes.system,
+        island: editingMinutes.island,
+        unit: editingMinutes.unit,
+        contractNo: editingMinutes.contractNo,
+        purchasePackageNo: editingMinutes.purchasePackageNo,
+        items: editingMinutes.items,
+        status: 'completed',
+        createdAt: editingMinutes.createdAt,
+        createdBy: editingMinutes.createdBy,
+      };
+    }
+    return null;
+  }, [selectedInvId, data?.invitations, editingMinutes]);
+
+  const autoFill = useMemo(() => {
+    if (!selectedInvitation) return null;
+    return buildOpiMinutesAutoFill(
+      selectedInvitation,
+      data?.generalEntries || [],
+      activeProject,
+      rowRemarks,
+    );
+  }, [selectedInvitation, data?.generalEntries, activeProject, rowRemarks]);
+
+  const invitationDetailedRows = useMemo(() => {
+    if (!selectedInvitation) return [];
+    return findDetailedRowsForInvitation(selectedInvitation, data?.detailedItems || []);
+  }, [selectedInvitation, data?.detailedItems]);
+
+  const filteredMerDetailedRows = useMemo(() => {
+    const q = merRowSearch.trim().toLowerCase();
+    if (!q) return invitationDetailedRows;
+    return invitationDetailedRows.filter((d) =>
+      [d.shipmentNo, d.packageNo, d.itemNo, d.itemCode, d.description, d.generalDescription]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [invitationDetailedRows, merRowSearch]);
+
+  const suggestedMerNo = useMemo(() => {
+    const supplier = autoFill?.supplier || selectedInvitation?.supplier || '';
+    const usedNos = data?.allUsedDocNos || [
+      ...(data?.osdrReports || []).map((r) => r.reportNo),
+      ...(data?.minutes || []).map((m) => m.minutesNo),
+    ];
+    return generateMerReportNo(supplier, usedNos, extractPlantDocConfig(activeProject));
+  }, [autoFill?.supplier, selectedInvitation?.supplier, data?.allUsedDocNos, data?.osdrReports, data?.minutes, activeProject]);
+
+  // Auto-populate unique MER number when user picks has_discrepancy
+  useEffect(() => {
+    if (resultStatus === 'has_discrepancy' && !merReportNoTouched && suggestedMerNo) {
+      setMerReportNo(suggestedMerNo);
+    }
+  }, [resultStatus, merReportNoTouched, suggestedMerNo]);
+
+  const selectedMerCount = useMemo(
+    () => Object.values(merDrafts).filter((d) => d.checked).length,
+    [merDrafts],
+  );
+
+  const handleSelectInvitation = (inv: OpiInvitationRecord) => {
+    setSelectedInvId(inv.id);
+    const initialRemarks: Record<number, string> = {};
+    (inv.items || []).forEach((it, idx) => {
+      if (it.remarks) initialRemarks[idx] = it.remarks;
+    });
+    setRowRemarks(initialRemarks);
+    setOtherNotes('');
+    setResultStatus('compliant');
+    setMerDrafts({});
+    setMerReportNo('');
+    setMerReportNoTouched(false);
+    setMerRowSearch('');
   };
 
-  const resetMinutesForm = () => {
+  const resetForm = useCallback(() => {
     setEditingMinutes(null);
-    setMinutesNo('');
-    setInvitationNo('');
-    setDate(getTodayIso());
-    setTime('09:00');
-    setPackingListNo('');
-    setSelectedPackages([]);
-    setSupplier('');
-    setSystem('');
-    setIsland('');
-    setUnit('');
-    setPurchasePackageNo('');
-    setMerNo('');
-    setItems([]);
-    setLocation('');
-    setStorekeeper('');
-    setMapnaInspector('');
-    setSellerRep('');
-    setEmployerInspector('');
-    setQcInspector('');
+    setSelectedInvId('');
+    setRowRemarks({});
+    setOtherNotes('');
     setResultStatus('compliant');
-    setNotes('');
-  };
+    setMerReportNo('');
+    setMerReportNoTouched(false);
+    setMerRowSearch('');
+    setMerDrafts({});
+  }, []);
+
+  const findLinkedMer = useCallback(
+    (rec: OpiMinutesRecord): OsdrReportRecord | null => {
+      const reports = data?.osdrReports || [];
+      if (rec.linkedMerId) {
+        const byId = reports.find((r) => r.id === rec.linkedMerId);
+        if (byId) return byId;
+      }
+      if (rec.merNo) {
+        const byNo = reports.find((r) => r.reportNo === rec.merNo);
+        if (byNo) return byNo;
+      }
+      const byMinId = reports.find((r) => r.opiMinutesId === rec.id);
+      if (byMinId) return byMinId;
+      return null;
+    },
+    [data?.osdrReports],
+  );
 
   const startEditMinutes = (rec: OpiMinutesRecord) => {
-    setMinutesViewMode('create');
+    setViewMode('create');
     setEditingMinutes(rec);
-    setMinutesNo(rec.minutesNo || '');
-    setInvitationNo(rec.invitationNo || '');
-    setDate(rec.date || getTodayIso());
-    setTime(rec.time || '09:00');
-    setPackingListNo(rec.packingListNo || '');
-    setSelectedPackages(rec.packageNos || []);
-    setSupplier(rec.supplier || '');
-    setSystem(rec.system || '');
-    setIsland(rec.island || '');
-    setUnit(rec.unit || '');
-    setPurchasePackageNo(rec.purchasePackageNo || '');
-    setMerNo(rec.merNo || '');
-    setItems(
-      rec.items && rec.items.length > 0
-        ? rec.items
-        : buildMomItemsForPacking(
-            rec.packingListNo,
-            rec.packageNos || [],
-            data?.detailedItems || [],
-            data?.generalEntries || [],
-          ),
+    const inv = (data?.invitations || []).find(
+      (i) => (rec.invitationId && i.id === rec.invitationId) || i.invitationNo === rec.invitationNo,
     );
-    setLocation(rec.location || '');
-    setStorekeeper(rec.storekeeper || '');
-    setMapnaInspector(rec.mapnaInspector || '');
-    setSellerRep(rec.sellerRep || rec.contractorInspector || '');
-    setEmployerInspector(rec.employerInspector || '');
-    setQcInspector(rec.qcInspector || '');
+    setSelectedInvId(inv ? inv.id : rec.id);
+
+    const nextRemarks: Record<number, string> = {};
+    (rec.items || []).forEach((it, idx) => {
+      nextRemarks[idx] = it.remarks || '';
+    });
+    setRowRemarks(nextRemarks);
+    setOtherNotes(rec.notes || '');
     setResultStatus(rec.resultStatus || 'compliant');
-    setNotes(rec.notes || '');
+
+    const linkedMer = findLinkedMer(rec);
+    if (linkedMer) {
+      setMerReportNo(linkedMer.reportNo);
+      setMerReportNoTouched(true);
+      const nextDrafts: Record<string, MerRowDraft> = {};
+      for (const item of linkedMer.items || []) {
+        const discQty =
+          item.discrepantQty !== undefined
+            ? item.discrepantQty
+            : item.discrepancyType === 'shortage'
+              ? item.shortage
+              : item.damagedQty;
+        nextDrafts[item.detailedId] = {
+          checked: true,
+          category: item.discrepancyType === 'shortage' ? 'shortage' : 'damaged',
+          discrepantQty: String(discQty ?? 0),
+          discrepancyText: item.discrepancyReason || '',
+          remark: item.remarks || '',
+        };
+      }
+      setMerDrafts(nextDrafts);
+    } else {
+      setMerReportNo(rec.merNo || '');
+      setMerReportNoTouched(Boolean(rec.merNo));
+      setMerDrafts({});
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const packagesForSelectedPacking = useMemo(() => {
-    if (!packingListNo) return [];
-    const set = new Set<string>();
-    for (const d of data?.detailedItems || []) {
-      if (d.shipmentNo === packingListNo && d.packageNo) set.add(d.packageNo);
-    }
-    return Array.from(set);
-  }, [data, packingListNo]);
-
-  const togglePackage = (pkg: string) => {
-    const next = selectedPackages.includes(pkg)
-      ? selectedPackages.filter((x) => x !== pkg)
-      : [...selectedPackages, pkg];
-    setSelectedPackages(next);
-    if (packingListNo) {
-      setItems(
-        buildMomItemsForPacking(
-          packingListNo,
-          next,
-          data?.detailedItems || [],
-          data?.generalEntries || [],
-        ),
-      );
-    }
+  const toggleMerRow = (row: DetailedComputed) => {
+    setMerDrafts((prev) => {
+      const existing = prev[row.id];
+      if (existing?.checked) {
+        return { ...prev, [row.id]: { ...existing, checked: false } };
+      }
+      return {
+        ...prev,
+        [row.id]: existing
+          ? { ...existing, checked: true }
+          : {
+              checked: true,
+              category: 'shortage',
+              discrepantQty: '1',
+              discrepancyText: '',
+              remark: '',
+            },
+      };
+    });
   };
 
-  const updateItemField = (index: number, key: keyof OpiInvitationLineItem, value: string) => {
-    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [key]: value } : it)));
+  const updateMerDraft = (rowId: string, patch: Partial<MerRowDraft>) => {
+    setMerDrafts((prev) => {
+      const cur: MerRowDraft = prev[rowId] || {
+        checked: true,
+        category: 'shortage',
+        discrepantQty: '0',
+        discrepancyText: '',
+        remark: '',
+      };
+      return { ...prev, [rowId]: { ...cur, ...patch } };
+    });
   };
 
-  const addBlankItemRow = () => {
-    setItems((prev) => [
-      ...prev,
-      {
-        itemNo: '',
-        packingListNo: packingListNo || '',
-        packageNo: '',
-        description: '',
-        uom: '',
-        remarks: '',
-      },
-    ]);
-  };
-
-  const removeItemRow = (index: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSaveMinutes = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedInvitation || !autoFill) {
+      notify(
+        'warning',
+        isFa ? 'ابتدا یک دعوتنامه گشایش باز را انتخاب کنید.' : 'Please select an open OPI Invitation first.',
+      );
+      return;
+    }
+
+    let merPayload: Partial<OsdrReportRecord> | undefined;
+    let finalMerNo = '';
+
+    if (resultStatus === 'has_discrepancy') {
+      finalMerNo = (merReportNo || suggestedMerNo).trim();
+      if (!finalMerNo) {
+        notify(
+          'warning',
+          isFa ? 'شماره گزارش مغایرت (MER) الزامی است.' : 'MER Report No. is required.',
+        );
+        return;
+      }
+
+      const checkedRows = invitationDetailedRows.filter((d) => merDrafts[d.id]?.checked);
+      if (checkedRows.length === 0) {
+        notify(
+          'warning',
+          isFa
+            ? 'حداقل یک ردیف دارای کسری یا مغایرت/آسیب‌دیدگی را تیک بزنید.'
+            : 'Please select at least one discrepant item for the MER report.',
+        );
+        return;
+      }
+
+      const merItems: OsdrReportItem[] = [];
+      for (const row of checkedRows) {
+        const draft = merDrafts[row.id];
+        const parsedQty = Number(draft.discrepantQty === '' ? 0 : draft.discrepantQty);
+        if (!Number.isFinite(parsedQty) || parsedQty < 0) {
+          notify(
+            'warning',
+            isFa
+              ? `مقدار Discrepant Quantity برای آیتم ${row.itemNo || row.packageNo} باید عددی و غیرمنفی باشد.`
+              : `Discrepant Quantity for item ${row.itemNo || row.packageNo} must be a non-negative number.`,
+          );
+          return;
+        }
+        merItems.push(
+          buildMerReportItem({
+            detailed: row,
+            category: draft.category,
+            discrepantQty: parsedQty,
+            discrepancyText: draft.discrepancyText,
+            remark: draft.remark,
+          }),
+        );
+      }
+
+      merPayload = {
+        reportNo: finalMerNo,
+        date: autoFill.date,
+        opiMinutesNo: autoFill.minutesNo,
+        opiNo: autoFill.invitationNo,
+        opiDate: autoFill.date,
+        packingListNo: autoFill.packingListNo,
+        projectName: activeProject?.name || selectedInvitation.projectName || '',
+        contractNo: autoFill.contractNo,
+        system: autoFill.system,
+        island: autoFill.island,
+        unit: autoFill.unit,
+        supplier: autoFill.supplier,
+        items: merItems,
+        notes: otherNotes.trim(),
+      };
+    }
+
     const payload = {
-      minutesNo,
-      invitationNo,
-      date,
-      time,
-      packingListNo,
-      packageNos: selectedPackages.length > 0 ? selectedPackages : packagesForSelectedPacking,
-      projectName: activeProject?.name || '',
-      supplier,
-      system,
-      island,
-      unit,
-      contractNo: activeProject?.code || '',
-      purchasePackageNo,
-      items,
-      merNo,
-      location,
-      storekeeper,
-      mapnaInspector,
-      sellerRep,
-      employerInspector,
-      contractorInspector: sellerRep,
-      qcInspector,
+      minutesNo: autoFill.minutesNo,
+      invitationId: selectedInvitation.id,
+      invitationNo: autoFill.invitationNo,
+      date: autoFill.date,
+      time: autoFill.time,
+      location: autoFill.location,
+      packingListNo: autoFill.packingListNo,
+      packingNos: autoFill.packingNos,
+      packageNos: Array.from(new Set(autoFill.items.map((it) => it.packageNo).filter(Boolean))),
+      projectName: activeProject?.name || selectedInvitation.projectName || '',
+      supplier: autoFill.supplier,
+      system: autoFill.system,
+      island: autoFill.island,
+      unit: autoFill.unit,
+      contractNo: autoFill.contractNo,
+      purchasePackageNo: autoFill.purchasePackageNo,
+      items: autoFill.items,
       resultStatus,
-      notes,
+      merNo: finalMerNo,
+      notes: otherNotes.trim(),
+      merPayload: resultStatus === 'has_discrepancy' ? merPayload : null,
     };
 
+    setSubmitting(true);
     try {
       if (editingMinutes) {
-        const res = await apiRequest<{ record: OpiMinutesRecord }>(`/api/opi-minutes/${editingMinutes.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
-        });
+        const res = await apiRequest<{ record: OpiMinutesRecord; merReport?: OsdrReportRecord }>(
+          `/api/opi-minutes/${editingMinutes.id}`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+          },
+        );
         notify(
           'success',
-          isFa
-            ? `صورتجلسه گشایش شماره ${res.record.minutesNo} ویرایش شد.`
-            : `Inspection Minutes ${res.record.minutesNo} updated.`,
+          res.merReport
+            ? isFa
+              ? `صورتجلسه ${res.record.minutesNo} و گزارش مغایرت ${res.merReport.reportNo} ویرایش و همگام‌سازی شدند.`
+              : `OPI Minutes ${res.record.minutesNo} and MER ${res.merReport.reportNo} updated.`
+            : isFa
+              ? `صورتجلسه گشایش شماره ${res.record.minutesNo} ویرایش شد.`
+              : `OPI Minutes ${res.record.minutesNo} updated.`,
         );
-        resetMinutesForm();
-        setPrintMinutes(res.record);
+        resetForm();
+        setPrintBundleWasUndone(false);
+        setPrintBundle({ minutes: res.record, mer: res.merReport || null });
         triggerAutoSnapshot(`Edit OPI Minutes ${res.record.minutesNo}`);
         onDataChanged();
-        loadData();
+        await loadData();
       } else {
-        const res = await apiRequest<{ record: OpiMinutesRecord }>('/api/opi-minutes', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
+        const res = await apiRequest<{ record: OpiMinutesRecord; merReport?: OsdrReportRecord }>(
+          '/api/opi-minutes',
+          {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          },
+        );
         notify(
           'success',
-          isFa
-            ? `صورتجلسه گشایش و بازرسی شماره ${res.record.minutesNo} ثبت شد.`
-            : `Inspection Minutes ${res.record.minutesNo} saved.`,
+          res.merReport
+            ? isFa
+              ? `صورتجلسه ${res.record.minutesNo} همراه با گزارش مغایرت ${res.merReport.reportNo} صادر و در جدول جزئیات ثبت شد.`
+              : `OPI Minutes ${res.record.minutesNo} and MER ${res.merReport.reportNo} issued and synced.`
+            : isFa
+              ? `صورتجلسه گشایش شماره ${res.record.minutesNo} صادر و در جدول جزئیات ثبت شد.`
+              : `OPI Minutes ${res.record.minutesNo} issued and synced to Detailed Equipment.`,
         );
-        resetMinutesForm();
-        setPrintMinutes(res.record);
-        triggerAutoSnapshot(`OPI Minutes ${res.record.minutesNo}`);
+        resetForm();
+        setPrintBundleWasUndone(false);
+        setPrintBundle({ minutes: res.record, mer: res.merReport || null });
+        triggerAutoSnapshot(
+          res.merReport
+            ? `OPI Minutes ${res.record.minutesNo} + MER ${res.merReport.reportNo}`
+            : `OPI Minutes ${res.record.minutesNo}`,
+        );
         onDataChanged();
-        loadData();
+        await loadData();
       }
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -1279,925 +1801,898 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       notify(
         'success',
         isFa
-          ? `صورتجلسه شماره ${deleteMinutesTarget.minutesNo} حذف شد.`
-          : `Inspection Minutes ${deleteMinutesTarget.minutesNo} deleted.`,
+          ? `صورتجلسه ${deleteMinutesTarget.minutesNo} حذف و وضعیت جدول جزئیات و دعوتنامه بازگردانی شد.`
+          : `OPI Minutes ${deleteMinutesTarget.minutesNo} deleted and reverted.`,
       );
-      if (editingMinutes?.id === deleteMinutesTarget.id) resetMinutesForm();
-      if (printMinutes?.id === deleteMinutesTarget.id) setPrintMinutes(null);
+      if (editingMinutes?.id === deleteMinutesTarget.id) resetForm();
+      if (printBundle?.minutes?.id === deleteMinutesTarget.id) setPrintBundle(null);
       setDeleteMinutesTarget(null);
       triggerAutoSnapshot(`Delete OPI Minutes ${deleteMinutesTarget.minutesNo}`);
       onDataChanged();
-      loadData();
+      await loadData();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     }
   };
 
-  // Discrepancy items eligible for OSDR
-  const discrepancyItems = useMemo(() => {
-    const editingItemIds = new Set((editingOsdr?.items || []).map((i) => i.detailedId));
-    const all = (data?.detailedItems || []).filter(
-      (d) => d.hasShortage || d.hasDamaged || d.surplus > 0 || editingItemIds.has(d.id),
-    );
-    if (!osdrPackingNo) return all;
-    return all.filter((d) => d.shipmentNo === osdrPackingNo);
-  }, [data, osdrPackingNo, editingOsdr]);
-
-  const getDiscrepancyType = (d: DetailedComputed): OsdrReportItem['discrepancyType'] => {
-    if (d.shortage > 0 && d.damagedQty && d.damagedQty > 0) return 'shortage_and_damaged';
-    if (d.shortage > 0) return 'shortage';
-    if (d.damagedQty && d.damagedQty > 0) return 'damaged';
-    return 'surplus';
-  };
-
-  const discrepancyTypeLabel = useCallback(
-    (tp: OsdrReportItem['discrepancyType']) => {
-      if (tp === 'shortage_and_damaged') return isFa ? 'کسری و آسیب‌دیدگی' : 'Shortage & Damaged';
-      if (tp === 'shortage') return isFa ? 'کسری (Shortage)' : 'Shortage';
-      if (tp === 'damaged') return isFa ? 'آسیب‌دیدگی (Damaged)' : 'Damaged';
-      return isFa ? 'اضافی (Overage)' : 'Overage / Surplus';
-    },
-    [isFa],
-  );
-
-  const handlePackingChangeForOsdr = (pk: string) => {
-    setOsdrPackingNo(pk);
-    if (!pk) {
-      setOsdrSupplier('');
-      setOsdrMinutesNo('');
-      return;
-    }
-    const sampleDet = (data?.detailedItems || []).find((d) => d.shipmentNo === pk && d.supplier);
-    const sampleGen = (data?.generalEntries || []).find((g) => (g.packingListNo || '').trim() === pk && g.supplier);
-    setOsdrSupplier(sampleDet?.supplier || sampleGen?.supplier || '');
-    const matchingMin = (data?.minutes || []).find((m) => m.packingListNo === pk);
-    setOsdrMinutesNo(matchingMin?.minutesNo || '');
-  };
-
-  const resetOsdrForm = () => {
-    setEditingOsdr(null);
-    setOsdrReportNo('');
-    setOsdrDate(getTodayIso());
-    setOsdrMinutesNo('');
-    setOsdrPackingNo('');
-    setOsdrSupplier('');
-    setOsdrNotes('');
-    setOsdrSelectedIds({});
-    setOsdrRemarks({});
-  };
-
-  const startEditOsdr = (rep: OsdrReportRecord) => {
-    setOsdrViewMode('create');
-    setEditingOsdr(rep);
-    setOsdrReportNo(rep.reportNo || '');
-    setOsdrDate(rep.date || getTodayIso());
-    setOsdrMinutesNo(rep.opiMinutesNo || '');
-    setOsdrPackingNo(rep.packingListNo || '');
-    setOsdrSupplier(rep.supplier || '');
-    setOsdrNotes(rep.notes || '');
-    const nextSel: Record<string, boolean> = {};
-    const nextRem: Record<string, string> = {};
-    for (const item of rep.items || []) {
-      nextSel[item.detailedId] = true;
-      if (item.remarks) nextRem[item.detailedId] = item.remarks;
-    }
-    setOsdrSelectedIds(nextSel);
-    setOsdrRemarks(nextRem);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleSaveOsdr = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const chosen = discrepancyItems.filter((d) => osdrSelectedIds[d.id]);
-    if (chosen.length === 0) {
-      notify('warning', isFa ? 'حداقل یک قلم دارای مغایرت را انتخاب کنید.' : 'Select at least one discrepancy item.');
-      return;
-    }
-
-    const itemsPayload: OsdrReportItem[] = chosen.map((d) => ({
-      detailedId: d.id,
-      shipmentNo: d.shipmentNo,
-      packageNo: d.packageNo,
-      itemNo: d.itemNo,
-      description: d.description || d.generalDescription,
-      itemCode: d.itemCode,
-      countingUnit: formatCountingUnit(d.countingUnit, prefs.language) || (isFa ? 'عدد' : 'PC'),
-      packingQty: d.packingQty || 0,
-      actualQty: d.actualQty || 0,
-      shortage: d.shortage,
-      surplus: d.surplus,
-      damagedQty: d.damagedQty || 0,
-      discrepancyType: getDiscrepancyType(d),
-      remarks: osdrRemarks[d.id] || '',
-    }));
-
-    const payload = {
-      reportNo: osdrReportNo,
-      date: osdrDate,
-      opiMinutesNo: osdrMinutesNo,
-      packingListNo: osdrPackingNo || chosen[0].shipmentNo,
-      supplier: osdrSupplier || chosen[0].supplier,
-      items: itemsPayload,
-      notes: osdrNotes,
-    };
-
+  const handleConfirmDeleteMer = async () => {
+    if (!deleteMerTarget) return;
     try {
-      if (editingOsdr) {
-        const res = await apiRequest<{ report: OsdrReportRecord }>(`/api/osdr/${editingOsdr.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
-        });
-        notify(
-          'success',
-          isFa
-            ? `گزارش مغایرت، کسری و آسیب‌دیدگی (MER) شماره ${res.report.reportNo} ویرایش شد.`
-            : `MER Report ${res.report.reportNo} updated.`,
-        );
-        resetOsdrForm();
-        setPrintOsdr(res.report);
-        triggerAutoSnapshot(`Edit MER ${res.report.reportNo}`);
-        onDataChanged();
-        loadData();
-      } else {
-        const res = await apiRequest<{ report: OsdrReportRecord }>('/api/osdr', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        notify(
-          'success',
-          isFa
-            ? `گزارش مغایرت، کسری و آسیب‌دیدگی (MER) شماره ${res.report.reportNo} ثبت شد.`
-            : `MER Report ${res.report.reportNo} issued.`,
-        );
-        resetOsdrForm();
-        setPrintOsdr(res.report);
-        triggerAutoSnapshot(`MER ${res.report.reportNo}`);
-        onDataChanged();
-        loadData();
-      }
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    }
-  };
-
-  const handleConfirmDeleteOsdr = async () => {
-    if (!deleteOsdrTarget) return;
-    try {
-      await apiRequest<{ ok: boolean }>(`/api/osdr/${deleteOsdrTarget.id}`, {
+      await apiRequest<{ ok: boolean }>(`/api/osdr/${deleteMerTarget.id}`, {
         method: 'DELETE',
       });
       notify(
         'success',
         isFa
-          ? `گزارش مغایرت (MER) شماره ${deleteOsdrTarget.reportNo} حذف شد.`
-          : `MER Report ${deleteOsdrTarget.reportNo} deleted.`,
+          ? `گزارش مغایرت ${deleteMerTarget.reportNo} حذف و جدول جزئیات بازگردانی شد.`
+          : `MER ${deleteMerTarget.reportNo} deleted and reverted.`,
       );
-      if (editingOsdr?.id === deleteOsdrTarget.id) resetOsdrForm();
-      if (printOsdr?.id === deleteOsdrTarget.id) setPrintOsdr(null);
-      setDeleteOsdrTarget(null);
-      triggerAutoSnapshot(`Delete MER ${deleteOsdrTarget.reportNo}`);
+      if (printBundle?.mer?.id === deleteMerTarget.id) setPrintBundle(null);
+      setDeleteMerTarget(null);
+      triggerAutoSnapshot(`Delete MER ${deleteMerTarget.reportNo}`);
       onDataChanged();
-      loadData();
+      await loadData();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     }
   };
 
-  const minutesColumns = useMemo<PrintColumnDef<OpiMinutesRecord>[]>(
+  const minutesList = useMemo(() => data?.minutes || [], [data]);
+  const merList = useMemo(() => data?.osdrReports || [], [data]);
+
+  const filteredMinutes = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return minutesList;
+    return minutesList.filter((m) =>
+      [m.minutesNo, m.invitationNo, m.packingListNo, m.supplier, m.location, m.merNo]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [minutesList, historySearch]);
+
+  const filteredMers = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return merList;
+    return merList.filter((r) =>
+      [
+        r.reportNo,
+        r.opiNo,
+        r.opiMinutesNo,
+        r.packingListNo,
+        r.supplier,
+        ...r.items.map((it) => `${it.itemNo} ${it.itemCode} ${it.description}`),
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [merList, historySearch]);
+
+  const minutesPagination = useClientPagination(filteredMinutes, 50);
+  const merPagination = useClientPagination(filteredMers, 50);
+
+  const minutesReportColumns = useMemo<PrintColumnDef<OpiMinutesRecord>[]>(
     () => [
-      { key: 'minutesNo', header: isFa ? 'شماره صورتجلسه' : 'Minutes No.', getValue: (r) => r.minutesNo },
-      { key: 'invitationNo', header: t.headers.opiInvitationNo, getValue: (r) => r.invitationNo || '' },
+      { key: 'minutesNo', header: isFa ? 'شماره OPI' : 'OPI No.', getValue: (r) => r.minutesNo },
       { key: 'date', header: isFa ? 'تاریخ' : 'Date', isDate: true, getValue: (r) => r.date },
-      { key: 'packingListNo', header: t.headers.packingListNo, getValue: (r) => r.packingListNo },
-      { key: 'packageNos', header: t.headers.packageNo, getValue: (r) => r.packageNos.join(', ') },
+      { key: 'time', header: isFa ? 'ساعت' : 'Time', getValue: (r) => r.time || '' },
+      { key: 'location', header: isFa ? 'محل انجام OPI' : 'Location', getValue: (r) => r.location || '' },
+      { key: 'packingListNo', header: 'Packing List No.', getValue: (r) => r.packingListNo || '' },
+      { key: 'supplier', header: t.headers.supplier, getValue: (r) => r.supplier || '' },
       {
         key: 'resultStatus',
-        header: isFa ? 'نتیجه بازرسی' : 'Inspection Result',
+        header: isFa ? 'وضعیت مغایرت' : 'Result',
         getValue: (r) =>
-          r.resultStatus === 'compliant'
-            ? isFa ? 'منطبق با پکینگ لیست' : 'Compliant'
-            : isFa ? 'دارای مغایرت / کسری / آسیب' : 'Has Discrepancy',
+          r.resultStatus === 'has_discrepancy'
+            ? isFa
+              ? `دارای مغایرت (${r.merNo || '-'})`
+              : `Discrepancy (${r.merNo || '-'})`
+            : isFa
+              ? 'فاقد مغایرت'
+              : 'Compliant',
       },
-      { key: 'mapnaInspector', header: isFa ? (activeEmployer.inspectorLabel || 'بازرس تأمین / کارفرما') : 'Inspector / Client Rep.', getValue: (r) => r.mapnaInspector || '' },
-      { key: 'employerInspector', header: isFa ? 'نماینده کارفرما' : 'Employer Inspector', getValue: (r) => r.employerInspector || '' },
-      { key: 'qcInspector', header: isFa ? 'بازرس QC' : 'QC Inspector', getValue: (r) => r.qcInspector || '' },
-      { key: 'notes', header: t.headers.notes, getValue: (r) => r.notes || '' },
+      { key: 'createdBy', header: isFa ? 'ثبت‌کننده' : 'Created By', getValue: (r) => r.createdBy },
     ],
     [t, isFa],
   );
 
-  const osdrColumns = useMemo<PrintColumnDef<OsdrReportRecord>[]>(
-    () => [
-      { key: 'reportNo', header: isFa ? 'شماره گزارش (MER)' : 'MER No.', getValue: (r) => r.reportNo },
-      { key: 'date', header: isFa ? 'تاریخ گزارش' : 'Report Date', isDate: true, getValue: (r) => r.date },
-      { key: 'packingListNo', header: t.headers.packingListNo, getValue: (r) => r.packingListNo },
-      { key: 'opiMinutesNo', header: isFa ? 'شماره صورتجلسه' : 'Minutes No.', getValue: (r) => r.opiMinutesNo || '' },
-      { key: 'supplier', header: t.headers.supplier, getValue: (r) => r.supplier || '' },
-      { key: 'itemsCount', header: isFa ? 'تعداد اقلام مغایرت' : 'Discrepancy Items', getValue: (r) => r.items.length },
-      {
-        key: 'summary',
-        header: isFa ? 'خلاصه اقلام' : 'Items Summary',
-        getValue: (r) =>
-          r.items
-            .map((i) => `${i.packageNo}#${i.itemNo}: ${discrepancyTypeLabel(i.discrepancyType)}`)
-            .join(' | '),
-      },
-      { key: 'createdBy', header: isFa ? 'تنظیم‌کننده' : 'Created By', getValue: (r) => r.createdBy },
-    ],
-    [t, isFa, discrepancyTypeLabel],
-  );
-
-  const minutesPrintPortal =
-    printMinutes && !printMinutesTableOpen && !printOsdrTableOpen
-      ? createPortal(
-          <div id="samaan-mom-print-root" data-samaan-print-portal="true">
-            <style>{buildIsolatedPrintPortalCss('samaan-mom-print-root', {
-              orientation: 'portrait',
-              isFa,
-              extraPrintCss: `
-                #samaan-mom-print-root table {
-                  width: 100% !important;
-                  table-layout: auto !important;
-                }
-                #samaan-mom-print-root tr {
-                  height: auto !important;
-                  break-inside: avoid;
-                  page-break-inside: avoid;
-                }
-                #samaan-mom-print-root table th,
-                #samaan-mom-print-root table td {
-                  text-align: center;
-                  vertical-align: middle;
-                  height: auto !important;
-                }
-              `,
-            })}</style>
-            <OfficialOpiMinutesSheet
-              record={printMinutes}
-              detailedItems={data?.detailedItems || []}
-              generalEntries={data?.generalEntries || []}
-              formatDate={formatDate}
-            />
-          </div>,
-          document.body,
-        )
-      : null;
-
-  const merPrintPortal =
-    printOsdr && !printMinutes && !printMinutesTableOpen && !printOsdrTableOpen
-      ? createPortal(
-          <div id="samaan-mer-print-root" data-samaan-print-portal="true">
-            <style>{buildIsolatedPrintPortalCss('samaan-mer-print-root', {
-              orientation: 'portrait',
-              isFa,
-              extraPrintCss: `
-                #samaan-mer-print-root table {
-                  width: 100% !important;
-                  table-layout: auto !important;
-                }
-                #samaan-mer-print-root tr {
-                  height: auto !important;
-                  break-inside: avoid;
-                  page-break-inside: avoid;
-                }
-                #samaan-mer-print-root table th,
-                #samaan-mer-print-root table td {
-                  text-align: center;
-                  vertical-align: middle;
-                  height: auto !important;
-                }
-              `,
-            })}</style>
-            <OfficialMerSheet
-              report={printOsdr}
-              isFa={isFa}
-              brandFull={t.brandFull}
-              formatDate={formatDate}
-              discrepancyTypeLabel={discrepancyTypeLabel}
-            />
-          </div>,
-          document.body,
-        )
-      : null;
+  const printPortalOrientation = useMemo<'portrait' | 'landscape' | 'mixed'>(() => {
+    if (printBundle?.minutes && printBundle?.mer) return 'mixed';
+    if (printBundle?.mer && !printBundle?.minutes) return 'landscape';
+    return 'portrait';
+  }, [printBundle]);
 
   return (
-    <div className="space-y-6">
-      {minutesPrintPortal}
-      {merPrintPortal}
+    <div className="space-y-5" data-testid="opi-minutes-view">
+      {/* Isolated Print Portal (Portrait OPI Minutes + Landscape MER in a single job when both exist) */}
+      {printBundle && !printReportOpen
+        ? createPortal(
+            <div id="samaan-opi-minutes-print-root" data-samaan-print-portal="true">
+              <style>
+                {buildIsolatedPrintPortalCss('samaan-opi-minutes-print-root', {
+                  orientation: printPortalOrientation,
+                  isFa,
+                  marginMm: 8,
+                  extraPrintCss: `
+                    #samaan-opi-minutes-print-root table th,
+                    #samaan-opi-minutes-print-root table td {
+                      text-align: center;
+                      vertical-align: middle;
+                    }
+                  `,
+                })}
+              </style>
+              {printBundle.minutes && (
+                <OfficialOpiMinutesSheet
+                  record={printBundle.minutes}
+                  formatDate={formatDate}
+                  pageBreakAfter={Boolean(printBundle.mer)}
+                />
+              )}
+              {printBundle.mer && (
+                <OfficialMerSheet report={printBundle.mer} formatDate={formatDate} />
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
 
-      {/* Sub-navigation Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSubTab('minutes')}
-            className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-              subTab === 'minutes'
-                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-            }`}
-          >
+      {/* Top Mode Bar */}
+      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 flex flex-wrap items-center justify-between gap-3 print:hidden">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
             <ClipboardCheck className="w-4 h-4" />
-            <span>{isFa ? 'صورتجلسه گشایش و بازرسی بسته‌ها' : 'Opening & Inspection Minutes'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSubTab('osdr')}
-            className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-              subTab === 'osdr'
-                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-            }`}
-          >
-            <FileWarning className="w-4 h-4" />
-            <span>{isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Discrepancy, Shortage & Damage Report (MER)'}</span>
-          </button>
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-extrabold text-[var(--text-primary)] truncate">
+                {isFa ? MD1_OPI_MINUTES_TITLE_FA : MD1_OPI_MINUTES_TITLE_EN}
+              </h2>
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                {formCode} · {MD1_MER_FORM_CODE}
+              </span>
+            </div>
+            <p className="text-[11px] text-[var(--text-muted)] truncate">
+              {isFa
+                ? 'انتخاب از دعوتنامه‌های باز OPI، ثبت صورتجلسه گشایش و صدور خودکار و هم‌زمان گزارش مغایرت (MER) در صورت وجود کسری یا آسیب‌دیدگی'
+                : 'Select an open OPI Invitation, issue OPI Minutes of Meeting, and automatically issue linked MER on discrepancy'}
+            </p>
+          </div>
         </div>
 
-        {subTab === 'minutes' ? (
-          <OperationalViewModeTabs
-            viewMode={minutesViewMode}
-            onChange={setMinutesViewMode}
-            historyCount={minutesList.length}
-            isFa={isFa}
-            canCreate={canEdit}
-            isEditing={Boolean(editingMinutes)}
-            testIdPrefix="opi-minutes"
-          />
-        ) : (
-          <OperationalViewModeTabs
-            viewMode={osdrViewMode}
-            onChange={setOsdrViewMode}
-            historyCount={osdrList.length}
-            isFa={isFa}
-            canCreate={canEdit}
-            isEditing={Boolean(editingOsdr)}
-            testIdPrefix="mer"
-          />
-        )}
+        <OperationalViewModeTabs
+          viewMode={viewMode}
+          onChange={(mode) => {
+            setViewMode(mode);
+            if (mode === 'history' && editingMinutes) resetForm();
+          }}
+          historyCount={minutesList.length}
+          isFa={isFa}
+          canCreate={canEdit}
+          isEditing={Boolean(editingMinutes)}
+          testIdPrefix="opi-minutes"
+        />
       </div>
 
-      {/* SUB-TAB 1: OPI MINUTES */}
-      {subTab === 'minutes' && (
-        <div className="space-y-6">
-          {canEdit && minutesViewMode === 'create' && (
-            <form
-              onSubmit={handleSaveMinutes}
-              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold">
-                    {isFa ? 'ثبت صورتجلسه گشایش و بازرسی بسته‌ها' : 'Record Package Opening & Inspection Minutes'}
+      {/* CREATE / EDIT WORKFLOW */}
+      {canEdit && viewMode === 'create' && (
+        <div className="space-y-4 print:hidden">
+          {!selectedInvitation || !autoFill ? (
+            /* STEP 1: SELECT OPEN OPI INVITATION */
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-extrabold text-[var(--text-primary)]">
+                    {isFa
+                      ? `مرحله ۱: انتخاب دعوتنامه گشایش باز (${openInvitations.length} دعوتنامه در انتظار صورتجلسه)`
+                      : `Step 1: Select an Open OPI Invitation (${openInvitations.length} pending)`}
                   </h3>
-                  {editingMinutes && (
-                    <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
-                      {isFa ? `حالت ویرایش: ${editingMinutes.minutesNo}` : `Editing: ${editingMinutes.minutesNo}`}
-                    </span>
-                  )}
+                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                    {isFa
+                      ? 'دعوتنامه‌هایی که قبلاً برای آن‌ها صورتجلسه صادر شده، به‌صورت خودکار از این فهرست حذف می‌شوند.'
+                      : 'Invitations that already have an OPI Minutes record are automatically excluded.'}
+                  </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  {editingMinutes && (
+
+                <div className="w-full sm:w-72">
+                  <SearchInputWithClear
+                    value={invSearch}
+                    onChange={setInvSearch}
+                    placeholder={
+                      isFa ? 'جستجو در شماره دعوتنامه، پکینگ، تامین‌کننده...' : 'Search invitation, packing...'
+                    }
+                  />
+                </div>
+              </div>
+
+              {loading && openInvitations.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[var(--text-muted)]">
+                  {isFa ? 'در حال بارگذاری دعوتنامه‌های باز...' : 'Loading open invitations...'}
+                </div>
+              ) : filteredOpenInvitations.length === 0 ? (
+                <div
+                  data-testid="opi-minutes-no-open-invitations"
+                  className="p-8 rounded-xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-canvas)]/50 text-center space-y-2"
+                >
+                  <ClipboardCheck className="w-8 h-8 mx-auto text-[var(--text-muted)]" />
+                  <div className="text-xs font-bold text-[var(--text-primary)]">
+                    {isFa
+                      ? 'هیچ دعوتنامه گشایش بازی برای صدور صورتجلسه یافت نشد.'
+                      : 'No open OPI Invitations available.'}
+                  </div>
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    {isFa
+                      ? 'ابتدا در بخش «دعوتنامه گشایش بسته‌ها» یک دعوتنامه صادر کنید یا از تب «سابقه فرم‌ها» صورتجلسه‌های ثبت‌شده را مشاهده نمایید.'
+                      : 'Issue an OPI Invitation first, or check Form History for existing minutes.'}
+                  </p>
+                </div>
+              ) : (
+                <StickyTableWrapper maxHeightClass="max-h-[56vh]">
+                  <table className="w-full text-xs border-collapse" data-testid="opi-open-invitations-table">
+                    <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
+                      <tr>
+                        <th className="p-2.5 text-start">{isFa ? 'شماره دعوتنامه OPI' : 'Invitation No.'}</th>
+                        <th className="p-2.5 text-center">{isFa ? 'تاریخ' : 'Date'}</th>
+                        <th className="p-2.5 text-center">{isFa ? 'ساعت' : 'Time'}</th>
+                        <th className="p-2.5 text-start">{isFa ? 'محل انجام OPI' : 'Location'}</th>
+                        <th className="p-2.5 text-start">{isFa ? 'تامین‌کننده' : 'Supplier'}</th>
+                        <th className="p-2.5 text-start">{isFa ? 'شماره پکینگ‌ها' : 'Packing Lists'}</th>
+                        <th className="p-2.5 text-center">{isFa ? 'ردیف‌ها' : 'Items'}</th>
+                        <th className="p-2.5 text-center">{isFa ? 'انتخاب' : 'Select'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-subtle)]">
+                      {filteredOpenInvitations.map((inv) => (
+                        <tr
+                          key={inv.id}
+                          data-testid={`open-inv-row-${inv.invitationNo}`}
+                          onClick={() => handleSelectInvitation(inv)}
+                          className="hover:bg-[var(--accent-soft)]/40 cursor-pointer transition-colors"
+                        >
+                          <td className="p-2.5 font-mono font-bold text-[var(--accent-primary)] tabular-nums" dir="ltr">
+                            {inv.invitationNo}
+                          </td>
+                          <td className="p-2.5 text-center tabular-nums" dir="ltr">
+                            {formatDate(inv.date)}
+                          </td>
+                          <td className="p-2.5 text-center tabular-nums" dir="ltr">
+                            {inv.time || '-'}
+                          </td>
+                          <td className="p-2.5 bidi-plaintext">{inv.location || '-'}</td>
+                          <td className="p-2.5 bidi-plaintext">{inv.supplier || '-'}</td>
+                          <td className="p-2.5 font-mono text-[11px]" dir="ltr">
+                            {(inv.packingNos || []).join(' ، ') || '-'}
+                          </td>
+                          <td className="p-2.5 text-center font-bold tabular-nums">
+                            {inv.items?.length || inv.packingNos?.length || 0}
+                          </td>
+                          <td className="p-2.5 text-center">
+                            <button
+                              type="button"
+                              data-testid={`select-open-inv-btn-${inv.invitationNo}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectInvitation(inv);
+                              }}
+                              className="h-7 px-3 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-[11px] font-bold inline-flex items-center gap-1"
+                            >
+                              <span>{isFa ? 'انتخاب' : 'Select'}</span>
+                              {isFa ? <ArrowLeft className="w-3 h-3" /> : <ArrowRight className="w-3 h-3" />}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </StickyTableWrapper>
+              )}
+            </div>
+          ) : (
+            /* STEP 2: COMPLETE MINUTES, OPTIONAL REMARKS & CONDITIONAL MER */
+            <form
+              onSubmit={handleSubmit}
+              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-5"
+            >
+              {/* Top Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {!editingMinutes && (
                     <button
                       type="button"
-                      onClick={resetMinutesForm}
-                      className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                      data-testid="opi-minutes-change-inv-btn"
+                      onClick={() => resetForm()}
+                      className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-xs font-semibold inline-flex items-center gap-1.5"
                     >
-                      <X className="w-3.5 h-3.5" />
-                      <span>{t.controls.cancel}</span>
+                      {isFa ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
+                      <span>{isFa ? 'تغییر دعوتنامه' : 'Change Invitation'}</span>
                     </button>
                   )}
-                  {formCode && (
-                    <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
-                      {formCode}
+                  <span className="text-xs font-extrabold text-[var(--text-primary)]">
+                    {isFa ? 'دعوتنامه انتخاب‌شده:' : 'Selected Invitation:'}{' '}
+                    <span dir="ltr" className="font-mono text-[var(--accent-primary)]">
+                      {autoFill.invitationNo}
+                    </span>
+                  </span>
+                  {editingMinutes && (
+                    <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/35 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
+                      {isFa ? 'حالت ویرایش صورتجلسه' : 'Editing Minutes'}
                     </span>
                   )}
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                <div>
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <label className="block text-[11px] text-[var(--text-secondary)]">
-                      {isFa ? 'شماره OPI / صورتجلسه' : 'OPI Minutes No.'} *
-                    </label>
-                    {!editingMinutes && (
-                      <button
-                        type="button"
-                        onClick={() => setMinutesNo(suggestedMinutesNo)}
-                        className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
-                        dir="ltr"
-                      >
-                        {suggestedMinutesNo}
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    dir={isFa && !minutesNo ? 'rtl' : 'ltr'}
-                    value={minutesNo}
-                    onChange={(e) => setMinutesNo(e.target.value)}
-                    placeholder={suggestedMinutesNo}
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                      isFa && !minutesNo ? 'text-right' : 'text-left'
-                    }`}
-                  />
-                </div>
-
-                <JalaliDateInput
-                  label={`${isFa ? 'تاریخ OPI' : 'OPI Date'} *`}
-                  value={date}
-                  onChange={setDate}
-                />
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'ساعت' : 'Time'}
-                  </label>
-                  <input
-                    type="time"
-                    dir="ltr"
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs text-left tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره دعوتنامه OPI' : 'OPI Invitation No.'}
-                  </label>
-                  <select
-                    value={invitationNo}
-                    onChange={(e) => handleInvitationChange(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  >
-                    <option value="">{isFa ? 'انتخاب اختیاری...' : 'Optional...'}</option>
-                    {(data?.invitations || []).map((inv) => (
-                      <option key={inv.id} value={inv.invitationNo}>
-                        {inv.invitationNo} ({formatDate(inv.date)})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.packingListNo} *
-                  </label>
-                  <select
-                    required
-                    value={packingListNo}
-                    onChange={(e) => {
-                      const nextPk = e.target.value;
-                      setPackingListNo(nextPk);
-                      setSelectedPackages([]);
-                      syncFromPacking(nextPk, []);
-                    }}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  >
-                    <option value="">{isFa ? 'انتخاب پکینگ لیست...' : 'Select Packing List...'}</option>
-                    {(data?.packings || []).map((pk) => (
-                      <option key={pk} value={pk}>
-                        {pk}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Supplier & Purchase Package (Project & Contract inherited automatically) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.supplier}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={supplier}
-                    onChange={(e) => setSupplier(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره بسته خرید' : 'Purchase Package No.'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={isFa && !purchasePackageNo ? 'rtl' : 'ltr'}
-                    value={purchasePackageNo}
-                    onChange={(e) => setPurchasePackageNo(e.target.value)}
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                      isFa && !purchasePackageNo ? 'text-right' : 'text-left'
-                    }`}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.system}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={system}
-                    onChange={(e) => setSystem(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.island}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={island}
-                    onChange={(e) => setIsland(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.unit}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'محل انجام OPI' : 'OPI Location'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!location ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-              </div>
-
-              {packagesForSelectedPacking.length > 0 && (
-                <div className="space-y-1.5">
-                  <div className="text-xs font-semibold text-[var(--text-secondary)]">
-                    {isFa ? 'انتخاب نگله‌های بازرسی‌شده (در صورت خالی بودن، همه نگله‌ها لحاظ می‌شوند):' : 'Inspected Packages:'}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {packagesForSelectedPacking.map((pkg) => {
-                      const checked = selectedPackages.includes(pkg);
-                      return (
-                        <label
-                          key={pkg}
-                          className={`px-2.5 py-1.5 rounded-lg border text-xs cursor-pointer flex items-center gap-1.5 ${
-                            checked
-                              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                              : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => togglePackage(pkg)}
-                          />
-                          <span dir="ltr" className="tabular-nums">{pkg}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Editable Line Items Table */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-[var(--text-secondary)]">
-                    {isFa ? 'اقلام جدول صورتجلسه (قابل ویرایش پیش از چاپ)' : 'Minutes Table Items'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={addBlankItemRow}
-                    className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>{isFa ? 'افزودن ردیف' : 'Add Row'}</span>
-                  </button>
-                </div>
-
-                {items.length > 0 && (
-                  <div className="rounded-lg border border-[var(--border-subtle)] overflow-x-clip">
-                    <StickyTableWrapper maxHeightClass="max-h-80">
-                      <table className="w-full text-[11px]">
-                      <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                        <tr>
-                          <th className="py-2 px-2 w-20">Item No.</th>
-                          <th className="py-2 px-2 min-w-[110px]">Packing List No.</th>
-                          <th className="py-2 px-2 min-w-[90px]">Package No.</th>
-                          <th className="py-2 px-2 min-w-[180px]">{isFa ? 'شرح (کالا/تجهیز)' : 'Description'}</th>
-                          <th className="py-2 px-2 w-24">{isFa ? 'واحد (UOM)' : 'UOM'}</th>
-                          <th className="py-2 px-2 min-w-[120px]">{isFa ? 'توضیحات' : 'Remarks'}</th>
-                          <th className="py-2 px-2 w-10" />
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--border-subtle)]">
-                        {items.map((it, idx) => (
-                          <tr key={idx}>
-                            <td className="p-1">
-                              <input
-                                type="text"
-                                dir="ltr"
-                                value={it.itemNo}
-                                onChange={(e) => updateItemField(idx, 'itemNo', e.target.value)}
-                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                              />
-                            </td>
-                            <td className="p-1">
-                              <input
-                                type="text"
-                                dir="ltr"
-                                value={it.packingListNo}
-                                onChange={(e) => updateItemField(idx, 'packingListNo', e.target.value)}
-                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                              />
-                            </td>
-                            <td className="p-1">
-                              <input
-                                type="text"
-                                dir="ltr"
-                                value={it.packageNo}
-                                onChange={(e) => updateItemField(idx, 'packageNo', e.target.value)}
-                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                              />
-                            </td>
-                            <td className="p-1">
-                              <input
-                                type="text"
-                                value={it.description}
-                                onChange={(e) => updateItemField(idx, 'description', e.target.value)}
-                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
-                              />
-                            </td>
-                            <td className="p-1">
-                              <input
-                                type="text"
-                                value={it.uom}
-                                onChange={(e) => updateItemField(idx, 'uom', e.target.value)}
-                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
-                              />
-                            </td>
-                            <td className="p-1">
-                              <input
-                                type="text"
-                                value={it.remarks}
-                                onChange={(e) => updateItemField(idx, 'remarks', e.target.value)}
-                                className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
-                              />
-                            </td>
-                            <td className="p-1">
-                              <button
-                                type="button"
-                                onClick={() => removeItemRow(idx)}
-                                className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
-                                aria-label="Remove row"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      </table>
-                    </StickyTableWrapper>
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'نتیجه کلی بازرسی' : 'Overall Result'} *
-                  </label>
-                  <select
-                    value={resultStatus}
-                    onChange={(e) => setResultStatus(e.target.value as 'compliant' | 'has_discrepancy')}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
-                  >
-                    <option value="compliant">
-                      {isFa ? 'فاقد هرگونه مغایرت و آسیب‌دیدگی' : 'Compliant / No Discrepancy'}
-                    </option>
-                    <option value="has_discrepancy">
-                      {isFa ? 'دارای مغایرت (مطابق فرم MER)' : 'Has Discrepancy (Per MER Form)'}
-                    </option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره فرم MER (در صورت مغایرت)' : 'MER No. (if discrepancy)'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={isFa && !merNo ? 'rtl' : 'ltr'}
-                    value={merNo}
-                    onChange={(e) => setMerNo(e.target.value)}
-                    placeholder="MER-..."
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                      isFa && !merNo ? 'text-right' : 'text-left'
-                    }`}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'انباردار' : 'Storekeeper'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!storekeeper ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={storekeeper}
-                    onChange={(e) => setStorekeeper(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? activeEmployer.equipmentSupplyLabel : `${activeEmployer.badgeCode} Equipment Supply`}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!mapnaInspector ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={mapnaInspector}
-                    onChange={(e) => setMapnaInspector(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'فروشنده' : 'Seller / Vendor'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!sellerRep ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={sellerRep}
-                    onChange={(e) => setSellerRep(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'دستگاه نظارت یا کارفرما' : 'Supervision / Employer'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!employerInspector ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={employerInspector}
-                    onChange={(e) => setEmployerInspector(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'سایر توضیحات' : t.headers.notes}
-                </label>
-                <input
-                  type="text"
-                  dir={!notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2">
                 {editingMinutes && (
                   <button
                     type="button"
-                    onClick={resetMinutesForm}
-                    className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                    onClick={resetForm}
+                    className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-semibold inline-flex items-center gap-1"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-3.5 h-3.5" />
                     <span>{t.controls.cancel}</span>
                   </button>
                 )}
+              </div>
+
+              {/* Auto-Filled OPI Minutes Metadata Strip */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 p-3.5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-[11.5px]">
+                <div>
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'شماره OPI / دعوتنامه' : 'OPI / Inv. No.'}
+                  </span>
+                  <strong dir="ltr" className="font-mono text-[var(--accent-primary)]">
+                    {autoFill.invitationNo}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'تاریخ و ساعت OPI' : 'Date & Time'}
+                  </span>
+                  <strong dir="ltr" className="tabular-nums">
+                    {formatDate(autoFill.date)} {autoFill.time ? `· ${autoFill.time}` : ''}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'محل انجام OPI' : 'Location'}
+                  </span>
+                  <strong className="bidi-plaintext">{autoFill.location || '-'}</strong>
+                </div>
+                <div>
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'تامین‌کننده' : 'Supplier'}
+                  </span>
+                  <strong className="bidi-plaintext">{autoFill.supplier || '-'}</strong>
+                </div>
+                <div>
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'سیستم / جزیره / واحد' : 'System / Island / Unit'}
+                  </span>
+                  <strong className="bidi-plaintext">
+                    {[autoFill.system, autoFill.island, autoFill.unit].filter(Boolean).join(' / ') || '-'}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'پروژه' : 'Project'}
+                  </span>
+                  <strong>{autoFill.projectBareName || '-'}</strong>
+                </div>
+                <div>
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'شماره قرارداد/درخواست خرید' : 'Contract / PR No.'}
+                  </span>
+                  <strong dir="ltr" className="font-mono">
+                    {autoFill.contractNo || '-'}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'شماره بسته خرید' : 'Purchase Package No.'}
+                  </span>
+                  <strong dir="ltr" className="font-mono">
+                    {autoFill.purchasePackageNo || '-'}
+                  </strong>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-[var(--text-muted)] block text-[10.5px]">
+                    {isFa ? 'پکینگ لیست‌ها' : 'Packing Lists'}
+                  </span>
+                  <strong dir="ltr" className="font-mono">
+                    {autoFill.packingListNo || '-'}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Invitation Packages Table with Optional Per-Row Remarks */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-extrabold text-[var(--text-primary)]">
+                  {isFa
+                    ? `بسته‌های دعوتنامه (${autoFill.items.length} ردیف) — امکان درج توضیحات اختیاری برای هر ردیف`
+                    : `Invitation Packages (${autoFill.items.length} rows) — Optional Per-Row Remarks`}
+                </h4>
+                <StickyTableWrapper maxHeightClass="max-h-[260px]">
+                  <table className="w-full text-xs border-collapse">
+                    <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
+                      <tr>
+                        <th className="p-2 text-center w-12">Item No.</th>
+                        <th className="p-2 text-start">Packing List No.</th>
+                        <th className="p-2 text-start">Package No.</th>
+                        <th className="p-2 text-start">{isFa ? 'شرح (کالا/تجهیز)' : 'Description'}</th>
+                        <th className="p-2 text-center">{isFa ? 'واحد (UOM)' : 'UOM'}</th>
+                        <th className="p-2 text-start min-w-[200px]">{isFa ? 'توضیحات (اختیاری)' : 'Remarks'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-subtle)]">
+                      {autoFill.items.map((it, idx) => (
+                        <tr key={idx}>
+                          <td className="p-2 text-center tabular-nums font-semibold">{idx + 1}</td>
+                          <td className="p-2 font-mono tabular-nums" dir="ltr">
+                            {it.packingListNo}
+                          </td>
+                          <td className="p-2 font-mono tabular-nums" dir="ltr">
+                            {it.packageNo}
+                          </td>
+                          <td className="p-2 bidi-plaintext">{it.description}</td>
+                          <td className="p-2 text-center">{it.uom}</td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              data-testid={`opi-minutes-row-remark-${idx}`}
+                              value={rowRemarks[idx] ?? it.remarks ?? ''}
+                              onChange={(e) =>
+                                setRowRemarks((prev) => ({ ...prev, [idx]: e.target.value }))
+                              }
+                              placeholder={isFa ? 'توضیحات...' : 'Remarks...'}
+                              className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </StickyTableWrapper>
+              </div>
+
+              {/* Outcome Selection (2 Verbatim Radio Cards) */}
+              <div className="space-y-2.5">
+                <label className="block text-xs font-extrabold text-[var(--text-primary)]">
+                  {isFa ? 'نتیجه گشایش و بازرسی بسته‌ها *' : 'Inspection Outcome *'}
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    data-testid="opi-outcome-compliant"
+                    onClick={() => setResultStatus('compliant')}
+                    className={`p-3.5 rounded-xl border text-start flex items-start gap-3 transition-all ${
+                      resultStatus === 'compliant'
+                        ? 'border-emerald-500 bg-emerald-500/10 text-[var(--text-primary)] shadow-xs'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                    }`}
+                  >
+                    <span
+                      className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        resultStatus === 'compliant'
+                          ? 'border-emerald-600 bg-emerald-600'
+                          : 'border-[var(--text-muted)]'
+                      }`}
+                    >
+                      {resultStatus === 'compliant' && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                      )}
+                    </span>
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-extrabold flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>{MD1_OPI_MINUTES_COMPLIANT_LABEL}</span>
+                      </div>
+                      <p className="text-[11px] text-[var(--text-muted)]">
+                        {isFa
+                          ? 'شماره و تاریخ OPI روی تمام ردیف‌های جزئیات این پکینگ‌ها ثبت شده و صورتجلسه صادر می‌شود.'
+                          : 'Syncs OPI No. & Date to all Detailed rows and issues the OPI Minutes.'}
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="opi-outcome-discrepancy"
+                    onClick={() => setResultStatus('has_discrepancy')}
+                    className={`p-3.5 rounded-xl border text-start flex items-start gap-3 transition-all ${
+                      resultStatus === 'has_discrepancy'
+                        ? 'border-amber-500 bg-amber-500/10 text-[var(--text-primary)] shadow-xs'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                    }`}
+                  >
+                    <span
+                      className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        resultStatus === 'has_discrepancy'
+                          ? 'border-amber-600 bg-amber-600'
+                          : 'border-[var(--text-muted)]'
+                      }`}
+                    >
+                      {resultStatus === 'has_discrepancy' && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                      )}
+                    </span>
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-extrabold flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>
+                          {isFa
+                            ? 'محموله ي بالا داراي مغايرت، برابر فرم MER No. مي باشد.'
+                            : 'Shipment has discrepancy — issue linked MER report'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[var(--text-muted)]">
+                        {isFa
+                          ? 'اقلام دارای کسری یا مغایرت/آسیب‌دیدگی را زیر انتخاب کنید تا فرم MER هم‌زمان با صورتجلسه صادر و چاپ شود.'
+                          : 'Select discrepant Detailed rows below to issue and print the official MER form together with Minutes.'}
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* CONDITIONAL MER DISCREPANCY BUILDER (MD1EX-FQP02/12-03) */}
+              {resultStatus === 'has_discrepancy' && (
+                <div
+                  data-testid="opi-mer-builder"
+                  className="rounded-xl border-2 border-amber-500/40 bg-amber-500/5 p-4 space-y-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <FileWarning className="w-4 h-4 text-amber-600 shrink-0" />
+                      <div>
+                        <h4 className="text-xs font-extrabold text-[var(--text-primary)]">
+                          {isFa
+                            ? `${MD1_MER_TITLE_FA} (${MD1_MER_FORM_CODE})`
+                            : `${MD1_MER_TITLE_EN} (${MD1_MER_FORM_CODE})`}
+                        </h4>
+                        <p className="text-[11px] text-[var(--text-muted)]">
+                          {isFa
+                            ? `ردیف‌های دارای کسری یا مغایرت/آسیب‌دیدگی را تیک بزنید (${selectedMerCount} قلم انتخاب‌شده از ${invitationDetailedRows.length} ردیف جزئیات)`
+                            : `Check discrepant items (${selectedMerCount} selected of ${invitationDetailedRows.length} Detailed rows)`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <div>
+                        <label className="block text-[10.5px] font-semibold text-[var(--text-secondary)] mb-0.5">
+                          {isFa ? 'شماره گزارش MER (خودکار و یکتا) *' : 'MER Report No. *'}
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          data-testid="mer-report-no-input"
+                          dir="ltr"
+                          value={merReportNo}
+                          onChange={(e) => {
+                            setMerReportNo(e.target.value);
+                            setMerReportNoTouched(true);
+                          }}
+                          placeholder={suggestedMerNo}
+                          className="h-9 w-44 px-3 rounded-lg border border-amber-500/50 bg-[var(--bg-surface)] text-xs font-mono font-bold tabular-nums text-left focus:outline-none focus:border-amber-600"
+                        />
+                      </div>
+
+                      <div className="w-56 self-end">
+                        <SearchInputWithClear
+                          value={merRowSearch}
+                          onChange={setMerRowSearch}
+                          placeholder={isFa ? 'فیلتر اقلام جزئیات...' : 'Filter Detailed rows...'}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {invitationDetailedRows.length === 0 ? (
+                    <div className="p-6 text-center rounded-xl border border-dashed border-amber-500/40 bg-[var(--bg-surface)] text-xs text-amber-800 dark:text-amber-300">
+                      {isFa
+                        ? 'هیچ ردیفی در جدول «جزئیات تجهیزات» برای پکینگ‌های این دعوتنامه ثبت نشده است. برای صدور گزارش MER ابتدا اقلام این پکینگ باید در جزئیات تجهیزات موجود باشند.'
+                        : 'No Detailed Equipment rows found for the packings in this invitation.'}
+                    </div>
+                  ) : (
+                    <StickyTableWrapper maxHeightClass="max-h-[360px]">
+                      <table className="w-full text-xs border-collapse" data-testid="mer-detailed-picker-table">
+                        <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
+                          <tr>
+                            <th className="p-2 text-center w-10">{isFa ? 'انتخاب' : 'Sel'}</th>
+                            <th className="p-2 text-start">Package Item</th>
+                            <th className="p-2 text-start">Tag No.</th>
+                            <th className="p-2 text-start">PL/Package No.</th>
+                            <th className="p-2 text-start">{isFa ? 'شرح (Description)' : 'Description'}</th>
+                            <th className="p-2 text-center">UOM</th>
+                            <th className="p-2 text-center">Pkg Qty</th>
+                            <th className="p-2 text-start min-w-[130px]">{isFa ? 'نوع مغایرت' : 'Category'}</th>
+                            <th className="p-2 text-center w-24">Discrepant Qty</th>
+                            <th className="p-2 text-center w-20">Received Qty</th>
+                            <th className="p-2 text-start min-w-[150px]">Discrepancy</th>
+                            <th className="p-2 text-start min-w-[140px]">Remark</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-surface)]">
+                          {filteredMerDetailedRows.map((row) => {
+                            const draft = merDrafts[row.id];
+                            const checked = Boolean(draft?.checked);
+                            const pkgQty = Number(row.packingQty ?? 0);
+                            const discNum = Number(draft?.discrepantQty === '' ? 0 : draft?.discrepantQty ?? 0);
+                            const recvQty = Number.isFinite(discNum) && discNum >= 0
+                              ? Math.max(0, Math.round((pkgQty - discNum + Number.EPSILON) * 1000) / 1000)
+                              : pkgQty;
+
+                            return (
+                              <tr
+                                key={row.id}
+                                data-testid={`mer-row-${row.id}`}
+                                className={checked ? 'bg-amber-500/10' : 'hover:bg-[var(--bg-subtle)]/40'}
+                              >
+                                <td className="p-2 text-center">
+                                  <input
+                                    type="checkbox"
+                                    data-testid={`mer-check-${row.id}`}
+                                    checked={checked}
+                                    onChange={() => toggleMerRow(row)}
+                                    className="w-4 h-4 accent-amber-600 cursor-pointer"
+                                  />
+                                </td>
+                                <td className="p-2 font-mono tabular-nums" dir="ltr">
+                                  {row.itemNo || '-'}
+                                </td>
+                                <td className="p-2 font-mono tabular-nums" dir="ltr">
+                                  {row.itemCode || '-'}
+                                </td>
+                                <td className="p-2 font-mono tabular-nums whitespace-nowrap" dir="ltr">
+                                  {[row.shipmentNo, row.packageNo].filter(Boolean).join(' / ')}
+                                </td>
+                                <td className="p-2 max-w-[200px]">
+                                  <div className="line-clamp-2 bidi-plaintext">
+                                    {row.description || row.generalDescription}
+                                  </div>
+                                </td>
+                                <td className="p-2 text-center">{row.countingUnit || '-'}</td>
+                                <td className="p-2 text-center font-bold tabular-nums">{pkgQty}</td>
+                                <td className="p-2">
+                                  {checked ? (
+                                    <select
+                                      data-testid={`mer-cat-${row.id}`}
+                                      value={draft.category}
+                                      onChange={(e) =>
+                                        updateMerDraft(row.id, {
+                                          category: e.target.value as MerDiscrepancyCategory,
+                                        })
+                                      }
+                                      className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-semibold"
+                                    >
+                                      <option value="shortage">{isFa ? 'کسری' : 'Shortage'}</option>
+                                      <option value="damaged">{isFa ? 'مغایرت / آسیب‌دیدگی' : 'Discrepancy / Damaged'}</option>
+                                    </select>
+                                  ) : (
+                                    <span className="text-[var(--text-muted)]">-</span>
+                                  )}
+                                </td>
+                                <td className="p-2">
+                                  {checked ? (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="any"
+                                      data-testid={`mer-qty-${row.id}`}
+                                      dir="ltr"
+                                      value={draft.discrepantQty}
+                                      onChange={(e) =>
+                                        updateMerDraft(row.id, { discrepantQty: e.target.value })
+                                      }
+                                      className="w-20 h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono font-bold text-center tabular-nums"
+                                    />
+                                  ) : (
+                                    <span className="text-[var(--text-muted)] block text-center">-</span>
+                                  )}
+                                </td>
+                                <td className="p-2 text-center font-extrabold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                  {checked ? recvQty : '-'}
+                                </td>
+                                <td className="p-2">
+                                  {checked ? (
+                                    <input
+                                      type="text"
+                                      data-testid={`mer-reason-${row.id}`}
+                                      value={draft.discrepancyText}
+                                      onChange={(e) =>
+                                        updateMerDraft(row.id, { discrepancyText: e.target.value })
+                                      }
+                                      placeholder={
+                                        draft.category === 'shortage'
+                                          ? isFa
+                                            ? 'مثلاً: کسری قطعه'
+                                            : 'Shortage...'
+                                          : isFa
+                                            ? 'مثلاً: آسیب‌دیدگی بدنه'
+                                            : 'Damaged...'
+                                      }
+                                      className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                                    />
+                                  ) : (
+                                    <span className="text-[var(--text-muted)]">-</span>
+                                  )}
+                                </td>
+                                <td className="p-2">
+                                  {checked ? (
+                                    <input
+                                      type="text"
+                                      data-testid={`mer-remark-${row.id}`}
+                                      value={draft.remark}
+                                      onChange={(e) =>
+                                        updateMerDraft(row.id, { remark: e.target.value })
+                                      }
+                                      placeholder={isFa ? 'توضیحات...' : 'Remark...'}
+                                      className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                                    />
+                                  ) : (
+                                    <span className="text-[var(--text-muted)]">-</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </StickyTableWrapper>
+                  )}
+                </div>
+              )}
+
+              {/* Other Notes */}
+              <div>
+                <label className="block text-xs font-bold text-[var(--text-secondary)] mb-1">
+                  {isFa ? 'سایر توضیحات صورتجلسه (اختیاری)' : 'Other Notes (Optional)'}
+                </label>
+                <textarea
+                  rows={2}
+                  data-testid="opi-minutes-notes-input"
+                  value={otherNotes}
+                  onChange={(e) => setOtherNotes(e.target.value)}
+                  placeholder={isFa ? 'سایر توضیحات...' : 'Other notes...'}
+                  className="w-full p-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+                />
+              </div>
+
+              {/* Submit Footer */}
+              <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2 border-t border-[var(--border-subtle)]">
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="h-10 px-4 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-semibold"
+                >
+                  {isFa ? 'انصراف' : 'Cancel'}
+                </button>
                 <button
                   type="submit"
-                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
+                  data-testid="opi-minutes-submit-btn"
+                  disabled={submitting}
+                  className="h-10 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-2 shadow-sm"
                 >
                   <CheckCircle2 className="w-4 h-4" />
                   <span>
-                    {editingMinutes
+                    {submitting
                       ? isFa
-                        ? 'ذخیره تغییرات صورتجلسه'
-                        : 'Update Minutes'
-                      : isFa
-                        ? 'ثبت صورتجلسه گشایش و چاپ فرم'
-                        : 'Save Minutes & Preview'}
+                        ? 'در حال صدور...'
+                        : 'Issuing...'
+                      : resultStatus === 'has_discrepancy'
+                        ? editingMinutes
+                          ? isFa
+                            ? 'ذخیره ویرایش صورتجلسه + گزارش MER'
+                            : 'Save Minutes + MER Changes'
+                          : isFa
+                            ? 'صدور صورتجلسه + گزارش مغایرت (MER) و پیش‌نمایش چاپ'
+                            : 'Issue Minutes + Linked MER & Print Preview'
+                        : editingMinutes
+                          ? isFa
+                            ? 'ذخیره ویرایش صورتجلسه'
+                            : 'Save Minutes Changes'
+                          : isFa
+                            ? 'صدور صورتجلسه گشایش و پیش‌نمایش چاپ'
+                            : 'Issue OPI Minutes & Print Preview'}
                   </span>
                 </button>
               </div>
             </form>
           )}
+        </div>
+      )}
 
-          {/* Minutes History Table */}
-          {(minutesViewMode === 'history' || !canEdit) && (
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
-            <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-bold">
-                {isFa ? 'صورتجلسه‌های گشایش و بازرسی ثبت‌شده' : 'Recorded Opening & Inspection Minutes'}
-              </h3>
-              <div className="flex items-center gap-2">
+      {/* HISTORY VIEW (OPI Minutes & Linked MER Reports) */}
+      {viewMode === 'history' && (
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-4 print:hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Sub-tabs for Minutes vs MER */}
+            <div className="inline-flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-1 gap-1">
+              <button
+                type="button"
+                data-testid="opi-history-tab-minutes"
+                onClick={() => setHistorySubTab('minutes')}
+                className={`h-8 px-3 rounded-lg text-xs font-bold transition-colors ${
+                  historySubTab === 'minutes'
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {isFa ? `صورتجلسه‌های گشایش (${minutesList.length})` : `OPI Minutes (${minutesList.length})`}
+              </button>
+              <button
+                type="button"
+                data-testid="opi-history-tab-mer"
+                onClick={() => setHistorySubTab('mer')}
+                className={`h-8 px-3 rounded-lg text-xs font-bold transition-colors ${
+                  historySubTab === 'mer'
+                    ? 'bg-amber-600 text-white'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {isFa ? `گزارش‌های مغایرت MER (${merList.length})` : `MER Reports (${merList.length})`}
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="w-64 sm:w-72">
+                <SearchInputWithClear
+                  value={historySearch}
+                  onChange={setHistorySearch}
+                  placeholder={isFa ? 'جستجو در شماره OPI، MER، پکینگ...' : 'Search OPI, MER, packing...'}
+                />
+              </div>
+
+              {historySubTab === 'minutes' && (
                 <button
                   type="button"
-                  onClick={() => setPrintMinutesTableOpen(true)}
-                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                  onClick={() => setPrintReportOpen(true)}
+                  disabled={filteredMinutes.length === 0}
+                  className="h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] disabled:opacity-45 text-xs font-semibold inline-flex items-center gap-1.5"
                 >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>{t.controls.printReport}</span>
+                  <Printer className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                  <span>{isFa ? 'چاپ فهرست' : 'Print List'}</span>
                 </button>
-              </div>
+              )}
             </div>
-            <StickyTableWrapper>
-              <table className="w-full text-xs">
-                <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                  <tr>
-                    <th className="py-2.5 px-4 text-start">{isFa ? 'شماره صورتجلسه' : 'Minutes No.'}</th>
-                    <th className="py-2.5 px-4 text-start">{isFa ? 'تاریخ' : 'Date'}</th>
-                    <th className="py-2.5 px-4 text-start">{t.headers.packingListNo}</th>
-                    <th className="py-2.5 px-4 text-start">{t.headers.packageNo}</th>
-                    <th className="py-2.5 px-4 text-start">{isFa ? 'نتیجه' : 'Result'}</th>
-                    <th className="py-2.5 px-4 text-start">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
-                    <th className="py-2.5 px-4 text-end">{isFa ? 'عملیات' : 'Actions'}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {loading ? (
+          </div>
+
+          {historySubTab === 'minutes' ? (
+            <>
+              <StickyTableWrapper maxHeightClass="max-h-[60vh]">
+                <table className="w-full text-xs border-collapse" data-testid="opi-minutes-history-table">
+                  <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
-                        {t.controls.loading}
-                      </td>
+                      <th className="p-2.5 text-center w-10">#</th>
+                      <th className="p-2.5 text-start">{isFa ? 'شماره OPI' : 'OPI No.'}</th>
+                      <th className="p-2.5 text-center">{isFa ? 'تاریخ' : 'Date'}</th>
+                      <th className="p-2.5 text-start">{isFa ? 'محل انجام OPI' : 'Location'}</th>
+                      <th className="p-2.5 text-start">{isFa ? 'تامین‌کننده' : 'Supplier'}</th>
+                      <th className="p-2.5 text-start">{isFa ? 'پکینگ لیست' : 'Packing List'}</th>
+                      <th className="p-2.5 text-center">{isFa ? 'وضعیت' : 'Status'}</th>
+                      <th className="p-2.5 text-center">{isFa ? 'اسکن امضاشده' : 'Signed Scan'}</th>
+                      <th className="p-2.5 text-center">{isFa ? 'عملیات' : 'Actions'}</th>
                     </tr>
-                  ) : minutesList.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
-                        {t.controls.noData}
-                      </td>
-                    </tr>
-                  ) : (
-                    minutesPagination.pageItems.map((rec) => (
-                      <tr
-                        key={rec.id}
-                        onClick={() =>
-                          setScanTarget({
-                            collection: 'opiMinutes',
-                            id: rec.id,
-                            label: rec.minutesNo,
-                            signedScan: rec.signedScan,
-                          })
-                        }
-                        title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
-                        className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer"
-                      >
-                        <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rec.minutesNo}</td>
-                        <td className="py-2.5 px-4 tabular-nums" dir="ltr">{formatDate(rec.date)}</td>
-                        <td className="py-2.5 px-4 tabular-nums" dir="ltr">{rec.packingListNo}</td>
-                        <td className="py-2.5 px-4 tabular-nums" dir="ltr">
-                          {rec.packageNos.length > 0 ? rec.packageNos.join(', ') : '-'}
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {loading && minutesList.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-8 text-center text-[var(--text-muted)]">
+                          {isFa ? 'در حال بارگذاری...' : 'Loading...'}
                         </td>
-                        <td className="py-2.5 px-4">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
-                              rec.resultStatus === 'compliant'
-                                ? 'bg-[var(--status-success-bg)] text-[var(--status-success)]'
-                                : 'bg-[var(--status-danger-bg)] text-[var(--status-danger)]'
-                            }`}
-                          >
-                            {rec.resultStatus === 'compliant'
-                              ? isFa ? 'منطبق' : 'Compliant'
-                              : isFa ? 'دارای مغایرت' : 'Discrepancy'}
-                          </span>
+                      </tr>
+                    ) : minutesPagination.pageItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-8 text-center text-[var(--text-muted)]">
+                          {isFa ? 'هیچ صورتجلسه‌ای ثبت نشده است.' : 'No OPI Minutes recorded yet.'}
                         </td>
-                        <td className="py-2.5 px-4 whitespace-nowrap">
-                          <SignedScanRowButton
-                            signedScan={rec.signedScan}
-                            recordLabel={rec.minutesNo}
+                      </tr>
+                    ) : (
+                      minutesPagination.pageItems.map((rec, idx) => {
+                        const linkedMer = findLinkedMer(rec);
+                        return (
+                          <tr
+                            key={rec.id}
+                            data-testid={`opi-minutes-history-row-${rec.minutesNo}`}
                             onClick={() =>
                               setScanTarget({
                                 collection: 'opiMinutes',
@@ -2206,585 +2701,371 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                                 signedScan: rec.signedScan,
                               })
                             }
-                          />
-                        </td>
-                        <td className="py-2.5 px-4 text-end" onClick={(e) => e.stopPropagation()}>
-                          <div className="inline-flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setPrintMinutes(rec)}
-                              className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
+                            className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer transition-colors"
+                          >
+                            <td className="p-2.5 text-center tabular-nums text-[var(--text-muted)]">
+                              {(minutesPagination.page - 1) * minutesPagination.pageSize + idx + 1}
+                            </td>
+                            <td className="p-2.5 font-mono font-bold text-[var(--accent-primary)] tabular-nums" dir="ltr">
+                              {rec.minutesNo}
+                            </td>
+                            <td className="p-2.5 text-center tabular-nums" dir="ltr">
+                              {formatDate(rec.date)}
+                            </td>
+                            <td className="p-2.5 bidi-plaintext">{rec.location || '-'}</td>
+                            <td className="p-2.5 bidi-plaintext">{rec.supplier || '-'}</td>
+                            <td className="p-2.5 font-mono text-[11px]" dir="ltr">
+                              {rec.packingListNo || '-'}
+                            </td>
+                            <td className="p-2.5 text-center">
+                              {rec.resultStatus === 'has_discrepancy' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  <span dir="ltr" className="font-mono">
+                                    {rec.merNo || (isFa ? 'دارای مغایرت' : 'MER')}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold">
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  <span>{isFa ? 'فاقد مغایرت' : 'Compliant'}</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2.5 text-center">
+                              <SignedScanRowButton
+                                signedScan={rec.signedScan}
+                                recordLabel={rec.minutesNo}
+                                onClick={() =>
+                                  setScanTarget({
+                                    collection: 'opiMinutes',
+                                    id: rec.id,
+                                    label: rec.minutesNo,
+                                    signedScan: rec.signedScan,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td
+                              className="p-2.5 text-center"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>{t.controls.print}</span>
-                            </button>
-                            {canEdit && (
-                              <>
+                              <div className="inline-flex items-center gap-1">
                                 <button
                                   type="button"
-                                  onClick={() => startEditMinutes(rec)}
-                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                                  title={t.controls.edit}
+                                  data-testid={`opi-minutes-print-btn-${rec.minutesNo}`}
+                                  onClick={() => {
+                                    setPrintBundleWasUndone(false);
+                                    setPrintBundle({ minutes: rec, mer: linkedMer });
+                                  }}
+                                  title={
+                                    linkedMer
+                                      ? isFa
+                                        ? 'چاپ صورتجلسه و گزارش MER پیوست'
+                                        : 'Print Minutes & Linked MER'
+                                      : isFa
+                                        ? 'پیش‌نمایش و چاپ صورتجلسه'
+                                        : 'Print OPI Minutes'
+                                  }
+                                  className="p-1.5 rounded-lg text-[var(--accent-primary)] hover:bg-[var(--accent-soft)]"
                                 >
-                                  <Pencil className="w-3.5 h-3.5" />
+                                  <Printer className="w-3.5 h-3.5" />
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setDeleteMinutesTarget(rec)}
-                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                                  title={t.controls.delete}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
-                            {rec.resultStatus === 'has_discrepancy' && canEdit && (
+                                {canEdit && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      data-testid={`opi-minutes-edit-btn-${rec.minutesNo}`}
+                                      onClick={() => startEditMinutes(rec)}
+                                      title={isFa ? 'ویرایش' : 'Edit'}
+                                      className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-500/10"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      data-testid={`opi-minutes-delete-btn-${rec.minutesNo}`}
+                                      onClick={() => setDeleteMinutesTarget(rec)}
+                                      title={isFa ? 'حذف' : 'Delete'}
+                                      className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-500/10"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </StickyTableWrapper>
+
+              <TablePaginationBar
+                page={minutesPagination.page}
+                totalPages={minutesPagination.totalPages}
+                total={minutesPagination.total}
+                pageSize={minutesPagination.pageSize}
+                onPageChange={minutesPagination.setPage}
+                onPageSizeChange={minutesPagination.setPageSize}
+                lang={prefs.language}
+              />
+            </>
+          ) : (
+            <>
+              <StickyTableWrapper maxHeightClass="max-h-[60vh]">
+                <table className="w-full text-xs border-collapse" data-testid="mer-history-table">
+                  <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
+                    <tr>
+                      <th className="p-2.5 text-center w-10">#</th>
+                      <th className="p-2.5 text-start">{isFa ? 'شماره MER' : 'MER No.'}</th>
+                      <th className="p-2.5 text-center">{isFa ? 'تاریخ' : 'Date'}</th>
+                      <th className="p-2.5 text-start">{isFa ? 'شماره OPI' : 'OPI No.'}</th>
+                      <th className="p-2.5 text-start">{isFa ? 'تامین‌کننده' : 'Supplier'}</th>
+                      <th className="p-2.5 text-start">Packing List No.</th>
+                      <th className="p-2.5 text-center">{isFa ? 'اقلام مغایرت' : 'Items'}</th>
+                      <th className="p-2.5 text-center">{isFa ? 'اسکن امضاشده' : 'Signed Scan'}</th>
+                      <th className="p-2.5 text-center">{isFa ? 'عملیات' : 'Actions'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {merPagination.pageItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-8 text-center text-[var(--text-muted)]">
+                          {isFa ? 'هیچ گزارش مغایرتی (MER) ثبت نشده است.' : 'No MER reports recorded yet.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      merPagination.pageItems.map((rep, idx) => (
+                        <tr
+                          key={rep.id}
+                          data-testid={`mer-history-row-${rep.reportNo}`}
+                          onClick={() =>
+                            setScanTarget({
+                              collection: 'osdr',
+                              id: rep.id,
+                              label: rep.reportNo,
+                              signedScan: rep.signedScan,
+                            })
+                          }
+                          className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer transition-colors"
+                        >
+                          <td className="p-2.5 text-center tabular-nums text-[var(--text-muted)]">
+                            {(merPagination.page - 1) * merPagination.pageSize + idx + 1}
+                          </td>
+                          <td className="p-2.5 font-mono font-bold text-amber-700 dark:text-amber-300 tabular-nums" dir="ltr">
+                            {rep.reportNo}
+                          </td>
+                          <td className="p-2.5 text-center tabular-nums" dir="ltr">
+                            {formatDate(rep.date)}
+                          </td>
+                          <td className="p-2.5 font-mono tabular-nums" dir="ltr">
+                            {rep.opiNo || rep.opiMinutesNo || '-'}
+                          </td>
+                          <td className="p-2.5 bidi-plaintext">{rep.supplier || '-'}</td>
+                          <td className="p-2.5 font-mono text-[11px]" dir="ltr">
+                            {rep.packingListNo || '-'}
+                          </td>
+                          <td className="p-2.5 text-center font-bold tabular-nums">{rep.items.length}</td>
+                          <td className="p-2.5 text-center">
+                            <SignedScanRowButton
+                              signedScan={rep.signedScan}
+                              recordLabel={rep.reportNo}
+                              onClick={() =>
+                                setScanTarget({
+                                  collection: 'osdr',
+                                  id: rep.id,
+                                  label: rep.reportNo,
+                                  signedScan: rep.signedScan,
+                                })
+                              }
+                            />
+                          </td>
+                          <td
+                            className="p-2.5 text-center"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="inline-flex items-center gap-1">
                               <button
                                 type="button"
+                                data-testid={`mer-print-btn-${rep.reportNo}`}
                                 onClick={() => {
-                                  handlePackingChangeForOsdr(rec.packingListNo);
-                                  setOsdrMinutesNo(rec.minutesNo);
-                                  setSubTab('osdr');
+                                  setPrintBundleWasUndone(false);
+                                  setPrintBundle({ minutes: null, mer: rep });
                                 }}
-                                className="h-7 px-2.5 rounded-lg bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold"
+                                title={isFa ? 'چاپ گزارش مغایرت MER' : 'Print MER Report'}
+                                className="p-1.5 rounded-lg text-[var(--accent-primary)] hover:bg-[var(--accent-soft)]"
                               >
-                                {isFa ? 'صدور MER' : 'Issue MER'}
+                                <Printer className="w-3.5 h-3.5" />
                               </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </StickyTableWrapper>
-            <TablePaginationBar
-              page={minutesPagination.page}
-              totalPages={minutesPagination.totalPages}
-              total={minutesPagination.total}
-              pageSize={minutesPagination.pageSize}
-              onPageChange={minutesPagination.setPage}
-              onPageSizeChange={minutesPagination.setPageSize}
-              lang={prefs.language}
-            />
-          </div>
-          )}
-        </div>
-      )}
-
-      {/* SUB-TAB 2: MER DISCREPANCY REPORT */}
-      {subTab === 'osdr' && (
-        <div className="space-y-6">
-          {canEdit && osdrViewMode === 'create' && (
-            <form
-              onSubmit={handleSaveOsdr}
-              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-sm font-bold">
-                  <AlertTriangle className="w-4 h-4 text-[var(--status-warning)]" />
-                  <span>{isFa ? 'صدور گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Issue MER Discrepancy Report'}</span>
-                  {editingOsdr && (
-                    <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
-                      {isFa ? `حالت ویرایش: ${editingOsdr.reportNo}` : `Editing: ${editingOsdr.reportNo}`}
-                    </span>
-                  )}
-                </div>
-                {editingOsdr && (
-                  <button
-                    type="button"
-                    onClick={resetOsdrForm}
-                    className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>{t.controls.cancel}</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                <div>
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <label className="block text-[11px] text-[var(--text-secondary)]">
-                      {isFa ? 'شماره گزارش (MER)' : 'MER Report No.'} *
-                    </label>
-                    {!editingOsdr && (
-                      <button
-                        type="button"
-                        onClick={() => setOsdrReportNo(suggestedMerNo)}
-                        className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
-                        dir="ltr"
-                      >
-                        {suggestedMerNo}
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    dir={isFa && !osdrReportNo ? 'rtl' : 'ltr'}
-                    value={osdrReportNo}
-                    onChange={(e) => setOsdrReportNo(e.target.value)}
-                    placeholder={suggestedMerNo}
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                      isFa && !osdrReportNo ? 'text-right' : 'text-left'
-                    }`}
-                  />
-                </div>
-
-                <JalaliDateInput
-                  label={`${isFa ? 'تاریخ گزارش' : 'Report Date'} *`}
-                  value={osdrDate}
-                  onChange={setOsdrDate}
-                />
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.packingListNo} *
-                  </label>
-                  <select
-                    required
-                    value={osdrPackingNo}
-                    onChange={(e) => handlePackingChangeForOsdr(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                  >
-                    <option value="">{isFa ? 'انتخاب پکینگ لیست...' : 'Select Packing List...'}</option>
-                    {(data?.packings || []).map((pk) => (
-                      <option key={pk} value={pk}>
-                        {pk}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره صورتجلسه گشایش' : 'Related OPI Minutes'}
-                  </label>
-                  <input
-                    type="text"
-                    dir={isFa && !osdrMinutesNo ? 'rtl' : 'ltr'}
-                    value={osdrMinutesNo}
-                    onChange={(e) => setOsdrMinutesNo(e.target.value)}
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                      isFa && !osdrMinutesNo ? 'text-right' : 'text-left'
-                    }`}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                    {t.headers.supplier}
-                  </label>
-                  <input
-                    type="text"
-                    dir={!osdrSupplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                    value={osdrSupplier}
-                    onChange={(e) => setOsdrSupplier(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-xs font-semibold text-[var(--text-secondary)]">
-                  {isFa
-                    ? 'اقلام دارای کسری، اضافی یا آسیب‌دیدگی (جهت درج در گزارش مغایرت (MER) انتخاب کنید):'
-                    : 'Items with Shortage, Overage, or Damage (select to include in MER):'}
-                </div>
-                <div className="rounded-xl border border-[var(--border-subtle)] overflow-x-clip">
-                  <StickyTableWrapper maxHeightClass="max-h-72">
-                    <table className="w-full text-xs">
-                      <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                      <tr>
-                        <th className="py-2 px-3 w-9">{isFa ? 'درج' : 'Add'}</th>
-                        <th className="py-2 px-3 text-start">{t.headers.shipmentNo}</th>
-                        <th className="py-2 px-3 text-start">{t.headers.packageNo}</th>
-                        <th className="py-2 px-3 text-start">{t.headers.itemNo}</th>
-                        <th className="py-2 px-3 text-start">{t.headers.description}</th>
-                        <th className="py-2 px-3 text-end">{t.headers.packingQty}</th>
-                        <th className="py-2 px-3 text-end">{t.headers.actualQty}</th>
-                        <th className="py-2 px-3 text-end">{t.headers.shortage}</th>
-                        <th className="py-2 px-3 text-end">{t.headers.damagedQty}</th>
-                        <th className="py-2 px-3 text-start">{isFa ? 'نوع مغایرت' : 'Discrepancy Type'}</th>
-                        <th className="py-2 px-3 text-start">{isFa ? 'توضیحات فنی' : 'Remarks'}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[var(--border-subtle)]">
-                      {discrepancyItems.length === 0 ? (
-                        <tr>
-                          <td colSpan={11} className="py-8 text-center text-[var(--text-muted)]">
-                            {isFa
-                              ? 'قلمی دارای کسری، اضافی یا آسیب‌دیدگی برای این انتخاب یافت نشد.'
-                              : 'No shortage, surplus, or damaged items found for this filter.'}
-                          </td>
-                        </tr>
-                      ) : (
-                        discrepancyItems.slice(0, 80).map((item) => {
-                          const discType = getDiscrepancyType(item);
-                          return (
-                            <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
-                              <td className="py-2 px-3">
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(osdrSelectedIds[item.id])}
-                                  onChange={(e) =>
-                                    setOsdrSelectedIds((prev) => ({
-                                      ...prev,
-                                      [item.id]: e.target.checked,
-                                    }))
-                                  }
-                                />
-                              </td>
-                              <td className="py-2 px-3 tabular-nums" dir="ltr">{item.shipmentNo}</td>
-                              <td className="py-2 px-3 tabular-nums" dir="ltr">{item.packageNo}</td>
-                              <td className="py-2 px-3 tabular-nums" dir="ltr">{item.itemNo}</td>
-                              <td className="py-2 px-3 max-w-[180px] truncate bidi-plaintext">
-                                {item.description || item.generalDescription}
-                              </td>
-                              <td className="py-2 px-3 text-end tabular-nums">{item.packingQty ?? 0}</td>
-                              <td className="py-2 px-3 text-end tabular-nums">{item.actualQty ?? 0}</td>
-                              <td className="py-2 px-3 text-end tabular-nums font-bold text-[var(--status-danger)]">
-                                {item.shortage > 0 ? item.shortage : '-'}
-                              </td>
-                              <td className="py-2 px-3 text-end tabular-nums font-bold text-[var(--status-warning)]">
-                                {item.damagedQty || '-'}
-                              </td>
-                              <td className="py-2 px-3 font-medium">{discrepancyTypeLabel(discType)}</td>
-                              <td className="py-2 px-3 w-44">
-                                <input
-                                  type="text"
-                                  dir={!osdrRemarks[item.id] ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                                  value={osdrRemarks[item.id] || ''}
-                                  onChange={(e) => {
-                                    setOsdrRemarks((prev) => ({ ...prev, [item.id]: e.target.value }));
-                                    setOsdrSelectedIds((prev) => ({ ...prev, [item.id]: true }));
-                                  }}
-                                  placeholder={isFa ? 'شرح مغایرت...' : 'Remark...'}
-                                  className="w-40 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                    </table>
-                  </StickyTableWrapper>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                  {t.headers.notes}
-                </label>
-                <input
-                  type="text"
-                  dir={!osdrNotes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                  value={osdrNotes}
-                  onChange={(e) => setOsdrNotes(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2">
-                {editingOsdr && (
-                  <button
-                    type="button"
-                    onClick={resetOsdrForm}
-                    className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-                  >
-                    <X className="w-4 h-4" />
-                    <span>{t.controls.cancel}</span>
-                  </button>
-                )}
-                <button
-                  type="submit"
-                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
-                >
-                  <FileWarning className="w-4 h-4" />
-                  <span>
-                    {editingOsdr
-                      ? isFa
-                        ? 'ذخیره تغییرات گزارش MER'
-                        : 'Update MER Report'
-                      : isFa
-                        ? 'ثبت گزارش مغایرت (MER) و نمایش فرم چاپی'
-                        : 'Issue MER & Preview Sheet'}
-                  </span>
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* MER History Table */}
-          {(osdrViewMode === 'history' || !canEdit) && (
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
-            <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-bold">
-                {isFa ? 'سوابق گزارش‌های مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Issued MER Reports'}
-              </h3>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPrintOsdrTableOpen(true)}
-                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>{t.controls.printReport}</span>
-                </button>
-              </div>
-            </div>
-            <StickyTableWrapper>
-              <table className="w-full text-xs">
-                <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                  <tr>
-                    <th className="py-2.5 px-4 text-start">{isFa ? 'شماره MER' : 'MER No.'}</th>
-                    <th className="py-2.5 px-4 text-start">{isFa ? 'تاریخ' : 'Date'}</th>
-                    <th className="py-2.5 px-4 text-start">{t.headers.packingListNo}</th>
-                    <th className="py-2.5 px-4 text-start">{t.headers.supplier}</th>
-                    <th className="py-2.5 px-4 text-end">{isFa ? 'تعداد اقلام مغایرت' : 'Items'}</th>
-                    <th className="py-2.5 px-4 text-start">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
-                    <th className="py-2.5 px-4 text-end">{t.controls.print}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
-                        {t.controls.loading}
-                      </td>
-                    </tr>
-                  ) : osdrList.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
-                        {t.controls.noData}
-                      </td>
-                    </tr>
-                  ) : (
-                    osdrPagination.pageItems.map((rep) => (
-                      <tr
-                        key={rep.id}
-                        onClick={() =>
-                          setScanTarget({
-                            collection: 'osdr',
-                            id: rep.id,
-                            label: rep.reportNo,
-                            signedScan: rep.signedScan,
-                          })
-                        }
-                        title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
-                        className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer"
-                      >
-                        <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rep.reportNo}</td>
-                        <td className="py-2.5 px-4 tabular-nums" dir="ltr">{formatDate(rep.date)}</td>
-                        <td className="py-2.5 px-4 tabular-nums" dir="ltr">{rep.packingListNo}</td>
-                        <td className="py-2.5 px-4 bidi-plaintext">{rep.supplier || '-'}</td>
-                        <td className="py-2.5 px-4 text-end tabular-nums font-bold text-[var(--status-danger)]">
-                          {rep.items.length}
-                        </td>
-                        <td className="py-2.5 px-4 whitespace-nowrap">
-                          <SignedScanRowButton
-                            signedScan={rep.signedScan}
-                            recordLabel={rep.reportNo}
-                            onClick={() =>
-                              setScanTarget({
-                                collection: 'osdr',
-                                id: rep.id,
-                                label: rep.reportNo,
-                                signedScan: rep.signedScan,
-                              })
-                            }
-                          />
-                        </td>
-                        <td className="py-2.5 px-4 text-end" onClick={(e) => e.stopPropagation()}>
-                          <div className="inline-flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setPrintOsdr(rep)}
-                              className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>{t.controls.print}</span>
-                            </button>
-                            {canEdit && (
-                              <>
+                              {canEdit && (
                                 <button
                                   type="button"
-                                  onClick={() => startEditOsdr(rep)}
-                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                                  title={t.controls.edit}
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setDeleteOsdrTarget(rep)}
-                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                                  title={t.controls.delete}
+                                  data-testid={`mer-delete-btn-${rep.reportNo}`}
+                                  onClick={() => setDeleteMerTarget(rep)}
+                                  title={isFa ? 'حذف گزارش MER' : 'Delete MER'}
+                                  className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-500/10"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </StickyTableWrapper>
-            <TablePaginationBar
-              page={osdrPagination.page}
-              totalPages={osdrPagination.totalPages}
-              total={osdrPagination.total}
-              pageSize={osdrPagination.pageSize}
-              onPageChange={osdrPagination.setPage}
-              onPageSizeChange={osdrPagination.setPageSize}
-              lang={prefs.language}
-            />
-          </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </StickyTableWrapper>
+
+              <TablePaginationBar
+                page={merPagination.page}
+                totalPages={merPagination.totalPages}
+                total={merPagination.total}
+                pageSize={merPagination.pageSize}
+                onPageChange={merPagination.setPage}
+                onPageSizeChange={merPagination.setPageSize}
+                lang={prefs.language}
+              />
+            </>
           )}
         </div>
       )}
 
-      {/* Printable Official MD1EX-FQP02/06-03 OPI Minutes Modal */}
-      {printMinutes && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
-          <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
-              <div>
-                <h3 className="text-sm font-bold">{t.nav.opiMinutes}</h3>
-                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  {formCode ? `${formCode} · ` : ''}{printMinutes.minutesNo}
-                </p>
+      {/* Simultaneous Official Print Preview Modal (OPI Minutes + Linked MER) with Post-Print Undo & Redo */}
+      {printBundle && (
+        <div
+          data-testid="opi-minutes-preview-modal"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 print:hidden"
+        >
+          <div className="w-full max-w-6xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] shadow-2xl max-h-[94vh] flex flex-col overflow-hidden">
+            {/* Toolbar */}
+            <div className="px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <Printer className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                <span className="text-xs sm:text-sm font-bold text-[var(--text-primary)] truncate">
+                  {printBundle.minutes && printBundle.mer
+                    ? isFa
+                      ? `پیش‌نمایش چاپ هم‌زمان صورتجلسه ${printBundle.minutes.minutesNo} و گزارش MER ${printBundle.mer.reportNo}`
+                      : `Combined Print Preview — Minutes ${printBundle.minutes.minutesNo} & MER ${printBundle.mer.reportNo}`
+                    : printBundle.minutes
+                      ? isFa
+                        ? `پیش‌نمایش چاپ صورتجلسه گشایش — ${printBundle.minutes.minutesNo} (${formCode})`
+                        : `OPI Minutes Preview — ${printBundle.minutes.minutesNo} (${formCode})`
+                      : isFa
+                        ? `پیش‌نمایش چاپ گزارش مغایرت — ${printBundle.mer?.reportNo} (${MD1_MER_FORM_CODE})`
+                        : `MER Preview — ${printBundle.mer?.reportNo} (${MD1_MER_FORM_CODE})`}
+                </span>
               </div>
-              <div className="flex items-center gap-2">
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {/* Post-Print Undo & Redo Controls */}
+                {canEdit && (
+                  <div
+                    dir="ltr"
+                    className="inline-flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5"
+                  >
+                    <button
+                      type="button"
+                      data-testid="opi-minutes-preview-undo-btn"
+                      disabled={!historyStatus.canUndo || historyBusy}
+                      onClick={() => void performUndo()}
+                      title={
+                        isFa
+                          ? 'واگرد (لغو صدور و بازگردانی وضعیت جدول جزئیات)'
+                          : 'Undo (revert issuance & Detailed table)'
+                      }
+                      className="h-8 px-2.5 rounded-lg text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] disabled:opacity-35 inline-flex items-center gap-1"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'واگرد' : 'Undo'}</span>
+                    </button>
+                    <div className="w-px h-4 bg-[var(--border-subtle)] mx-0.5" />
+                    <button
+                      type="button"
+                      data-testid="opi-minutes-preview-redo-btn"
+                      disabled={!historyStatus.canRedo || historyBusy}
+                      onClick={() => void performRedo()}
+                      title={isFa ? 'انجام مجدد' : 'Redo'}
+                      className="h-8 px-2.5 rounded-lg text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] disabled:opacity-35 inline-flex items-center gap-1"
+                    >
+                      <Redo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'انجام مجدد' : 'Redo'}</span>
+                    </button>
+                  </div>
+                )}
+
                 <button
                   type="button"
+                  data-testid="opi-minutes-preview-print-btn"
+                  disabled={printBundleWasUndone}
                   onClick={() => triggerAppPrint()}
-                  className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+                  className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-45 text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'چاپ فرم (A4)' : 'Print Form (A4)'}</span>
+                  <span>
+                    {printBundle.minutes && printBundle.mer
+                      ? isFa
+                        ? 'چاپ صورتجلسه + گزارش MER'
+                        : 'Print Minutes + MER'
+                      : printBundle.minutes
+                        ? isFa
+                          ? 'چاپ صورتجلسه (A4 عمودی)'
+                          : 'Print Minutes (A4 Portrait)'
+                        : isFa
+                          ? 'چاپ گزارش MER (A4 افقی)'
+                          : 'Print MER (A4 Landscape)'}
+                  </span>
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setPrintMinutes(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
+                  data-testid="opi-minutes-preview-close-btn"
+                  aria-label={isFa ? 'بستن پیش‌نمایش' : 'Close preview'}
+                  onClick={() => {
+                    setPrintBundle(null);
+                    setPrintBundleWasUndone(false);
+                  }}
+                  className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto w-full max-w-[196mm] bg-white p-5 shadow-lg rounded-sm">
-                <OfficialOpiMinutesSheet
-                  record={printMinutes}
-                  detailedItems={data?.detailedItems || []}
-                  generalEntries={data?.generalEntries || []}
-                  formatDate={formatDate}
-                />
+            {printBundleWasUndone && (
+              <div
+                data-testid="opi-minutes-preview-undone-banner"
+                className="px-4 py-2.5 bg-amber-500/15 border-b border-amber-500/35 text-xs font-semibold text-amber-800 dark:text-amber-300"
+              >
+                {isFa
+                  ? 'صدور این فرم با دکمه واگرد (Undo) لغو و جدول جزئیات به حالت قبل بازگردانده شد. برای بازگرداندن آن، روی «انجام مجدد (Redo)» کلیک کنید.'
+                  : 'Issuance was undone and Detailed Equipment was restored. Click Redo to reapply it.'}
               </div>
+            )}
+
+            <div className="flex-1 overflow-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-900 space-y-6">
+              {printBundle.minutes && (
+                <div className="max-w-[820px] mx-auto bg-white p-5 rounded-xl shadow-md">
+                  <OfficialOpiMinutesSheet
+                    record={printBundle.minutes}
+                    formatDate={formatDate}
+                  />
+                </div>
+              )}
+              {printBundle.mer && (
+                <div className="max-w-[1120px] mx-auto bg-white p-5 rounded-xl shadow-md">
+                  <OfficialMerSheet report={printBundle.mer} formatDate={formatDate} />
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Printable MER Modal */}
-      {printOsdr && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
-          <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
-              <div>
-                <h3 className="text-sm font-bold">
-                  {isFa ? 'پیش‌نمایش گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'Printable MER Report'}
-                </h3>
-                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  MER · {printOsdr.reportNo}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => triggerAppPrint()}
-                  className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'چاپ فرم (A4)' : 'Print Form (A4)'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrintOsdr(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto w-full max-w-[196mm] bg-white p-5 shadow-lg rounded-sm">
-                <OfficialMerSheet
-                  report={printOsdr}
-                  isFa={isFa}
-                  brandFull={t.brandFull}
-                  formatDate={formatDate}
-                  discrepancyTypeLabel={discrepancyTypeLabel}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <PrintReportModal
-        open={printMinutesTableOpen}
-        onClose={() => setPrintMinutesTableOpen(false)}
-        title={t.nav.opiMinutes}
-        columns={minutesColumns}
-        rows={data?.minutes || []}
-      />
-
-      <PrintReportModal
-        open={printOsdrTableOpen}
-        onClose={() => setPrintOsdrTableOpen(false)}
-        title={isFa ? 'گزارش مغایرت، کسری و آسیب‌دیدگی (MER)' : 'MER Reports'}
-        columns={osdrColumns}
-        rows={data?.osdrReports || []}
-      />
-
-      <ConfirmActionModal
-        open={Boolean(deleteMinutesTarget)}
-        title={isFa ? 'حذف صورتجلسه گشایش و بازرسی' : 'Delete OPI Minutes'}
-        message={
-          deleteMinutesTarget
-            ? isFa
-              ? `آیا از حذف صورتجلسه شماره ${deleteMinutesTarget.minutesNo} اطمینان دارید؟`
-              : `Delete OPI Minutes ${deleteMinutesTarget.minutesNo}?`
-            : ''
-        }
-        onConfirm={handleConfirmDeleteMinutes}
-        onCancel={() => setDeleteMinutesTarget(null)}
-      />
-
-      <ConfirmActionModal
-        open={Boolean(deleteOsdrTarget)}
-        title={isFa ? 'حذف گزارش مغایرت (MER)' : 'Delete MER Report'}
-        message={
-          deleteOsdrTarget
-            ? isFa
-              ? `آیا از حذف گزارش MER شماره ${deleteOsdrTarget.reportNo} اطمینان دارید؟`
-              : `Delete MER Report ${deleteOsdrTarget.reportNo}?`
-            : ''
-        }
-        onConfirm={handleConfirmDeleteOsdr}
-        onCancel={() => setDeleteOsdrTarget(null)}
-      />
-
+      {/* Signed Scan Modal (supports both OPI Minutes and MER reports) */}
       {scanTarget && (
         <SignedScanModal
           open={Boolean(scanTarget)}
@@ -2793,28 +3074,50 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
           recordLabel={scanTarget.label}
           signedScan={scanTarget.signedScan}
           onClose={() => setScanTarget(null)}
-          onUpdated={(nextScan) => {
-            setData((prev) => {
-              if (!prev) return prev;
-              if (scanTarget.collection === 'opiMinutes') {
-                return {
-                  ...prev,
-                  minutes: prev.minutes.map((m) =>
-                    m.id === scanTarget.id ? { ...m, signedScan: nextScan } : m,
-                  ),
-                };
-              }
-              return {
-                ...prev,
-                osdrReports: prev.osdrReports.map((o) =>
-                  o.id === scanTarget.id ? { ...o, signedScan: nextScan } : o,
-                ),
-              };
-            });
-            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          onUpdated={() => {
+            void loadData();
           }}
         />
       )}
+
+      {/* Delete Minutes Confirmation */}
+      <ConfirmActionModal
+        open={Boolean(deleteMinutesTarget)}
+        title={isFa ? 'حذف صورتجلسه گشایش و بازرسی' : 'Delete OPI Minutes'}
+        message={
+          isFa
+            ? `آیا از حذف صورتجلسه شماره «${deleteMinutesTarget?.minutesNo || ''}» اطمینان دارید؟ شماره OPI (و در صورت وجود، گزارش MER پیوست و اطلاعات مغایرت آن) از جدول جزئیات بازگردانی و دعوتنامه مجدداً باز خواهد شد.`
+            : `Are you sure you want to delete OPI Minutes "${deleteMinutesTarget?.minutesNo || ''}"? Detailed Equipment and any linked MER will be reverted and the invitation reopened.`
+        }
+        confirmLabel={isFa ? 'بله، حذف شود' : 'Delete'}
+        danger
+        onCancel={() => setDeleteMinutesTarget(null)}
+        onConfirm={handleConfirmDeleteMinutes}
+      />
+
+      {/* Delete MER Confirmation */}
+      <ConfirmActionModal
+        open={Boolean(deleteMerTarget)}
+        title={isFa ? 'حذف گزارش مغایرت (MER)' : 'Delete MER Report'}
+        message={
+          isFa
+            ? `آیا از حذف گزارش مغایرت شماره «${deleteMerTarget?.reportNo || ''}» اطمینان دارید؟ اطلاعات MER ثبت‌شده در جدول جزئیات پاک و مقادیر به حالت قبل بازگردانده می‌شود.`
+            : `Are you sure you want to delete MER "${deleteMerTarget?.reportNo || ''}"? Synced MER fields in Detailed Equipment will be reverted.`
+        }
+        confirmLabel={isFa ? 'بله، حذف شود' : 'Delete'}
+        danger
+        onCancel={() => setDeleteMerTarget(null)}
+        onConfirm={handleConfirmDeleteMer}
+      />
+
+      {/* Minutes History Print Report */}
+      <PrintReportModal
+        open={printReportOpen}
+        onClose={() => setPrintReportOpen(false)}
+        title={isFa ? 'گزارش سوابق صورتجلسه‌های گشایش و بازرسی (OPI)' : 'OPI Minutes History Report'}
+        rows={filteredMinutes}
+        columns={minutesReportColumns}
+      />
     </div>
   );
 };

@@ -401,11 +401,12 @@ const OfficialSmrSheet: React.FC<OfficialSmrSheetProps> = ({
 
         {/* QA Control Note inside bottom of lower frame */}
         <div
+          dir="rtl"
           style={{
             padding: '4px 10px',
             fontSize: '8.5px',
             fontWeight: 600,
-            textAlign: 'left',
+            textAlign: 'right',
           }}
         >
           {design.template?.introText ||

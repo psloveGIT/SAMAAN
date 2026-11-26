@@ -476,12 +476,13 @@ const OfficialBmrSheet: React.FC<OfficialBmrSheetProps> = ({ rows, estimates, me
 
         {/* Row 4: QA Control Note */}
         <div
+          dir="rtl"
           style={{
             borderBottom: '1px solid #000000',
             padding: '4px 10px',
             fontSize: '8.5px',
             fontWeight: 600,
-            textAlign: 'left',
+            textAlign: 'right',
           }}
         >
           {design.template?.introText ||

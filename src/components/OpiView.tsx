@@ -4,11 +4,8 @@ import {
   ArrowLeft,
   ArrowRight,
   CalendarClock,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
-  ClipboardCheck,
-  FileText,
   Pencil,
   Printer,
   Redo2,
@@ -24,10 +21,10 @@ import { triggerAppPrint } from '../lib/print.ts';
 import { extractPlantDocConfig } from '../shared/docNumbering.ts';
 import { resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
-import { formatCountingUnit } from '../shared/normalizers.ts';
 import {
   buildOpiInvitationHeaderAutoFill,
   buildOpiInvitationLineItems,
+  buildOpiLocationOptions,
   filterEligibleGeneralForOpi,
   formatHeaderProjectTitle,
   generateOpiInvitationNo,
@@ -90,7 +87,12 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
   const contractDisplay = (record.contractNo ?? activeProject?.contractRef ?? '').trim();
 
   const resolvedItems = useMemo<OpiInvitationLineItem[]>(() => {
-    if (record.items && record.items.length > 0) return record.items;
+    if (record.items && record.items.length > 0) {
+      return record.items.map((it, idx) => ({
+        ...it,
+        itemNo: (it.itemNo || '').trim() || String(idx + 1),
+      }));
+    }
     const matchedGeneral = record.generalIds?.length
       ? generalEntries.filter((g) => record.generalIds!.includes(g.id))
       : generalEntries.filter((g) => (record.packingNos || []).includes((g.packingListNo || '').trim()));
@@ -194,19 +196,6 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
                 >
                   {formatDate(record.issueDate || record.date)}
                 </span>
-              </div>
-              <div
-                dir="ltr"
-                style={{
-                  textAlign: 'center',
-                  fontSize: '9px',
-                  fontWeight: 800,
-                  borderTop: '1px solid #000000',
-                  paddingTop: '3px',
-                  marginTop: '2px',
-                }}
-              >
-                OPI Invitation
               </div>
             </div>
           }
@@ -401,7 +390,7 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
                     wordBreak: 'break-word',
                   }}
                 >
-                  {row?.itemNo || '\u00A0'}
+                  {row ? (row.itemNo?.trim() || String(idx + 1)) : '\u00A0'}
                 </td>
                 <td
                   className="tabular-nums"
@@ -646,12 +635,14 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
         )}
 
         <div
+          dir="rtl"
+          data-testid="opi-sheet-qa-notice"
           style={{
             borderTop: '1px solid #000000',
             padding: '4px 8px',
             fontSize: '8.3px',
             fontWeight: 600,
-            textAlign: 'left',
+            textAlign: 'right',
           }}
         >
           توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
@@ -690,16 +681,6 @@ interface OpiApiResponse {
   packings: string[];
 }
 
-interface ResultRowDraft {
-  selected: boolean;
-  actualQty: string;
-  damagedQty: string;
-  repNo: string;
-  repStatus: string;
-  repDescription: string;
-  notes: string;
-}
-
 interface OpiViewProps {
   refreshSignal: number;
   onDataChanged: () => void;
@@ -722,7 +703,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
 
-  const [tab, setTab] = useState<'invitation' | 'results'>('invitation');
   const [invViewMode, setInvViewMode] = useState<OperationalViewMode>(() =>
     canEdit ? 'create' : 'history',
   );
@@ -765,20 +745,12 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const [printInvitation, setPrintInvitation] = useState<OpiInvitationRecord | null>(null);
   const [printInvWasUndone, setPrintInvWasUndone] = useState(false);
   const [printInvTableOpen, setPrintInvTableOpen] = useState(false);
-  const [printItemsTableOpen, setPrintItemsTableOpen] = useState(false);
   const [scanTarget, setScanTarget] = useState<OpiInvitationRecord | null>(null);
 
   const printInvIdRef = useRef<string | null>(null);
   useEffect(() => {
     printInvIdRef.current = printInvitation?.id || null;
   }, [printInvitation]);
-
-  // OPI Results Recording State (Tab 2)
-  const [resultInvitationId, setResultInvitationId] = useState('');
-  const [resultPackingFilter, setResultPackingFilter] = useState('');
-  const [resultOpiNo, setResultOpiNo] = useState('');
-  const [resultOpiDate, setResultOpiDate] = useState(getTodayIso());
-  const [rowDrafts, setRowDrafts] = useState<Record<string, ResultRowDraft>>({});
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -819,25 +791,16 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
 
   const selectedRows = useMemo(() => Object.values(selectedMap), [selectedMap]);
 
-  // Location datalist suggestions derived from existing invitations & general/detailed locations
-  const locationSuggestions = useMemo(() => {
-    const set = new Set<string>();
-    for (const inv of invitationsList) {
-      if (inv.location?.trim()) set.add(inv.location.trim());
-    }
-    for (const d of data?.detailedItems || []) {
-      if (d.storageLocation?.trim()) set.add(d.storageLocation.trim());
-    }
-    for (const g of generalEntries) {
-      if (g.dispatchLocation?.trim()) set.add(g.dispatchLocation.trim());
-    }
-    if (isFa) {
-      set.add('انبار سایت نیروگاه');
-      set.add('محوطه باز انبار');
-      set.add('انبار سرپوشیده');
-    }
-    return Array.from(set).slice(0, 40);
-  }, [invitationsList, data?.detailedItems, generalEntries, isFa]);
+  // Location suggestions strictly derived via Storage Label 20-rule Persian Warehouse mapping
+  const locationSuggestions = useMemo(
+    () =>
+      buildOpiLocationOptions(
+        data?.detailedItems || [],
+        invitationsList,
+        selectedRows.map((r) => r.packingListNo),
+      ),
+    [data?.detailedItems, invitationsList, selectedRows],
+  );
 
   // Auto-fill header fields & official MD1 document number (<PLANT>-<SUPPLIER>-####)
   const autoHeader = useMemo(
@@ -1171,109 +1134,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
 
   const invitationsPagination = useClientPagination(filteredInvitations, 25);
 
-  // Tab 2: Record OPI Inspection Results
-  const selectedInvitation = useMemo(
-    () => invitationsList.find((inv) => inv.id === resultInvitationId) || null,
-    [invitationsList, resultInvitationId],
-  );
-
-  const itemsForResults = useMemo(() => {
-    const all = data?.detailedItems || [];
-    return all.filter((d) => {
-      if (selectedInvitation && !selectedInvitation.packingNos.includes(d.shipmentNo)) {
-        return false;
-      }
-      if (resultPackingFilter && d.shipmentNo !== resultPackingFilter) {
-        return false;
-      }
-      return true;
-    });
-  }, [data, selectedInvitation, resultPackingFilter]);
-  const resultsPagination = useClientPagination(itemsForResults, 50);
-
-  useEffect(() => {
-    if (selectedInvitation) {
-      setResultOpiNo(selectedInvitation.invitationNo);
-      setResultOpiDate(selectedInvitation.date || getTodayIso());
-    }
-  }, [selectedInvitation]);
-
-  const getDraft = (item: DetailedComputed): ResultRowDraft => {
-    return (
-      rowDrafts[item.id] || {
-        selected: item.actualQty === null,
-        actualQty:
-          item.actualQty !== null && item.actualQty !== undefined
-            ? String(item.actualQty)
-            : item.packingQty !== null && item.packingQty !== undefined
-              ? String(item.packingQty)
-              : '',
-        damagedQty: item.damagedQty ? String(item.damagedQty) : '',
-        repNo: item.repNo || '',
-        repStatus: item.repStatus || '',
-        repDescription: item.repDescription || '',
-        notes: item.notes || '',
-      }
-    );
-  };
-
-  const updateDraft = (id: string, item: DetailedComputed, patch: Partial<ResultRowDraft>) => {
-    setRowDrafts((prev) => ({
-      ...prev,
-      [id]: { ...getDraft(item), ...patch },
-    }));
-  };
-
-  const handleSaveResults = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const results = itemsForResults
-      .map((item) => {
-        const d = getDraft(item);
-        if (!d.selected) return null;
-        const actualNum = d.actualQty.trim() === '' ? null : Number(d.actualQty);
-        const damagedNum = d.damagedQty.trim() === '' ? null : Number(d.damagedQty);
-        return {
-          detailedId: item.id,
-          actualQty: actualNum,
-          damagedQty: damagedNum,
-          repNo: d.repNo,
-          repStatus: d.repStatus,
-          repDescription: d.repDescription,
-          notes: d.notes,
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => Boolean(x));
-
-    if (results.length === 0) {
-      notify('warning', isFa ? 'حداقل یک قلم را انتخاب کنید.' : 'Select at least one item.');
-      return;
-    }
-
-    try {
-      const res = await apiRequest<{ updatedCount: number }>('/api/opi/results', {
-        method: 'POST',
-        body: JSON.stringify({
-          invitationId: resultInvitationId || undefined,
-          opiNo: resultOpiNo,
-          opiDate: resultOpiDate,
-          results,
-        }),
-      });
-      notify(
-        'success',
-        isFa
-          ? `نتیجه بازرسی برای ${res.updatedCount.toLocaleString('fa-IR')} قلم ثبت و موجودی محاسبه شد.`
-          : `Inspection results saved for ${res.updatedCount} items.`,
-      );
-      setRowDrafts({});
-      triggerAutoSnapshot(`OPI Results ${resultOpiNo}`);
-      onDataChanged();
-      await loadData();
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    }
-  };
-
   const invReportColumns = useMemo<PrintColumnDef<OpiInvitationRecord>[]>(
     () => [
       { key: 'invitationNo', header: t.headers.opiInvitationNo, getValue: (r) => r.invitationNo },
@@ -1282,46 +1142,14 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       { key: 'location', header: isFa ? 'مکان' : 'Location', getValue: (r) => r.location || '' },
       { key: 'supplier', header: t.headers.supplier, getValue: (r) => r.supplier || '' },
       { key: 'packingNos', header: t.headers.packingListNo, getValue: (r) => r.packingNos.join(', ') },
-      {
-        key: 'status',
-        header: isFa ? 'وضعیت' : 'Status',
-        getValue: (r) =>
-          r.status === 'completed'
-            ? isFa
-              ? 'ثبت نتیجه شده'
-              : 'Completed'
-            : isFa
-              ? 'صادرشده'
-              : 'Issued',
-      },
       { key: 'createdBy', header: isFa ? 'صادرکننده' : 'Issued By', getValue: (r) => r.createdBy },
     ],
     [t, isFa],
   );
 
-  const itemReportColumns = useMemo<PrintColumnDef<DetailedComputed>[]>(
-    () => [
-      { key: 'rowNo', header: t.headers.rowNo, getValue: (r) => r.rowNo },
-      { key: 'shipmentNo', header: t.headers.shipmentNo, getValue: (r) => r.shipmentNo },
-      { key: 'packageNo', header: t.headers.packageNo, getValue: (r) => r.packageNo },
-      { key: 'itemNo', header: t.headers.itemNo, getValue: (r) => r.itemNo },
-      { key: 'description', header: t.headers.description, getValue: (r) => r.description || r.generalDescription },
-      { key: 'countingUnit', header: t.headers.countingUnit, getValue: (r) => formatCountingUnit(r.countingUnit, prefs.language) },
-      { key: 'packingQty', header: t.headers.packingQty, getValue: (r) => r.packingQty },
-      { key: 'actualQty', header: t.headers.actualQty, getValue: (r) => r.actualQty },
-      { key: 'damagedQty', header: t.headers.damagedQty, getValue: (r) => r.damagedQty },
-      { key: 'shortage', header: t.headers.shortage, getValue: (r) => r.shortage },
-      { key: 'opiNo', header: t.headers.opiNo, getValue: (r) => r.opiNo },
-      { key: 'opiDate', header: t.headers.opiDate, isDate: true, getValue: (r) => r.opiDate },
-      { key: 'repNo', header: t.headers.repNo, getValue: (r) => r.repNo },
-      { key: 'repStatus', header: t.headers.repStatus, getValue: (r) => r.repStatus },
-    ],
-    [t, prefs.language],
-  );
-
-  // Isolated Print Portal (12mm safe margin, portrait A4, hides #root during print)
+  // Isolated Print Portal (portrait A4, hides #root during print)
   const opiPrintPortal =
-    printInvitation && !printInvTableOpen && !printItemsTableOpen
+    printInvitation && !printInvTableOpen
       ? createPortal(
           <div id="samaan-opi-print-root" data-samaan-print-portal="true">
             <style>
@@ -1360,62 +1188,21 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
     <div className="space-y-5">
       {opiPrintPortal}
 
-      {/* Top Navigation: Sub-Tabs + Unified Create/History Switcher */}
+      {/* Top Navigation: Unified Create/History Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            data-testid="opi-tab-invitation"
-            onClick={() => setTab('invitation')}
-            className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-              tab === 'invitation'
-                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            <span>
-              {isFa
-                ? 'دعوتنامه گشایش و بازرسی بسته‌ها'
-                : 'Package Opening & Inspection Invitation'}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            data-testid="opi-tab-results"
-            onClick={() => setTab('results')}
-            className={`h-10 px-4 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-              tab === 'results'
-                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]'
-            }`}
-          >
-            <ClipboardCheck className="w-4 h-4" />
-            <span>
-              {isFa
-                ? 'ثبت نتایج بازرسی (مقدار واقعی و آسیب‌دیده)'
-                : 'Record Inspection Results'}
-            </span>
-          </button>
-        </div>
-
-        {tab === 'invitation' && (
-          <OperationalViewModeTabs
-            viewMode={invViewMode}
-            onChange={setInvViewMode}
-            historyCount={invitationsList.length}
-            isFa={isFa}
-            canCreate={canEdit}
-            isEditing={Boolean(editingInvitation)}
-            testIdPrefix="opi-invitation"
-          />
-        )}
+        <OperationalViewModeTabs
+          viewMode={invViewMode}
+          onChange={setInvViewMode}
+          historyCount={invitationsList.length}
+          isFa={isFa}
+          canCreate={canEdit}
+          isEditing={Boolean(editingInvitation)}
+          testIdPrefix="opi-invitation"
+        />
       </div>
 
-      {/* TAB 1: Issue & Manage OPI Invitations (MD1EX-FQP02/02-03) */}
-      {tab === 'invitation' && (
-        <div className="space-y-5">
+      {/* Issue & Manage OPI Invitations (MD1EX-FQP02/02-03) */}
+      <div className="space-y-5">
           {canEdit && invViewMode === 'create' && (
             <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden">
               {/* Stepper Header */}
@@ -1859,7 +1646,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                           list="samaan-opi-locations"
                           value={location}
                           onChange={(e) => setLocation(e.target.value)}
-                          placeholder={isFa ? 'مثال: انبار سایت نیروگاه' : 'e.g. Site Warehouse'}
+                          placeholder={isFa ? 'مثال: انبار روباز' : 'e.g. انبار روباز'}
                           className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                         />
                         <datalist id="samaan-opi-locations">
@@ -2124,308 +1911,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               />
             </div>
           )}
-        </div>
-      )}
-
-      {/* TAB 2: Record OPI Inspection Results */}
-      {tab === 'results' && (
-        <form onSubmit={handleSaveResults} className={`space-y-4 ${printInvitation ? 'print:hidden' : ''}`}>
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'فیلتر بر اساس دعوتنامه' : 'Filter by Invitation'}
-              </label>
-              <select
-                value={resultInvitationId}
-                onChange={(e) => setResultInvitationId(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-              >
-                <option value="">{t.controls.all}</option>
-                {invitationsList.map((inv) => (
-                  <option key={inv.id} value={inv.id}>
-                    {inv.invitationNo} ({formatDate(inv.date)})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.packingListNo}
-              </label>
-              <select
-                value={resultPackingFilter}
-                onChange={(e) => setResultPackingFilter(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-              >
-                <option value="">{t.controls.all}</option>
-                {(data?.packings || []).map((pk) => (
-                  <option key={pk} value={pk}>
-                    {pk}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.opiNo}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !resultOpiNo ? 'rtl' : 'ltr'}
-                value={resultOpiNo}
-                onChange={(e) => setResultOpiNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !resultOpiNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
-
-            <JalaliDateInput
-              label={t.headers.opiDate}
-              value={resultOpiDate}
-              onChange={setResultOpiDate}
-            />
-          </div>
-
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
-            <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-[var(--text-secondary)]">
-                {isFa ? 'اقلام مشمول بازرسی گشایش' : 'Items for Opening Inspection'}
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                {resultsPagination.pageItems.length > 0 && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const allPageSelected = resultsPagination.pageItems.every(
-                          (item) => getDraft(item).selected,
-                        );
-                        setRowDrafts((prev) => {
-                          const next = { ...prev };
-                          for (const item of resultsPagination.pageItems) {
-                            const current = next[item.id] || getDraft(item);
-                            next[item.id] = { ...current, selected: !allPageSelected };
-                          }
-                          return next;
-                        });
-                      }}
-                      className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
-                    >
-                      {resultsPagination.pageItems.every((item) => getDraft(item).selected)
-                        ? isFa
-                          ? 'لغو انتخاب صفحه'
-                          : 'Deselect Page'
-                        : isFa
-                          ? 'انتخاب صفحه'
-                          : 'Select Page'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const allSelected = itemsForResults.every((item) => getDraft(item).selected);
-                        setRowDrafts((prev) => {
-                          const next = { ...prev };
-                          for (const item of itemsForResults) {
-                            const current = next[item.id] || getDraft(item);
-                            next[item.id] = { ...current, selected: !allSelected };
-                          }
-                          return next;
-                        });
-                      }}
-                      className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
-                    >
-                      {itemsForResults.every((item) => getDraft(item).selected)
-                        ? isFa
-                          ? 'لغو انتخاب کل جدول'
-                          : 'Deselect All'
-                        : isFa
-                          ? 'انتخاب کل ردیف‌های جدول'
-                          : 'Select All Rows'}
-                    </button>
-                  </>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setPrintItemsTableOpen(true)}
-                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>{t.controls.printReport}</span>
-                </button>
-              </div>
-            </div>
-
-            <StickyTableWrapper>
-              <table className="w-full text-xs">
-                <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                  <tr>
-                    <th className="py-2.5 px-3 w-12">
-                      <input
-                        type="checkbox"
-                        aria-label={isFa ? 'انتخاب همه اقلام' : 'Select all items'}
-                        checked={
-                          itemsForResults.length > 0 &&
-                          itemsForResults.every((item) => getDraft(item).selected)
-                        }
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setRowDrafts((prev) => {
-                            const next = { ...prev };
-                            for (const item of itemsForResults) {
-                              const current = next[item.id] || getDraft(item);
-                              next[item.id] = { ...current, selected: checked };
-                            }
-                            return next;
-                          });
-                        }}
-                      />
-                    </th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.shipmentNo}</th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.packageNo}</th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.itemNo}</th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.description}</th>
-                    <th className="py-2.5 px-3 text-end">{t.headers.packingQty}</th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.actualQty}</th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.damagedQty}</th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.repNo}</th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.repStatus}</th>
-                    <th className="py-2.5 px-3 text-start">{t.headers.repDescription}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {itemsForResults.length === 0 ? (
-                    <tr>
-                      <td colSpan={11} className="py-10 text-center text-[var(--text-muted)]">
-                        {t.controls.noData}
-                      </td>
-                    </tr>
-                  ) : (
-                    resultsPagination.pageItems.map((item) => {
-                      const d = getDraft(item);
-                      return (
-                        <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
-                          <td className="py-2 px-3">
-                            <input
-                              type="checkbox"
-                              checked={d.selected}
-                              onChange={(e) => updateDraft(item.id, item, { selected: e.target.checked })}
-                            />
-                          </td>
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">{item.shipmentNo}</td>
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">{item.packageNo}</td>
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">{item.itemNo}</td>
-                          <td className="py-2 px-3 max-w-[200px] truncate bidi-plaintext" title={item.description}>
-                            {item.description || item.generalDescription}
-                          </td>
-                          <td className="py-2 px-3 text-end tabular-nums font-semibold">
-                            {item.packingQty ?? '-'} {formatCountingUnit(item.countingUnit, prefs.language)}
-                          </td>
-                          <td className="py-2 px-3 w-28">
-                            <input
-                              type="number"
-                              step="any"
-                              dir={isFa && !d.actualQty ? 'rtl' : 'ltr'}
-                              disabled={!canEdit}
-                              value={d.actualQty}
-                              onChange={(e) =>
-                                updateDraft(item.id, item, { actualQty: e.target.value, selected: true })
-                              }
-                              className={`w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
-                                isFa && !d.actualQty ? 'text-right' : 'text-left'
-                              }`}
-                            />
-                          </td>
-                          <td className="py-2 px-3 w-24">
-                            <input
-                              type="number"
-                              step="any"
-                              dir={isFa && !d.damagedQty ? 'rtl' : 'ltr'}
-                              disabled={!canEdit}
-                              value={d.damagedQty}
-                              onChange={(e) =>
-                                updateDraft(item.id, item, { damagedQty: e.target.value, selected: true })
-                              }
-                              className={`w-20 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
-                                isFa && !d.damagedQty ? 'text-right' : 'text-left'
-                              }`}
-                            />
-                          </td>
-                          <td className="py-2 px-3 w-28">
-                            <input
-                              type="text"
-                              dir={isFa && !d.repNo ? 'rtl' : 'ltr'}
-                              disabled={!canEdit}
-                              value={d.repNo}
-                              onChange={(e) =>
-                                updateDraft(item.id, item, { repNo: e.target.value, selected: true })
-                              }
-                              className={`w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs ${
-                                isFa && !d.repNo ? 'text-right' : 'text-left'
-                              }`}
-                            />
-                          </td>
-                          <td className="py-2 px-3 w-28">
-                            <input
-                              type="text"
-                              dir={!d.repStatus ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                              disabled={!canEdit}
-                              value={d.repStatus}
-                              onChange={(e) =>
-                                updateDraft(item.id, item, { repStatus: e.target.value, selected: true })
-                              }
-                              className="w-24 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
-                            />
-                          </td>
-                          <td className="py-2 px-3 w-40">
-                            <input
-                              type="text"
-                              dir={!d.repDescription ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                              disabled={!canEdit}
-                              value={d.repDescription}
-                              onChange={(e) =>
-                                updateDraft(item.id, item, { repDescription: e.target.value, selected: true })
-                              }
-                              className="w-36 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </StickyTableWrapper>
-            <TablePaginationBar
-              page={resultsPagination.page}
-              totalPages={resultsPagination.totalPages}
-              total={resultsPagination.total}
-              pageSize={resultsPagination.pageSize}
-              onPageChange={resultsPagination.setPage}
-              onPageSizeChange={resultsPagination.setPageSize}
-              lang={prefs.language}
-            />
-
-            {canEdit && itemsForResults.length > 0 && (
-              <div className="p-4 border-t border-[var(--border-subtle)] flex justify-end">
-                <button
-                  type="submit"
-                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>
-                    {isFa
-                      ? 'ثبت نتایج بازرسی و محاسبه کسری/موجودی'
-                      : 'Save Inspection Results & Compute Balances'}
-                  </span>
-                </button>
-              </div>
-            )}
-          </div>
-        </form>
-      )}
+      </div>
 
       {/* Printable Official MD1EX-FQP02/02-03 OPI Invitation Preview Modal with Post-Print Undo & Redo */}
       {printInvitation && (
@@ -2539,17 +2025,9 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       <PrintReportModal
         open={printInvTableOpen}
         onClose={() => setPrintInvTableOpen(false)}
-        title={isFa ? 'فهرست دعوتنامه‌های گشایش و بازرسی بسته‌ها' : 'Issued OPI Invitations'}
+        title={isFa ? 'فهرست دعوتنامه‌های گشایش و بازرسی بسته ها' : 'Issued OPI Invitations'}
         columns={invReportColumns}
         rows={invitationsList}
-      />
-
-      <PrintReportModal
-        open={printItemsTableOpen}
-        onClose={() => setPrintItemsTableOpen(false)}
-        title={isFa ? 'گزارش اقلام و نتایج بازرسی گشایش بسته‌ها' : 'OPI Inspection Items Report'}
-        columns={itemReportColumns}
-        rows={itemsForResults}
       />
 
       <ConfirmActionModal

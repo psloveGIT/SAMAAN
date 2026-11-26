@@ -9,6 +9,7 @@ import {
   evaluateAppUpdateState,
   filterAndSortChangelog,
   mergeChangelogs,
+  resolveColdLaunchUpdatePolicy,
   type AppReleaseNote,
   type RemoteVersionPayload,
 } from './appVersion.ts';
@@ -188,5 +189,52 @@ test('mergeChangelogs and filterAndSortChangelog preserve v1.0.0 history and sup
 
   const searched = filterAndSortChangelog(merged, { query: 'انتشار اولیه' });
   assert.ok(searched.some((r) => r.version === '1.0.0'));
+});
+
+test('resolveColdLaunchUpdatePolicy keeps installed version open (never auto-reloads) and prompts user on cold reopen', () => {
+  const remote: RemoteVersionPayload = {
+    version: '2.16.2',
+    buildId: '2026.06.04-1',
+    releasedAt: '2026-06-04',
+    latestRelease: APP_CHANGELOG[0],
+    changelog: APP_CHANGELOG,
+  };
+  // Simulate app closed while 2.16.2 was published; user reopens installed 2.16.1
+  // Cold launch clears prior deferredBuildId -> evaluation enters live_update with toast visible
+  const evaluation = evaluateAppUpdateState({
+    currentBuildId: '2026.06.03-1',
+    currentVersion: '2.16.1',
+    remotePayload: remote,
+    swNeedRefresh: true,
+    lastSeenBuildId: '2026.06.03-1',
+    deferredBuildId: null,
+  });
+  const policy = resolveColdLaunchUpdatePolicy({
+    isColdLaunch: true,
+    evaluation,
+  });
+  assert.equal(policy.shouldAutoReload, false);
+  assert.equal(policy.shouldClearDeferredOnBoot, true);
+  assert.equal(policy.shouldPromptUserToUpdate, true);
+  assert.equal(evaluation.mode, 'live_update');
+  assert.equal(evaluation.shouldShowFloatingToast, true);
+  assert.equal(evaluation.shouldShowQuietBadge, true);
+
+  // When user clicks Later during the active session, prompt hides and still never auto-reloads
+  const deferredEval = evaluateAppUpdateState({
+    currentBuildId: '2026.06.03-1',
+    currentVersion: '2.16.1',
+    remotePayload: remote,
+    swNeedRefresh: true,
+    lastSeenBuildId: '2026.06.03-1',
+    deferredBuildId: '2026.06.04-1',
+  });
+  const warmPolicy = resolveColdLaunchUpdatePolicy({
+    isColdLaunch: false,
+    evaluation: deferredEval,
+  });
+  assert.equal(warmPolicy.shouldAutoReload, false);
+  assert.equal(warmPolicy.shouldClearDeferredOnBoot, false);
+  assert.equal(warmPolicy.shouldPromptUserToUpdate, false);
 });
 

@@ -23,6 +23,7 @@ import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
 import { computeSelectionFormulaSummary, isMerOpen, isRepOpen } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
+import { inferSizeFromDescription } from '../shared/sizeExtractor.ts';
 import { formatDisplayNumber, formatMultiValueCell, getTodayIso } from '../shared/jalali.ts';
 import {
   formatCountingUnit,
@@ -251,6 +252,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   const [itemNoTaken, setItemNoTaken] = useState(false);
   const [itemNoManual, setItemNoManual] = useState(false);
   const [genDescManual, setGenDescManual] = useState(false);
+  const [sizeManual, setSizeManual] = useState(false);
   const [saving, setSaving] = useState(false);
   const [knownPackings, setKnownPackings] = useState<string[]>([]);
   const [knownPackages, setKnownPackages] = useState<string[]>([]);
@@ -401,6 +403,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       setItemNoTaken(false);
       setItemNoManual(false);
       setGenDescManual(false);
+      setSizeManual(false);
       setIsSubReprocurement(false);
       setIsShortageReprocurement(false);
 
@@ -839,6 +842,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     setItemNoTaken(false);
     setItemNoManual(true);
     setGenDescManual(Boolean(row.generalDescription));
+    setSizeManual(Boolean(row.size));
     setIsSubReprocurement(false);
     setIsShortageReprocurement(false);
     setFormModalOpen(true);
@@ -988,10 +992,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           itemNo: draft.itemNo,
           generalDescription: finalGenDesc,
           description: draft.description,
-          size: draft.size,
+          size: draft.size?.trim() || inferSizeFromDescription(draft.description),
           itemCode: draft.itemCode,
           packingQty: draft.packingQty ?? null,
-          actualQty: null,
+          actualQty: draft.actualQty ?? draft.packingQty ?? null,
           damagedQty: null,
           countingUnit: draft.countingUnit,
           island: draft.island,
@@ -1053,6 +1057,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
           setLinkedGeneral(check?.linkedGeneral || linkedGeneral);
           setGenDescManual(false);
+          setSizeManual(false);
           setItemNoManual(false);
           setItemNoTaken(false);
           setIsSubReprocurement(false);
@@ -1460,11 +1465,11 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             itemNo: it.itemNo || String(baseItemNo + i),
             generalDescription: genDesc,
             description: desc,
-            size: it.size || '',
+            size: it.size || inferSizeFromDescription(desc),
             itemCode: it.itemCode || '',
             mtoRef: it.mtoRef || '',
             packingQty: it.packingQty ?? 1,
-            actualQty: null,
+            actualQty: it.actualQty ?? it.packingQty ?? 1,
             damagedQty: null,
             countingUnit: normalizeCountingUnitToFa(it.countingUnit || draft.countingUnit) || 'عدد',
             itemCategory: it.itemCategory || '',
@@ -2928,6 +2933,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         ...prev,
                         description: nextDesc,
                         ...(genDescManual ? {} : { generalDescription: inferGeneralDescription(nextDesc) }),
+                        ...(sizeManual ? {} : { size: inferSizeFromDescription(nextDesc) }),
                       }));
                     }}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
@@ -2954,7 +2960,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         }));
                       }
                     }}
-                    placeholder={isFa ? 'تشخیص خودکار از شرح کالا (مثلاً Pipe یا IPE Beam)' : 'Auto-inferred from description (e.g., Pipe, IPE Beam)'}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
                   />
                 </div>
@@ -2982,7 +2987,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                     type="text"
                     dir={isFa && !draft.size ? 'rtl' : 'ltr'}
                     value={draft.size || ''}
-                    onChange={(e) => setDraft({ ...draft, size: e.target.value })}
+                    onChange={(e) => {
+                      setSizeManual(e.target.value.trim().length > 0);
+                      setDraft({ ...draft, size: e.target.value });
+                    }}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
                       isFa && !draft.size ? 'text-right' : 'text-left'
                     }`}

@@ -580,6 +580,7 @@ const OfficialPeriodicInspectionSheet: React.FC<OfficialPeriodicInspectionSheetP
 
               {/* QA Notice Strip (All 5 Pages) */}
               <div
+                dir="rtl"
                 style={{
                   borderBottom: '1px solid #000000',
                   padding: '3px 8px',

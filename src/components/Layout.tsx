@@ -189,6 +189,7 @@ export const Layout: React.FC<LayoutProps> = ({
       });
     };
     window.addEventListener('samaan:update-status', onUpdateStatus);
+    window.dispatchEvent(new Event('samaan:request-update-status'));
     return () => window.removeEventListener('samaan:update-status', onUpdateStatus);
   }, []);
 

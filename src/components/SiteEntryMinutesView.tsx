@@ -772,6 +772,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
 
         {/* QA Explanatory Notes Box */}
         <div
+          dir="rtl"
           style={{
             padding: '5px 10px 6px',
             fontSize: '8.2px',
@@ -797,7 +798,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </div>
             </>
           )}
-          <div style={{ fontWeight: 700 }}>
+          <div dir="rtl" style={{ fontWeight: 700, textAlign: 'right' }}>
             توجه : این فرم تحت کنترل واحد QA میباشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
           </div>
         </div>

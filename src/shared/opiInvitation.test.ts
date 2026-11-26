@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import {
   buildOpiInvitationHeaderAutoFill,
   buildOpiInvitationLineItems,
+  buildOpiLocationOptions,
   computeOpenOpiInvitations,
   filterEligibleGeneralForOpi,
   formatHeaderProjectTitle,
   generateOpiInvitationNo,
+  splitOpiDocumentTokens,
   stripProjectWord,
 } from './opiInvitation.ts';
 import type { GeneralEntry } from './types.ts';
@@ -181,4 +183,76 @@ test('computeOpenOpiInvitations implements Dashboard Note (تبصره) accuratel
   assert.equal(open[1].date, '2026-05-10');
   assert.equal(open[1].totalDetailedRows, 0);
   assert.equal(open[1].linkedDetailedRows, 0);
+});
+
+test('computeOpenOpiInvitations handles multiline stacked opiNo, slash codes, Persian digits, and split-package invitations without false positives', () => {
+  assert.deepEqual(splitOpiDocumentTokens('OPI/1404/01\nOPI/1404/02'), [
+    'OPI/1404/01',
+    'OPI/1404/02',
+  ]);
+  assert.deepEqual(splitOpiDocumentTokens('NK-TU-۰۰۰۱\r\nNK-TU-۰۰۰۲'), [
+    'NK-TU-0001',
+    'NK-TU-0002',
+  ]);
+
+  const general = [
+    // Stacked multiline in Detailed opiNo -> CLOSED
+    { packingListNo: 'PK-ML-1', opiInvitationNo: 'NK-TU-0001', opiInvitationDate: '2026-06-01' },
+    // Slash-containing invitation numbers stacked in Detailed opiNo -> CLOSED
+    { packingListNo: 'PK-ML-2', opiInvitationNo: 'OPI/1404/05', opiInvitationDate: '2026-06-01' },
+    // Stacked multiline in BOTH General and Detailed -> CLOSED
+    { packingListNo: 'PK-ML-3', opiInvitationNo: 'INV-A\nINV-B', opiInvitationDate: '2026-06-01' },
+    // Split packing: row 1 has INV-C, row 2 has INV-D -> both CLOSED
+    { packingListNo: 'PK-ML-4', opiInvitationNo: 'INV-C', opiInvitationDate: '2026-06-01' },
+    { packingListNo: 'PK-ML-4', opiInvitationNo: 'INV-D', opiInvitationDate: '2026-06-02' },
+    // Partial packing: row 1 has stacked numbers, row 2 is BLANK -> STILL OPEN
+    { packingListNo: 'PK-OPEN-1', opiInvitationNo: 'NK-ME-0099', opiInvitationDate: '2026-06-03' },
+  ];
+
+  const detailed = [
+    { shipmentNo: 'PK-ML-1', opiNo: 'NK-TU-۰۰۰۱\nNK-TU-۰۰۰۲' },
+    { shipmentNo: 'PK-ML-1', opiNo: 'NK-TU-0001\nNK-TU-0003' },
+    { shipmentNo: 'PK-ML-2', opiNo: 'OPI/1404/05\nOPI/1404/06' },
+    { shipmentNo: 'PK-ML-3', opiNo: 'INV-A\nINV-B' },
+    { shipmentNo: 'PK-ML-4', opiNo: 'INV-C' },
+    { shipmentNo: 'PK-ML-4', opiNo: 'INV-D' },
+    { shipmentNo: 'PK-OPEN-1', opiNo: 'NK-ME-0099\nNK-ME-0100' },
+    { shipmentNo: 'PK-OPEN-1', opiNo: '' },
+  ];
+
+  const open = computeOpenOpiInvitations(general, detailed);
+  assert.deepEqual(
+    open.map((x) => x.invitationNo),
+    ['NK-ME-0099'],
+  );
+});
+
+test('buildOpiLocationOptions outputs strictly Persian Warehouse names from Storage Label rules (never raw codes)', () => {
+  const options = buildOpiLocationOptions(
+    [
+      { shipmentNo: 'PK-1', storageLocation: 'W1-A2' },
+      { shipmentNo: 'PK-1', storageLocation: 'CA-03' },
+      { shipmentNo: 'PK-2', storageLocation: 'CR-1' },
+      { shipmentNo: 'PK-2', storageLocation: 'S-12' },
+      { shipmentNo: 'PK-2', storageLocation: 'WNNC-04' },
+    ],
+    [{ location: 'W2-01' }, { location: 'محوطه ویژه توربین' }],
+    ['PK-1'],
+  );
+
+  // Prioritized selected packing warehouses appear first
+  assert.equal(options[0], 'انبار روباز');
+  assert.equal(options[1], 'کانتینر A');
+  // Other detailed & canonical Persian warehouses included
+  assert.ok(options.includes('اتاق ابزار دقیق'));
+  assert.ok(options.includes('سوله‌ی سر پوشیده'));
+  assert.ok(options.includes('انبار نصب نیرو ساختمان'));
+  assert.ok(options.includes('انبار باسکول'));
+  assert.ok(options.includes('محوطه ویژه توربین'));
+  // Raw storage location codes must NEVER appear
+  assert.ok(!options.includes('W1-A2'));
+  assert.ok(!options.includes('CA-03'));
+  assert.ok(!options.includes('CR-1'));
+  assert.ok(!options.includes('S-12'));
+  assert.ok(!options.includes('W2-01'));
 });

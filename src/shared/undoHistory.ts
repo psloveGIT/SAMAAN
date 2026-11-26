@@ -391,15 +391,7 @@ export function resolveAutoUndoSpec(
     };
   }
 
-  // OPI Invitations & Results
-  if (pathname === '/api/opi/results' && m === 'POST') {
-    return {
-      labelFa: 'ثبت نتایج بازرسی و گشایش بسته‌ها (OPI)',
-      labelEn: 'Record OPI Inspection Results',
-      deepScopes: ['opiInvitations'],
-      shallowScopes: ['detailed', 'general'],
-    };
-  }
+  // OPI Invitations
   if (pathname === '/api/opi' || pathname.startsWith('/api/opi/')) {
     return {
       labelFa: `${actionVerbFa} دعوتنامه گشایش بسته‌ها (OPI)`,

@@ -16,11 +16,53 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.16.1';
-export const APP_BUILD_ID = '2026.06.03-1';
-export const APP_RELEASED_AT = '2026-06-03';
+export const APP_VERSION = '2.17.0';
+export const APP_BUILD_ID = '2026.06.05-1';
+export const APP_RELEASED_AT = '2026-06-05';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.17.0',
+    buildId: '2026.06.05-1',
+    releasedAt: '2026-06-05',
+    titleFa: 'فرم رسمی رسید مصرف مستقیم کالا (MD1EX-FQP02/11-03)، صورتجلسه گشایش و گزارش مغایرت MER هم‌زمان (MD1EX-FQP02/06-03 و MD1EX-FQP02/12-03) و رفع باگ‌های ثبت جزئیات',
+    titleEn: 'Official MD1 Direct Consumption Voucher (GCV), OPI Minutes + Simultaneous Linked MER Forms & Detailed Equipment Fixes',
+    changesFa: [
+      'فعال‌سازی و بازطراحی کامل پنجمین فرم پیش‌فرض مپنا توسعه یک (MD1): «رسید مصرف مستقیم کالا (MD1EX-FQP02/11-03)» با فیلتر اقلام فاقد شماره رسید مصرف، دریافت اطلاعات خرید، تکمیل خودکار فیلدها از جزئیات و ثبت کلی، همگام‌سازی خودکار شماره و تعداد رسید مصرف، چاپ A4 افقی، Undo/Redo پس از چاپ و آرشیو اسکن امضاشده',
+      'فعال‌سازی و بازطراحی کامل ششمین فرم پیش‌فرض مپنا توسعه یک (MD1): «صورتجلسه گشایش و بازرسی بسته‌ها (MD1EX-FQP02/06-03)» متصل به دعوتنامه‌های باز OPI با صدور و چاپ هم‌زمان «گزارش مغایرت، کسری و آسیب‌دیدگی (MD1EX-FQP02/12-03)» در صورت وجود کسری یا آسیب‌دیدگی و همگام‌سازی خودکار جدول جزئیات تجهیزات',
+      'رفع باگ ثبت قلم جدید در جزئیات تجهیزات: استخراج خودکار «اندازه» از «شرح» با قابلیت ویرایش دستی و حذف هایلایت/متن نمونه فیلد «شرح کلی»',
+      'رفع باگ مقدار اولیه اقلام جدید در جزئیات تجهیزات: ثبت خودکار «مقدار واقعی» و «موجودی کارفرما» برابر «مقدار پکینگ» و «موجودی پیمانکار» برابر صفر از لحظه ثبت',
+    ],
+    changesEn: [
+      'Activated and redesigned the fifth built-in MAPNA MD1 default form: Not-Stored Goods Consumption Voucher (MD1EX-FQP02/11-03) with no-GCV filtering, procurement inputs, auto-filled header/items, Detailed table sync, Landscape A4 print, post-print Undo/Redo, and signed scan archive',
+      'Activated and redesigned the sixth built-in MAPNA MD1 default form: OPI Minutes of Meeting (MD1EX-FQP02/06-03) linked to open OPI invitations with simultaneous conditional Material Exceptions Report (MD1EX-FQP02/12-03) issuance, mixed Portrait+Landscape printing, and full Detailed Equipment sync',
+      'Fixed Detailed Equipment new-item modal: automatically infers Size from Description while keeping it editable, and removed placeholder highlight from General Description',
+      'Fixed initial quantities for newly registered Detailed Equipment rows: Actual Qty and Employer Inventory immediately equal Packing Qty and Contractor Inventory equals 0',
+    ],
+  },
+  {
+    version: '2.16.2',
+    buildId: '2026.06.04-1',
+    releasedAt: '2026-06-04',
+    titleFa: 'رفع باگ دعوتنامه‌های باز چندخطی، اصلاح دقیق فرم چاپی و مکان OPI، حذف بخش اضافی نتایج بازرسی، راست‌چین متن QA در تمام فرم‌ها و نمایش پیام اختیاری آپدیت پس از بازگشایی برنامه',
+    titleEn: 'Multiline Open OPI Fix, Exact MD1 OPI Form Copy & Persian Locations, Removed Redundant OPI Results Tab, Universal Right-Aligned QA Notices & User-Confirmed Cold-Launch Updates',
+    changesFa: [
+      'رفع باگ بخش «دعوتنامه‌های باز» در داشبورد تحلیلی: پشتیبانی کامل از ردیف‌های جزئیات دارای چند شماره دعوتنامه زیرهم (چندخطی) و جلوگیری از نمایش اشتباه آن‌ها به‌عنوان دعوتنامه باز',
+      'اصلاح لیست «مکان OPI» در بخش صدور دعوتنامه گشایش بسته‌ها جهت نمایش معادل فارسی نام انبارها بر اساس ۲۰ شرط استاندارد برچسب انبارش کالا (به‌جای کدهای خام محل نگهداری)',
+      'اصلاح دقیق عبارات و چیدمان فرم چاپی دعوتنامه گشایش و بازرسی بسته‌ها مطابق فرم اصلی MD1: انتقال «OPI Invitation» به مرکز سربرگ و حذف «OPI Inspection Invitation»، بازگردانی عنوان دقیق «دعوتنامه گشایش و بازرسی بسته ها»، بازگردانی عبارت امضاء «تامین تجهیزات توسعه یک» و تکمیل خودکار ستون «Item No.» هنگام چاپ مجدد از سابقه فرم‌ها',
+      'حذف کامل بخش اضافی «ثبت نتایج بازرسی (مقدار واقعی و آسیب‌دیده)» و موارد مرتبط با آن از بخش دعوتنامه گشایش بسته‌ها',
+      'راست‌چین کردن قطعی عبارت «توجه: این فرم تحت کنترل واحد QA می‌باشد...» در تمام فرم‌های چاپی سامانه',
+      'اصلاح مکانیزم بروزرسانی هنگام بسته بودن برنامه: باز شدن ابتدا با همان نسخه نصب‌شده روی سیستم کاربر، بررسی فوری نسخه جدید و نمایش پیغام بروزرسانی تا کاربر در صورت تمایل آن را آپدیت کند',
+    ],
+    changesEn: [
+      'Fixed Dashboard "Open OPI Invitations" so Detailed rows containing multiple stacked (multiline) invitation numbers are properly matched and never falsely flagged as open',
+      'Updated the "OPI Location" options in OPI Invitation issuance to strictly show Persian Warehouse equivalents mapped from the 20 Storage Label warehouse rules instead of raw storage location codes',
+      'Restored exact official MD1EX-FQP02/02-03 wording and header layout: moved "OPI Invitation" to the center header (removing "OPI Inspection Invitation"), restored exact title "دعوتنامه گشایش و بازرسی بسته ها" and signatory label "تامین تجهیزات توسعه یک", and fixed blank "Item No." on History re-prints',
+      'Removed the redundant "Record Inspection Results (Actual & Damaged)" tab and related handlers from OPI Invitation',
+      'Enforced right-aligned RTL layout for the QA control notice across every printable form in the application',
+      'Refined closed-app reopen updates: opens the currently installed version first without forced reload, immediately checks for updates, and prompts the user to update only if they choose to',
+    ],
+  },
   {
     version: '2.16.1',
     buildId: '2026.06.03-1',
@@ -696,5 +738,33 @@ export function evaluateAppUpdateState(input: UpdateEvaluationInput): UpdateEval
     shouldShowFloatingToast: false,
     shouldShowQuietBadge: false,
     releases: [localChangelog[0]],
+  };
+}
+
+export interface ColdLaunchUpdatePolicyInput {
+  isColdLaunch: boolean;
+  evaluation: Pick<UpdateEvaluationResult, 'mode' | 'shouldShowFloatingToast' | 'targetBuildId'>;
+}
+
+export interface ColdLaunchUpdatePolicy {
+  shouldAutoReload: false;
+  shouldClearDeferredOnBoot: boolean;
+  shouldPromptUserToUpdate: boolean;
+}
+
+/**
+ * Policy when an update is published while the app is closed and the user reopens it:
+ * 1) Never auto-reload; always open the currently installed version first.
+ * 2) Clear any prior session deferral on cold launch so the update prompt is shown freshly.
+ * 3) Prompt the user to update only if they choose to click Update Now.
+ */
+export function resolveColdLaunchUpdatePolicy(
+  input: ColdLaunchUpdatePolicyInput,
+): ColdLaunchUpdatePolicy {
+  return {
+    shouldAutoReload: false,
+    shouldClearDeferredOnBoot: input.isColdLaunch,
+    shouldPromptUserToUpdate:
+      input.evaluation.mode === 'live_update' && input.evaluation.shouldShowFloatingToast,
   };
 }

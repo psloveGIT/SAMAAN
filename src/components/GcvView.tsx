@@ -1,23 +1,41 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, FileCheck2, Pencil, Printer, Trash2, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  FileCheck2,
+  Pencil,
+  Printer,
+  Redo2,
+  RotateCcw,
+  Trash2,
+  Undo2,
+  X,
+} from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { roundQty } from '../shared/formulas.ts';
-import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
+import { triggerAppPrint } from '../lib/print.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
+import {
+  buildGcvHeaderAutoFill,
+  combineGcvRemark,
+  GCV_PURCHASE_BY_OPTIONS,
+  generateGcvReceiptNo,
+  MD1_GCV_COMPANY_NAME,
+  MD1_GCV_COPY_TEXT,
+  MD1_GCV_FORM_CODE,
+  MD1_GCV_QA_NOTICE,
+  MD1_GCV_TITLE_EN,
+  MD1_GCV_TITLE_FA,
+  resolveGcvQuantities,
+  type GcvPurchaseByOption,
+} from '../shared/gcv.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { formatHeaderProjectTitle } from '../shared/opiInvitation.ts';
 import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
-import {
-  OperationalViewModeTabs,
-  type OperationalViewMode,
-} from './OperationalViewModeTabs.tsx';
-import {
-  BuiltInSheetHeaderRow,
-  OfficialExtraMetaStrip,
-  OfficialFormSignatures,
-} from './OfficialSheetHeader.tsx';
 import type {
   DetailedComputed,
   DocumentLineItem,
@@ -26,18 +44,23 @@ import type {
 } from '../shared/types.ts';
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
+import { BuiltInSheetHeaderRow, OfficialExtraMetaStrip } from './OfficialSheetHeader.tsx';
+import {
+  OperationalViewModeTabs,
+  type OperationalViewMode,
+} from './OperationalViewModeTabs.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
+import { SubstitutionItemPicker } from './SubstitutionItemPicker.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface GcvApiResponse {
   documents: GcvDocumentRecord[];
   detailedItems: DetailedComputed[];
   generalEntries?: GeneralEntry[];
-  packings?: string[];
-  totalDetailedCount?: number;
+  allUsedDocNos?: string[];
 }
 
 interface GcvViewProps {
@@ -55,22 +78,10 @@ const GcvRadioCircle: React.FC<{ checked?: boolean }> = ({ checked }) => (
       height: '12px',
       borderRadius: '9999px',
       border: '1.3px solid #000000',
-      backgroundColor: '#ffffff',
+      backgroundColor: checked ? '#000000' : '#ffffff',
       flexShrink: 0,
     }}
-  >
-    {checked && (
-      <span
-        style={{
-          width: '6.5px',
-          height: '6.5px',
-          borderRadius: '9999px',
-          backgroundColor: '#000000',
-          display: 'block',
-        }}
-      />
-    )}
-  </span>
+  />
 );
 
 interface OfficialGcvSheetProps {
@@ -79,15 +90,32 @@ interface OfficialGcvSheetProps {
   formatDate: (iso: string) => string;
 }
 
-const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
+export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
   doc,
   detailedItems,
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
   const design = resolveBuiltInFormDesign(activeEmployer, 'gcv');
-  const formCode = design.docCode;
-  const displayProjectName = doc.projectName?.trim() || activeProject?.name || '..................';
+  const isMd1Default = activeEmployer.id === 'mapna-md1' && !design.template;
+  const formCode = isMd1Default ? MD1_GCV_FORM_CODE : design.docCode || MD1_GCV_FORM_CODE;
+
+  const effectiveDesign = useMemo(
+    () =>
+      isMd1Default
+        ? {
+            ...design,
+            companyTitle: MD1_GCV_COMPANY_NAME,
+            titleFa: MD1_GCV_TITLE_FA,
+            titleEn: MD1_GCV_TITLE_EN,
+            docCode: MD1_GCV_FORM_CODE,
+            footerCopyText: MD1_GCV_COPY_TEXT,
+          }
+        : design,
+    [design, isMd1Default],
+  );
+
+  const projectHeaderTitle = formatHeaderProjectTitle(doc.projectName || activeProject?.name);
 
   const detailedById = useMemo(() => {
     const map = new Map<string, DetailedComputed>();
@@ -97,17 +125,19 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
 
   const minRows = 6;
   const totalDisplayRows = Math.max(minRows, doc.items.length);
-  const paddedRows: (DocumentLineItem | null)[] = [
+  const paddedRows: Array<DocumentLineItem | null> = [
     ...doc.items,
     ...Array.from({ length: Math.max(0, totalDisplayRows - doc.items.length) }, () => null),
   ];
 
-  const receiverMgrText = doc.receiverManager || doc.receiver || '';
+  const purchaseByLabel = (opt: GcvPurchaseByOption) =>
+    GCV_PURCHASE_BY_OPTIONS.find((o) => o.value === opt)?.labelFa || '';
 
   return (
     <div
       dir="rtl"
-      className={design.orientation === 'portrait' ? 'samaan-a4-portrait' : 'samaan-a4-landscape'}
+      data-testid="official-gcv-sheet"
+      className="samaan-a4-landscape samaan-print-sheet-landscape"
       style={{
         backgroundColor: '#ffffff',
         color: '#000000',
@@ -117,11 +147,12 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
       }}
     >
       {/* Upper Main Frame */}
-      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+      <div style={{ border: `1.8px solid ${effectiveDesign.accentColor || '#000000'}` }}>
         <BuiltInSheetHeaderRow
           employer={activeEmployer}
-          design={design}
-          projectTitle={`پروژه ${displayProjectName}`}
+          design={effectiveDesign}
+          projectTitle={projectHeaderTitle}
+          compact
           leftMetaSlot={
             <div
               style={{
@@ -134,13 +165,27 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
                 gap: '6px',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
                 <span>شماره:</span>
                 <span dir="ltr" className="tabular-nums">
                   {doc.receiptNo}
                 </span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
                 <span>تاریخ:</span>
                 <span dir="ltr" className="tabular-nums">
                   {formatDate(doc.date)}
@@ -149,15 +194,19 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             </div>
           }
         />
-        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
+        <OfficialExtraMetaStrip
+          design={effectiveDesign}
+          inset
+          borderColor={effectiveDesign.accentColor}
+        />
 
-        {/* Metadata Strip Row 1 (5 columns RTL: درخواست خرید | تامین کننده | کارشناس خرید | شماره بسته خرید | Realised Note No.) */}
+        {/* Metadata Strip Row 1 (5 columns RTL: درخواست خرید | تامین کننده | کارشناس خرید | شماره بسته خريد | Realised Note No.) */}
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1.05fr 1.15fr 1.15fr 1.1fr 1.15fr',
+            gridTemplateColumns: '1.05fr 1.15fr 1.1fr 1.1fr 1.15fr',
             borderBottom: '1px solid #000000',
-            fontSize: '9.8px',
+            fontSize: '9.6px',
             textAlign: 'right',
           }}
         >
@@ -176,7 +225,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             <span className="bidi-plaintext">{doc.buyerName || ''}</span>
           </div>
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
-            <strong style={{ fontWeight: 700 }}>شماره بسته خرید: </strong>
+            <strong style={{ fontWeight: 700 }}>شماره بسته خريد: </strong>
             <span dir="ltr" className="tabular-nums">
               {doc.purchasePackageNo || ''}
             </span>
@@ -187,40 +236,64 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           </div>
         </div>
 
-        {/* Metadata Strip Row 2 (Single continuous row RTL: خرید توسط: ○ تدارکات تهران ○ مالی- اداری کارگاه ○ پیمانکار تامین کننده | جزیره/سیستم: | شماره بارنامه:) */}
+        {/* Metadata Strip Row 2 (3 columns RTL with vertical dividers: خريد توسط | جزیره:/سیستم: | شماره بارنامه:) */}
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1.8fr 1fr 1fr',
-            alignItems: 'center',
+            gridTemplateColumns: '2fr 1fr 1fr',
+            alignItems: 'stretch',
             borderBottom: '1px solid #000000',
-            padding: '5px 8px',
-            fontSize: '9.8px',
+            fontSize: '9.6px',
             textAlign: 'right',
           }}
         >
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
-            <strong style={{ fontWeight: 700 }}>خرید توسط:</strong>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-              <GcvRadioCircle checked={doc.purchaseBy === 'tehran_proc'} />
-              <span>تدارکات تهران</span>
-            </span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-              <GcvRadioCircle checked={doc.purchaseBy === 'site_admin'} />
-              <span>مالی- اداری کارگاه</span>
-            </span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-              <GcvRadioCircle checked={doc.purchaseBy === 'contractor_supplier'} />
-              <span>پیمانکار تامین کننده</span>
-            </span>
+          <div
+            style={{
+              borderLeft: '1px solid #000000',
+              padding: '5px 8px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <strong style={{ fontWeight: 700 }}>خريد توسط:</strong>
+            {(['tehran_proc', 'site_admin', 'contractor_supplier'] as const).map((opt) => (
+              <span
+                key={opt}
+                data-testid={`gcv-sheet-purchaseby-${opt}`}
+                data-checked={doc.purchaseBy === opt ? 'true' : 'false'}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <GcvRadioCircle checked={doc.purchaseBy === opt} />
+                <span>{purchaseByLabel(opt)}</span>
+              </span>
+            ))}
           </div>
 
-          <div style={{ textAlign: 'center' }}>
-            <strong style={{ fontWeight: 700 }}>جزیره/سیستم: </strong>
+          <div
+            style={{
+              borderLeft: '1px solid #000000',
+              padding: '5px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+            }}
+          >
+            <strong style={{ fontWeight: 700 }}>جزیره:/سیستم: </strong>
             <span className="bidi-plaintext">{doc.islandSystem || ''}</span>
           </div>
 
-          <div style={{ textAlign: 'center' }}>
+          <div
+            style={{
+              padding: '5px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+            }}
+          >
             <strong style={{ fontWeight: 700 }}>شماره بارنامه: </strong>
             <span dir="ltr" className="tabular-nums">
               {doc.waybillNo || ''}
@@ -235,36 +308,107 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           style={{
             width: '100%',
             borderCollapse: 'collapse',
-            fontSize: '9.3px',
+            fontSize: '9.2px',
           }}
         >
           <thead>
             <tr style={{ backgroundColor: '#e5e7eb', fontWeight: 700 }}>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
                 Item No.
               </th>
-              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th
+                className="samaan-col-code"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
                 PL/Package No.
               </th>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
                 Package Item
               </th>
-              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 6px' }}>
+              <th
+                className="samaan-col-fluid"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 6px',
+                  textAlign: 'center',
+                }}
+              >
                 Description
               </th>
-              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th
+                className="samaan-col-fluid"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
                 Technical info/Size
               </th>
-              <th className="samaan-col-code" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th
+                className="samaan-col-code"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
                 Tag No.
               </th>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
                 UOM
               </th>
-              <th className="samaan-col-compact" style={{ borderBottom: '1px solid #000000', borderRight: '1px solid #000000', padding: '5px 4px' }}>
+              <th
+                className="samaan-col-compact"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 4px',
+                  textAlign: 'center',
+                }}
+              >
                 Quantity
               </th>
-              <th className="samaan-col-fluid" style={{ borderBottom: '1px solid #000000', padding: '5px 5px' }}>
+              <th
+                className="samaan-col-fluid"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  padding: '5px 5px',
+                  textAlign: 'center',
+                }}
+              >
                 Remark
               </th>
             </tr>
@@ -274,65 +418,134 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
               const detailed = row ? detailedById.get(row.detailedId) : undefined;
               const isLast = idx === paddedRows.length - 1;
               const rowBottomBorder = isLast ? 'none' : '1px solid #000000';
-              const plPkgText = row ? [row.shipmentNo, row.packageNo].filter(Boolean).join(' / ') : '';
+              // Rule 1-12: PL/Package No. = Detailed shipmentNo ("شماره محموله")
+              const plText = row ? (row.shipmentNo || detailed?.shipmentNo || '') : '';
+              // Rule 1-13: Package Item = Detailed packageNo ("شماره نگله")
+              const pkgItemText = row ? (row.packageNo || detailed?.packageNo || '') : '';
+              // Rule 1-14: Description = Detailed description ("شرح")
+              const descText = row
+                ? row.description || detailed?.description || detailed?.generalDescription || ''
+                : '';
+              // Rule 1-15: Technical info/Size = Detailed size ("اندازه")
               const techText = row ? (row.technicalInfo || detailed?.size || '') : '';
-              const tagText = row ? (row.tagNo || detailed?.itemCode || '') : '';
+              // Rule 1-16: Tag No. = Detailed itemNo ("شماره آیتم")
+              const tagText = row ? (row.tagNo || row.itemNo || detailed?.itemNo || '') : '';
+              // Rule 1-17: UOM = Detailed countingUnit ("واحد شمارش")
               const uomText = row ? (row.uom || detailed?.countingUnit || '') : '';
-              const remarkText = row ? (row.remark || (idx === 0 && doc.notes ? doc.notes : '')) : '';
+              // Rule 1-20: Remark = Detailed equipment notes + userRemark stacked underneath
+              const remarkText = row
+                ? combineGcvRemark(
+                    row.equipmentNotes !== undefined ? row.equipmentNotes : detailed?.notes,
+                    row.userRemark,
+                  ) ||
+                  row.remark ||
+                  ''
+                : '';
 
               return (
                 <tr key={row ? `${row.detailedId}-${idx}` : `empty-${idx}`}>
                   <td
                     className="tabular-nums samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
                   >
                     {row ? idx + 1 : '\u00A0'}
                   </td>
                   <td
                     className="tabular-nums samaan-col-code"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
                   >
-                    {plPkgText}
+                    {plText}
                   </td>
                   <td
                     className="tabular-nums samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
                   >
-                    {row?.itemNo || ''}
+                    {pkgItemText}
                   </td>
                   <td
+                    dir="auto"
                     className="bidi-plaintext samaan-col-fluid"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 6px' }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 6px',
+                      textAlign: 'center',
+                      whiteSpace: 'pre-line',
+                    }}
                   >
-                    {row?.description || ''}
+                    {descText}
                   </td>
                   <td
+                    dir="auto"
                     className="bidi-plaintext samaan-col-fluid"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
                   >
                     {techText}
                   </td>
                   <td
                     className="tabular-nums samaan-col-code"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
                   >
                     {tagText}
                   </td>
                   <td
+                    dir="auto"
                     className="bidi-plaintext samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px' }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                    }}
                   >
                     {uomText}
                   </td>
                   <td
                     className="tabular-nums samaan-col-compact"
-                    style={{ borderBottom: rowBottomBorder, borderRight: '1px solid #000000', padding: '4px 4px', fontWeight: 700 }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      borderRight: '1px solid #000000',
+                      padding: '4px 4px',
+                      textAlign: 'center',
+                      fontWeight: 700,
+                    }}
                   >
                     {row ? row.qty : ''}
                   </td>
                   <td
+                    dir="auto"
                     className="bidi-plaintext samaan-col-fluid"
-                    style={{ borderBottom: rowBottomBorder, padding: '4px 5px' }}
+                    style={{
+                      borderBottom: rowBottomBorder,
+                      padding: '4px 5px',
+                      textAlign: 'center',
+                      whiteSpace: 'pre-line',
+                    }}
                   >
                     {remarkText}
                   </td>
@@ -343,8 +556,14 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
         </table>
       </div>
 
-      {/* Separate Lower Approval Frame */}
-      <div className="samaan-keep-together" style={{ border: '1.8px solid #000000', marginTop: '12px' }}>
+      {/* Lower Approval, QA Notice & Enclosed Footer Frame */}
+      <div
+        className="samaan-keep-together"
+        style={{
+          border: `1.8px solid ${effectiveDesign.accentColor || '#000000'}`,
+          marginTop: '10px',
+        }}
+      >
         {/* Row 1: امضاء */}
         <div
           style={{
@@ -359,7 +578,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           امضاء
         </div>
 
-        {/* Row 2: Group Headers */}
+        {/* Row 2: 2 Group Headers (verbatim MD1EX-FQP02/11-03) */}
         <div
           style={{
             display: 'grid',
@@ -371,28 +590,21 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           }}
         >
           <div style={{ borderLeft: '1px solid #000000', padding: '4px 8px' }}>
-            تحویل گیرنده / پیمانکار نصب
+            تحویل گيرنده / پیمانکار نصب
           </div>
           <div style={{ padding: '4px 8px' }}>
-            {activeEmployer.companyFullName}
+            {isMd1Default ? 'شركت توسعه یک مپنا' : activeEmployer.companyFullName}
           </div>
         </div>
 
-        {/* Row 3: 4 Equal Signature Boxes */}
-        {(design.template?.signatures?.length || !design.showSignatures) ? (
-          <OfficialFormSignatures
-            signatures={design.signatures}
-            showSignatures={design.showSignatures}
-            borderColor={design.accentColor}
-          />
-        ) : (
+        {/* Row 3: 4 Equal Signature Boxes (verbatim MD1EX-FQP02/11-03) */}
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: '1fr 1fr 1fr 1fr',
-            minHeight: '78px',
+            minHeight: '72px',
             borderBottom: '1px solid #000000',
-            fontSize: '9.5px',
+            fontSize: '9.4px',
             textAlign: 'right',
           }}
         >
@@ -424,11 +636,11 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>مدیر پروژه / سرپرست کارگاه/ دفتر فنی:</div>
+              <div style={{ fontWeight: 700 }}>مدير پروژه / سرپرست كارگاه/ دفتر فنی:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
-              {receiverMgrText}
+              {doc.receiverManager || ''}
             </div>
           </div>
 
@@ -459,7 +671,7 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>مدیر پروژه/ سرپرست کارگاه:</div>
+              <div style={{ fontWeight: 700 }}>مدير پروژه/ سرپرست كارگاه:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
@@ -467,101 +679,104 @@ const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             </div>
           </div>
         </div>
-        )}
 
-        {/* Row 4: QA Control Note inside bottom of Approval Frame */}
+        {/* Row 4: Right-Aligned QA Notice */}
         <div
+          dir="rtl"
+          data-testid="gcv-qa-notice"
           style={{
             padding: '4px 10px',
             fontSize: '8.5px',
             fontWeight: 600,
-            textAlign: 'left',
+            textAlign: 'right',
+            borderBottom: '1px solid #000000',
           }}
         >
-          {design.template?.introText ||
-            'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.'}
+          {effectiveDesign.template?.introText || MD1_GCV_QA_NOTICE}
         </div>
-      </div>
 
-      {/* Outside Bottom Footer Strip */}
-      <div
-        style={{
-          marginTop: '4px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 4px',
-          fontSize: '9px',
-          fontWeight: 700,
-        }}
-      >
-        <div>{design.template?.footerCopyText || 'رونوشت: معاونت تامین ، امور مالی، واحد کنترل کالا و انبار، پیمانکار نصب'}</div>
-        {(formCode || design.revisionText) && (
-          <div dir="ltr" className="tabular-nums">
-            {[formCode, design.revisionText].filter(Boolean).join(' · ')}
-          </div>
-        )}
+        {/* Row 5: Enclosed Copy & Form Code Footer */}
+        <div
+          dir="rtl"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '4px 10px',
+            fontSize: '8.8px',
+            fontWeight: 700,
+          }}
+        >
+          <span>{effectiveDesign.footerCopyText || MD1_GCV_COPY_TEXT}</span>
+          <span dir="ltr" className="tabular-nums">
+            {[formCode, effectiveDesign.revisionText].filter(Boolean).join(' · ')}
+          </span>
+        </div>
       </div>
     </div>
   );
 };
 
 export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
+  const {
+    prefs,
+    t,
+    user,
+    notify,
+    formatDate,
+    triggerAutoSnapshot,
+    activeEmployer,
+    activeProject,
+    historyStatus,
+    historyBusy,
+    performUndo,
+    performRedo,
+  } = useApp();
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
-  const formCode = getEmployerFormCode(activeEmployer, '11-03');
+  const formCode = getEmployerFormCode(activeEmployer, '11-03') || MD1_GCV_FORM_CODE;
 
   const [viewMode, setViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
+  const [step, setStep] = useState<1 | 2>(1);
   const [data, setData] = useState<GcvApiResponse | null>(null);
-  const suggestedReceiptNo = useMemo(
-    () =>
-      generateNextPlantAwareDocNo(
-        'GCV',
-        (data?.documents || []).map((d) => d.receiptNo),
-        extractPlantDocConfig(activeProject),
-      ),
-    [data?.documents, activeProject],
-  );
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
+  // Step 1 Selection state + Selection Undo/Redo stack
+  const [selectedMap, setSelectedMap] = useState<Record<string, DetailedComputed>>({});
+  const [selectionPast, setSelectionPast] = useState<Array<Record<string, DetailedComputed>>>([]);
+  const [selectionFuture, setSelectionFuture] = useState<Array<Record<string, DetailedComputed>>>([]);
+
+  // Step 2 Form inputs
   const [receiptNo, setReceiptNo] = useState('');
+  const [receiptNoTouched, setReceiptNoTouched] = useState(false);
   const [date, setDate] = useState(getTodayIso());
-  const [receiver, setReceiver] = useState('');
   const [purchaseRequestNo, setPurchaseRequestNo] = useState('');
-  const [supplier, setSupplier] = useState('');
   const [buyerName, setBuyerName] = useState('');
   const [purchasePackageNo, setPurchasePackageNo] = useState('');
-  const [releaseNoteNo, setReleaseNoteNo] = useState('');
-  const [purchaseBy, setPurchaseBy] = useState<
-    'tehran_proc' | 'site_admin' | 'contractor_supplier' | ''
-  >('');
-  const [islandSystem, setIslandSystem] = useState('');
-  const [waybillNo, setWaybillNo] = useState('');
-  const [storekeeper, setStorekeeper] = useState('');
-  const [receiverManager, setReceiverManager] = useState('');
-  const [equipmentSupply, setEquipmentSupply] = useState('');
-  const [mapnaSiteManager, setMapnaSiteManager] = useState('');
-  const [notes, setNotes] = useState('');
+  const [purchaseBy, setPurchaseBy] = useState<GcvPurchaseByOption | ''>('');
+  const [userRemarkMap, setUserRemarkMap] = useState<Record<string, string>>({});
 
-  const [itemSearch, setItemSearch] = useState('');
-  const [shipmentFilter, setShipmentFilter] = useState('');
-  const [lastAutoPacking, setLastAutoPacking] = useState('');
-  const [qtyMap, setQtyMap] = useState<Record<string, string>>({});
-  const [remarkMap, setRemarkMap] = useState<Record<string, string>>({});
+  // Optional header overrides (collapsed by default — auto-filled from Detailed + General)
+  const [showAdvancedHeader, setShowAdvancedHeader] = useState(false);
+  const [supplierOverride, setSupplierOverride] = useState('');
+  const [releaseNoteOverride, setReleaseNoteOverride] = useState('');
+  const [islandSystemOverride, setIslandSystemOverride] = useState('');
+  const [waybillOverride, setWaybillOverride] = useState('');
+
+  // History / Edit / Delete / Print / Scan state
+  const [historySearch, setHistorySearch] = useState('');
   const [editingDoc, setEditingDoc] = useState<GcvDocumentRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GcvDocumentRecord | null>(null);
   const [printDoc, setPrintDoc] = useState<GcvDocumentRecord | null>(null);
+  const [printDocWasUndone, setPrintDocWasUndone] = useState(false);
   const [printReportOpen, setPrintReportOpen] = useState(false);
   const [scanTarget, setScanTarget] = useState<GcvDocumentRecord | null>(null);
 
-  const loadData = useCallback(async (opts?: { packing?: string; search?: string }) => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ compact: '1', limit: '80' });
-      if (opts?.packing) qs.set('packing', opts.packing);
-      if (opts?.search) qs.set('search', opts.search);
-      const res = await apiRequest<GcvApiResponse>(`/api/gcv?${qs.toString()}`);
+      const res = await apiRequest<GcvApiResponse>('/api/gcv');
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -571,217 +786,240 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   }, [notify]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      loadData({ packing: shipmentFilter, search: itemSearch.trim() });
-    }, itemSearch ? 220 : 0);
-    return () => window.clearTimeout(timer);
-  }, [loadData, refreshSignal, shipmentFilter, itemSearch]);
+    void loadData();
+  }, [loadData, refreshSignal]);
 
-  const oldQtyByDetailedId = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const line of editingDoc?.items || []) {
-      map.set(line.detailedId, roundQty((map.get(line.detailedId) || 0) + line.qty));
+  // Keep Print Preview modal synced with Undo/Redo
+  useEffect(() => {
+    if (!printDoc || !data) return;
+    const found = (data.documents || []).find((d) => d.id === printDoc.id);
+    if (found) {
+      setPrintDocWasUndone(false);
+      if (found !== printDoc) setPrintDoc(found);
+    } else {
+      setPrintDocWasUndone(true);
     }
-    return map;
-  }, [editingDoc]);
+  }, [data, printDoc]);
 
-  const getAvailableQty = useCallback(
-    (item: DetailedComputed) => roundQty(item.mapnaInventory + (oldQtyByDetailedId.get(item.id) || 0)),
-    [oldQtyByDetailedId],
+  // Keep scanTarget synced after upload/delete
+  useEffect(() => {
+    if (!scanTarget || !data) return;
+    const updated = (data.documents || []).find((d) => d.id === scanTarget.id);
+    if (updated && updated.signedScan !== scanTarget.signedScan) {
+      setScanTarget(updated);
+    }
+  }, [data, scanTarget]);
+
+  const suggestedReceiptNo = useMemo(
+    () =>
+      generateGcvReceiptNo(
+        data?.allUsedDocNos || (data?.documents || []).map((d) => d.receiptNo),
+        activeProject,
+      ),
+    [data?.allUsedDocNos, data?.documents, activeProject],
   );
 
-  const knownPackings = useMemo(() => {
-    if (data?.packings && data.packings.length > 0) return data.packings;
-    const set = new Set<string>();
-    for (const d of data?.detailedItems || []) {
-      if (!d.opiPending && (d.mapnaInventory > 0 || oldQtyByDetailedId.has(d.id)) && d.shipmentNo) {
-        set.add(d.shipmentNo);
-      }
+  // Auto-populate unique receipt number when creating a new GCV
+  useEffect(() => {
+    if (!editingDoc && !receiptNoTouched && suggestedReceiptNo) {
+      setReceiptNo(suggestedReceiptNo);
     }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [data, oldQtyByDetailedId]);
+  }, [editingDoc, receiptNoTouched, suggestedReceiptNo]);
 
-  const deliverableItems = useMemo(() => {
-    const all = (data?.detailedItems || []).filter(
-      (d) => (!d.opiPending && getAvailableQty(d) > 0) || oldQtyByDetailedId.has(d.id),
-    );
-    const byShipment = shipmentFilter
-      ? all.filter((d) => (d.shipmentNo || '').trim() === shipmentFilter)
-      : all;
-    const q = itemSearch.trim().toLowerCase();
-    if (!q) return byShipment;
-    return byShipment.filter((d) =>
-      [d.shipmentNo, d.packageNo, d.itemNo, d.description, d.generalDescription, d.itemCode, d.size]
-        .join(' ')
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [data, shipmentFilter, itemSearch, getAvailableQty, oldQtyByDetailedId]);
+  const selectedList = useMemo(() => Object.values(selectedMap), [selectedMap]);
 
-  const detailedLookup = useMemo(() => {
-    const map = new Map<string, DetailedComputed>();
-    for (const d of data?.detailedItems || []) map.set(d.id, d);
-    return map;
-  }, [data]);
+  const autoFilledHeader = useMemo(
+    () => buildGcvHeaderAutoFill(selectedList, data?.generalEntries || [], activeProject),
+    [selectedList, data?.generalEntries, activeProject],
+  );
 
-  const documentsList = useMemo(() => data?.documents || [], [data]);
-  const docsPagination = useClientPagination(documentsList, 50);
+  const effectiveSupplier = supplierOverride.trim() || autoFilledHeader.supplier;
+  const effectiveReleaseNote = releaseNoteOverride.trim() || autoFilledHeader.releaseNoteNo;
+  const effectiveIslandSystem = islandSystemOverride.trim() || autoFilledHeader.islandSystem;
+  const effectiveWaybill = waybillOverride.trim() || autoFilledHeader.waybillNo;
 
-  const autoFillFromPacking = useCallback(
-    (pk: string, pkgNo = '', detItem?: DetailedComputed) => {
-      if (!pk) return;
-      const generalEntries = data?.generalEntries || [];
-      const genMatch =
-        generalEntries.find(
-          (g) =>
-            (g.packingListNo || '').trim() === pk.trim() &&
-            (!pkgNo || (g.packageNo || '').trim() === pkgNo.trim()),
-        ) || generalEntries.find((g) => (g.packingListNo || '').trim() === pk.trim());
-      const detMatch =
-        detItem || (data?.detailedItems || []).find((d) => (d.shipmentNo || '').trim() === pk.trim());
-
-      const nextSupplier = detMatch?.supplier || genMatch?.supplier || '';
-      const nextIslandSystem = [
-        detMatch?.island || genMatch?.island,
-        detMatch?.system || genMatch?.system,
-      ]
-        .map((s) => (s || '').trim())
-        .filter(Boolean)
-        .join(' / ');
-      const nextWaybill = genMatch?.billOfLadingNo || '';
-      const nextRelease = genMatch?.releaseNo || '';
-      const nextPr = detMatch?.mtoRef || '';
-
-      const switchedPacking = lastAutoPacking !== pk;
-      if (switchedPacking || !supplier.trim()) {
-        if (nextSupplier) setSupplier(nextSupplier);
-      }
-      if (switchedPacking || !islandSystem.trim()) {
-        if (nextIslandSystem) setIslandSystem(nextIslandSystem);
-      }
-      if (switchedPacking || !waybillNo.trim()) {
-        if (nextWaybill) setWaybillNo(nextWaybill);
-      }
-      if (switchedPacking || !releaseNoteNo.trim()) {
-        if (nextRelease) setReleaseNoteNo(nextRelease);
-      }
-      if (switchedPacking || !purchaseRequestNo.trim()) {
-        if (nextPr) setPurchaseRequestNo(nextPr);
-      }
-      setLastAutoPacking(pk);
+  // Selection history helpers
+  const commitSelection = useCallback(
+    (next: Record<string, DetailedComputed>) => {
+      setSelectionPast((prev) => [...prev.slice(-29), selectedMap]);
+      setSelectionFuture([]);
+      setSelectedMap(next);
     },
-    [data, lastAutoPacking, supplier, islandSystem, waybillNo, releaseNoteNo, purchaseRequestNo],
+    [selectedMap],
   );
 
-  const updateItemQty = (item: DetailedComputed, value: string) => {
-    setQtyMap((prev) => ({ ...prev, [item.id]: value }));
-    if (Number(value) > 0) {
-      autoFillFromPacking(item.shipmentNo, item.packageNo, item);
-    }
+  const handleToggleRow = useCallback(
+    (item: DetailedComputed) => {
+      const next = { ...selectedMap };
+      if (next[item.id]) {
+        delete next[item.id];
+      } else {
+        next[item.id] = item;
+      }
+      commitSelection(next);
+    },
+    [selectedMap, commitSelection],
+  );
+
+  const handleTogglePage = useCallback(
+    (rows: DetailedComputed[], allSelected: boolean) => {
+      const next = { ...selectedMap };
+      if (allSelected) {
+        for (const r of rows) delete next[r.id];
+      } else {
+        for (const r of rows) next[r.id] = r;
+      }
+      commitSelection(next);
+    },
+    [selectedMap, commitSelection],
+  );
+
+  const handleSelectionUndo = () => {
+    if (selectionPast.length === 0) return;
+    const prev = selectionPast[selectionPast.length - 1];
+    setSelectionPast((p) => p.slice(0, -1));
+    setSelectionFuture((f) => [selectedMap, ...f.slice(0, 29)]);
+    setSelectedMap(prev);
   };
 
-  const resetForm = () => {
+  const handleSelectionRedo = () => {
+    if (selectionFuture.length === 0) return;
+    const next = selectionFuture[0];
+    setSelectionFuture((f) => f.slice(1));
+    setSelectionPast((p) => [...p.slice(-29), selectedMap]);
+    setSelectedMap(next);
+  };
+
+  const handleClearSelection = () => {
+    if (selectedList.length === 0) return;
+    commitSelection({});
+  };
+
+  const resetForm = useCallback(() => {
     setEditingDoc(null);
+    setStep(1);
+    setSelectedMap({});
+    setSelectionPast([]);
+    setSelectionFuture([]);
     setReceiptNo('');
+    setReceiptNoTouched(false);
     setDate(getTodayIso());
-    setReceiver('');
     setPurchaseRequestNo('');
-    setSupplier('');
     setBuyerName('');
     setPurchasePackageNo('');
-    setReleaseNoteNo('');
     setPurchaseBy('');
-    setIslandSystem('');
-    setWaybillNo('');
-    setStorekeeper('');
-    setReceiverManager('');
-    setEquipmentSupply('');
-    setMapnaSiteManager('');
-    setNotes('');
-    setShipmentFilter('');
-    setLastAutoPacking('');
-    setQtyMap({});
-    setRemarkMap({});
-  };
+    setUserRemarkMap({});
+    setShowAdvancedHeader(false);
+    setSupplierOverride('');
+    setReleaseNoteOverride('');
+    setIslandSystemOverride('');
+    setWaybillOverride('');
+  }, []);
 
   const startEdit = (doc: GcvDocumentRecord) => {
     setViewMode('create');
     setEditingDoc(doc);
     setReceiptNo(doc.receiptNo || '');
+    setReceiptNoTouched(true);
     setDate(doc.date || getTodayIso());
-    setReceiver(doc.receiver || '');
     setPurchaseRequestNo(doc.purchaseRequestNo || '');
-    setSupplier(doc.supplier || '');
     setBuyerName(doc.buyerName || '');
     setPurchasePackageNo(doc.purchasePackageNo || '');
-    setReleaseNoteNo(doc.releaseNoteNo || '');
     setPurchaseBy(doc.purchaseBy || '');
-    setIslandSystem(doc.islandSystem || '');
-    setWaybillNo(doc.waybillNo || '');
-    setStorekeeper(doc.storekeeper || '');
-    setReceiverManager(doc.receiverManager || '');
-    setEquipmentSupply(doc.equipmentSupply || '');
-    setMapnaSiteManager(doc.mapnaSiteManager || '');
-    setNotes(doc.notes || '');
-    setLastAutoPacking(doc.items[0]?.shipmentNo || '');
-    const nextQty: Record<string, string> = {};
-    const nextRem: Record<string, string> = {};
+    setSupplierOverride(doc.supplier || '');
+    setReleaseNoteOverride(doc.releaseNoteNo || '');
+    setIslandSystemOverride(doc.islandSystem || '');
+    setWaybillOverride(doc.waybillNo || '');
+
+    const detById = new Map<string, DetailedComputed>();
+    for (const d of data?.detailedItems || []) detById.set(d.id, d);
+
+    const nextSelected: Record<string, DetailedComputed> = {};
+    const nextRemarks: Record<string, string> = {};
     for (const line of doc.items || []) {
-      nextQty[line.detailedId] = String(line.qty);
-      if (line.remark) nextRem[line.detailedId] = line.remark;
+      const det = detById.get(line.detailedId);
+      if (det) {
+        nextSelected[det.id] = det;
+      }
+      if (line.userRemark !== undefined) {
+        nextRemarks[line.detailedId] = line.userRemark;
+      } else if (line.remark) {
+        const eqNotes = (det?.notes || '').trim();
+        if (eqNotes && line.remark.startsWith(`${eqNotes}\n`)) {
+          nextRemarks[line.detailedId] = line.remark.slice(eqNotes.length + 1);
+        } else if (line.remark !== eqNotes) {
+          nextRemarks[line.detailedId] = line.remark;
+        }
+      }
     }
-    setQtyMap(nextQty);
-    setRemarkMap(nextRem);
+    setSelectedMap(nextSelected);
+    setSelectionPast([]);
+    setSelectionFuture([]);
+    setUserRemarkMap(nextRemarks);
+    setStep(2);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const selectedEntries = useMemo(() => {
-    return Object.entries(qtyMap)
-      .map(([detailedId, val]) => {
-        const det = detailedLookup.get(detailedId);
-        return {
-          detailedId,
-          qty: Number(val),
-          technicalInfo: det?.size || '',
-          tagNo: det?.itemCode || '',
-          uom: det?.countingUnit || '',
-          remark: (remarkMap[detailedId] || '').trim(),
-        };
-      })
-      .filter((x) => Number.isFinite(x.qty) && x.qty > 0);
-  }, [qtyMap, remarkMap, detailedLookup]);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedEntries.length === 0) {
+    if (selectedList.length === 0) {
       notify(
         'warning',
-        isFa ? 'برای حداقل یک قلم مقدار تحویلی وارد کنید.' : 'Enter delivery qty for at least one item.',
+        isFa ? 'ابتدا حداقل یک قلم کالا را انتخاب کنید.' : 'Please select at least one item first.',
+      );
+      setStep(1);
+      return;
+    }
+    const finalReceiptNo = (receiptNo || suggestedReceiptNo).trim();
+    if (!finalReceiptNo) {
+      notify(
+        'warning',
+        isFa ? 'شماره رسید مصرف الزامی است.' : 'Receipt number is required.',
+      );
+      return;
+    }
+    if (!purchaseBy) {
+      notify(
+        'warning',
+        isFa
+          ? 'لطفاً گزینه «خرید توسط» (تدارکات تهران / مالی- اداری کارگاه / پیمانکار تامین کننده) را انتخاب کنید.'
+          : 'Please select a "Purchased By" option.',
       );
       return;
     }
 
+    const lineItemsPayload = selectedList.map((d) => {
+      const { formQty } = resolveGcvQuantities(d);
+      const eqNotes = (d.notes || '').trim();
+      const usrRem = (userRemarkMap[d.id] || '').trim();
+      return {
+        detailedId: d.id,
+        qty: formQty,
+        technicalInfo: (d.size || '').trim(),
+        tagNo: (d.itemNo || '').trim(),
+        uom: (d.countingUnit || '').trim(),
+        equipmentNotes: eqNotes,
+        userRemark: usrRem,
+        remark: combineGcvRemark(eqNotes, usrRem),
+      };
+    });
+
     const payload = {
-      receiptNo,
-      date,
+      receiptNo: finalReceiptNo,
+      date: date || getTodayIso(),
       projectName: activeProject?.name || '',
-      receiver,
-      purchaseRequestNo,
-      supplier,
-      buyerName,
-      purchasePackageNo,
-      releaseNoteNo,
-      purchaseBy: purchaseBy || undefined,
-      islandSystem,
-      waybillNo,
-      storekeeper,
-      receiverManager: receiverManager || receiver,
-      equipmentSupply,
-      mapnaSiteManager,
-      notes,
-      items: selectedEntries,
+      purchaseRequestNo: purchaseRequestNo.trim(),
+      supplier: effectiveSupplier,
+      buyerName: buyerName.trim(),
+      purchasePackageNo: purchasePackageNo.trim(),
+      releaseNoteNo: effectiveReleaseNote,
+      purchaseBy,
+      islandSystem: effectiveIslandSystem,
+      waybillNo: effectiveWaybill,
+      items: lineItemsPayload,
     };
 
+    setSubmitting(true);
     try {
       if (editingDoc) {
         const res = await apiRequest<{ document: GcvDocumentRecord }>(`/api/gcv/${editingDoc.id}`, {
@@ -791,14 +1029,15 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         notify(
           'success',
           isFa
-            ? `رسید مصرف مستقیم کالا شماره ${res.document.receiptNo} ویرایش و موجودی‌ها به‌روزرسانی شد.`
-            : `Direct Material Consumption Receipt ${res.document.receiptNo} updated.`,
+            ? `رسید مصرف مستقیم کالا شماره ${res.document.receiptNo} ویرایش و در جدول جزئیات به‌روزرسانی شد.`
+            : `GCV ${res.document.receiptNo} updated and Detailed Equipment synced.`,
         );
         resetForm();
+        setPrintDocWasUndone(false);
         setPrintDoc(res.document);
         triggerAutoSnapshot(`Edit GCV ${res.document.receiptNo}`);
         onDataChanged();
-        loadData();
+        await loadData();
       } else {
         const res = await apiRequest<{ document: GcvDocumentRecord }>('/api/gcv', {
           method: 'POST',
@@ -807,17 +1046,20 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         notify(
           'success',
           isFa
-            ? `رسید مصرف مستقیم کالا شماره ${res.document.receiptNo} ثبت و موجودی‌ها به‌روزرسانی شد.`
-            : `Direct Material Consumption Receipt ${res.document.receiptNo} created.`,
+            ? `رسید مصرف مستقیم کالا شماره ${res.document.receiptNo} صادر و در جدول جزئیات ثبت شد.`
+            : `GCV ${res.document.receiptNo} issued and synced to Detailed Equipment.`,
         );
         resetForm();
+        setPrintDocWasUndone(false);
         setPrintDoc(res.document);
         triggerAutoSnapshot(`GCV ${res.document.receiptNo}`);
         onDataChanged();
-        loadData();
+        await loadData();
       }
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -828,69 +1070,104 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
       notify(
         'success',
         isFa
-          ? `رسید GCV شماره ${deleteTarget.receiptNo} حذف و موجودی اقلام بازگردانی شد.`
-          : `GCV ${deleteTarget.receiptNo} deleted and stock restored.`,
+          ? `رسید مصرف مستقیم شماره ${deleteTarget.receiptNo} حذف و مقادیر جدول جزئیات بازگردانی شد.`
+          : `GCV ${deleteTarget.receiptNo} deleted and Detailed Equipment restored.`,
       );
       if (editingDoc?.id === deleteTarget.id) resetForm();
       if (printDoc?.id === deleteTarget.id) setPrintDoc(null);
       setDeleteTarget(null);
       triggerAutoSnapshot(`Delete GCV ${deleteTarget.receiptNo}`);
       onDataChanged();
-      loadData();
+      await loadData();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     }
   };
 
+  const documentsList = useMemo(() => data?.documents || [], [data]);
+
+  const filteredDocuments = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return documentsList;
+    return documentsList.filter((doc) =>
+      [
+        doc.receiptNo,
+        doc.purchaseRequestNo,
+        doc.supplier,
+        doc.buyerName,
+        doc.purchasePackageNo,
+        doc.releaseNoteNo,
+        doc.islandSystem,
+        doc.waybillNo,
+        ...doc.items.map((i) => `${i.shipmentNo} ${i.packageNo} ${i.tagNo || i.itemNo} ${i.description}`),
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [documentsList, historySearch]);
+
+  const docsPagination = useClientPagination(filteredDocuments, 50);
+
+  const purchaseByDisplay = (val?: string) => {
+    const found = GCV_PURCHASE_BY_OPTIONS.find((o) => o.value === val);
+    return found ? (isFa ? found.labelFa : found.labelEn) : '-';
+  };
+
   const historyColumns = useMemo<PrintColumnDef<GcvDocumentRecord>[]>(
     () => [
-      { key: 'receiptNo', header: t.headers.gcvReceiptNo, getValue: (r) => r.receiptNo },
+      { key: 'receiptNo', header: isFa ? 'شماره رسید مصرف' : 'GCV No.', getValue: (r) => r.receiptNo },
       { key: 'date', header: isFa ? 'تاریخ' : 'Date', isDate: true, getValue: (r) => r.date },
-      { key: 'projectName', header: isFa ? 'پروژه' : 'Project', getValue: (r) => r.projectName || '' },
-      { key: 'supplier', header: t.headers.supplier, getValue: (r) => r.supplier || '' },
-      { key: 'releaseNoteNo', header: 'Release Note No.', getValue: (r) => r.releaseNoteNo || '' },
-      { key: 'waybillNo', header: isFa ? 'شماره بارنامه' : 'Waybill No.', getValue: (r) => r.waybillNo || '' },
-      { key: 'receiver', header: t.headers.receiver, getValue: (r) => r.receiver },
-      { key: 'itemCount', header: isFa ? 'تعداد اقلام' : 'Items', getValue: (r) => r.items.length },
       {
-        key: 'itemsSummary',
-        header: isFa ? 'شرح اقلام' : 'Items Summary',
-        getValue: (r) =>
-          r.items.map((i) => `${i.shipmentNo}/${i.packageNo}#${i.itemNo} (${i.qty})`).join(' | '),
+        key: 'purchaseRequestNo',
+        header: isFa ? 'درخواست خرید' : 'Purchase Req.',
+        getValue: (r) => r.purchaseRequestNo || '',
       },
+      { key: 'supplier', header: t.headers.supplier, getValue: (r) => r.supplier || '' },
+      { key: 'buyerName', header: isFa ? 'کارشناس خرید' : 'Buyer', getValue: (r) => r.buyerName || '' },
+      {
+        key: 'purchasePackageNo',
+        header: isFa ? 'شماره بسته خرید' : 'Purchase Pkg.',
+        getValue: (r) => r.purchasePackageNo || '',
+      },
+      { key: 'releaseNoteNo', header: 'Realised Note No.', getValue: (r) => r.releaseNoteNo || '' },
+      {
+        key: 'purchaseBy',
+        header: isFa ? 'خرید توسط' : 'Purchased By',
+        getValue: (r) => purchaseByDisplay(r.purchaseBy),
+      },
+      {
+        key: 'islandSystem',
+        header: isFa ? 'جزیره/سیستم' : 'Island/System',
+        getValue: (r) => r.islandSystem || '',
+      },
+      { key: 'waybillNo', header: isFa ? 'شماره بارنامه' : 'Waybill No.', getValue: (r) => r.waybillNo || '' },
+      { key: 'itemCount', header: isFa ? 'تعداد اقلام' : 'Items', getValue: (r) => r.items.length },
       { key: 'createdBy', header: isFa ? 'ثبت‌کننده' : 'Created By', getValue: (r) => r.createdBy },
-      { key: 'notes', header: t.headers.notes, getValue: (r) => r.notes || '' },
     ],
     [t, isFa],
   );
 
   return (
-    <div className="space-y-6">
-      {/* Dedicated A4 Landscape Portal for Official MD1EX-FQP02/11-03 GCV Sheet */}
+    <div className="space-y-5" data-testid="gcv-view">
+      {/* Isolated A4 Landscape Print Portal (Pure white 8mm margins, zero gray border) */}
       {printDoc && !printReportOpen
         ? createPortal(
             <div id="samaan-gcv-print-root" data-samaan-print-portal="true">
-              <style>{buildIsolatedPrintPortalCss('samaan-gcv-print-root', {
-                orientation: 'landscape',
-                isFa,
-                extraPrintCss: `
-                  #samaan-gcv-print-root table {
-                    width: 100% !important;
-                    table-layout: auto !important;
-                  }
-                  #samaan-gcv-print-root tr {
-                    height: auto !important;
-                    break-inside: avoid;
-                    page-break-inside: avoid;
-                  }
-                  #samaan-gcv-print-root table th,
-                  #samaan-gcv-print-root table td {
-                    text-align: center;
-                    vertical-align: middle;
-                    height: auto !important;
-                  }
-                `,
-              })}</style>
+              <style>
+                {buildIsolatedPrintPortalCss('samaan-gcv-print-root', {
+                  orientation: 'landscape',
+                  isFa,
+                  marginMm: 8,
+                  extraPrintCss: `
+                    #samaan-gcv-print-root table th,
+                    #samaan-gcv-print-root table td {
+                      text-align: center;
+                      vertical-align: middle;
+                    }
+                  `,
+                })}
+              </style>
               <OfficialGcvSheet
                 doc={printDoc}
                 detailedItems={data?.detailedItems || []}
@@ -901,20 +1178,37 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
           )
         : null}
 
-      {/* Top Mode Bar: Form vs History */}
+      {/* Top Mode Bar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
-          <FileCheck2 className="w-4 h-4 text-[var(--accent-primary)]" />
-          <span>{isFa ? 'رسید مصرف مستقیم کالا (GCV)' : 'Direct Consumption Voucher (GCV)'}</span>
-          {formCode && (
-            <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-              {formCode}
-            </span>
-          )}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+            <FileCheck2 className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-extrabold text-[var(--text-primary)] truncate">
+                {isFa ? MD1_GCV_TITLE_FA : MD1_GCV_TITLE_EN}
+              </h2>
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                {formCode}
+              </span>
+            </div>
+            <p className="text-[11px] text-[var(--text-muted)] truncate">
+              {isFa
+                ? 'انتخاب اقلام فاقد شماره رسید مصرف از جدول جزئیات، تکمیل مشخصات خرید و صدور فرم رسمی A4 افقی'
+                : 'Select Detailed items without a GCV receipt number, complete procurement info, and issue official A4 Landscape voucher'}
+            </p>
+          </div>
         </div>
+
         <OperationalViewModeTabs
           viewMode={viewMode}
-          onChange={setViewMode}
+          onChange={(mode) => {
+            setViewMode(mode);
+            if (mode === 'history' && editingDoc) {
+              resetForm();
+            }
+          }}
           historyCount={documentsList.length}
           isFa={isFa}
           canCreate={canEdit}
@@ -923,627 +1217,779 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         />
       </div>
 
+      {/* CREATE / EDIT WORKFLOW */}
       {canEdit && viewMode === 'create' && (
-        <form
-          onSubmit={handleSubmit}
-          className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-sm font-bold">
-              <FileCheck2 className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{isFa ? 'ثبت رسید مصرف مستقیم کالا (GCV)' : 'Not-Stored Goods Consumption Voucher (GCV)'}</span>
+        <div className="space-y-4 print:hidden">
+          {/* Step Indicator & Editing Banner */}
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                data-testid="gcv-step-1-tab"
+                onClick={() => setStep(1)}
+                className={`h-8 px-3 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition-colors ${
+                  step === 1
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                    : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full bg-black/15 inline-flex items-center justify-center text-[11px] tabular-nums">
+                  1
+                </span>
+                <span>{isFa ? 'فیلتر و انتخاب اقلام (فاقد رسید مصرف)' : '1. Filter & Select Items'}</span>
+              </button>
+
+              <span className="text-[var(--text-muted)] text-xs">→</span>
+
+              <button
+                type="button"
+                data-testid="gcv-step-2-tab"
+                disabled={selectedList.length === 0}
+                onClick={() => setStep(2)}
+                className={`h-8 px-3 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition-colors disabled:opacity-45 ${
+                  step === 2
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                    : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full bg-black/15 inline-flex items-center justify-center text-[11px] tabular-nums">
+                  2
+                </span>
+                <span>{isFa ? 'اطلاعات خرید، توضیحات و صدور فرم' : '2. Procurement Info & Issue'}</span>
+              </button>
+
               {editingDoc && (
-                <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
-                  {isFa ? `حالت ویرایش: ${editingDoc.receiptNo}` : `Editing: ${editingDoc.receiptNo}`}
+                <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/35 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
+                  {isFa ? `در حال ویرایش: ${editingDoc.receiptNo}` : `Editing: ${editingDoc.receiptNo}`}
                 </span>
               )}
             </div>
+
             <div className="flex items-center gap-2">
               {editingDoc && (
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-semibold inline-flex items-center gap-1"
                 >
                   <X className="w-3.5 h-3.5" />
                   <span>{t.controls.cancel}</span>
                 </button>
               )}
-              {formCode && (
-                <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
-                  {formCode}
-                </span>
-              )}
+              <span
+                data-testid="gcv-selected-count"
+                className="px-2.5 py-1 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] text-xs font-extrabold tabular-nums"
+              >
+                {isFa ? `${selectedList.length} قلم انتخاب‌شده` : `${selectedList.length} Selected`}
+              </span>
             </div>
           </div>
 
-          {/* Row 1: Core Document Details */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <div>
-              <div className="flex items-center justify-between gap-1 mb-1">
-                <label className="block text-[11px] text-[var(--text-secondary)]">
-                  {t.headers.gcvReceiptNo} *
-                </label>
-                {!editingDoc && (
+          {/* STEP 1: Filter & Select Detailed Items without GCV Receipt No. */}
+          {step === 1 && (
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-4">
+              {/* Selection Undo / Redo / Clear & Next Action Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--border-subtle)]">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => setReceiptNo(suggestedReceiptNo)}
-                    className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
-                    dir="ltr"
+                    data-testid="gcv-sel-undo-btn"
+                    disabled={selectionPast.length === 0}
+                    onClick={handleSelectionUndo}
+                    className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 text-xs font-semibold inline-flex items-center gap-1"
                   >
-                    {suggestedReceiptNo}
+                    <Undo2 className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'واگرد انتخاب' : 'Undo'}</span>
                   </button>
+                  <button
+                    type="button"
+                    data-testid="gcv-sel-redo-btn"
+                    disabled={selectionFuture.length === 0}
+                    onClick={handleSelectionRedo}
+                    className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 text-xs font-semibold inline-flex items-center gap-1"
+                  >
+                    <Redo2 className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'انجام مجدد' : 'Redo'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="gcv-sel-clear-btn"
+                    disabled={selectedList.length === 0}
+                    onClick={handleClearSelection}
+                    className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 text-xs font-semibold inline-flex items-center gap-1 text-rose-600 dark:text-rose-400"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'پاک کردن انتخاب‌ها' : 'Clear'}</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  data-testid="gcv-next-step-btn"
+                  disabled={selectedList.length === 0}
+                  onClick={() => setStep(2)}
+                  className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-45 text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-1.5 shadow-sm"
+                >
+                  <span>
+                    {isFa
+                      ? `ادامه به مرحله ۲ (${selectedList.length} قلم)`
+                      : `Continue to Step 2 (${selectedList.length})`}
+                  </span>
+                  {isFa ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+
+              {/* Detailed-Equipment-grade Picker filtered to rows with NO gcvReceiptNo */}
+              <SubstitutionItemPicker
+                noGcvOnly={true}
+                allowGcvReceiptNo={editingDoc?.receiptNo || ''}
+                refreshSignal={refreshSignal}
+                selectedMap={selectedMap}
+                onToggleRow={handleToggleRow}
+                onTogglePage={handleTogglePage}
+                testIdPrefix="gcv-picker"
+              />
+            </div>
+          )}
+
+          {/* STEP 2: Procurement Inputs, Per-Row Remarks & Issue */}
+          {step === 2 && (
+            <form
+              onSubmit={handleSubmit}
+              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-5"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
+                <button
+                  type="button"
+                  data-testid="gcv-back-step-btn"
+                  onClick={() => setStep(1)}
+                  className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-xs font-semibold inline-flex items-center gap-1.5"
+                >
+                  {isFa ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
+                  <span>{isFa ? 'بازگشت به انتخاب اقلام' : 'Back to Selection'}</span>
+                </button>
+
+                <div className="text-xs text-[var(--text-secondary)]">
+                  {isFa
+                    ? 'فیلدهای سربرگ از جدول جزئیات و ثبت کلی به‌صورت خودکار پر می‌شوند؛ فقط اطلاعات خرید زیر را وارد نمایید.'
+                    : 'Header metadata auto-fills from Detailed & General tables; complete the procurement fields below.'}
+                </div>
+              </div>
+
+              {/* Primary Required Inputs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+                <div>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <label className="text-[11px] font-semibold text-[var(--text-secondary)]">
+                      {isFa ? 'شماره رسید مصرف (یکتا) *' : 'GCV No. (Unique) *'}
+                    </label>
+                    {!editingDoc && suggestedReceiptNo && receiptNo !== suggestedReceiptNo && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReceiptNo(suggestedReceiptNo);
+                          setReceiptNoTouched(false);
+                        }}
+                        className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline"
+                        dir="ltr"
+                      >
+                        {suggestedReceiptNo}
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    data-testid="gcv-receipt-no-input"
+                    dir="ltr"
+                    value={receiptNo}
+                    onChange={(e) => {
+                      setReceiptNo(e.target.value);
+                      setReceiptNoTouched(true);
+                    }}
+                    placeholder={suggestedReceiptNo}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono tabular-nums text-left focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <JalaliDateInput
+                  label={`${isFa ? 'تاریخ رسید (پیش‌فرض: امروز)' : 'Receipt Date'} *`}
+                  value={date}
+                  onChange={setDate}
+                />
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'درخواست خرید' : 'Purchase Request No.'}
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="gcv-pr-input"
+                    dir="auto"
+                    value={purchaseRequestNo}
+                    onChange={(e) => setPurchaseRequestNo(e.target.value)}
+                    placeholder={isFa ? 'شماره درخواست خرید...' : 'PR No...'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'کارشناس خرید' : 'Buyer Name'}
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="gcv-buyer-input"
+                    dir="auto"
+                    value={buyerName}
+                    onChange={(e) => setBuyerName(e.target.value)}
+                    placeholder={isFa ? 'نام کارشناس خرید...' : 'Buyer name...'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'شماره بسته خريد' : 'Purchase Package No.'}
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="gcv-pkg-input"
+                    dir="auto"
+                    value={purchasePackageNo}
+                    onChange={(e) => setPurchasePackageNo(e.target.value)}
+                    placeholder={isFa ? 'شماره بسته خرید...' : 'Package No...'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+              </div>
+
+              {/* Purchase By Radio Cards (Rule 1-8) */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-[var(--text-primary)]">
+                  {isFa ? 'خريد توسط (انتخاب یک گزینه الزامی است) *' : 'Purchased By (Required) *'}
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {GCV_PURCHASE_BY_OPTIONS.map((opt) => {
+                    const selected = purchaseBy === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        data-testid={`gcv-purchaseby-${opt.value}`}
+                        onClick={() => setPurchaseBy(opt.value)}
+                        className={`h-11 px-3.5 rounded-xl border text-xs font-bold flex items-center gap-2.5 transition-all ${
+                          selected
+                            ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] shadow-xs'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        <span
+                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                            selected
+                              ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]'
+                              : 'border-[var(--text-muted)]'
+                          }`}
+                        >
+                          {selected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </span>
+                        <span>{isFa ? opt.labelFa : opt.labelEn}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Compact Auto-Filled Header Strip + Optional Override Drawer */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 p-3.5 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[11.5px]">
+                    <span>
+                      <strong className="text-[var(--text-muted)]">{isFa ? 'پروژه:' : 'Project:'} </strong>
+                      <span className="font-bold text-[var(--text-primary)]">
+                        {autoFilledHeader.headerProjectTitle}
+                      </span>
+                    </span>
+                    <span>
+                      <strong className="text-[var(--text-muted)]">{isFa ? 'تامین کننده:' : 'Supplier:'} </strong>
+                      <span className="font-semibold text-[var(--text-primary)]">
+                        {effectiveSupplier || '-'}
+                      </span>
+                    </span>
+                    <span>
+                      <strong className="text-[var(--text-muted)]">Realised Note No.: </strong>
+                      <span dir="ltr" className="font-mono font-semibold text-[var(--text-primary)]">
+                        {effectiveReleaseNote || '-'}
+                      </span>
+                    </span>
+                    <span>
+                      <strong className="text-[var(--text-muted)]">{isFa ? 'جزیره/سیستم:' : 'Island/System:'} </strong>
+                      <span className="font-semibold text-[var(--text-primary)]">
+                        {effectiveIslandSystem || '-'}
+                      </span>
+                    </span>
+                    <span>
+                      <strong className="text-[var(--text-muted)]">{isFa ? 'شماره بارنامه:' : 'Waybill:'} </strong>
+                      <span dir="ltr" className="font-mono font-semibold text-[var(--text-primary)]">
+                        {effectiveWaybill || '-'}
+                      </span>
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedHeader((v) => !v)}
+                    className="text-[11px] font-semibold text-[var(--accent-primary)] inline-flex items-center gap-1 hover:underline shrink-0"
+                  >
+                    <span>{isFa ? 'اصلاح اختیاری سربرگ' : 'Optional Overrides'}</span>
+                    {showAdvancedHeader ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                {showAdvancedHeader && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-[var(--border-subtle)]">
+                    <div>
+                      <label className="block text-[10.5px] text-[var(--text-muted)] mb-1">
+                        {isFa ? 'تامین کننده' : 'Supplier'}
+                      </label>
+                      <input
+                        type="text"
+                        value={supplierOverride}
+                        onChange={(e) => setSupplierOverride(e.target.value)}
+                        placeholder={autoFilledHeader.supplier || '-'}
+                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10.5px] text-[var(--text-muted)] mb-1">
+                        Realised Note No.
+                      </label>
+                      <input
+                        type="text"
+                        dir="ltr"
+                        value={releaseNoteOverride}
+                        onChange={(e) => setReleaseNoteOverride(e.target.value)}
+                        placeholder={autoFilledHeader.releaseNoteNo || '-'}
+                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10.5px] text-[var(--text-muted)] mb-1">
+                        {isFa ? 'جزیره/سیستم' : 'Island/System'}
+                      </label>
+                      <input
+                        type="text"
+                        value={islandSystemOverride}
+                        onChange={(e) => setIslandSystemOverride(e.target.value)}
+                        placeholder={autoFilledHeader.islandSystem || '-'}
+                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10.5px] text-[var(--text-muted)] mb-1">
+                        {isFa ? 'شماره بارنامه' : 'Waybill No.'}
+                      </label>
+                      <input
+                        type="text"
+                        dir="ltr"
+                        value={waybillOverride}
+                        onChange={(e) => setWaybillOverride(e.target.value)}
+                        placeholder={autoFilledHeader.waybillNo || '-'}
+                        className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono"
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
-              <input
-                type="text"
-                required
-                dir={isFa && !receiptNo ? 'rtl' : 'ltr'}
-                value={receiptNo}
-                onChange={(e) => setReceiptNo(e.target.value)}
-                placeholder={suggestedReceiptNo}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !receiptNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
 
-            <JalaliDateInput
-              label={`${isFa ? 'تاریخ رسید' : 'Receipt Date'} *`}
-              value={date}
-              onChange={setDate}
-            />
+              {/* Selected Items Review + Per-Row Optional Remark */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-xs font-extrabold text-[var(--text-primary)]">
+                    {isFa
+                      ? `اقلام انتخاب‌شده برای درج در رسید مصرف (${selectedList.length} قلم)`
+                      : `Selected Items (${selectedList.length})`}
+                  </h3>
+                  <span className="text-[11px] text-[var(--text-muted)]">
+                    {isFa
+                      ? 'توضیحات دلخواه هر ردیف زیر «توضیحات تجهیز» در ستون Remark فرم چاپ می‌شود.'
+                      : 'Optional per-row remarks stack underneath Equipment Notes in the form Remark column.'}
+                  </span>
+                </div>
 
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.receiver} *
-              </label>
-              <input
-                type="text"
-                required
-                dir={!receiver ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={receiver}
-                onChange={(e) => setReceiver(e.target.value)}
-                placeholder={isFa ? 'تحویل گیرنده / پیمانکار نصب' : 'Receiver / Installer'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره Release Note' : 'Realised Note No.'}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !releaseNoteNo ? 'rtl' : 'ltr'}
-                value={releaseNoteNo}
-                onChange={(e) => setReleaseNoteNo(e.target.value)}
-                placeholder="RN-..."
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !releaseNoteNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
-          </div>
-
-          {/* Row 2: Procurement & Transport Metadata */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'درخواست خرید' : 'Purchase Req. No.'}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !purchaseRequestNo ? 'rtl' : 'ltr'}
-                value={purchaseRequestNo}
-                onChange={(e) => setPurchaseRequestNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !purchaseRequestNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.supplier}
-              </label>
-              <input
-                type="text"
-                dir={!supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'کارشناس خرید' : 'Buyer Name'}
-              </label>
-              <input
-                type="text"
-                dir={!buyerName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={buyerName}
-                onChange={(e) => setBuyerName(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره بسته خرید' : 'Purchase Package No.'}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !purchasePackageNo ? 'rtl' : 'ltr'}
-                value={purchasePackageNo}
-                onChange={(e) => setPurchasePackageNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !purchasePackageNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'جزیره/سیستم' : 'Island / System'}
-              </label>
-              <input
-                type="text"
-                dir={!islandSystem ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={islandSystem}
-                onChange={(e) => setIslandSystem(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره بارنامه' : 'Waybill No.'}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !waybillNo ? 'rtl' : 'ltr'}
-                value={waybillNo}
-                onChange={(e) => setWaybillNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !waybillNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
-          </div>
-
-          {/* Row 3: Purchase By + Signatures */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
-            <div className="lg:col-span-4">
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'خرید توسط' : 'Purchased By'}
-              </label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { id: 'tehran_proc', fa: 'تدارکات تهران', en: 'Tehran Proc.' },
-                  { id: 'site_admin', fa: 'مالی- اداری کارگاه', en: 'Site Admin' },
-                  { id: 'contractor_supplier', fa: 'پیمانکار تامین کننده', en: 'Contractor' },
-                ].map((opt) => {
-                  const active = purchaseBy === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() =>
-                        setPurchaseBy((prev) =>
-                          prev === opt.id
-                            ? ''
-                            : (opt.id as 'tehran_proc' | 'site_admin' | 'contractor_supplier'),
-                        )
-                      }
-                      className={`h-9 px-2 rounded-lg border text-[11px] font-medium transition-colors truncate ${
-                        active
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                      }`}
-                      title={isFa ? opt.fa : opt.en}
-                    >
-                      {isFa ? opt.fa : opt.en}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'انباردار' : 'Storekeeper'}
-              </label>
-              <input
-                type="text"
-                dir={!storekeeper ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={storekeeper}
-                onChange={(e) => setStorekeeper(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'مدیر پروژه / سرپرست (تحویل‌گیرنده)' : 'Receiver Manager / Tech'}
-              </label>
-              <input
-                type="text"
-                dir={!receiverManager ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={receiverManager}
-                onChange={(e) => setReceiverManager(e.target.value)}
-                placeholder={receiver || ''}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? `تأمین تجهیزات (${activeEmployer.shortName})` : `Equipment Supply (${activeEmployer.badgeCode})`}
-              </label>
-              <input
-                type="text"
-                dir={!equipmentSupply ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={equipmentSupply}
-                onChange={(e) => setEquipmentSupply(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? `مدیر پروژه / سرپرست (${activeEmployer.shortName})` : `${activeEmployer.badgeCode} Project / Site Mgr`}
-              </label>
-              <input
-                type="text"
-                dir={!mapnaSiteManager ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={mapnaSiteManager}
-                onChange={(e) => setMapnaSiteManager(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'ملاحظات / Remark عمومی' : 'General Remark / Notes'}
-              </label>
-              <input
-                type="text"
-                dir={!notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-          </div>
-
-          {/* Deliverable Items Selection Table */}
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs font-semibold text-[var(--text-secondary)]">
-                {isFa
-                  ? 'اقلام آماده تحویل از موجودی کارفرما (دارای بازرسی ثبت‌شده)'
-                  : 'Deliverable Items from Main Warehouse Stock (OPI Recorded)'}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={shipmentFilter}
-                  onChange={(e) => {
-                    const pk = e.target.value;
-                    setShipmentFilter(pk);
-                    if (pk) autoFillFromPacking(pk);
-                  }}
-                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                >
-                  <option value="">{t.headers.packingListNo}: {t.controls.all}</option>
-                  {knownPackings.map((pk) => (
-                    <option key={pk} value={pk}>
-                      {pk}
-                    </option>
-                  ))}
-                </select>
-                <SearchInputWithClear
-                  value={itemSearch}
-                  onChange={setItemSearch}
-                  placeholder={t.controls.searchPlaceholder}
-                  className="w-64"
-                  inputClassName="h-8 text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-[var(--border-subtle)] overflow-x-clip">
-              <StickyTableWrapper maxHeightClass="max-h-72">
-                <table className="w-full text-xs">
-                  <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                  <tr>
-                    <th className="py-2 px-3">{t.headers.shipmentNo}</th>
-                    <th className="py-2 px-3">{t.headers.packageNo}</th>
-                    <th className="py-2 px-3">{t.headers.itemNo}</th>
-                    <th className="py-2 px-3">{t.headers.description}</th>
-                    <th className="py-2 px-3">{t.headers.size}</th>
-                    <th className="py-2 px-3">{t.headers.mapnaInventory}</th>
-                    <th className="py-2 px-3">{t.headers.gcvDeliveredQty}</th>
-                    <th className="py-2 px-3">{isFa ? 'ملاحظات ردیف' : 'Remark'}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {deliverableItems.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
-                        {isFa
-                          ? 'موردی با موجودی انبار و بازرسی ثبت‌شده یافت نشد.'
-                          : 'No items with available main inventory found.'}
-                      </td>
-                    </tr>
-                  ) : (
-                    deliverableItems.slice(0, 80).map((item) => {
-                      const avail = getAvailableQty(item);
-                      return (
-                        <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">
-                            {item.shipmentNo}
-                          </td>
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">
-                            {item.packageNo}
-                          </td>
-                          <td className="py-2 px-3 tabular-nums" dir="ltr">
-                            {item.itemNo}
-                          </td>
-                          <td
-                            className="py-2 px-3 max-w-[230px] truncate bidi-plaintext"
-                            title={item.description}
-                          >
-                            {item.description || item.generalDescription}
-                          </td>
-                          <td className="py-2 px-3 bidi-plaintext">{item.size || '-'}</td>
-                          <td className="py-2 px-3 font-semibold text-[var(--accent-primary)] tabular-nums">
-                            {avail} {item.countingUnit}
-                          </td>
-                          <td className="py-2 px-3 w-36">
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                max={avail}
-                                dir={isFa && !qtyMap[item.id] ? 'rtl' : 'ltr'}
-                                value={qtyMap[item.id] || ''}
-                                onChange={(e) => updateItemQty(item, e.target.value)}
-                                placeholder="0"
-                                className="w-20 h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
-                              />
-                              {avail > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => updateItemQty(item, String(avail))}
-                                  className="px-2 h-8 rounded bg-[var(--bg-subtle)] text-[10px] font-semibold hover:bg-[var(--accent-soft)]"
-                                >
-                                  {isFa ? 'کل' : 'Max'}
-                                </button>
+                <StickyTableWrapper maxHeightClass="max-h-[360px]">
+                  <table className="w-full text-xs border-collapse">
+                    <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
+                      <tr>
+                        <th className="p-2 text-center w-10">#</th>
+                        <th className="p-2 text-start">PL/Package No.</th>
+                        <th className="p-2 text-start">Package Item</th>
+                        <th className="p-2 text-start">{isFa ? 'شرح (Description)' : 'Description'}</th>
+                        <th className="p-2 text-start">{isFa ? 'اندازه (Size)' : 'Size'}</th>
+                        <th className="p-2 text-start">Tag No.</th>
+                        <th className="p-2 text-center">UOM</th>
+                        <th className="p-2 text-center">{isFa ? 'مقدار واقعی (فرم)' : 'Qty (Form)'}</th>
+                        <th className="p-2 text-center">{isFa ? 'مقدار پکینگ (ثبت جزئیات)' : 'Packing (Sync)'}</th>
+                        <th className="p-2 text-start min-w-[200px]">
+                          {isFa ? 'توضیحات ردیف (اختیاری)' : 'Row Remark (Optional)'}
+                        </th>
+                        <th className="p-2 text-center w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-subtle)]">
+                      {selectedList.map((item, idx) => {
+                        const { formQty, syncDeliveredQty } = resolveGcvQuantities(item);
+                        return (
+                          <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
+                            <td className="p-2 text-center tabular-nums font-semibold">{idx + 1}</td>
+                            <td className="p-2 font-mono tabular-nums" dir="ltr">
+                              {item.shipmentNo}
+                            </td>
+                            <td className="p-2 font-mono tabular-nums" dir="ltr">
+                              {item.packageNo}
+                            </td>
+                            <td className="p-2 max-w-[220px]">
+                              <div className="line-clamp-2 bidi-plaintext">
+                                {item.description || item.generalDescription}
+                              </div>
+                            </td>
+                            <td className="p-2 bidi-plaintext">{item.size || '-'}</td>
+                            <td className="p-2 font-mono tabular-nums" dir="ltr">
+                              {item.itemNo || '-'}
+                            </td>
+                            <td className="p-2 text-center">{item.countingUnit || '-'}</td>
+                            <td className="p-2 text-center font-extrabold tabular-nums text-[var(--accent-primary)]">
+                              {formQty}
+                            </td>
+                            <td className="p-2 text-center font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                              {syncDeliveredQty}
+                            </td>
+                            <td className="p-2 space-y-1">
+                              {item.notes?.trim() && (
+                                <div className="text-[10px] text-[var(--text-muted)] bg-[var(--bg-canvas)] px-2 py-0.5 rounded border border-[var(--border-subtle)] line-clamp-1">
+                                  {isFa ? `توضیحات تجهیز: ${item.notes}` : `Equip. Note: ${item.notes}`}
+                                </div>
                               )}
-                            </div>
-                          </td>
-                          <td className="py-2 px-3 w-36">
-                            <input
-                              type="text"
-                              dir={!remarkMap[item.id] ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                              value={remarkMap[item.id] || ''}
-                              onChange={(e) =>
-                                setRemarkMap((prev) => ({ ...prev, [item.id]: e.target.value }))
-                              }
-                              placeholder={isFa ? 'اختیاری' : 'Optional'}
-                              className="w-full h-8 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-                </table>
-              </StickyTableWrapper>
-            </div>
-          </div>
+                              <input
+                                type="text"
+                                data-testid={`gcv-row-remark-${item.id}`}
+                                value={userRemarkMap[item.id] || ''}
+                                onChange={(e) =>
+                                  setUserRemarkMap((prev) => ({
+                                    ...prev,
+                                    [item.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder={isFa ? 'توضیحات...' : 'Remark...'}
+                                className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+                              />
+                            </td>
+                            <td className="p-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleRow(item)}
+                                title={isFa ? 'حذف از فهرست' : 'Remove'}
+                                className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-500/10"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </StickyTableWrapper>
+              </div>
 
-          <div className="flex items-center justify-between pt-2">
-            <span className="text-xs text-[var(--text-muted)] tabular-nums">
-              {isFa
-                ? `${selectedEntries.length.toLocaleString('fa-IR')} قلم انتخاب‌شده`
-                : `${selectedEntries.length} items selected`}
-            </span>
-            <div className="flex items-center gap-2">
-              {editingDoc && (
+              {/* Submit Footer */}
+              <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2 border-t border-[var(--border-subtle)]">
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                  className="h-10 px-4 rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-semibold"
                 >
-                  <X className="w-4 h-4" />
-                  <span>{t.controls.cancel}</span>
+                  {isFa ? 'شروع مجدد' : 'Reset'}
                 </button>
-              )}
+                <button
+                  type="submit"
+                  data-testid="gcv-submit-btn"
+                  disabled={submitting}
+                  className="h-10 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-2 shadow-sm"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>
+                    {submitting
+                      ? isFa
+                        ? 'در حال صدور...'
+                        : 'Issuing...'
+                      : editingDoc
+                        ? isFa
+                          ? 'ذخیره ویرایش و پیش‌نمایش چاپ'
+                          : 'Save Changes & Print Preview'
+                        : isFa
+                          ? 'صدور رسید مصرف مستقیم و پیش‌نمایش چاپ'
+                          : 'Issue Direct Consumption Voucher & Preview'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+
+      {/* HISTORY VIEW */}
+      {viewMode === 'history' && (
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-4 print:hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="w-full sm:w-80">
+              <SearchInputWithClear
+                value={historySearch}
+                onChange={setHistorySearch}
+                placeholder={
+                  isFa
+                    ? 'جستجو در شماره رسید، درخواست خرید، تامین‌کننده، پکینگ...'
+                    : 'Search GCV No., PR, supplier, packing...'
+                }
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
               <button
-                type="submit"
-                className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
+                type="button"
+                onClick={() => setPrintReportOpen(true)}
+                disabled={filteredDocuments.length === 0}
+                className="h-9 px-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] disabled:opacity-45 text-xs font-semibold inline-flex items-center gap-1.5"
               >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>
-                  {editingDoc
-                    ? isFa
-                      ? 'ذخیره تغییرات رسید GCV'
-                      : 'Update GCV Receipt'
-                    : isFa
-                      ? 'ثبت رسید مصرف مستقیم کالا و صدور فرم'
-                      : 'Save Receipt & Print'}
-                </span>
+                <Printer className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <span>{isFa ? 'چاپ فهرست سوابق' : 'Print History List'}</span>
               </button>
             </div>
           </div>
-        </form>
-      )}
 
-      {/* GCV Document History */}
-      {(viewMode === 'history' || !canEdit) && (
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
-        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-bold">
-            {isFa ? 'سوابق رسید مصرف مستقیم کالا' : 'Recorded Direct Consumption Receipts'}
-          </h3>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPrintReportOpen(true)}
-              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>{t.controls.printReport}</span>
-            </button>
-          </div>
-        </div>
-        <StickyTableWrapper>
-          <table className="w-full text-xs">
-            <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-              <tr>
-                <th className="py-2.5 px-4">{t.headers.gcvReceiptNo}</th>
-                <th className="py-2.5 px-4">{isFa ? 'تاریخ' : 'Date'}</th>
-                <th className="py-2.5 px-4">{t.headers.supplier}</th>
-                <th className="py-2.5 px-4">{isFa ? 'بارنامه / Release Note' : 'Waybill / Release'}</th>
-                <th className="py-2.5 px-4">{t.headers.receiver}</th>
-                <th className="py-2.5 px-4">{isFa ? 'تعداد اقلام' : 'Items'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'ثبت‌کننده' : 'Created By'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border-subtle)]">
-              {loading ? (
+          <StickyTableWrapper maxHeightClass="max-h-[62vh]">
+            <table className="w-full text-xs border-collapse" data-testid="gcv-history-table">
+              <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-[var(--text-muted)]">
-                    {t.controls.loading}
-                  </td>
+                  <th className="p-2.5 text-center w-10">#</th>
+                  <th className="p-2.5 text-start">{isFa ? 'شماره رسید مصرف' : 'GCV No.'}</th>
+                  <th className="p-2.5 text-center">{isFa ? 'تاریخ' : 'Date'}</th>
+                  <th className="p-2.5 text-start">{isFa ? 'درخواست خرید' : 'Purchase Req.'}</th>
+                  <th className="p-2.5 text-start">{isFa ? 'تامین کننده' : 'Supplier'}</th>
+                  <th className="p-2.5 text-start">{isFa ? 'کارشناس خرید' : 'Buyer'}</th>
+                  <th className="p-2.5 text-start">{isFa ? 'خرید توسط' : 'Purchased By'}</th>
+                  <th className="p-2.5 text-center">{isFa ? 'تعداد اقلام' : 'Items'}</th>
+                  <th className="p-2.5 text-center">{isFa ? 'اسکن امضاشده' : 'Signed Scan'}</th>
+                  <th className="p-2.5 text-center">{isFa ? 'عملیات' : 'Actions'}</th>
                 </tr>
-              ) : documentsList.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="py-8 text-center text-[var(--text-muted)]">
-                    {t.controls.noData}
-                  </td>
-                </tr>
-              ) : (
-                docsPagination.pageItems.map((doc) => (
-                  <tr
-                    key={doc.id}
-                    onClick={() => setScanTarget(doc)}
-                    title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
-                    className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer"
-                  >
-                    <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">
-                      {doc.receiptNo}
-                    </td>
-                    <td className="py-2.5 px-4 tabular-nums" dir="ltr">
-                      {formatDate(doc.date)}
-                    </td>
-                    <td className="py-2.5 px-4 bidi-plaintext">{doc.supplier || '-'}</td>
-                    <td className="py-2.5 px-4 tabular-nums" dir="ltr">
-                      {[doc.waybillNo, doc.releaseNoteNo].filter(Boolean).join(' / ') || '-'}
-                    </td>
-                    <td className="py-2.5 px-4 bidi-plaintext">{doc.receiver}</td>
-                    <td className="py-2.5 px-4 tabular-nums">{doc.items.length}</td>
-                    <td className="py-2.5 px-4">{doc.createdBy}</td>
-                    <td className="py-2.5 px-4 whitespace-nowrap">
-                      <SignedScanRowButton
-                        signedScan={doc.signedScan}
-                        recordLabel={doc.receiptNo}
-                        onClick={() => setScanTarget(doc)}
-                      />
-                    </td>
-                    <td className="py-2.5 px-4" onClick={(e) => e.stopPropagation()}>
-                      <div className="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setPrintDoc(doc)}
-                          className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          <span>{t.controls.print}</span>
-                        </button>
-                        {canEdit && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => startEdit(doc)}
-                              className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
-                              title={t.controls.edit}
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setDeleteTarget(doc)}
-                              className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
-                              title={t.controls.delete}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-subtle)]">
+                {loading && documentsList.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="p-8 text-center text-[var(--text-muted)]">
+                      {isFa ? 'در حال بارگذاری...' : 'Loading...'}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </StickyTableWrapper>
-        <TablePaginationBar
-          page={docsPagination.page}
-          totalPages={docsPagination.totalPages}
-          total={docsPagination.total}
-          pageSize={docsPagination.pageSize}
-          onPageChange={docsPagination.setPage}
-          onPageSizeChange={docsPagination.setPageSize}
-          lang={prefs.language}
-        />
-      </div>
+                ) : docsPagination.pageItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="p-8 text-center text-[var(--text-muted)]">
+                      {isFa
+                        ? 'هیچ رسید مصرف مستقیمی ثبت نشده است.'
+                        : 'No Direct Consumption Vouchers recorded yet.'}
+                    </td>
+                  </tr>
+                ) : (
+                  docsPagination.pageItems.map((doc, idx) => (
+                    <tr
+                      key={doc.id}
+                      data-testid={`gcv-history-row-${doc.receiptNo}`}
+                      onClick={() => setScanTarget(doc)}
+                      title={
+                        isFa
+                          ? 'برای مشاهده یا بارگذاری اسکن امضاشده این فرم کلیک کنید'
+                          : 'Click to view or upload signed scan'
+                      }
+                      className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer transition-colors"
+                    >
+                      <td className="p-2.5 text-center tabular-nums text-[var(--text-muted)]">
+                        {(docsPagination.page - 1) * docsPagination.pageSize + idx + 1}
+                      </td>
+                      <td className="p-2.5 font-mono font-bold text-[var(--accent-primary)] tabular-nums" dir="ltr">
+                        {doc.receiptNo}
+                      </td>
+                      <td className="p-2.5 text-center tabular-nums" dir="ltr">
+                        {formatDate(doc.date)}
+                      </td>
+                      <td className="p-2.5 tabular-nums">{doc.purchaseRequestNo || '-'}</td>
+                      <td className="p-2.5 bidi-plaintext">{doc.supplier || '-'}</td>
+                      <td className="p-2.5 bidi-plaintext">{doc.buyerName || '-'}</td>
+                      <td className="p-2.5">{purchaseByDisplay(doc.purchaseBy)}</td>
+                      <td className="p-2.5 text-center font-bold tabular-nums">{doc.items.length}</td>
+                      <td className="p-2.5 text-center">
+                        <SignedScanRowButton
+                          signedScan={doc.signedScan}
+                          recordLabel={doc.receiptNo}
+                          onClick={() => setScanTarget(doc)}
+                        />
+                      </td>
+                      <td
+                        className="p-2.5 text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            data-testid={`gcv-print-btn-${doc.receiptNo}`}
+                            onClick={() => {
+                              setPrintDocWasUndone(false);
+                              setPrintDoc(doc);
+                            }}
+                            title={isFa ? 'پیش‌نمایش و چاپ فرم رسمی' : 'Print Official Form'}
+                            className="p-1.5 rounded-lg text-[var(--accent-primary)] hover:bg-[var(--accent-soft)]"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                          {canEdit && (
+                            <>
+                              <button
+                                type="button"
+                                data-testid={`gcv-edit-btn-${doc.receiptNo}`}
+                                onClick={() => startEdit(doc)}
+                                title={isFa ? 'ویرایش' : 'Edit'}
+                                className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-500/10"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`gcv-delete-btn-${doc.receiptNo}`}
+                                onClick={() => setDeleteTarget(doc)}
+                                title={isFa ? 'حذف' : 'Delete'}
+                                className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-500/10"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </StickyTableWrapper>
+
+          <TablePaginationBar
+            page={docsPagination.page}
+            totalPages={docsPagination.totalPages}
+            total={docsPagination.total}
+            pageSize={docsPagination.pageSize}
+            onPageChange={docsPagination.setPage}
+            onPageSizeChange={docsPagination.setPageSize}
+            lang={prefs.language}
+          />
+        </div>
       )}
 
-      {/* Printable Official MD1EX-FQP02/11-03 Landscape Modal */}
+      {/* Printable Official MD1EX-FQP02/11-03 Preview Modal with Post-Print Undo & Redo */}
       {printDoc && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
-          <div className="w-full max-w-6xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
-              <div>
-                <h3 className="text-sm font-bold">
-                  {isFa ? 'فرم رسمی رسید مصرف مستقیم کالا' : 'Official Not-Stored Goods Consumption Voucher'}
-                </h3>
-                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  {formCode ? `${formCode} · ` : ''}{printDoc.receiptNo}
-                </p>
+        <div
+          data-testid="gcv-preview-modal"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 print:hidden"
+        >
+          <div className="w-full max-w-6xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] shadow-2xl max-h-[94vh] flex flex-col overflow-hidden">
+            {/* Toolbar */}
+            <div className="px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <Printer className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                <span className="text-xs sm:text-sm font-bold text-[var(--text-primary)] truncate">
+                  {isFa
+                    ? `پیش‌نمایش چاپ رسید مصرف مستقیم کالا — ${printDoc.receiptNo} (${formCode})`
+                    : `GCV Print Preview — ${printDoc.receiptNo} (${formCode})`}
+                </span>
               </div>
-              <div className="flex items-center gap-2">
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {/* Post-Print Undo & Redo Controls */}
+                {canEdit && (
+                  <div
+                    dir="ltr"
+                    className="inline-flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5"
+                  >
+                    <button
+                      type="button"
+                      data-testid="gcv-preview-undo-btn"
+                      disabled={!historyStatus.canUndo || historyBusy}
+                      onClick={() => void performUndo()}
+                      title={
+                        isFa
+                          ? 'واگرد (لغو صدور رسید مصرف و بازگردانی وضعیت جدول جزئیات)'
+                          : 'Undo (revert GCV & Detailed table)'
+                      }
+                      className="h-8 px-2.5 rounded-lg text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] disabled:opacity-35 inline-flex items-center gap-1"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'واگرد' : 'Undo'}</span>
+                    </button>
+                    <div className="w-px h-4 bg-[var(--border-subtle)] mx-0.5" />
+                    <button
+                      type="button"
+                      data-testid="gcv-preview-redo-btn"
+                      disabled={!historyStatus.canRedo || historyBusy}
+                      onClick={() => void performRedo()}
+                      title={isFa ? 'انجام مجدد (اعمال مجدد رسید مصرف)' : 'Redo (reapply GCV)'}
+                      className="h-8 px-2.5 rounded-lg text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] disabled:opacity-35 inline-flex items-center gap-1"
+                    >
+                      <Redo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'انجام مجدد' : 'Redo'}</span>
+                    </button>
+                  </div>
+                )}
+
                 <button
                   type="button"
+                  data-testid="gcv-preview-print-btn"
+                  disabled={printDocWasUndone}
                   onClick={() => triggerAppPrint()}
-                  className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
+                  className="h-9 px-4 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-45 text-[var(--accent-contrast)] text-xs font-bold inline-flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'چاپ فرم (A4 افقی)' : 'Print Form (A4 Landscape)'}</span>
+                  <span>{isFa ? 'چاپ متریال / رسید (A4 افقی)' : 'Print Voucher (A4 Landscape)'}</span>
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setPrintDoc(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
+                  data-testid="gcv-preview-close-btn"
+                  aria-label={isFa ? 'بستن پیش‌نمایش' : 'Close preview'}
+                  onClick={() => {
+                    setPrintDoc(null);
+                    setPrintDocWasUndone(false);
+                  }}
+                  className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="overflow-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto w-full max-w-[283mm] bg-white p-5 shadow-lg rounded-sm">
+            {printDocWasUndone && (
+              <div
+                data-testid="gcv-preview-undone-banner"
+                className="px-4 py-2.5 bg-amber-500/15 border-b border-amber-500/35 text-xs font-semibold text-amber-800 dark:text-amber-300"
+              >
+                {isFa
+                  ? 'صدور این رسید مصرف با دکمه واگرد (Undo) لغو و جدول جزئیات به حالت قبل بازگردانده شد. برای بازگرداندن آن، روی «انجام مجدد (Redo)» کلیک کنید.'
+                  : 'This GCV was undone and Detailed Equipment was restored. Click Redo to reapply it.'}
+              </div>
+            )}
+
+            <div className="flex-1 overflow-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-900">
+              <div className="max-w-[1120px] mx-auto bg-white p-5 rounded-xl shadow-md">
                 <OfficialGcvSheet
                   doc={printDoc}
                   detailedItems={data?.detailedItems || []}
@@ -1555,28 +2001,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         </div>
       )}
 
-      <PrintReportModal
-        open={printReportOpen}
-        onClose={() => setPrintReportOpen(false)}
-        title={t.nav.gcv}
-        columns={historyColumns}
-        rows={data?.documents || []}
-      />
-
-      <ConfirmActionModal
-        open={Boolean(deleteTarget)}
-        title={isFa ? 'حذف رسید مصرف مستقیم کالا (GCV)' : 'Delete GCV Receipt'}
-        message={
-          deleteTarget
-            ? isFa
-              ? `آیا از حذف رسید شماره ${deleteTarget.receiptNo} اطمینان دارید؟ مقدار تحویلی به موجودی کارفرما بازگردانده می‌شود.`
-              : `Delete GCV Receipt ${deleteTarget.receiptNo}? Delivered quantities will return to main inventory.`
-            : ''
-        }
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setDeleteTarget(null)}
-      />
-
+      {/* Signed Form Scan Modal */}
       {scanTarget && (
         <SignedScanModal
           open={Boolean(scanTarget)}
@@ -1585,21 +2010,35 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
           recordLabel={scanTarget.receiptNo}
           signedScan={scanTarget.signedScan}
           onClose={() => setScanTarget(null)}
-          onUpdated={(nextScan) => {
-            setData((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    documents: prev.documents.map((d) =>
-                      d.id === scanTarget.id ? { ...d, signedScan: nextScan } : d,
-                    ),
-                  }
-                : prev,
-            );
-            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          onUpdated={() => {
+            void loadData();
           }}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'حذف رسید مصرف مستقیم کالا' : 'Delete Direct Consumption Voucher'}
+        message={
+          isFa
+            ? `آیا از حذف رسید مصرف شماره «${deleteTarget?.receiptNo || ''}» اطمینان دارید؟ شماره رسید مصرف و تعداد رسید مصرف از جدول جزئیات تجهیزات پاک خواهد شد.`
+            : `Are you sure you want to delete GCV "${deleteTarget?.receiptNo || ''}"? Its receipt number and delivered quantity will be reverted in Detailed Equipment.`
+        }
+        confirmLabel={isFa ? 'بله، حذف شود' : 'Delete'}
+        danger
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+      />
+
+      {/* History List Print Report */}
+      <PrintReportModal
+        open={printReportOpen}
+        onClose={() => setPrintReportOpen(false)}
+        title={isFa ? 'گزارش سوابق رسید مصرف مستقیم کالا (GCV)' : 'Direct Consumption Vouchers History'}
+        rows={filteredDocuments}
+        columns={historyColumns}
+      />
     </div>
   );
 };

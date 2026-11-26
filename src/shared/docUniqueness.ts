@@ -72,11 +72,15 @@ export function collectAllUsedDocNos(
     excludeScope?: UniqueDocScope;
     excludeId?: string;
     excludeIds?: readonly string[];
+    allowPairedOpiInvitationNo?: string;
   },
 ): Map<string, UsedDocNoEntry> {
   const excludedSet = new Set<string>(options?.excludeIds || []);
   if (options?.excludeId) excludedSet.add(options.excludeId);
   const excludeScope = options?.excludeScope;
+  const pairedOpiKey = options?.allowPairedOpiInvitationNo
+    ? normalizeDocNoKey(options.allowPairedOpiInvitationNo)
+    : '';
 
   const map = new Map<string, UsedDocNoEntry>();
 
@@ -84,6 +88,7 @@ export function collectAllUsedDocNos(
     if (excludeScope === scope && excludedSet.has(id)) return;
     const key = normalizeDocNoKey(rawDocNo);
     if (!key) return;
+    if (scope === 'opi' && pairedOpiKey && key === pairedOpiKey) return;
     if (!map.has(key)) {
       map.set(key, { scope, id, docNo: String(rawDocNo || '').trim() });
     }
@@ -146,6 +151,7 @@ export function assertUniqueDocNo(
     excludeScope?: UniqueDocScope;
     excludeId?: string;
     excludeIds?: readonly string[];
+    allowPairedOpiInvitationNo?: string;
   },
 ): UniqueDocNoCheckResult {
   const normalizedKey = normalizeDocNoKey(rawDocNo);

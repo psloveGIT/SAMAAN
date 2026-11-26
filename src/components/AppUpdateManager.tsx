@@ -26,6 +26,8 @@ import {
 
 const SEEN_BUILD_KEY = 'samaan_seen_build_id_v1';
 const DEFERRED_BUILD_KEY = 'samaan_deferred_build_id_v1';
+const PENDING_ACK_BUILD_KEY = 'samaan_pending_ack_build_id_v1';
+const SESSION_ACTIVE_KEY = 'samaan_session_active_v1';
 const POLL_INTERVAL_MS = 60_000;
 const MIN_FOCUS_CHECK_GAP_MS = 15_000;
 
@@ -48,6 +50,22 @@ function safeSetStorage(key: string, value: string): void {
 function safeRemoveStorage(key: string): void {
   try {
     localStorage.removeItem(key);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function safeGetSession(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetSession(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value);
   } catch {
     // ignore storage errors
   }
@@ -90,18 +108,48 @@ export const AppUpdateManager: React.FC = () => {
   const { prefs, notify } = useApp();
   const isFa = prefs.language === 'fa';
 
-  // Read initial lastSeenBuildId BEFORE persisting first-visit marker
-  const [initialLastSeen] = useState<string | null>(() => {
-    const existing = safeGetStorage(SEEN_BUILD_KEY);
-    if (!existing) {
+  // Detect whether this mount is a fresh cold launch (app was closed and just reopened)
+  const [coldLaunchInit] = useState(() => {
+    const wasActive = safeGetSession(SESSION_ACTIVE_KEY);
+    const isCold = !wasActive;
+    safeSetSession(SESSION_ACTIVE_KEY, '1');
+
+    // Strip cache-busting query param if we just reloaded after an update
+    if (typeof window !== 'undefined') {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('_samaan_v')) {
+          url.searchParams.delete('_samaan_v');
+          window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+        }
+      } catch {
+        // ignore URL cleanup issues
+      }
+    }
+
+    // If user explicitly clicked "Update Now" for this exact build, mark it seen ONLY now that it actually booted
+    const pendingAck = safeGetStorage(PENDING_ACK_BUILD_KEY);
+    if (pendingAck && pendingAck === APP_BUILD_ID) {
+      safeSetStorage(SEEN_BUILD_KEY, APP_BUILD_ID);
+      safeRemoveStorage(PENDING_ACK_BUILD_KEY);
+      safeRemoveStorage(DEFERRED_BUILD_KEY);
+    }
+
+    // On a fresh cold reopen, clear any old "Later" deferral so updates released while closed are never silently muted
+    if (isCold) {
+      safeRemoveStorage(DEFERRED_BUILD_KEY);
+    }
+
+    const existingSeen = safeGetStorage(SEEN_BUILD_KEY);
+    if (!existingSeen) {
       // First-ever visit: record current build quietly without nagging
       safeSetStorage(SEEN_BUILD_KEY, APP_BUILD_ID);
-      return null;
+      return { isCold, lastSeen: null as string | null };
     }
-    return existing;
+    return { isCold, lastSeen: existingSeen };
   });
 
-  const [lastSeenBuildId, setLastSeenBuildId] = useState<string | null>(initialLastSeen);
+  const [lastSeenBuildId, setLastSeenBuildId] = useState<string | null>(coldLaunchInit.lastSeen);
   const [deferredBuildId, setDeferredBuildId] = useState<string | null>(() => safeGetStorage(DEFERRED_BUILD_KEY));
   const [remotePayload, setRemotePayload] = useState<RemoteVersionPayload | null>(null);
   const [swNeedRefresh, setSwNeedRefresh] = useState(false);
@@ -126,6 +174,9 @@ export const AppUpdateManager: React.FC = () => {
 
     if (swRegRef.current) {
       swRegRef.current.update().catch(() => {});
+      if (swRegRef.current.waiting) {
+        setSwNeedRefresh(true);
+      }
     }
     const payload = await fetchRemoteVersion();
     if (payload) {
@@ -147,6 +198,9 @@ export const AppUpdateManager: React.FC = () => {
         onRegisteredSW(_swUrl, reg) {
           if (reg) {
             swRegRef.current = reg;
+            if (reg.waiting) {
+              setSwNeedRefresh(true);
+            }
             reg.update().catch(() => {});
           }
         },
@@ -157,11 +211,9 @@ export const AppUpdateManager: React.FC = () => {
     }
   }, [checkForUpdates]);
 
-  // Poll for remote updates quietly while running & on window focus/visibility restore
+  // Immediate check on cold open + quiet polling while running & on window focus/visibility restore
   useEffect(() => {
-    const initialTimer = window.setTimeout(() => {
-      void checkForUpdates(true);
-    }, 2500);
+    void checkForUpdates(true);
 
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -179,7 +231,6 @@ export const AppUpdateManager: React.FC = () => {
     document.addEventListener('visibilitychange', onFocusOrVisible);
 
     return () => {
-      window.clearTimeout(initialTimer);
       window.clearInterval(interval);
       window.removeEventListener('focus', onFocusOrVisible);
       document.removeEventListener('visibilitychange', onFocusOrVisible);
@@ -200,8 +251,70 @@ export const AppUpdateManager: React.FC = () => {
     [remotePayload, swNeedRefresh, lastSeenBuildId, deferredBuildId],
   );
 
-  // Broadcast subtle badge status for Layout sidebar/header indicator
-  useEffect(() => {
+  const applyCleanUpdateReload = useCallback(
+    async (targetBuildId: string, options: { preserveSeenBuildForWhatsNew?: boolean } = {}) => {
+      setUpdating(true);
+      try {
+        safeRemoveStorage(DEFERRED_BUILD_KEY);
+        setDeferredBuildId(null);
+
+        if (options.preserveSeenBuildForWhatsNew) {
+          // Keep SEEN_BUILD_KEY at current old build so the fresh bundle immediately shows What's New
+          safeRemoveStorage(PENDING_ACK_BUILD_KEY);
+        } else if (targetBuildId && targetBuildId !== APP_BUILD_ID) {
+          // Mark pending acknowledgement; only promoted to SEEN_BUILD_KEY after new build actually loads
+          safeSetStorage(PENDING_ACK_BUILD_KEY, targetBuildId);
+        }
+
+        // 1) Clear all Cache Storage entries so stale precached HTML/JS cannot be served again
+        if (typeof window !== 'undefined' && 'caches' in window) {
+          try {
+            const keys = await window.caches.keys();
+            await Promise.all(keys.map((k) => window.caches.delete(k)));
+          } catch {
+            // ignore cache clear issues
+          }
+        }
+
+        // 2) Activate any waiting Service Worker OR unregister stale SW registrations so next load hits network
+        if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+          try {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            let activatedWaiting = false;
+            for (const reg of regs) {
+              if (reg.waiting) {
+                reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                activatedWaiting = true;
+              }
+            }
+            if (activatedWaiting && updateSwFnRef.current) {
+              await Promise.race([
+                updateSwFnRef.current(true),
+                new Promise((resolve) => setTimeout(resolve, 1200)),
+              ]);
+            } else {
+              await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
+            }
+          } catch {
+            // ignore SW cleanup issues
+          }
+        }
+
+        // 3) Force a fresh cache-busted navigation so the browser always fetches the latest index.html
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location.href);
+          url.searchParams.set('_samaan_v', targetBuildId || String(Date.now()));
+          window.location.replace(url.toString());
+        }
+      } catch {
+        window.location.reload();
+      }
+    },
+    [],
+  );
+
+  // Broadcast subtle badge status for Layout sidebar/header indicator (and reply to late-mounting Layout requests)
+  const broadcastUpdateStatus = useCallback(() => {
     window.dispatchEvent(
       new CustomEvent('samaan:update-status', {
         detail: {
@@ -212,6 +325,16 @@ export const AppUpdateManager: React.FC = () => {
       }),
     );
   }, [evaluation.shouldShowQuietBadge, evaluation.mode, evaluation.targetVersion]);
+
+  useEffect(() => {
+    broadcastUpdateStatus();
+  }, [broadcastUpdateStatus]);
+
+  useEffect(() => {
+    const onRequestStatus = () => broadcastUpdateStatus();
+    window.addEventListener('samaan:request-update-status', onRequestStatus);
+    return () => window.removeEventListener('samaan:request-update-status', onRequestStatus);
+  }, [broadcastUpdateStatus]);
 
   // Listen for manual changelog / check-update open event from Layout
   useEffect(() => {
@@ -224,36 +347,11 @@ export const AppUpdateManager: React.FC = () => {
   }, [checkForUpdates]);
 
   const handleUpdateNow = async () => {
-    setUpdating(true);
-    try {
-      const nextSeen =
-        evaluation.mode === 'live_update' && remotePayload?.buildId
-          ? remotePayload.buildId
-          : APP_BUILD_ID;
-      safeSetStorage(SEEN_BUILD_KEY, nextSeen);
-      safeRemoveStorage(DEFERRED_BUILD_KEY);
-      setLastSeenBuildId(nextSeen);
-      setDeferredBuildId(null);
-
-      // Clear Cache Storage so the latest bundle/assets load cleanly
-      if (typeof window !== 'undefined' && 'caches' in window) {
-        try {
-          const keys = await window.caches.keys();
-          await Promise.all(keys.map((k) => window.caches.delete(k)));
-        } catch {
-          // ignore cache clear issues
-        }
-      }
-
-      if (swNeedRefresh && updateSwFnRef.current) {
-        await updateSwFnRef.current(true);
-      }
-
-      // Trigger clean reload to apply fresh assets
-      window.location.reload();
-    } catch {
-      window.location.reload();
-    }
+    const targetBuild =
+      evaluation.mode === 'live_update' && remotePayload?.buildId
+        ? remotePayload.buildId
+        : evaluation.targetBuildId;
+    await applyCleanUpdateReload(targetBuild, { preserveSeenBuildForWhatsNew: false });
   };
 
   const handleDeferLater = () => {
@@ -264,6 +362,7 @@ export const AppUpdateManager: React.FC = () => {
   const handleAcknowledgeReopen = () => {
     safeSetStorage(SEEN_BUILD_KEY, APP_BUILD_ID);
     safeRemoveStorage(DEFERRED_BUILD_KEY);
+    safeRemoveStorage(PENDING_ACK_BUILD_KEY);
     setLastSeenBuildId(APP_BUILD_ID);
     setDeferredBuildId(null);
   };
@@ -408,8 +507,8 @@ export const AppUpdateManager: React.FC = () => {
                 <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
                   {evaluation.mode === 'live_update'
                     ? isFa
-                      ? 'می‌توانید همین الان یا پس از اتمام کارتان بروزرسانی کنید.'
-                      : 'Update now or defer until you finish your current task.'
+                      ? `نسخه فعلی (${APP_VERSION}) باز است؛ در صورت تمایل همین الان بروزرسانی کنید یا بعداً انجام دهید.`
+                      : `You are running v${APP_VERSION}. Update now if you wish, or defer until later.`
                     : isFa
                       ? 'تغییرات جدید اعمال شده در این نسخه را مشاهده کنید.'
                       : 'Review the latest improvements applied to the app.'}

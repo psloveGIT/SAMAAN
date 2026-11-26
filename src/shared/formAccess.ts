@@ -44,8 +44,8 @@ export const OPERATIONAL_FORM_SECTIONS: readonly OperationalFormSectionMeta[] = 
   {
     order: 2,
     key: 'opi',
-    titleFa: 'دعوتنامه گشایش و بازرسی بسته‌ها',
-    titleEn: 'OPI Inspection Invitation',
+    titleFa: 'دعوتنامه گشایش و بازرسی بسته ها',
+    titleEn: 'OPI Invitation',
     shortCode: 'OPI',
     defaultDataSource: 'opi',
   },
@@ -117,7 +117,7 @@ export const OPERATIONAL_FORM_SECTIONS: readonly OperationalFormSectionMeta[] = 
  *   have no built-in default forms and unlock each section once the user uploads its form.
  */
 export const BUILT_IN_EMPLOYER_DEFAULT_FORMS: Record<string, readonly OperationalFormSectionKey[]> = {
-  'mapna-md1': ['storageLabel', 'substitution', 'miv', 'opi'],
+  'mapna-md1': ['storageLabel', 'substitution', 'miv', 'opi', 'gcv', 'opiMinutes'],
   'mapna-md2': [],
   'mapna-md3': [],
 };

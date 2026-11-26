@@ -594,10 +594,12 @@ export interface SiteEntryMinutesRecord {
 export interface OpiMinutesRecord {
   id: string;
   minutesNo: string;
+  invitationId?: string;
   invitationNo?: string;
   date: string; // ISO YYYY-MM-DD
   time?: string; // ساعت
   packingListNo: string;
+  packingNos?: string[];
   packageNos: string[];
   projectName?: string;
   supplier?: string;
@@ -608,6 +610,7 @@ export interface OpiMinutesRecord {
   purchasePackageNo?: string;
   items?: OpiInvitationLineItem[];
   merNo?: string;
+  linkedMerId?: string;
   location?: string;
   storekeeper?: string;
   mapnaInspector?: string;
@@ -635,7 +638,9 @@ export interface OsdrReportItem {
   shortage: number;
   surplus: number;
   damagedQty: number;
+  discrepantQty?: number;
   discrepancyType: 'shortage' | 'damaged' | 'surplus' | 'shortage_and_damaged';
+  discrepancyReason?: string;
   remarks?: string;
 }
 
@@ -644,7 +649,15 @@ export interface OsdrReportRecord {
   reportNo: string;
   date: string; // ISO YYYY-MM-DD
   opiMinutesNo?: string;
+  opiMinutesId?: string;
+  opiNo?: string;
+  opiDate?: string;
   packingListNo: string;
+  projectName?: string;
+  contractNo?: string;
+  system?: string;
+  island?: string;
+  unit?: string;
   supplier?: string;
   items: OsdrReportItem[];
   notes?: string;
@@ -741,6 +754,7 @@ export interface DocumentLineItem {
   remark?: string;
   userRemark?: string;
   equipmentNotes?: string;
+  syncDeliveredQty?: number;
   sourceWarehouse?: 'auto' | 'employer' | 'contractor';
   deductedFromMapna?: number;
   deductedFromContractor?: number;
