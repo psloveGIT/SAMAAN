@@ -51,6 +51,7 @@ export const GENERAL_IMPORT_COLUMNS: ImportColumnDef[] = [
   { key: 'opiInvitationNo', labelFa: 'شماره دعوتنامه OPI', labelEn: 'OPI Invitation No.' },
   { key: 'opiInvitationDate', labelFa: 'تاریخ دعوتنامه OPI', labelEn: 'OPI Invitation Date', isDate: true },
   { key: 'driverName', labelFa: 'نام راننده', labelEn: 'Driver Name' },
+  { key: 'purchasePackageNo', labelFa: 'شماره بسته خرید', labelEn: 'Purchase Package No.' },
 ];
 
 export const DETAILED_IMPORT_COLUMNS: ImportColumnDef[] = [
@@ -461,6 +462,11 @@ function getAutoGeneralMapping(combinedCols: string[]): Record<string, number> {
     { key: 'opiInvitationNo', candidates: ['شماره دعوتنامه opi', 'opi invitation no'], fallback: 24 },
     { key: 'opiInvitationDate', candidates: ['تاریخ دعوتنامه opi', 'opi invitation date'], fallback: 25 },
     { key: 'driverName', candidates: ['نام راننده', 'راننده', 'driver'], fallback: 26 },
+    {
+      key: 'purchasePackageNo',
+      candidates: ['شماره بسته خرید', 'بسته خرید', 'purchase package no', 'purchase package', 'po package'],
+      fallback: -1,
+    },
   ];
 
   const mapped: Record<string, number> = {};
@@ -755,6 +761,7 @@ export function parseGeneralCsv(
   const idxOpiNo = col('opiInvitationNo');
   const idxOpiDate = col('opiInvitationDate');
   const idxDriver = col('driverName');
+  const idxPurchasePackageNo = col('purchasePackageNo');
 
   const now = new Date().toISOString();
   const rows: Omit<GeneralEntry, 'id'>[] = [];
@@ -804,6 +811,7 @@ export function parseGeneralCsv(
       opiInvitationNo: idxOpiNo >= 0 ? cleanStr(line[idxOpiNo]) : '',
       opiInvitationDate: idxOpiDate >= 0 ? parseFlexibleDateToIso(line[idxOpiDate] || '', assumedCalendar) : '',
       driverName: idxDriver >= 0 ? cleanStr(line[idxDriver]) : '',
+      purchasePackageNo: idxPurchasePackageNo >= 0 ? cleanStr(line[idxPurchasePackageNo]) : '',
       createdAt: now,
       updatedAt: now,
       createdBy,

@@ -297,6 +297,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     billOfLadingNo: '',
     vehicleNo: '',
     driverName: '',
+    purchasePackageNo: '',
   });
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -449,6 +450,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       { key: 'freightCost', header: t.headers.freightCost, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.freightCost },
       { key: 'opiInvitationNo', header: t.headers.opiInvitationNo, hideInTable: true, get: (r: GeneralRowView) => r.opiInvitationNo },
       { key: 'opiInvitationDate', header: t.headers.opiInvitationDate, isDate: true, hideInTable: true, get: (r: GeneralRowView) => r.opiInvitationDate },
+      { key: 'purchasePackageNo', header: t.headers.purchasePackageNo, hideInTable: true, get: (r: GeneralRowView) => r.purchasePackageNo },
       { key: 'driverName', header: t.headers.driverName, hideInTable: true, get: (r: GeneralRowView) => r.driverName },
     ],
     [t],
@@ -794,7 +796,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       setBulkEditOpen(false);
       setBulkPatch({
         arrivalDate: '', supplier: '', dispatchLocation: '', island: '', system: '', subSystem: '',
-        unit: '', releaseNo: '', releaseDate: '', billOfLadingNo: '', vehicleNo: '', driverName: '',
+        unit: '', releaseNo: '', releaseDate: '', billOfLadingNo: '', vehicleNo: '', driverName: '', purchasePackageNo: '',
       });
       clearSelection();
       triggerAutoSnapshot('Bulk Edit General');
@@ -1342,7 +1344,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   },
                   {
                     title: isFa ? 'حمل‌ونقل، صورتجلسات ورود و بازرسی' : 'Logistics, Minutes & Inspection',
-                    keys: ['employerEntryMinutesNo', 'mapnaEntryMinutesNo', 'releaseNo', 'releaseDate', 'billOfLadingNo', 'vehicleNo', 'driverName', 'opiInvitationNo', 'opiInvitationDate'],
+                    keys: ['purchasePackageNo', 'employerEntryMinutesNo', 'mapnaEntryMinutesNo', 'releaseNo', 'releaseDate', 'billOfLadingNo', 'vehicleNo', 'driverName', 'opiInvitationNo', 'opiInvitationDate'],
                   },
                 ] as const
               ).map((group) => (
@@ -1495,6 +1497,20 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     onChange={(e) => setEditNums({ ...editNums, itemCount: sanitizeDigitsOnly(e.target.value) })}
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
                       isFa && !editNums.itemCount ? 'text-right' : 'text-left'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.purchasePackageNo}
+                  </label>
+                  <input
+                    type="text"
+                    dir={isFa && !editing.purchasePackageNo ? 'rtl' : 'ltr'}
+                    value={editing.purchasePackageNo || ''}
+                    onChange={(e) => setEditing({ ...editing, purchasePackageNo: e.target.value })}
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext ${
+                      isFa && !editing.purchasePackageNo ? 'text-right' : 'text-left'
                     }`}
                   />
                 </div>
@@ -1915,6 +1931,16 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     value={bulkPatch.driverName}
                     onChange={(e) => setBulkPatch((p) => ({ ...p, driverName: e.target.value }))}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.purchasePackageNo}</label>
+                  <input
+                    type="text"
+                    dir={isFa && !bulkPatch.purchasePackageNo ? 'rtl' : 'ltr'}
+                    value={bulkPatch.purchasePackageNo}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, purchasePackageNo: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] tabular-nums"
                   />
                 </div>
               </div>

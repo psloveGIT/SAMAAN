@@ -322,6 +322,7 @@ export interface GeneralEntry {
   packingListNo: string; // شماره پکینگ لیست
   packageNo: string; // شماره نگله
   packageType?: string; // نوع بسته‌بندی
+  purchasePackageNo?: string; // شماره بسته خرید
   itemCount?: number | null; // تعداد اقلام نگله
   itemDescription: string; // شرح کالا
   island: string; // جزیره
@@ -494,6 +495,7 @@ export interface OpiInvitationRecord {
   date: string; // ISO YYYY-MM-DD (تاریخ بازرسی)
   time: string; // HH:mm
   packingNos: string[];
+  generalIds?: string[]; // شناسه‌های ردیف‌های ثبت کلی انتخاب‌شده
   location?: string;
   projectName?: string;
   system?: string;

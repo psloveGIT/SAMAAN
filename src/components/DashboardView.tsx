@@ -17,6 +17,7 @@ import type {
   ExpiringChemicalNotice,
   SelectionFormulaSummary,
 } from '../shared/types.ts';
+import type { OpenOpiInvitationItem } from '../shared/opiInvitation.ts';
 import type { NavTabKey } from './Layout.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
@@ -38,12 +39,14 @@ interface AnalyticsPayload {
     openMerCount?: number;
     openRepCount?: number;
     expiringChemicalsCount?: number;
+    openOpiCount?: number;
   };
   totals: SelectionFormulaSummary & {
     grossWeightTons?: number;
     netWeightTons?: number;
   };
   transitByStatus: { status: string; count: number }[];
+  openOpiInvitations?: OpenOpiInvitationItem[];
   byIsland: {
     name: string;
     generalCount: number;
@@ -405,43 +408,119 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </div>
 
-        {/* Transit Pipeline */}
-        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 flex flex-col">
-          <div className="flex items-center justify-between gap-2 mb-4">
-            <h3 className="text-sm font-bold tracking-tight">
-              {isFa ? 'وضعیت محموله‌های در راه' : 'In-Transit Pipeline'}
-            </h3>
-            <button
-              type="button"
-              onClick={() => onNavigate('transit')}
-              className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-0.5"
-            >
-              <span>{isFa ? 'جزئیات' : 'Details'}</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          {data.transitByStatus.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center py-8 text-xs text-[var(--text-muted)]">
-              {t.controls.noData}
+        {/* Right Stack: Transit Pipeline + Open OPI Invitations */}
+        <div className="flex flex-col gap-5">
+          {/* Transit Pipeline */}
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 flex flex-col">
+            <div className="flex items-center justify-between gap-2 mb-4">
+              <h3 className="text-sm font-bold tracking-tight">
+                {isFa ? 'وضعیت محموله‌های در راه' : 'In-Transit Pipeline'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => onNavigate('transit')}
+                className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-0.5"
+              >
+                <span>{isFa ? 'جزئیات' : 'Details'}</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
             </div>
-          ) : (
-            <div className="divide-y divide-[var(--border-subtle)]">
-              {data.transitByStatus.map((row) => (
-                <div
-                  key={row.status}
-                  className="flex items-center justify-between py-3 first:pt-1 last:pb-1 text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${getTransitStatusDot(row.status)}`} />
-                    <span className="font-medium text-[var(--text-secondary)] truncate">{row.status}</span>
+            {data.transitByStatus.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center py-6 text-xs text-[var(--text-muted)]">
+                {t.controls.noData}
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--border-subtle)]">
+                {data.transitByStatus.map((row) => (
+                  <div
+                    key={row.status}
+                    className="flex items-center justify-between py-2.5 first:pt-1 last:pb-1 text-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${getTransitStatusDot(row.status)}`} />
+                      <span className="font-medium text-[var(--text-secondary)] truncate">{row.status}</span>
+                    </div>
+                    <span className="font-bold text-sm text-[var(--text-primary)] tabular-nums">
+                      {fmt(row.count)}
+                    </span>
                   </div>
-                  <span className="font-bold text-sm text-[var(--text-primary)] tabular-nums">
-                    {fmt(row.count)}
-                  </span>
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Open OPI Invitations (دعوتنامه‌های باز) */}
+          <div
+            data-testid="dashboard-open-opi-section"
+            className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] p-5 flex flex-col flex-1"
+          >
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    (data.openOpiInvitations?.length || 0) > 0
+                      ? 'bg-[var(--status-warning)]'
+                      : 'bg-[var(--status-success)]'
+                  }`}
+                />
+                <h3 className="text-sm font-bold tracking-tight truncate">
+                  {isFa
+                    ? `دعوتنامه‌های باز (${fmt(data.openOpiInvitations?.length || 0)})`
+                    : `Open OPI Invitations (${fmt(data.openOpiInvitations?.length || 0)})`}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigate('opi')}
+                className="text-xs font-medium text-[var(--accent-primary)] hover:underline flex items-center gap-0.5 shrink-0"
+              >
+                <span>{isFa ? 'دعوتنامه‌ها' : 'Invitations'}</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
             </div>
-          )}
+
+            {!data.openOpiInvitations || data.openOpiInvitations.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center py-6 text-xs text-[var(--text-muted)] text-center">
+                {isFa ? 'هیچ دعوتنامه بازی وجود ندارد.' : 'No open OPI invitations.'}
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--border-subtle)] max-h-64 overflow-y-auto">
+                {data.openOpiInvitations.map((inv) => (
+                  <div
+                    key={inv.invitationNo}
+                    data-testid="dashboard-open-opi-row"
+                    className="py-2.5 first:pt-1 last:pb-1 flex items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <div
+                        dir="ltr"
+                        className="font-mono font-bold text-[var(--text-primary)] truncate text-left"
+                      >
+                        {inv.invitationNo}
+                      </div>
+                      {inv.missingDetailedPackings.length > 0 && (
+                        <div
+                          className="text-[11px] text-[var(--text-muted)] truncate mt-0.5 bidi-plaintext"
+                          title={inv.missingDetailedPackings.join('، ')}
+                        >
+                          {isFa ? 'پکینگ:' : 'Packing:'}{' '}
+                          <span dir="ltr" className="tabular-nums">
+                            {inv.missingDetailedPackings.join('، ')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      dir="ltr"
+                      className="text-[11.5px] font-semibold text-[var(--text-secondary)] tabular-nums shrink-0"
+                    >
+                      {inv.date ? formatDate(inv.date) : '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

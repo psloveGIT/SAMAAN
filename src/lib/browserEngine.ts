@@ -49,6 +49,7 @@ import {
 } from '../shared/customFilters.ts';
 import { extractEquipmentOffline } from '../shared/smartExtractor.ts';
 import { getLocalVersionPayload } from '../shared/appVersion.ts';
+import { computeOpenOpiInvitations } from '../shared/opiInvitation.ts';
 import { analyzeImportDelta, hasRecordMeaningfulChanges } from '../shared/importDelta.ts';
 import {
   applyCategoryDelete,
@@ -1908,7 +1909,7 @@ async function handleStaticApiRequestInner<T>(
         [
           g.rowNo, g.packingListNo, g.packageNo, g.packageType || '', g.itemDescription, g.supplier,
           g.dispatchLocation, g.employerEntryMinutesNo, g.mapnaEntryMinutesNo,
-          g.releaseNo, g.billOfLadingNo, g.vehicleNo, g.driverName,
+          g.releaseNo, g.billOfLadingNo, g.vehicleNo, g.driverName, g.purchasePackageNo || '',
           g.opiInvitationNo, g.island, g.system, g.subSystem, g.unit,
         ],
         q,
@@ -2119,6 +2120,7 @@ async function handleStaticApiRequestInner<T>(
         opiInvitationNo: normKey(raw.opiInvitationNo),
         opiInvitationDate: normKey(raw.opiInvitationDate),
         driverName: normKey(raw.driverName),
+        purchasePackageNo: normKey(raw.purchasePackageNo),
         createdAt: now,
         updatedAt: now,
         createdBy: u.username,
@@ -2159,7 +2161,7 @@ async function handleStaticApiRequestInner<T>(
     const stringFields: (keyof GeneralEntry)[] = [
       'arrivalDate', 'releaseNo', 'releaseDate', 'supplier', 'dispatchLocation',
       'employerEntryMinutesNo', 'packageType', 'island', 'system', 'subSystem',
-      'unit', 'billOfLadingNo', 'vehicleNo', 'opiInvitationNo', 'opiInvitationDate', 'driverName',
+      'unit', 'billOfLadingNo', 'vehicleNo', 'opiInvitationNo', 'opiInvitationDate', 'driverName', 'purchasePackageNo',
     ];
     for (const k of stringFields) {
       if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
@@ -2234,6 +2236,9 @@ async function handleStaticApiRequestInner<T>(
 
     if (patch.packageType !== undefined) {
       patch.packageType = normKey(patch.packageType);
+    }
+    if (patch.purchasePackageNo !== undefined) {
+      patch.purchasePackageNo = normKey(patch.purchasePackageNo);
     }
     if (patch.itemCount !== undefined) {
       patch.itemCount =
@@ -3941,22 +3946,38 @@ async function handleStaticApiRequestInner<T>(
     const raw = body as Partial<OpiInvitationRecord>;
     const cleanNo = normKey(raw.invitationNo);
     const cleanDate = normKey(raw.date);
+    const cleanGeneralIds = Array.from(new Set((raw.generalIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
     const cleanPackings = Array.from(new Set((raw.packingNos || []).map(normKey).filter(Boolean)));
-    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+    if (!cleanNo || !cleanDate || (cleanPackings.length === 0 && cleanGeneralIds.length === 0)) {
       throw new StaticEngineError(
-        errMsg('شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است', 'Invitation No., date, and at least one Packing List are required'),
+        errMsg('شماره دعوتنامه، تاریخ و حداقل یک ردیف یا پکینگ لیست الزامی است', 'Invitation No., date, and at least one row or Packing List are required'),
         400,
       );
     }
+    const derivedPackings =
+      cleanPackings.length > 0
+        ? cleanPackings
+        : Array.from(
+            new Set(
+              db.general
+                .filter((g) => cleanGeneralIds.includes(g.id))
+                .map((g) => normKey(g.packingListNo))
+                .filter(Boolean),
+            ),
+          );
+    const preserveMulti = (val: unknown) =>
+      String(val ?? '')
+        .replace(/\r\n/g, '\n')
+        .trim();
     const cleanItems = Array.isArray(raw.items)
       ? raw.items
           .map((it) => ({
             itemNo: normKey(it?.itemNo),
             packingListNo: normKey(it?.packingListNo),
             packageNo: normKey(it?.packageNo),
-            description: normKey(it?.description),
+            description: preserveMulti(it?.description),
             uom: normKey(it?.uom),
-            remarks: normKey(it?.remarks),
+            remarks: preserveMulti(it?.remarks),
           }))
           .filter(
             (it) =>
@@ -3975,7 +3996,8 @@ async function handleStaticApiRequestInner<T>(
       issueDate: normKey(raw.issueDate) || cleanDate,
       date: cleanDate,
       time: normKey(raw.time) || '09:00',
-      packingNos: cleanPackings,
+      packingNos: derivedPackings,
+      generalIds: cleanGeneralIds.length > 0 ? cleanGeneralIds : undefined,
       location: normKey(raw.location),
       projectName: normKey(raw.projectName),
       system: normKey(raw.system),
@@ -3996,18 +4018,16 @@ async function handleStaticApiRequestInner<T>(
     };
     db.opiInvitations.unshift(record);
     const now = new Date().toISOString();
+    const generalIdSet = new Set(cleanGeneralIds);
     for (const g of db.general) {
-      if (cleanPackings.includes(normKey(g.packingListNo))) {
+      const matched =
+        generalIdSet.size > 0
+          ? generalIdSet.has(g.id)
+          : derivedPackings.includes(normKey(g.packingListNo));
+      if (matched) {
         g.opiInvitationNo = cleanNo;
         g.opiInvitationDate = cleanDate;
         g.updatedAt = now;
-      }
-    }
-    for (const d of db.detailed) {
-      if (cleanPackings.includes(normKey(d.shipmentNo))) {
-        d.opiNo = cleanNo;
-        d.opiDate = cleanDate;
-        d.updatedAt = now;
       }
     }
     addAudit(db, sanitizeUser(u), 'ISSUE_OPI_INVITATION', 'opi', cleanNo, `صدور دعوتنامه OPI شماره ${cleanNo}`);
@@ -4023,48 +4043,73 @@ async function handleStaticApiRequestInner<T>(
     const raw = body as Partial<OpiInvitationRecord>;
     const cleanNo = normKey(raw.invitationNo ?? rec.invitationNo);
     const cleanDate = normKey(raw.date ?? rec.date);
+    const hasExplicitGeneralIds = raw.generalIds !== undefined;
+    const cleanGeneralIds = Array.from(
+      new Set(
+        ((hasExplicitGeneralIds ? raw.generalIds : rec.generalIds) || [])
+          .map((gid) => String(gid || '').trim())
+          .filter(Boolean),
+      ),
+    );
     const cleanPackings = Array.from(
       new Set(((raw.packingNos !== undefined ? raw.packingNos : rec.packingNos) || []).map(normKey).filter(Boolean)),
     );
-    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+    if (!cleanNo || !cleanDate || (cleanPackings.length === 0 && cleanGeneralIds.length === 0)) {
       throw new StaticEngineError(
-        errMsg('شماره دعوتنامه، تاریخ و حداقل یک پکینگ لیست الزامی است', 'Invitation No., date, and at least one Packing List are required'),
+        errMsg('شماره دعوتنامه، تاریخ و حداقل یک ردیف یا پکینگ لیست الزامی است', 'Invitation No., date, and at least one row or Packing List are required'),
         400,
       );
     }
+    const derivedPackings =
+      cleanPackings.length > 0
+        ? cleanPackings
+        : Array.from(
+            new Set(
+              db.general
+                .filter((g) => cleanGeneralIds.includes(g.id))
+                .map((g) => normKey(g.packingListNo))
+                .filter(Boolean),
+            ),
+          );
 
     const oldNo = normKey(rec.invitationNo);
     const oldPackings = [...rec.packingNos];
+    const oldGeneralIds = new Set(rec.generalIds || []);
+    const nextGeneralIds = new Set(cleanGeneralIds);
     const now = new Date().toISOString();
 
     for (const g of db.general) {
       const pk = normKey(g.packingListNo);
-      if (oldPackings.includes(pk) && normKey(g.opiInvitationNo) === oldNo && !cleanPackings.includes(pk)) {
-        const fallback = db.opiInvitations.find((inv) => inv.id !== rec.id && inv.packingNos.includes(pk));
+      const wasMatched =
+        oldGeneralIds.size > 0
+          ? oldGeneralIds.has(g.id) || normKey(g.opiInvitationNo) === oldNo
+          : oldPackings.includes(pk) && normKey(g.opiInvitationNo) === oldNo;
+      const isNowMatched =
+        nextGeneralIds.size > 0
+          ? nextGeneralIds.has(g.id)
+          : derivedPackings.includes(pk);
+      if (wasMatched && !isNowMatched && normKey(g.opiInvitationNo) === oldNo) {
+        const fallback = db.opiInvitations.find(
+          (inv) =>
+            inv.id !== rec.id &&
+            ((inv.generalIds && inv.generalIds.includes(g.id)) ||
+              (!inv.generalIds?.length && inv.packingNos.includes(pk))),
+        );
         g.opiInvitationNo = fallback ? fallback.invitationNo : '';
         g.opiInvitationDate = fallback ? fallback.date : '';
         g.updatedAt = now;
       }
-      if (cleanPackings.includes(pk)) {
+      if (isNowMatched) {
         g.opiInvitationNo = cleanNo;
         g.opiInvitationDate = cleanDate;
         g.updatedAt = now;
       }
     }
-    for (const d of db.detailed) {
-      const pk = normKey(d.shipmentNo);
-      if (oldPackings.includes(pk) && normKey(d.opiNo) === oldNo && !cleanPackings.includes(pk) && d.actualQty == null) {
-        const fallback = db.opiInvitations.find((inv) => inv.id !== rec.id && inv.packingNos.includes(pk));
-        d.opiNo = fallback ? fallback.invitationNo : '';
-        d.opiDate = fallback ? fallback.date : '';
-        d.updatedAt = now;
-      }
-      if (cleanPackings.includes(pk) && (d.actualQty == null || normKey(d.opiNo) === oldNo || !normKey(d.opiNo))) {
-        d.opiNo = cleanNo;
-        d.opiDate = cleanDate;
-        d.updatedAt = now;
-      }
-    }
+
+    const preserveMulti = (val: unknown) =>
+      String(val ?? '')
+        .replace(/\r\n/g, '\n')
+        .trim();
 
     if (Array.isArray(raw.items)) {
       rec.items = raw.items
@@ -4072,9 +4117,9 @@ async function handleStaticApiRequestInner<T>(
           itemNo: normKey(it?.itemNo),
           packingListNo: normKey(it?.packingListNo),
           packageNo: normKey(it?.packageNo),
-          description: normKey(it?.description),
+          description: preserveMulti(it?.description),
           uom: normKey(it?.uom),
-          remarks: normKey(it?.remarks),
+          remarks: preserveMulti(it?.remarks),
         }))
         .filter(
           (it) =>
@@ -4091,7 +4136,8 @@ async function handleStaticApiRequestInner<T>(
     if (raw.issueDate !== undefined) rec.issueDate = normKey(raw.issueDate) || cleanDate;
     rec.date = cleanDate;
     if (raw.time !== undefined) rec.time = normKey(raw.time) || '09:00';
-    rec.packingNos = cleanPackings;
+    rec.packingNos = derivedPackings;
+    if (hasExplicitGeneralIds) rec.generalIds = cleanGeneralIds.length > 0 ? cleanGeneralIds : undefined;
     if (raw.location !== undefined) rec.location = normKey(raw.location);
     if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
     if (raw.system !== undefined) rec.system = normKey(raw.system);
@@ -4119,23 +4165,22 @@ async function handleStaticApiRequestInner<T>(
     if (idx === -1) throw new StaticEngineError(errMsg('دعوتنامه OPI یافت نشد', 'OPI invitation not found'), 404);
     const [removed] = db.opiInvitations.splice(idx, 1);
     const oldNo = normKey(removed.invitationNo);
+    const removedIds = new Set(removed.generalIds || []);
     const now = new Date().toISOString();
     for (const g of db.general) {
       const pk = normKey(g.packingListNo);
-      if (removed.packingNos.includes(pk) && normKey(g.opiInvitationNo) === oldNo) {
-        const fallback = db.opiInvitations.find((inv) => inv.packingNos.includes(pk));
+      const matched =
+        normKey(g.opiInvitationNo) === oldNo &&
+        (removedIds.size > 0 ? removedIds.has(g.id) : removed.packingNos.includes(pk));
+      if (matched) {
+        const fallback = db.opiInvitations.find(
+          (inv) =>
+            (inv.generalIds && inv.generalIds.includes(g.id)) ||
+            (!inv.generalIds?.length && inv.packingNos.includes(pk)),
+        );
         g.opiInvitationNo = fallback ? fallback.invitationNo : '';
         g.opiInvitationDate = fallback ? fallback.date : '';
         g.updatedAt = now;
-      }
-    }
-    for (const d of db.detailed) {
-      const pk = normKey(d.shipmentNo);
-      if (removed.packingNos.includes(pk) && normKey(d.opiNo) === oldNo && d.actualQty == null) {
-        const fallback = db.opiInvitations.find((inv) => inv.packingNos.includes(pk));
-        d.opiNo = fallback ? fallback.invitationNo : '';
-        d.opiDate = fallback ? fallback.date : '';
-        d.updatedAt = now;
       }
     }
     addAudit(db, sanitizeUser(u), 'DELETE_OPI_INVITATION', 'opi', removed.invitationNo, `حذف دعوتنامه OPI شماره ${removed.invitationNo}`);
@@ -6245,6 +6290,7 @@ async function handleStaticApiRequestInner<T>(
         countingUnit: d.countingUnit,
       }));
     const expiringChemicals = getExpiringChemicals(detailedComputed, 30);
+    const openOpiInvitations = computeOpenOpiInvitations(db.general, db.detailed, db.opiInvitations);
 
     return {
       counts: {
@@ -6259,6 +6305,7 @@ async function handleStaticApiRequestInner<T>(
         openMerCount: openMerItems.length,
         openRepCount: openRepItems.length,
         expiringChemicalsCount: expiringChemicals.length,
+        openOpiCount: openOpiInvitations.length,
       },
       totals: {
         ...detailedSummary,
@@ -6272,6 +6319,7 @@ async function handleStaticApiRequestInner<T>(
         transitAmountSum: transitSummary.transitAmountSum,
       },
       transitByStatus: Object.entries(transitByStatus).map(([status, count]) => ({ status, count })),
+      openOpiInvitations,
       byIsland: Object.values(byIslandMap).sort((a, b) => (b.generalCount + b.detailedCount) - (a.generalCount + a.detailedCount)),
       availableYears,
       selectedYear,

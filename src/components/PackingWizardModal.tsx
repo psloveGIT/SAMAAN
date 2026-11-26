@@ -35,6 +35,7 @@ interface PackageLineDraft {
   id: string;
   packageNo: string;
   packageType: string;
+  purchasePackageNo: string;
   itemCount: string;
   itemDescription: string;
   island: string;
@@ -92,6 +93,7 @@ function createEmptyLine(prefill?: TransitEntry | null): PackageLineDraft {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     packageNo: prefill?.packageNo || '',
     packageType: '',
+    purchasePackageNo: '',
     itemCount: '',
     itemDescription: prefill?.itemDescription || '',
     island: '',
@@ -288,6 +290,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             packageNo: (p.packageNo || '').trim(),
             packageType: pkgType,
+            purchasePackageNo: '',
             itemCount: p.itemCount ? sanitizeDigitsOnly(String(p.itemCount)) : '',
             itemDescription: (p.itemDescription || '').trim(),
             island: h.island || '',
@@ -441,6 +444,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
         packingListNo: pk,
         packageNo: l.packageNo.trim(),
         packageType: l.packageType.trim(),
+        purchasePackageNo: l.purchasePackageNo.trim(),
         itemCount: parseNumericInput(l.itemCount),
         itemDescription: l.itemDescription.trim(),
         island: l.island.trim(),
@@ -943,6 +947,22 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             onChange={(e) => handlePackageTypeChange(line.id, e.target.value)}
                             placeholder={isFa ? 'صندوق چوبی / پالت / کارتن...' : 'Wooden Box / Pallet / Crate...'}
                             className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                            {t.headers.purchasePackageNo}
+                          </label>
+                          <input
+                            type="text"
+                            dir={isFa && !line.purchasePackageNo ? 'rtl' : 'ltr'}
+                            value={line.purchasePackageNo}
+                            onChange={(e) => updateLine(line.id, { purchasePackageNo: e.target.value })}
+                            placeholder={isFa ? 'اختیاری (مثال: PO-102)' : 'Optional (e.g. PO-102)'}
+                            className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                              isFa && !line.purchasePackageNo ? 'text-right' : 'text-left'
+                            }`}
                           />
                         </div>
 

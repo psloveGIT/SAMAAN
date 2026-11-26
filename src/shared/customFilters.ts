@@ -43,6 +43,7 @@ export const GENERAL_FILTER_FIELDS: FilterFieldOption[] = [
   { key: 'vehicleNo', labelFa: 'شماره خودرو', labelEn: 'Vehicle No.' },
   { key: 'freightCost', labelFa: 'مبلغ کرایه حمل (ریال)', labelEn: 'Freight Cost (IRR)', isNumeric: true },
   { key: 'driverName', labelFa: 'نام راننده', labelEn: 'Driver Name' },
+  { key: 'purchasePackageNo', labelFa: 'شماره بسته خرید', labelEn: 'Purchase Package No.' },
   { key: 'opiInvitationNo', labelFa: 'شماره دعوتنامه OPI', labelEn: 'OPI Invitation No.' },
 ];
 

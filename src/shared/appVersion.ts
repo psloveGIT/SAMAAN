@@ -16,11 +16,32 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.15.1';
-export const APP_BUILD_ID = '2026.06.01-1';
-export const APP_RELEASED_AT = '2026-06-01';
+export const APP_VERSION = '2.16.0';
+export const APP_BUILD_ID = '2026.06.02-1';
+export const APP_RELEASED_AT = '2026-06-02';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.16.0',
+    buildId: '2026.06.02-1',
+    releasedAt: '2026-06-02',
+    titleFa: 'فرم رسمی دعوتنامه گشایش و بازرسی بسته‌ها (MD1EX-FQP02/02-03)، شماره بسته خرید در ثبت کلی و بخش دعوتنامه‌های باز در داشبورد',
+    titleEn: 'Official MD1 OPI Invitation Form (MD1EX-FQP02/02-03), Purchase Package No. in General Equipment & Dashboard Open OPI Invitations',
+    changesFa: [
+      'فعال‌سازی و بازطراحی کامل چهارمین فرم پیش‌فرض کارفرمای مپنا توسعه یک (MD1): «دعوتنامه گشایش و بازرسی بسته‌ها (MD1EX-FQP02/02-03)» با قفل سایر کارفرماها تا زمان تعریف فرم',
+      'گردش‌کار دو مرحله‌ای با فیلترهای پیشرفته مشابه جزئیات تجهیزات: انتخاب صرفاً ردیف‌های فاقد «شماره دعوتنامه OPI» از جدول ثبت کلی، تعیین زمان، تاریخ و مکان OPI و ثبت توضیحات اختیاری برای هر ردیف',
+      'شماره‌گذاری خودکار دعوتنامه بر اساس مخفف نیروگاه و کد تأمین‌کننده (TU/ME/PS و اختصار دوحرفی)، تکمیل خودکار تمام ۲۰ فیلد فرم و ستون واحد (UOM) از نوع بسته‌بندی، همگام‌سازی خودکار شماره و تاریخ دعوتنامه در ثبت کلی، و فعال ماندن Undo/Redo حتی پس از چاپ',
+      'افزودن ستون و فیلد «شماره بسته خرید» در جدول، ثبت، ویرایش، ویرایش گروهی و ورود اکسل بخش ثبت کلی تجهیزات',
+      'افزودن بخش «دعوتنامه‌های باز» زیر «وضعیت محموله‌های در راه» در داشبورد جهت نمایش خودکار شماره و تاریخ دعوتنامه‌هایی که تمام ردیف‌های جزئیات پکینگ آن‌ها هنوز شماره دعوتنامه نگرفته‌اند',
+    ],
+    changesEn: [
+      'Activated and redesigned the fourth built-in MAPNA MD1 default form: Package Opening & Inspection Invitation (MD1EX-FQP02/02-03), keeping other employers gated',
+      'Built a 2-step workflow with Detailed-Equipment-grade filtering over General Equipment rows lacking an OPI Invitation No., schedule inputs (date, time, location), and optional per-row remarks',
+      'Added automatic plant + supplier-coded numbering (TU/ME/PS or deterministic 2-letter code), full 20-rule auto-fill with UOM mapped from Package Type, automatic General Equipment syncing, and post-print Undo/Redo',
+      'Added Purchase Package No. across General Equipment table, creation wizard, single/bulk edit, filters, and CSV/Excel import',
+      'Added the "Open OPI Invitations" card directly beneath "In-Transit Pipeline" in Dashboard listing invitation numbers and dates whenever Detailed rows for a packing are not yet fully linked',
+    ],
+  },
   {
     version: '2.15.1',
     buildId: '2026.06.01-1',
