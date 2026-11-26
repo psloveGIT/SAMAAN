@@ -37,6 +37,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface SiteEntryApiResponse {
@@ -841,6 +842,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   const [viewMode, setViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
   const [data, setData] = useState<SiteEntryApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [scanTarget, setScanTarget] = useState<SiteEntryMinutesRecord | null>(null);
   const minutesList = useMemo(() => data?.minutes || [], [data]);
   const minutesPagination = useClientPagination(minutesList, 50);
 
@@ -1320,7 +1322,6 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             <style>{buildIsolatedPrintPortalCss('samaan-form-print-root', {
               orientation: 'portrait',
               isFa,
-              marginMm: 12,
               extraPrintCss: `
                 #samaan-form-print-root table {
                   width: 100% !important;
@@ -2056,25 +2057,31 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                 <th className="py-2.5 px-4">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Contractor'}</th>
                 <th className="py-2.5 px-4">{t.headers.billOfLadingNo}</th>
                 <th className="py-2.5 px-4">{isFa ? 'وضعیت ظاهری' : 'Condition'}</th>
+                <th className="py-2.5 px-4">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
                 <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={9} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : minutesList.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={9} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
               ) : (
                 minutesPagination.pageItems.map((rec) => (
-                  <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/50">
+                  <tr
+                    key={rec.id}
+                    onClick={() => setScanTarget(rec)}
+                    title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
+                    className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer"
+                  >
                     <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rec.minutesNo}</td>
                     <td className="py-2.5 px-4 tabular-nums" dir="ltr">{rec.releaseNoteNo || '-'}</td>
                     <td className="py-2.5 px-4 tabular-nums" dir="ltr">{formatDate(rec.date)}</td>
@@ -2094,7 +2101,14 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                         {conditionLabel(rec.conditionStatus)}
                       </span>
                     </td>
-                    <td className="py-2.5 px-4">
+                    <td className="py-2.5 px-4 whitespace-nowrap">
+                      <SignedScanRowButton
+                        signedScan={rec.signedScan}
+                        recordLabel={rec.minutesNo}
+                        onClick={() => setScanTarget(rec)}
+                      />
+                    </td>
+                    <td className="py-2.5 px-4" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
@@ -2148,7 +2162,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
 
       {/* Printable Official MD1EX-FQP02/15-01 Preview Modal */}
       {printSheet && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
               <div>
@@ -2209,6 +2223,30 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {scanTarget && (
+        <SignedScanModal
+          open={Boolean(scanTarget)}
+          collection="siteEntry"
+          recordId={scanTarget.id}
+          recordLabel={scanTarget.minutesNo}
+          signedScan={scanTarget.signedScan}
+          onClose={() => setScanTarget(null)}
+          onUpdated={(nextScan) => {
+            setData((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    minutes: prev.minutes.map((m) =>
+                      m.id === scanTarget.id ? { ...m, signedScan: nextScan } : m,
+                    ),
+                  }
+                : prev,
+            );
+            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          }}
+        />
+      )}
     </div>
   );
 };

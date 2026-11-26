@@ -9,8 +9,8 @@
  *    live application UI / sidebar / modal backdrop behind it.
  */
 
-export const STANDARD_PRINT_MARGIN_MM = 12;
-export const MIN_SAFE_PRINT_MARGIN_MM = 10;
+export const STANDARD_PRINT_MARGIN_MM = 8;
+export const MIN_SAFE_PRINT_MARGIN_MM = 6;
 
 export function normalizeSafePrintMarginMm(margin?: number | string): number {
   const parsed =
@@ -26,7 +26,7 @@ export function normalizeSafePrintMarginMm(margin?: number | string): number {
 }
 
 /**
- * Generates a standardized @page CSS rule with safe white margins on all 4 edges
+ * Generates a standardized @page CSS rule with crisp pure-white margins on all 4 edges
  * and optional automatic browser page numbering ("صفحه: # از #" / "Page: # of #").
  */
 export function buildPrintPageRule(
@@ -40,7 +40,7 @@ export function buildPrintPageRule(
 ): string {
   const safeMm = normalizeSafePrintMarginMm(margin);
   const showFooter = options?.showBrowserPageFooter ?? true;
-  const bottomMm = showFooter ? Math.max(safeMm + 3, 15) : safeMm;
+  const bottomMm = showFooter ? Math.max(safeMm + 3, 11) : safeMm;
   const pageSelector = options?.pageName ? `@page ${options.pageName}` : '@page';
   const contentExpr = isFa
     ? '"صفحه: " counter(page) " از " counter(pages)'
@@ -50,12 +50,14 @@ export function buildPrintPageRule(
     return `${pageSelector} {
     size: A4 ${orientation};
     margin: ${safeMm}mm;
+    background: #ffffff;
   }`;
   }
 
   return `${pageSelector} {
     size: A4 ${orientation};
     margin: ${safeMm}mm ${safeMm}mm ${bottomMm}mm ${safeMm}mm;
+    background: #ffffff;
     @bottom-center {
       content: ${contentExpr};
       font-family: 'Vazirmatn', 'Plus Jakarta Sans', system-ui, sans-serif;
@@ -79,8 +81,9 @@ export interface IsolatedPrintPortalOptions {
  * Generates complete, self-contained print isolation CSS for a document.body portal.
  * - On screen: completely hidden (`display: none !important`).
  * - In print: hides EVERY sibling of `body` (`#root`, modals, overlays, toasts),
- *   reveals ONLY `#${portalId}`, applies safe A4 margins, and supports mixed
- *   Portrait + Landscape sheets in a single print job (e.g. Substitution + Auto-MIV).
+ *   forces a pure white background (`#ffffff`) and light `color-scheme` (eliminating
+ *   any dark/gray page border or theme tint), applies crisp safe A4 margins, and supports
+ *   mixed Portrait + Landscape sheets in a single print job (e.g. Substitution + Auto-MIV).
  */
 export function buildIsolatedPrintPortalCss(
   portalId: string,
@@ -119,26 +122,37 @@ export function buildIsolatedPrintPortalCss(
     }
     @media print {
       ${pageRules}
-      html, body {
+      :root, html, html.light, html.dark, html.eye-comfort, html.dark.eye-comfort, body {
         margin: 0 !important;
         padding: 0 !important;
+        min-height: 0 !important;
         background: #ffffff !important;
+        background-color: #ffffff !important;
+        background-image: none !important;
         color: #000000 !important;
+        color-scheme: light !important;
+        border: none !important;
+        box-shadow: none !important;
         width: 100% !important;
         height: auto !important;
         overflow: visible !important;
       }
+      body > #root,
       body > *:not(#${portalId}) {
         display: none !important;
+        visibility: hidden !important;
       }
       #${portalId} {
         display: block !important;
         position: static !important;
         width: 100% !important;
         margin: 0 !important;
-        padding: 1.5mm !important;
+        padding: 0 !important;
+        border: none !important;
+        box-shadow: none !important;
         box-sizing: border-box !important;
         background: #ffffff !important;
+        background-color: #ffffff !important;
         color: #000000 !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
@@ -148,12 +162,14 @@ export function buildIsolatedPrintPortalCss(
         width: 100% !important;
         max-width: 100% !important;
         box-sizing: border-box !important;
+        background: #ffffff !important;
       }
       #${portalId} .samaan-print-sheet-landscape {
         page: samaan-sheet-landscape;
         width: 100% !important;
         max-width: 100% !important;
         box-sizing: border-box !important;
+        background: #ffffff !important;
       }
       #${portalId} .samaan-print-page-break {
         break-after: page !important;

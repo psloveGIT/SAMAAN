@@ -56,6 +56,7 @@ import {
 import { OpiGeneralPicker } from './OpiGeneralPicker.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
@@ -765,6 +766,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   const [printInvWasUndone, setPrintInvWasUndone] = useState(false);
   const [printInvTableOpen, setPrintInvTableOpen] = useState(false);
   const [printItemsTableOpen, setPrintItemsTableOpen] = useState(false);
+  const [scanTarget, setScanTarget] = useState<OpiInvitationRecord | null>(null);
 
   const printInvIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1326,7 +1328,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
               {buildIsolatedPrintPortalCss('samaan-opi-print-root', {
                 orientation: 'portrait',
                 isFa,
-                marginMm: 12,
                 extraPrintCss: `
                   #samaan-opi-print-root table {
                     width: 100% !important;
@@ -2016,19 +2017,26 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                       <th className="py-2.5 px-3 text-start">{t.headers.supplier}</th>
                       <th className="py-2.5 px-3 text-start">{t.headers.packingListNo}</th>
                       <th className="py-2.5 px-3 text-center">{isFa ? 'ردیف‌ها' : 'Items'}</th>
+                      <th className="py-2.5 px-3 text-start">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
                       <th className="py-2.5 px-3 text-start">{isFa ? 'عملیات' : 'Actions'}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
                     {invitationsPagination.pageItems.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-10 text-center text-[var(--text-muted)]">
+                        <td colSpan={9} className="py-10 text-center text-[var(--text-muted)]">
                           {t.controls.noData}
                         </td>
                       </tr>
                     ) : (
                       invitationsPagination.pageItems.map((inv) => (
-                        <tr key={inv.id} className="hover:bg-[var(--bg-subtle)]/40">
+                        <tr
+                          key={inv.id}
+                          data-testid={`opi-history-row-${inv.id}`}
+                          onClick={() => setScanTarget(inv)}
+                          title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
+                          className="hover:bg-[var(--bg-subtle)]/40 cursor-pointer"
+                        >
                           <td className="py-2.5 px-3 font-mono font-bold tabular-nums text-[var(--accent-primary)] whitespace-nowrap" dir="ltr">
                             {inv.invitationNo}
                           </td>
@@ -2051,6 +2059,16 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                             {inv.items?.length || inv.packingNos?.length || 0}
                           </td>
                           <td className="py-2.5 px-3 whitespace-nowrap">
+                            <SignedScanRowButton
+                              signedScan={inv.signedScan}
+                              recordLabel={inv.invitationNo}
+                              onClick={() => setScanTarget(inv)}
+                            />
+                          </td>
+                          <td
+                            className="py-2.5 px-3 whitespace-nowrap"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <div className="inline-flex items-center gap-1">
                               <button
                                 type="button"
@@ -2413,7 +2431,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
       {printInvitation && (
         <div
           data-testid="opi-preview-modal"
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden"
         >
           <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] shadow-2xl max-h-[94vh] flex flex-col overflow-hidden">
             {/* Modal Toolbar */}
@@ -2547,6 +2565,31 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
         onConfirm={handleConfirmDeleteInvitation}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Signed Form Scan Viewer / Uploader Modal */}
+      {scanTarget && (
+        <SignedScanModal
+          open={Boolean(scanTarget)}
+          collection="opi"
+          recordId={scanTarget.id}
+          recordLabel={scanTarget.invitationNo}
+          signedScan={scanTarget.signedScan}
+          onClose={() => setScanTarget(null)}
+          onUpdated={(nextScan) => {
+            setData((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    invitations: prev.invitations.map((item) =>
+                      item.id === scanTarget.id ? { ...item, signedScan: nextScan } : item,
+                    ),
+                  }
+                : prev,
+            );
+            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          }}
+        />
+      )}
     </div>
   );
 };

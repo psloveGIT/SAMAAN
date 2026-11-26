@@ -258,7 +258,6 @@ export const CustomFormsRunnerView: React.FC<CustomFormsRunnerViewProps> = ({
               {buildIsolatedPrintPortalCss('samaan-custom-form-print-root', {
                 orientation: effectiveUploadedForm.printSettings.orientation,
                 isFa,
-                marginMm: 12,
               })}
             </style>
             <UploadedFormA4Sheet

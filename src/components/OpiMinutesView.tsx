@@ -42,6 +42,7 @@ import type {
 import { ConfirmActionModal } from './ConfirmActionModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
+import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 const buildMomItemsForPacking = (
@@ -922,6 +923,12 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
   const [osdrViewMode, setOsdrViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
   const [data, setData] = useState<OpiMinutesApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [scanTarget, setScanTarget] = useState<{
+    collection: 'opiMinutes' | 'osdr';
+    id: string;
+    label: string;
+    signedScan?: OpiMinutesRecord['signedScan'];
+  } | null>(null);
   const minutesList = useMemo(() => data?.minutes || [], [data]);
   const minutesPagination = useClientPagination(minutesList, 50);
   const osdrList = useMemo(() => data?.osdrReports || [], [data]);
@@ -1507,7 +1514,6 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
             <style>{buildIsolatedPrintPortalCss('samaan-mom-print-root', {
               orientation: 'portrait',
               isFa,
-              marginMm: 12,
               extraPrintCss: `
                 #samaan-mom-print-root table {
                   width: 100% !important;
@@ -1544,7 +1550,6 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
             <style>{buildIsolatedPrintPortalCss('samaan-mer-print-root', {
               orientation: 'portrait',
               isFa,
-              marginMm: 12,
               extraPrintCss: `
                 #samaan-mer-print-root table {
                   width: 100% !important;
@@ -2138,25 +2143,38 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     <th className="py-2.5 px-4 text-start">{t.headers.packingListNo}</th>
                     <th className="py-2.5 px-4 text-start">{t.headers.packageNo}</th>
                     <th className="py-2.5 px-4 text-start">{isFa ? 'نتیجه' : 'Result'}</th>
+                    <th className="py-2.5 px-4 text-start">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
                     <th className="py-2.5 px-4 text-end">{isFa ? 'عملیات' : 'Actions'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {loading ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-[var(--text-muted)]">
+                      <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
                         {t.controls.loading}
                       </td>
                     </tr>
                   ) : minutesList.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-[var(--text-muted)]">
+                      <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
                         {t.controls.noData}
                       </td>
                     </tr>
                   ) : (
                     minutesPagination.pageItems.map((rec) => (
-                      <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/50">
+                      <tr
+                        key={rec.id}
+                        onClick={() =>
+                          setScanTarget({
+                            collection: 'opiMinutes',
+                            id: rec.id,
+                            label: rec.minutesNo,
+                            signedScan: rec.signedScan,
+                          })
+                        }
+                        title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
+                        className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer"
+                      >
                         <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rec.minutesNo}</td>
                         <td className="py-2.5 px-4 tabular-nums" dir="ltr">{formatDate(rec.date)}</td>
                         <td className="py-2.5 px-4 tabular-nums" dir="ltr">{rec.packingListNo}</td>
@@ -2176,7 +2194,21 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                               : isFa ? 'دارای مغایرت' : 'Discrepancy'}
                           </span>
                         </td>
-                        <td className="py-2.5 px-4 text-end">
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <SignedScanRowButton
+                            signedScan={rec.signedScan}
+                            recordLabel={rec.minutesNo}
+                            onClick={() =>
+                              setScanTarget({
+                                collection: 'opiMinutes',
+                                id: rec.id,
+                                label: rec.minutesNo,
+                                signedScan: rec.signedScan,
+                              })
+                            }
+                          />
+                        </td>
+                        <td className="py-2.5 px-4 text-end" onClick={(e) => e.stopPropagation()}>
                           <div className="inline-flex items-center gap-1.5">
                             <button
                               type="button"
@@ -2513,25 +2545,38 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                     <th className="py-2.5 px-4 text-start">{t.headers.packingListNo}</th>
                     <th className="py-2.5 px-4 text-start">{t.headers.supplier}</th>
                     <th className="py-2.5 px-4 text-end">{isFa ? 'تعداد اقلام مغایرت' : 'Items'}</th>
+                    <th className="py-2.5 px-4 text-start">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
                     <th className="py-2.5 px-4 text-end">{t.controls.print}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {loading ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-[var(--text-muted)]">
+                      <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
                         {t.controls.loading}
                       </td>
                     </tr>
                   ) : osdrList.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-[var(--text-muted)]">
+                      <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
                         {t.controls.noData}
                       </td>
                     </tr>
                   ) : (
                     osdrPagination.pageItems.map((rep) => (
-                      <tr key={rep.id} className="hover:bg-[var(--bg-subtle)]/50">
+                      <tr
+                        key={rep.id}
+                        onClick={() =>
+                          setScanTarget({
+                            collection: 'osdr',
+                            id: rep.id,
+                            label: rep.reportNo,
+                            signedScan: rep.signedScan,
+                          })
+                        }
+                        title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
+                        className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer"
+                      >
                         <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rep.reportNo}</td>
                         <td className="py-2.5 px-4 tabular-nums" dir="ltr">{formatDate(rep.date)}</td>
                         <td className="py-2.5 px-4 tabular-nums" dir="ltr">{rep.packingListNo}</td>
@@ -2539,7 +2584,21 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                         <td className="py-2.5 px-4 text-end tabular-nums font-bold text-[var(--status-danger)]">
                           {rep.items.length}
                         </td>
-                        <td className="py-2.5 px-4 text-end">
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <SignedScanRowButton
+                            signedScan={rep.signedScan}
+                            recordLabel={rep.reportNo}
+                            onClick={() =>
+                              setScanTarget({
+                                collection: 'osdr',
+                                id: rep.id,
+                                label: rep.reportNo,
+                                signedScan: rep.signedScan,
+                              })
+                            }
+                          />
+                        </td>
+                        <td className="py-2.5 px-4 text-end" onClick={(e) => e.stopPropagation()}>
                           <div className="inline-flex items-center gap-1.5">
                             <button
                               type="button"
@@ -2593,7 +2652,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
       {/* Printable Official MD1EX-FQP02/06-03 OPI Minutes Modal */}
       {printMinutes && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
               <div>
@@ -2637,7 +2696,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
       {/* Printable MER Modal */}
       {printOsdr && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
               <div>
@@ -2725,6 +2784,37 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         onConfirm={handleConfirmDeleteOsdr}
         onCancel={() => setDeleteOsdrTarget(null)}
       />
+
+      {scanTarget && (
+        <SignedScanModal
+          open={Boolean(scanTarget)}
+          collection={scanTarget.collection}
+          recordId={scanTarget.id}
+          recordLabel={scanTarget.label}
+          signedScan={scanTarget.signedScan}
+          onClose={() => setScanTarget(null)}
+          onUpdated={(nextScan) => {
+            setData((prev) => {
+              if (!prev) return prev;
+              if (scanTarget.collection === 'opiMinutes') {
+                return {
+                  ...prev,
+                  minutes: prev.minutes.map((m) =>
+                    m.id === scanTarget.id ? { ...m, signedScan: nextScan } : m,
+                  ),
+                };
+              }
+              return {
+                ...prev,
+                osdrReports: prev.osdrReports.map((o) =>
+                  o.id === scanTarget.id ? { ...o, signedScan: nextScan } : o,
+                ),
+              };
+            });
+            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          }}
+        />
+      )}
     </div>
   );
 };

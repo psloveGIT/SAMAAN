@@ -132,6 +132,10 @@ import {
   computeMivStockDeduction,
   type MivStockSourcePreference,
 } from '../shared/miv.ts';
+import {
+  assertUniqueDocNo,
+  validateSignedScanPayload,
+} from '../shared/docUniqueness.ts';
 import type {
   AuditLogEntry,
   CalendarMode,
@@ -167,6 +171,8 @@ import type {
   ReprocurementApplyPayload,
   ReprocurementApplyResponse,
   ShortageBackfillRecord,
+  SignedScanAttachment,
+  SignedScanCollectionKey,
   SiteEntryMinutesRecord,
   SubstitutionLineItem,
   SubstitutionRecord,
@@ -1413,6 +1419,10 @@ async function handleStaticApiRequestInner<T>(
     if (!formId || !docNo) {
       throw new StaticEngineError(errMsg('فرم و شماره سند الزامی است', 'Form ID and document number are required'), 400);
     }
+    const uniqCheck = assertUniqueDocNo(db, docNo);
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
+    }
     const now = new Date().toISOString();
     const record: CustomFormSubmission = {
       id: makeId(),
@@ -1443,7 +1453,14 @@ async function handleStaticApiRequestInner<T>(
     if (!target) {
       throw new StaticEngineError(errMsg('سند یافت نشد', 'Submission not found'), 404);
     }
-    if (body.docNo !== undefined) target.docNo = normKey(String(body.docNo || ''));
+    if (body.docNo !== undefined) {
+      const nextDocNo = normKey(String(body.docNo || ''));
+      const uniqCheck = assertUniqueDocNo(db, nextDocNo, { excludeScope: 'customForms', excludeId: target.id });
+      if (!uniqCheck.ok) {
+        throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
+      }
+      target.docNo = nextDocNo;
+    }
     if (body.date !== undefined) target.date = normKey(String(body.date || ''));
     if (body.packingListNo !== undefined) target.packingListNo = normKey(String(body.packingListNo || ''));
     if (body.fieldValues && typeof body.fieldValues === 'object') {
@@ -3736,6 +3753,10 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
+    }
     const cleanItems = Array.isArray(raw.items)
       ? raw.items
           .map((it) => ({
@@ -3839,6 +3860,10 @@ async function handleStaticApiRequestInner<T>(
         ),
         400,
       );
+    }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'siteEntry', excludeId: rec.id });
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
     if (Array.isArray(raw.items)) {
       rec.items = raw.items
@@ -3954,6 +3979,10 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
+    }
     const derivedPackings =
       cleanPackings.length > 0
         ? cleanPackings
@@ -4059,6 +4088,10 @@ async function handleStaticApiRequestInner<T>(
         errMsg('شماره دعوتنامه، تاریخ و حداقل یک ردیف یا پکینگ لیست الزامی است', 'Invitation No., date, and at least one row or Packing List are required'),
         400,
       );
+    }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'opi', excludeId: rec.id });
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
     const derivedPackings =
       cleanPackings.length > 0
@@ -4269,6 +4302,10 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
+    }
     const cleanItems = Array.isArray(raw.items)
       ? raw.items
           .map((it) => ({
@@ -4343,6 +4380,10 @@ async function handleStaticApiRequestInner<T>(
         errMsg('شماره صورتجلسه، تاریخ و شماره پکینگ لیست الزامی است', 'Minutes No., date, and Packing List No. are required'),
         400,
       );
+    }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'opiMinutes', excludeId: rec.id });
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
     if (Array.isArray(raw.items)) {
       rec.items = raw.items
@@ -4429,6 +4470,10 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
+    }
     const record: OsdrReportRecord = {
       id: makeId(),
       reportNo: cleanNo,
@@ -4465,6 +4510,10 @@ async function handleStaticApiRequestInner<T>(
         ),
         400,
       );
+    }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'osdr', excludeId: rec.id });
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
     rec.reportNo = cleanNo;
     rec.date = cleanDate;
@@ -4520,6 +4569,10 @@ async function handleStaticApiRequestInner<T>(
         errMsg('شماره رسید، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است', 'Receipt No., receiver, and at least one item are required'),
         400,
       );
+    }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
 
     const lineItems: DocumentLineItem[] = [];
@@ -4629,6 +4682,10 @@ async function handleStaticApiRequestInner<T>(
         errMsg('شماره رسید، تحویل‌گیرنده و حداقل یک قلم کالا الزامی است', 'Receipt No., receiver, and at least one item are required'),
         400,
       );
+    }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'gcv', excludeId: existing.id });
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
 
     const oldQtyByDetailedId = new Map<string, number>();
@@ -4794,6 +4851,10 @@ async function handleStaticApiRequestInner<T>(
     const items = raw.items || [];
     if (!cleanNo || !items.length) {
       throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
+    }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
 
     const isMivType = docType === 'miv_contractor' || docType === 'miv_mapna';
@@ -4987,6 +5048,10 @@ async function handleStaticApiRequestInner<T>(
     const items = raw.items || [];
     if (!cleanNo || !items.length) {
       throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
+    }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'miv', excludeId: existing.id });
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
 
     const oldReversalByDetailedId = new Map<string, { mapna: number; contractor: number; total: number }>();
@@ -5504,6 +5569,10 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
+    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    if (!uniqCheck.ok) {
+      throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
+    }
     const numQty =
       sanitizedOrigItems.length > 0
         ? roundQty(sanitizedOrigItems.reduce((sum, i) => sum + i.qty, 0))
@@ -5589,6 +5658,10 @@ async function handleStaticApiRequestInner<T>(
     if (raw.docNo !== undefined) {
       const cleanNo = normKey(raw.docNo);
       if (!cleanNo) throw new StaticEngineError(errMsg('شماره سند جایگزینی الزامی است', 'Document No. is required'), 400);
+      const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'substitutions', excludeId: rec.id });
+      if (!uniqCheck.ok) {
+        throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
+      }
       rec.docNo = cleanNo;
     }
     if (raw.date !== undefined) {
@@ -5749,6 +5822,88 @@ async function handleStaticApiRequestInner<T>(
     );
     await saveActiveDb();
     return { ok: true, reversedMivs } as T;
+  }
+
+  // ---------------- SIGNED FORM SCANS (ALL FORMS EXCEPT STORAGE LABELS) ----------------
+  if (pathname.startsWith('/api/form-scans/') && (method === 'PUT' || method === 'DELETE')) {
+    const u = requireAuth(['admin', 'operator']);
+    const parts = pathname.replace(/^\/api\/form-scans\//, '').split('/');
+    const collectionKey = parts[0] as SignedScanCollectionKey;
+    const recordId = parts[1] ? decodeURIComponent(parts[1]) : '';
+    const resolveCollection = (): {
+      items: Array<{ id: string; signedScan?: SignedScanAttachment | null }>;
+      auditScope: AuditLogEntry['scope'];
+    } | null => {
+      switch (collectionKey) {
+        case 'opi':
+          return { items: db.opiInvitations, auditScope: 'opi' };
+        case 'siteEntry':
+          return { items: db.siteEntryMinutes, auditScope: 'siteEntry' };
+        case 'opiMinutes':
+          return { items: db.opiMinutes, auditScope: 'opiMinutes' };
+        case 'osdr':
+          return { items: db.osdrReports, auditScope: 'osdr' };
+        case 'substitutions':
+          return { items: db.substitutions, auditScope: 'substitution' };
+        case 'gcv':
+          return { items: db.gcvDocuments, auditScope: 'gcv' };
+        case 'miv':
+          return { items: db.mivDocuments, auditScope: 'miv' };
+        case 'periodic':
+          return { items: db.periodicInspections, auditScope: 'periodicInspection' };
+        case 'customForms':
+          if (!db.customFormSubmissions) db.customFormSubmissions = [];
+          return { items: db.customFormSubmissions, auditScope: 'customForm' };
+        default:
+          return null;
+      }
+    };
+    const resolved = resolveCollection();
+    if (!resolved) {
+      throw new StaticEngineError(errMsg('بخش فرم معتبر نیست', 'Invalid form collection'), 400);
+    }
+    const target = resolved.items.find((r) => r.id === recordId);
+    if (!target) {
+      throw new StaticEngineError(errMsg('سند مورد نظر یافت نشد', 'Target form record not found'), 404);
+    }
+    if (method === 'PUT') {
+      const validation = validateSignedScanPayload({
+        ...(body as Partial<SignedScanAttachment>),
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: u.fullName || u.username,
+      });
+      if (!validation.ok || !validation.attachment) {
+        throw new StaticEngineError(
+          errMsg(
+            validation.errorFa || 'فایل اسکن معتبر نیست',
+            validation.errorEn || 'Invalid signed scan file',
+          ),
+          400,
+        );
+      }
+      target.signedScan = validation.attachment;
+      addAudit(
+        db,
+        sanitizeUser(u),
+        'UPLOAD_SIGNED_SCAN',
+        resolved.auditScope,
+        target.id,
+        `بارگذاری اسکن امضاشده فرم (${validation.attachment.fileName}) در بخش ${collectionKey}`,
+      );
+      await saveActiveDb();
+      return { ok: true, signedScan: validation.attachment } as T;
+    }
+    target.signedScan = null;
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'DELETE_SIGNED_SCAN',
+      resolved.auditScope,
+      target.id,
+      `حذف فایل اسکن امضاشده فرم در بخش ${collectionKey}`,
+    );
+    await saveActiveDb();
+    return { ok: true } as T;
   }
 
   // ---------------- MATERIAL ESTIMATION (MTO) ----------------

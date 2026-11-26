@@ -16,11 +16,32 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.16.0';
-export const APP_BUILD_ID = '2026.06.02-1';
-export const APP_RELEASED_AT = '2026-06-02';
+export const APP_VERSION = '2.16.1';
+export const APP_BUILD_ID = '2026.06.03-1';
+export const APP_RELEASED_AT = '2026-06-03';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.16.1',
+    buildId: '2026.06.03-1',
+    releasedAt: '2026-06-03',
+    titleFa: 'رفع کامل حاشیه خاکستری چاپ، اصلاح خطوط و کادر فرم حواله، یکتایی سراسری شماره فرم‌ها، آرشیو اسکن امضاشده فرم‌ها و حذف ایمیل شخصی از رابط کاربری',
+    titleEn: 'Eliminated Gray Print Borders & Tightened Margins, Fixed MIV Dividers/Footer/QA Alignment, Global Unique Form Numbering, Signed Form Scan Archive & Hidden Developer Email',
+    changesFa: [
+      'حذف کامل حاشیه خاکستری دور صفحه در چاپ تمامی فرم‌های فعلی و آینده (در هر دو حالت روشن و تاریک) و تنظیم حاشیه سفید استاندارد و متعادل ۸ میلی‌متری روی کاغذ',
+      'اصلاح دقیق ساختار فرم حواله انبار (در هر دو بخش درخواست کالا و حواله خودکار جایگزینی): افزودن خطوط عمودی جداکننده میان «درخواست‌کننده» و «تحویل‌گیرنده» و میان فیلدهای سربرگ (شماره قرارداد، پیمانکار، سیستم/جزیره، واحد و شماره رسید)، افزودن کادر کامل دور بخش «رونوشت» و کد فرم پایین صفحه، و انتقال متن کنترل واحد QA به سمت راست',
+      'اعمال یکتایی سراسری و قطعی شماره تمام فرم‌ها در سراسر پروژه به‌طوری که هیچ شماره فرمی در هیچ بخشی تکرار یا مجدداً استفاده نشود',
+      'افزودن امکان اسکن مستقیم یا بارگذاری فایل اسکن امضاشده (PDF و تصویر) در سابقه تمام فرم‌های سامانه (به‌جز برچسب انبارش کالا) همراه با مشاهده فوری فایل با کلیک بر روی ردیف سابقه',
+      'حذف کامل نمایش آدرس ایمیل شخصی از تمام بخش‌های رابط کاربری و ارسال خودکار و داخلی درخواست‌های فرم و گزارش خطا از طریق سرور برنامه',
+    ],
+    changesEn: [
+      'Completely eliminated gray printed borders across all current and future forms (in both Light and Dark themes) and tightened safe print margins to a crisp 8mm pure-white frame',
+      'Refined the official MIV sheet (shared by both MIV Issuance and Substitution Auto-MIV): added vertical dividers between Requester/Receiver and all 5 metadata strip cells, enclosed the bottom Copy/Form-Code footer in a solid black border, and right-aligned the QA control notice',
+      'Enforced project-wide unique form document numbering across all form collections and Trash so assigned numbers can never be duplicated',
+      'Added signed scan capture/upload (PDF/images up to 10 MB) and row-click viewer across Form History in every operational form section (except Storage Labels)',
+      'Removed personal email visibility from all client UI screens and routed form requests and error reports internally via the backend',
+    ],
+  },
   {
     version: '2.16.0',
     buildId: '2026.06.02-1',

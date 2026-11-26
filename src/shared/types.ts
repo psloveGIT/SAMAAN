@@ -128,6 +128,26 @@ export interface CustomEmployerForm {
   updatedAt: string;
 }
 
+export type SignedScanCollectionKey =
+  | 'opi'
+  | 'miv'
+  | 'substitutions'
+  | 'siteEntry'
+  | 'opiMinutes'
+  | 'osdr'
+  | 'gcv'
+  | 'periodic'
+  | 'customForms';
+
+export interface SignedScanAttachment {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataBase64: string;
+  uploadedAt: string;
+  uploadedBy?: string;
+}
+
 export interface CustomFormSubmission {
   id: string;
   formId: string;
@@ -138,6 +158,7 @@ export interface CustomFormSubmission {
   fieldValues: Record<string, string>;
   rows: Array<Record<string, string>>;
   notes?: string;
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   updatedAt: string;
   createdBy: string;
@@ -511,6 +532,7 @@ export interface OpiInvitationRecord {
   employerRep?: string;
   notes?: string;
   status: 'issued' | 'completed';
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   createdBy: string;
 }
@@ -564,6 +586,7 @@ export interface SiteEntryMinutesRecord {
   mapnaRep?: string; // legacy alias kept for backwards compatibility
   conditionStatus: 'healthy' | 'shortage_suspected' | 'damaged_apparent';
   notes?: string;
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   createdBy: string;
 }
@@ -594,6 +617,7 @@ export interface OpiMinutesRecord {
   qcInspector?: string;
   resultStatus: 'compliant' | 'has_discrepancy';
   notes?: string;
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   createdBy: string;
 }
@@ -624,6 +648,7 @@ export interface OsdrReportRecord {
   supplier?: string;
   items: OsdrReportItem[];
   notes?: string;
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   createdBy: string;
 }
@@ -693,6 +718,7 @@ export interface SubstitutionRecord {
   supplierSignatory?: string;
   status: 'pending' | 'approved' | 'executed';
   notes?: string;
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   createdBy: string;
 }
@@ -740,6 +766,7 @@ export interface GcvDocumentRecord {
   mapnaSiteManager?: string;
   notes?: string;
   items: DocumentLineItem[];
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   createdBy: string;
 }
@@ -771,6 +798,7 @@ export interface MivDocumentRecord {
   deliveredBy?: string;
   notes?: string;
   items: DocumentLineItem[];
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   createdBy: string;
 }
@@ -811,6 +839,7 @@ export interface PeriodicInspectionRecord {
   projectManagerSignatory: string;
   copyTo: string;
   answers: PeriodicInspectionAnswer[];
+  signedScan?: SignedScanAttachment | null;
   createdAt: string;
   createdBy: string;
 }

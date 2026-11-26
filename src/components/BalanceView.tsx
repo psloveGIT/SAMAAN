@@ -773,7 +773,6 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
               <style>{buildIsolatedPrintPortalCss('samaan-bmr-print-root', {
                 orientation: 'landscape',
                 isFa,
-                marginMm: 12,
                 extraPrintCss: `
                   #samaan-bmr-print-root table {
                     width: 100% !important;
@@ -1044,7 +1043,7 @@ export const BalanceView: React.FC<BalanceViewProps> = ({ refreshSignal, onDataC
 
       {/* Printable Official MD1EX-FQP02/09-03 BMR Landscape Modal */}
       {bmrModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="w-full max-w-6xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
               <div>

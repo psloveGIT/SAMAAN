@@ -27,8 +27,6 @@ import type {
   DeveloperRequestAttachment,
 } from '../shared/types.ts';
 
-export const DEVELOPER_CONTACT_EMAIL = 'Mohammad.Reza.Zoghi@gmail.com';
-
 const ALLOWED_EXTENSIONS = [
   '.xlsx',
   '.xls',
@@ -350,8 +348,8 @@ export const DeveloperFormRequestPanel: React.FC<DeveloperFormRequestPanelProps>
       notify(
         'success',
         isFa
-          ? 'درخواست و مدارک شما با موفقیت برای سازنده برنامه ثبت و ارسال شد.'
-          : 'Your request and attached forms were submitted to the developer.',
+          ? 'درخواست و فایل‌های شما به‌صورت خودکار و داخلی برای سازنده سامانه ارسال شد.'
+          : 'Your request and attached files were delivered internally to the developer.',
       );
       onSubmitted?.(res.request);
     } catch (err) {
@@ -360,8 +358,8 @@ export const DeveloperFormRequestPanel: React.FC<DeveloperFormRequestPanelProps>
         err instanceof ApiError
           ? err.message
           : isFa
-            ? 'ارسال درخواست ناموفق بود. می‌توانید فایل پکیج درخواست را دانلود یا ایمیل کنید.'
-            : 'Failed to submit request. You can download the request bundle or send via email.',
+            ? 'ارسال درخواست ناموفق بود. می‌توانید فایل پکیج درخواست را دانلود کرده و مجدداً تلاش کنید.'
+            : 'Failed to submit request. You can download the request bundle and try again.',
       );
     } finally {
       setSubmitting(false);
@@ -372,7 +370,6 @@ export const DeveloperFormRequestPanel: React.FC<DeveloperFormRequestPanelProps>
     const payload = buildPayload();
     const bundle = {
       exportedAt: new Date().toISOString(),
-      developerEmail: DEVELOPER_CONTACT_EMAIL,
       ...payload,
     };
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
@@ -390,40 +387,6 @@ export const DeveloperFormRequestPanel: React.FC<DeveloperFormRequestPanelProps>
         ? 'پکیج درخواست و فایل‌های پیوست با فرمت JSON دانلود شد.'
         : 'Request bundle JSON downloaded.',
     );
-  };
-
-  const buildMailtoHref = () => {
-    const sectionTitles = selectedSections
-      .map((key) => {
-        if (key === 'other') return isFa ? 'سایر فرم‌ها' : 'Other forms';
-        const m = OPERATIONAL_FORM_SECTIONS.find((s) => s.key === key);
-        return m ? (isFa ? m.titleFa : m.titleEn) : key;
-      })
-      .join('، ');
-
-    const subject =
-      requestType === 'new_employer'
-        ? `[SAMAAN v${APP_VERSION}] درخواست تعریف کارفرمای جدید: ${newEmployerNameFa.trim() || 'جدید'}`
-        : `[SAMAAN v${APP_VERSION}] ارسال فرم‌های کارفرمای ${selectedBuiltInEmployer?.nameFa || targetEmployerId}`;
-
-    const bodyLines = [
-      `نوع درخواست: ${requestType === 'new_employer' ? 'تعریف کارفرمای جدید و فرم‌ها' : 'افزودن فرم برای کارفرمای پیش‌فرض'}`,
-      `نام درخواست‌کننده: ${requesterName || '-'}`,
-      `سمت / واحد: ${requesterRole || '-'}`,
-      `شماره تماس: ${requesterPhone || '-'}`,
-      `ایمیل: ${requesterEmail || '-'}`,
-      `پروژه / نیروگاه: ${projectName || '-'}`,
-      requestType === 'new_employer'
-        ? `کارفرمای جدید: ${newEmployerNameFa || '-'} (${newEmployerShortName || '-'}) | تلفن: ${newEmployerPhone || '-'} | آدرس: ${newEmployerAddress || '-'}`
-        : `کارفرمای پیش‌فرض: ${selectedBuiltInEmployer?.nameFa || targetEmployerId}`,
-      `بخش‌های انتخاب‌شده: ${sectionTitles || '-'}`,
-      `توضیحات: ${description || '-'}`,
-      attachments.length > 0
-        ? `فایل‌های انتخاب‌شده در برنامه (لطفاً به ایمیل پیوست نمایید): ${attachments.map((a) => a.fileName).join(' ، ')}`
-        : '',
-    ].filter(Boolean);
-
-    return `mailto:${DEVELOPER_CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
   };
 
   const handleDeleteHistory = async (id: string) => {
@@ -463,15 +426,10 @@ export const DeveloperFormRequestPanel: React.FC<DeveloperFormRequestPanelProps>
           </div>
         </div>
 
-        <a
-          href={buildMailtoHref()}
-          className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-1.5 shrink-0"
-        >
+        <span className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1.5 shrink-0">
           <Mail className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-          <span dir="ltr" className="font-mono">
-            {DEVELOPER_CONTACT_EMAIL}
-          </span>
-        </a>
+          <span>{isFa ? 'ارسال خودکار و داخلی به سازنده' : 'Internal Delivery to Developer'}</span>
+        </span>
       </div>
 
       {/* Submission Confirmation Banner */}
@@ -935,14 +893,6 @@ export const DeveloperFormRequestPanel: React.FC<DeveloperFormRequestPanelProps>
               <Download className="w-3.5 h-3.5" />
               <span>{isFa ? 'دانلود فایل پکیج درخواست' : 'Download Request Bundle'}</span>
             </button>
-
-            <a
-              href={buildMailtoHref()}
-              className="h-9 px-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-xs font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1.5 transition-colors"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              <span>{isFa ? 'ارسال از طریق ایمیل' : 'Send via Email'}</span>
-            </a>
           </div>
 
           <button

@@ -133,7 +133,8 @@ export function PrintReportModal<T>({
         @media print {
           @page {
             size: A4 ${orientation};
-            margin: 12mm 12mm 15mm 12mm;
+            margin: 8mm 8mm 11mm 8mm;
+            background: #ffffff;
             @bottom-center {
               content: ${isFa ? '"صفحه: " counter(page) " از " counter(pages)' : '"Page: " counter(page) " of " counter(pages)'};
               font-family: 'Vazirmatn', 'Plus Jakarta Sans', system-ui, sans-serif;
@@ -143,8 +144,18 @@ export function PrintReportModal<T>({
               direction: ${isFa ? 'rtl' : 'ltr'};
             }
           }
+          :root, html, html.dark, html.eye-comfort, body {
+            background: #ffffff !important;
+            background-color: #ffffff !important;
+            color-scheme: light !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            min-height: 0 !important;
+          }
+          body > #root,
           body > *:not(#samaan-print-root) {
             display: none !important;
+            visibility: hidden !important;
           }
           #samaan-print-root {
             display: block !important;
@@ -152,7 +163,10 @@ export function PrintReportModal<T>({
             overflow: visible !important;
             height: auto !important;
             max-height: none !important;
-            padding: 1.5mm !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
             box-sizing: border-box !important;
             background: #ffffff !important;
             color: #111827 !important;

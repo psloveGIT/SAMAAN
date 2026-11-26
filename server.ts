@@ -155,7 +155,12 @@ import {
   computeMivStockDeduction,
   type MivStockSourcePreference,
 } from './src/shared/miv.ts';
+import {
+  assertUniqueDocNo,
+  validateSignedScanPayload,
+} from './src/shared/docUniqueness.ts';
 import type {
+  AuditLogEntry,
   CalendarMode,
   CategoryGroupKey,
   CustomFormSubmission,
@@ -186,6 +191,8 @@ import type {
   ReprocurementApplyPayload,
   ReprocurementApplyResponse,
   ShortageBackfillRecord,
+  SignedScanAttachment,
+  SignedScanCollectionKey,
   SiteEntryMinutesRecord,
   SubstitutionLineItem,
   SubstitutionRecord,
@@ -351,9 +358,112 @@ function reverseMivDocument(s: SamaanStore, mivId: string): MivDocumentRecord | 
 
 const ERROR_REPORTS_FILE = path.resolve(process.cwd(), 'data', 'samaan-error-reports.json');
 const EMPLOYER_REQUESTS_FILE = path.resolve(process.cwd(), 'data', 'samaan-employer-requests.json');
+const DEVELOPER_OUTBOX_FILE = path.resolve(process.cwd(), 'data', 'samaan-developer-outbox.json');
 const ALLOWED_DEV_REQUEST_EXTS = new Set([
   '.xlsx', '.xls', '.xlsm', '.csv', '.docx', '.doc', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.txt',
 ]);
+
+interface DeveloperOutboxEntry {
+  id: string;
+  kind: 'employer_request' | 'error_report';
+  refId: string;
+  subject: string;
+  text: string;
+  attachmentNames: string[];
+  createdAt: string;
+  deliveryStatus: 'sent' | 'queued';
+  providerMessageId?: string;
+}
+
+function loadDeveloperOutboxFromDisk(): DeveloperOutboxEntry[] {
+  try {
+    if (!fs.existsSync(DEVELOPER_OUTBOX_FILE)) return [];
+    const parsed = JSON.parse(fs.readFileSync(DEVELOPER_OUTBOX_FILE, 'utf8'));
+    return Array.isArray(parsed) ? (parsed as DeveloperOutboxEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDeveloperOutboxToDisk(entries: DeveloperOutboxEntry[]): void {
+  try {
+    const dir = path.dirname(DEVELOPER_OUTBOX_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${DEVELOPER_OUTBOX_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(entries.slice(0, 200)), 'utf8');
+    fs.renameSync(tmp, DEVELOPER_OUTBOX_FILE);
+  } catch (err) {
+    console.error('Failed to persist developer outbox:', err);
+  }
+}
+
+/**
+ * Internal server-side developer dispatch.
+ * Recipient email and mail provider API keys live ONLY on the server and are NEVER returned to clients.
+ */
+function dispatchInternalDeveloperEmail(payload: {
+  kind: 'employer_request' | 'error_report';
+  refId: string;
+  subject: string;
+  text: string;
+  attachments?: Array<{ fileName: string; dataBase64: string }>;
+}): void {
+  const now = new Date().toISOString();
+  const entry: DeveloperOutboxEntry = {
+    id: makeId(),
+    kind: payload.kind,
+    refId: payload.refId,
+    subject: payload.subject.slice(0, 240),
+    text: payload.text.slice(0, 12000),
+    attachmentNames: (payload.attachments || []).map((a) => a.fileName).slice(0, 5),
+    createdAt: now,
+    deliveryStatus: 'queued',
+  };
+
+  const existing = loadDeveloperOutboxFromDisk();
+  existing.unshift(entry);
+  saveDeveloperOutboxToDisk(existing);
+
+  const notifyTo = String(process.env.DEVELOPER_NOTIFY_EMAIL || 'Mohammad.Reza.Zoghi@gmail.com').trim();
+  const resendKey = String(process.env.RESEND_API_KEY || '').trim();
+  const mailFrom = String(process.env.MAIL_FROM || 'SAMAAN System <onboarding@resend.dev>').trim();
+
+  if (!notifyTo || !resendKey) {
+    return;
+  }
+
+  void fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: mailFrom,
+      to: [notifyTo],
+      subject: entry.subject,
+      text: entry.text,
+      attachments: (payload.attachments || []).slice(0, 5).map((att) => ({
+        filename: att.fileName,
+        content: att.dataBase64,
+      })),
+    }),
+  })
+    .then(async (resp) => {
+      if (!resp.ok) return;
+      const body = (await resp.json().catch(() => ({}))) as { id?: string };
+      const list = loadDeveloperOutboxFromDisk();
+      const target = list.find((e) => e.id === entry.id);
+      if (target) {
+        target.deliveryStatus = 'sent';
+        if (body.id) target.providerMessageId = String(body.id);
+        saveDeveloperOutboxToDisk(list);
+      }
+    })
+    .catch(() => {
+      // Kept safely queued in server outbox
+    });
+}
 
 function loadErrorReportsFromDisk(): ErrorReportRecord[] {
   try {
@@ -738,6 +848,19 @@ async function startServer() {
     const existing = loadErrorReportsFromDisk().filter((r) => r.id !== record.id);
     existing.unshift(record);
     saveErrorReportsToDisk(existing);
+    dispatchInternalDeveloperEmail({
+      kind: 'error_report',
+      refId: record.id,
+      subject: `[SAMAAN Error Report] ${record.title} (${record.severity})`,
+      text: [
+        `Title: ${record.title}`,
+        `Category: ${record.category} | Severity: ${record.severity} | Section: ${record.section}`,
+        `Project: ${record.projectName || '-'} | User: ${record.username || '-'} | Version: ${record.appVersion || '-'}`,
+        '',
+        record.description,
+        record.stepsToReproduce ? `\nSteps:\n${record.stepsToReproduce}` : '',
+      ].join('\n'),
+    });
     res.json({ ok: true, report: record, syncedAt: now });
   });
 
@@ -815,6 +938,31 @@ async function startServer() {
     const existing = loadEmployerRequestsFromDisk().filter((r) => r.id !== record.id);
     existing.unshift(record);
     saveEmployerRequestsToDisk(existing);
+    dispatchInternalDeveloperEmail({
+      kind: 'employer_request',
+      refId: record.id,
+      subject:
+        record.requestType === 'new_employer'
+          ? `[SAMAAN] درخواست تعریف کارفرمای جدید: ${record.newEmployerNameFa || '-'}`
+          : `[SAMAAN] درخواست فرم کارفرما: ${record.targetEmployerName || '-'}`,
+      text: [
+        `نوع درخواست: ${record.requestType}`,
+        `درخواست‌کننده: ${record.requesterName} (${record.requesterPhone})`,
+        record.requesterRole ? `سمت: ${record.requesterRole}` : '',
+        record.requesterEmail ? `ایمیل درخواست‌کننده: ${record.requesterEmail}` : '',
+        record.projectName ? `پروژه: ${record.projectName}` : '',
+        record.targetEmployerName ? `کارفرمای مقصد: ${record.targetEmployerName}` : '',
+        record.newEmployerNameFa ? `نام کارفرمای جدید: ${record.newEmployerNameFa}` : '',
+        record.sectionKeys.length ? `بخش‌ها: ${record.sectionKeys.join(', ')}` : '',
+        record.description ? `\nتوضیحات:\n${record.description}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      attachments: record.attachments.map((att) => ({
+        fileName: att.fileName,
+        dataBase64: att.dataBase64,
+      })),
+    });
     res.json({ ok: true, request: record });
   });
 
@@ -896,6 +1044,11 @@ async function startServer() {
       res.status(400).json({ error: errMsg(req, 'فرم و شماره سند الزامی است', 'Form ID and document number are required') });
       return;
     }
+    const uniqCheck = assertUniqueDocNo(store.db, docNo);
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
+      return;
+    }
     const now = new Date().toISOString();
     const record: CustomFormSubmission = {
       id: makeId(),
@@ -933,7 +1086,15 @@ async function startServer() {
       return;
     }
     const body = req.body as Partial<CustomFormSubmission>;
-    if (body.docNo !== undefined) target.docNo = normKey(body.docNo);
+    if (body.docNo !== undefined) {
+      const nextDocNo = normKey(body.docNo);
+      const uniqCheck = assertUniqueDocNo(store.db, nextDocNo, { excludeScope: 'customForms', excludeId: target.id });
+      if (!uniqCheck.ok) {
+        res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
+        return;
+      }
+      target.docNo = nextDocNo;
+    }
     if (body.date !== undefined) target.date = normKey(body.date);
     if (body.packingListNo !== undefined) target.packingListNo = normKey(body.packingListNo);
     if (body.fieldValues && typeof body.fieldValues === 'object') target.fieldValues = body.fieldValues;
@@ -3753,6 +3914,11 @@ async function startServer() {
       });
       return;
     }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
+      return;
+    }
     const cleanItems = Array.isArray(raw.items)
       ? raw.items
           .map((it) => ({
@@ -3861,6 +4027,11 @@ async function startServer() {
           'Minutes No., date, and at least one Packing List are required',
         ),
       });
+      return;
+    }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'siteEntry', excludeId: rec.id });
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
     if (Array.isArray(raw.items)) {
@@ -3992,6 +4163,11 @@ async function startServer() {
       });
       return;
     }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
+      return;
+    }
 
     const derivedPackings =
       cleanPackings.length > 0
@@ -4114,6 +4290,11 @@ async function startServer() {
           'Invitation No., date, and at least one row or Packing List are required',
         ),
       });
+      return;
+    }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'opi', excludeId: rec.id });
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
 
@@ -4356,6 +4537,11 @@ async function startServer() {
       });
       return;
     }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
+      return;
+    }
 
     const cleanItems = Array.isArray(raw.items)
       ? raw.items
@@ -4443,6 +4629,11 @@ async function startServer() {
           'Minutes No., date, and Packing List No. are required',
         ),
       });
+      return;
+    }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'opiMinutes', excludeId: rec.id });
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
     if (Array.isArray(raw.items)) {
@@ -4551,6 +4742,11 @@ async function startServer() {
       });
       return;
     }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
+      return;
+    }
 
     const record: OsdrReportRecord = {
       id: makeId(),
@@ -4595,6 +4791,11 @@ async function startServer() {
           'Report No., date, Packing List No., and at least one discrepancy item are required',
         ),
       });
+      return;
+    }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'osdr', excludeId: rec.id });
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
     rec.reportNo = cleanNo;
@@ -4665,6 +4866,11 @@ async function startServer() {
           'Receipt No., receiver, and at least one item are required',
         ),
       });
+      return;
+    }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
 
@@ -4791,6 +4997,11 @@ async function startServer() {
           'Receipt No., receiver, and at least one item are required',
         ),
       });
+      return;
+    }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'gcv', excludeId: existing.id });
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
 
@@ -4977,6 +5188,11 @@ async function startServer() {
     const cleanDate = normKey(date);
     if (!cleanNo || !Array.isArray(items) || items.length === 0) {
       res.status(400).json({ error: errMsg(req, 'شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required') });
+      return;
+    }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
 
@@ -5180,6 +5396,11 @@ async function startServer() {
       res.status(400).json({
         error: errMsg(req, 'شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'),
       });
+      return;
+    }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'miv', excludeId: existing.id });
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
 
@@ -5619,6 +5840,11 @@ async function startServer() {
       });
       return;
     }
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    if (!uniqCheck.ok) {
+      res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
+      return;
+    }
 
     const numQty =
       sanitizedOrigItems.length > 0
@@ -5714,6 +5940,11 @@ async function startServer() {
       const cleanNo = normKey(raw.docNo);
       if (!cleanNo) {
         res.status(400).json({ error: errMsg(req, 'شماره سند جایگزینی الزامی است', 'Document No. is required') });
+        return;
+      }
+      const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'substitutions', excludeId: rec.id });
+      if (!uniqCheck.ok) {
+        res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
         return;
       }
       rec.docNo = cleanNo;
@@ -5903,6 +6134,101 @@ async function startServer() {
     });
     store.saveImmediate();
     res.json({ ok: true, reversedMivs });
+  });
+
+  // ---------------- SIGNED FORM SCANS (ALL FORMS EXCEPT STORAGE LABELS) ----------------
+  const resolveSignedScanCollection = (
+    rawCollection: string,
+  ): {
+    items: Array<{ id: string; signedScan?: SignedScanAttachment | null }>;
+    auditScope: AuditLogEntry['scope'];
+  } | null => {
+    const key = rawCollection as SignedScanCollectionKey;
+    switch (key) {
+      case 'opi':
+        return { items: store.db.opiInvitations, auditScope: 'opi' };
+      case 'siteEntry':
+        return { items: store.db.siteEntryMinutes, auditScope: 'siteEntry' };
+      case 'opiMinutes':
+        return { items: store.db.opiMinutes, auditScope: 'opiMinutes' };
+      case 'osdr':
+        return { items: store.db.osdrReports, auditScope: 'osdr' };
+      case 'substitutions':
+        return { items: store.db.substitutions, auditScope: 'substitution' };
+      case 'gcv':
+        return { items: store.db.gcvDocuments, auditScope: 'gcv' };
+      case 'miv':
+        return { items: store.db.mivDocuments, auditScope: 'miv' };
+      case 'periodic':
+        return { items: store.db.periodicInspections, auditScope: 'periodicInspection' };
+      case 'customForms':
+        if (!store.db.customFormSubmissions) store.db.customFormSubmissions = [];
+        return { items: store.db.customFormSubmissions, auditScope: 'customForm' };
+      default:
+        return null;
+    }
+  };
+
+  app.put('/api/form-scans/:collection/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const resolved = resolveSignedScanCollection(req.params.collection);
+    if (!resolved) {
+      res.status(400).json({ error: errMsg(req, 'بخش فرم معتبر نیست', 'Invalid form collection') });
+      return;
+    }
+    const target = resolved.items.find((r) => r.id === req.params.id);
+    if (!target) {
+      res.status(404).json({ error: errMsg(req, 'سند مورد نظر یافت نشد', 'Target form record not found') });
+      return;
+    }
+    const rawBody = (req.body || {}) as Partial<SignedScanAttachment>;
+    const validation = validateSignedScanPayload({
+      ...rawBody,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: req.currentUser!.fullName || req.currentUser!.username,
+    });
+    if (!validation.ok || !validation.attachment) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          validation.errorFa || 'فایل اسکن معتبر نیست',
+          validation.errorEn || 'Invalid signed scan file',
+        ),
+      });
+      return;
+    }
+    target.signedScan = validation.attachment;
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'UPLOAD_SIGNED_SCAN',
+      scope: resolved.auditScope,
+      targetId: target.id,
+      summary: `بارگذاری اسکن امضاشده فرم (${validation.attachment.fileName}) در بخش ${req.params.collection}`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true, signedScan: validation.attachment });
+  });
+
+  app.delete('/api/form-scans/:collection/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {
+    const resolved = resolveSignedScanCollection(req.params.collection);
+    if (!resolved) {
+      res.status(400).json({ error: errMsg(req, 'بخش فرم معتبر نیست', 'Invalid form collection') });
+      return;
+    }
+    const target = resolved.items.find((r) => r.id === req.params.id);
+    if (!target) {
+      res.status(404).json({ error: errMsg(req, 'سند مورد نظر یافت نشد', 'Target form record not found') });
+      return;
+    }
+    target.signedScan = null;
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'DELETE_SIGNED_SCAN',
+      scope: resolved.auditScope,
+      targetId: target.id,
+      summary: `حذف فایل اسکن امضاشده فرم در بخش ${req.params.collection}`,
+    });
+    store.saveImmediate();
+    res.json({ ok: true });
   });
 
   // ---------------- MATERIAL ESTIMATION (MTO) ----------------

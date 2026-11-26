@@ -23,6 +23,7 @@ import {
   OfficialExtraMetaStrip,
   OfficialFormSignatures,
 } from './OfficialSheetHeader.tsx';
+import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
@@ -672,6 +673,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
   const [printRec, setPrintRec] = useState<PeriodicInspectionRecord | null>(null);
   const [editingRecord, setEditingRecord] = useState<PeriodicInspectionRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PeriodicInspectionRecord | null>(null);
+  const [scanTarget, setScanTarget] = useState<PeriodicInspectionRecord | null>(null);
 
   const loadRecords = useCallback(async () => {
     setLoading(true);
@@ -866,7 +868,6 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
               <style>{buildIsolatedPrintPortalCss('samaan-periodic-print-root', {
                 orientation: 'landscape',
                 isFa,
-                marginMm: 12,
                 extraPrintCss: `
                   #samaan-periodic-print-root .samaan-periodic-page {
                     margin-bottom: 0 !important;
@@ -1211,19 +1212,20 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                 <th className="py-2.5 px-3">{isFa ? 'موارد مناسب (+)' : 'OK (+)'}</th>
                 <th className="py-2.5 px-3">{isFa ? 'موارد نامناسب (-)' : 'NG (-)'}</th>
                 <th className="py-2.5 px-3">{isFa ? 'ثبت‌کننده' : 'Created By'}</th>
+                <th className="py-2.5 px-3">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
                 <th className="py-2.5 px-3">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : records.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
@@ -1232,7 +1234,12 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                   const okCount = (rec.answers || []).filter((a) => a.status === '+').length;
                   const ngCount = (rec.answers || []).filter((a) => a.status === '-').length;
                   return (
-                    <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/40">
+                    <tr
+                      key={rec.id}
+                      onClick={() => setScanTarget(rec)}
+                      title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
+                      className="hover:bg-[var(--bg-subtle)]/40 cursor-pointer"
+                    >
                       <td className="py-2.5 px-3 tabular-nums" dir="ltr">
                         {formatDate(rec.inspectionDate)}
                       </td>
@@ -1249,7 +1256,14 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
                         {isFa ? ngCount.toLocaleString('fa-IR') : ngCount}
                       </td>
                       <td className="py-2.5 px-3">{rec.createdBy}</td>
-                      <td className="py-2.5 px-3">
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <SignedScanRowButton
+                          signedScan={rec.signedScan}
+                          recordLabel={formatDate(rec.inspectionDate)}
+                          onClick={() => setScanTarget(rec)}
+                        />
+                      </td>
+                      <td className="py-2.5 px-3" onClick={(e) => e.stopPropagation()}>
                         <div className="inline-flex items-center gap-1.5">
                           <button
                             type="button"
@@ -1302,7 +1316,7 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
 
       {/* 5-Page Official A4 Landscape Print Preview Modal */}
       {printRec && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="w-full max-w-6xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
               <div>
@@ -1359,6 +1373,23 @@ export const PeriodicInspectionPanel: React.FC<PeriodicInspectionPanelProps> = (
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {scanTarget && (
+        <SignedScanModal
+          open={Boolean(scanTarget)}
+          collection="periodic"
+          recordId={scanTarget.id}
+          recordLabel={formatDate(scanTarget.inspectionDate)}
+          signedScan={scanTarget.signedScan}
+          onClose={() => setScanTarget(null)}
+          onUpdated={(nextScan) => {
+            setRecords((prev) =>
+              prev.map((r) => (r.id === scanTarget.id ? { ...r, signedScan: nextScan } : r)),
+            );
+            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          }}
+        />
+      )}
     </div>
   );
 };

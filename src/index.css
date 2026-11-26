@@ -412,7 +412,8 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
 @media print {
   @page {
     size: A4 portrait;
-    margin: 12mm 12mm 15mm 12mm;
+    margin: 8mm 8mm 11mm 8mm;
+    background: #ffffff;
     @bottom-center {
       content: "صفحه: " counter(page) " از " counter(pages);
       font-family: "Vazirmatn", "Plus Jakarta Sans", system-ui, sans-serif;
@@ -427,7 +428,8 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
   }
   @page samaan-en-page {
     size: A4 portrait;
-    margin: 12mm 12mm 15mm 12mm;
+    margin: 8mm 8mm 11mm 8mm;
+    background: #ffffff;
     @bottom-center {
       content: "Page: " counter(page) " of " counter(pages);
       font-family: "Plus Jakarta Sans", system-ui, sans-serif;
@@ -437,39 +439,57 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
       direction: ltr;
     }
   }
+  /* Force pure white paper & light color-scheme in print even when app is in Dark or Eye-Comfort mode */
+  :root,
+  html,
+  html.light,
+  html.dark,
+  html.eye-comfort,
+  html.dark.eye-comfort,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    background-image: none !important;
+    color: #000000 !important;
+    color-scheme: light !important;
+    box-shadow: none !important;
+    border: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
   /* Global fail-safe: whenever any dedicated print portal is mounted on body,
-     NEVER print the live application UI (#root, modals, sidebars, toasts). */
+     strictly hide #root and every sibling so app chrome/modal backdrops NEVER bleed into print. */
+  body:has(> [data-samaan-print-portal="true"]) > #root,
   body:has(> [data-samaan-print-portal="true"]) > *:not([data-samaan-print-portal="true"]) {
     display: none !important;
+    visibility: hidden !important;
   }
   [data-samaan-print-portal="true"] {
     display: block !important;
     position: static !important;
     width: 100% !important;
     margin: 0 !important;
-    padding: 1.5mm !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
     box-sizing: border-box !important;
     background: #ffffff !important;
+    background-color: #ffffff !important;
     color: #000000 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
-  html, body {
-    margin: 0 !important;
-    padding: 0 !important;
-    width: 100% !important;
-    height: auto !important;
-    overflow: visible !important;
-    background: #ffffff !important;
-    color: #000000 !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
   /* Critical for Chromium/Firefox repeating <thead> on every printed page:
-     remove flex/overflow/max-height constraints from all table ancestor containers */
-  #root,
-  #root > div,
-  main,
+     remove flex/overflow/max-height constraints ONLY when no print portal is hiding #root */
+  body:not(:has(> [data-samaan-print-portal="true"])) #root,
+  body:not(:has(> [data-samaan-print-portal="true"])) #root > div,
+  body:not(:has(> [data-samaan-print-portal="true"])) main,
   [id$="-print-root"],
   [id$="-print-root"] .samaan-a4-portrait,
   [id$="-print-root"] .samaan-a4-landscape,
@@ -503,7 +523,7 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
     box-shadow: none !important;
     background: #ffffff !important;
     color: #000000 !important;
-    padding: 1.5mm !important;
+    padding: 0 !important;
     margin: 0 !important;
     width: 100% !important;
     box-sizing: border-box !important;
@@ -513,6 +533,8 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
     width: 100% !important;
     max-width: 100% !important;
     margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
     box-sizing: border-box !important;
   }
   /* Enforce repeating column headers across every printed page in ALL sections */

@@ -51,6 +51,7 @@ import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { OperationalViewModeTabs, type OperationalViewMode } from './OperationalViewModeTabs.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SubstitutionItemPicker } from './SubstitutionItemPicker.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
@@ -302,20 +303,28 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                 </div>
               </div>
 
-              {/* Metadata Strip Row (1-3, 1-5, 1-6, 1-7, 1-8) */}
+              {/* Metadata Strip Row (1-3, 1-5, 1-6, 1-7, 1-8) with solid vertical cell dividers */}
               <div
+                data-testid="miv-sheet-meta-strip"
                 style={{
                   display: 'grid',
                   gridTemplateColumns: '1.35fr 1.3fr 1.05fr 0.65fr 0.95fr',
-                  alignItems: 'center',
+                  alignItems: 'stretch',
                   borderBottom: '1px solid #000000',
-                  padding: '5px 8px',
                   fontSize: '9.2px',
                   textAlign: 'right',
-                  gap: '8px',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <div
+                  data-testid="miv-meta-cell-contract"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '5px 7px',
+                    borderLeft: '1px solid #000000',
+                  }}
+                >
                   <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
                     <div>شماره قرارداد/</div>
                     <div>درخواست خرید:</div>
@@ -329,7 +338,16 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <div
+                  data-testid="miv-meta-cell-party"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '5px 7px',
+                    borderLeft: '1px solid #000000',
+                  }}
+                >
                   <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
                     <div>پیمانکار/</div>
                     <div>درخواست کننده:</div>
@@ -339,7 +357,16 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <div
+                  data-testid="miv-meta-cell-system"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '5px 7px',
+                    borderLeft: '1px solid #000000',
+                  }}
+                >
                   <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
                     <div>سیستم/</div>
                     <div>جزیره:</div>
@@ -349,14 +376,31 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                   </span>
                 </div>
 
-                <div>
+                <div
+                  data-testid="miv-meta-cell-unit"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '5px 7px',
+                    borderLeft: '1px solid #000000',
+                  }}
+                >
                   <strong style={{ fontWeight: 700 }}>واحد: </strong>
                   <span data-testid="miv-sheet-unit" className="bidi-plaintext">
                     {doc.unit || ''}
                   </span>
                 </div>
 
-                <div>
+                <div
+                  data-testid="miv-meta-cell-receipt"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '5px 7px',
+                  }}
+                >
                   <strong style={{ fontWeight: 700 }}>شماره رسید: </strong>
                   <span dir="ltr" data-testid="miv-sheet-receipt-no" className="tabular-nums">
                     {doc.receiptNo || ''}
@@ -611,15 +655,17 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                       flex: 1,
                       display: 'grid',
                       gridTemplateColumns: '1fr 1fr',
-                      padding: '5px 8px',
-                      gap: '8px',
+                      alignItems: 'stretch',
                     }}
                   >
                     <div
+                      data-testid="miv-sig-cell-requester"
                       style={{
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
+                        padding: '5px 7px',
+                        borderLeft: '1px solid #000000',
                       }}
                     >
                       <div>
@@ -630,10 +676,12 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                     </div>
 
                     <div
+                      data-testid="miv-sig-cell-receiver"
                       style={{
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
+                        padding: '5px 7px',
                       }}
                     >
                       <div>
@@ -646,27 +694,33 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                 </div>
               </div>
 
-              {/* QA Control Notice */}
+              {/* QA Control Notice — Right-aligned per official MD1EX-FQP02/05-03 */}
               <div
+                dir="rtl"
+                data-testid="miv-sheet-qa-notice"
                 style={{
                   padding: '3.5px 10px',
                   fontSize: '8.3px',
                   fontWeight: 600,
-                  textAlign: 'left',
+                  textAlign: 'right',
                 }}
               >
                 {MD1_MIV_QA_NOTICE}
               </div>
             </div>
 
-            {/* Outside Bottom Footer Strip */}
+            {/* Bordered Bottom Footer Frame matching official MD1EX-FQP02/05-03 */}
             <div
+              data-testid="miv-sheet-copy-footer"
+              className="samaan-keep-together"
               style={{
-                marginTop: '4px',
+                marginTop: '6px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                padding: '0 4px',
+                border: '1.6px solid #000000',
+                backgroundColor: '#ffffff',
+                padding: '4px 8px',
                 fontSize: '8.8px',
                 fontWeight: 700,
               }}
@@ -745,6 +799,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [printDocWasUndone, setPrintDocWasUndone] = useState(false);
   const [printReportOpen, setPrintReportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<MivDocumentRecord | null>(null);
+  const [scanTarget, setScanTarget] = useState<MivDocumentRecord | null>(null);
 
   const printDocIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1348,7 +1403,6 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                 {buildIsolatedPrintPortalCss('samaan-miv-print-root', {
                   orientation: 'landscape',
                   isFa,
-                  marginMm: 12,
                   showBrowserPageFooter: false,
                 })}
               </style>
@@ -2063,19 +2117,20 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                 <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'واحد' : 'Unit'}</th>
                 <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'شماره رسید' : 'Receipt No.'}</th>
                 <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'تعداد اقلام' : 'Items'}</th>
+                <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
                 <th className="px-3 py-2 whitespace-nowrap">{isFa ? 'عملیات' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={9} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : mivPagination.pageItems.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={9} className="py-8 text-center text-[var(--text-muted)]">
                     {isFa ? 'هنوز حواله انباری ثبت نشده است.' : 'No MIV documents issued yet.'}
                   </td>
                 </tr>
@@ -2084,7 +2139,9 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                   <tr
                     key={doc.id}
                     data-testid={`miv-history-row-${doc.id}`}
-                    className="hover:bg-[var(--bg-subtle)]/50 transition-colors"
+                    onClick={() => setScanTarget(doc)}
+                    title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
+                    className="hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
                   >
                     <td dir="ltr" className="px-3 py-2 font-mono font-bold text-[var(--text-primary)] whitespace-nowrap">
                       {doc.docNo}
@@ -2108,6 +2165,16 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                       {doc.items.length}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
+                      <SignedScanRowButton
+                        signedScan={doc.signedScan}
+                        recordLabel={doc.docNo}
+                        onClick={() => setScanTarget(doc)}
+                      />
+                    </td>
+                    <td
+                      className="px-3 py-2 whitespace-nowrap"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <div className="inline-flex items-center gap-1">
                         <button
                           type="button"
@@ -2296,6 +2363,24 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Signed Form Scan Viewer / Uploader Modal */}
+      {scanTarget && (
+        <SignedScanModal
+          open={Boolean(scanTarget)}
+          collection="miv"
+          recordId={scanTarget.id}
+          recordLabel={scanTarget.docNo}
+          signedScan={scanTarget.signedScan}
+          onClose={() => setScanTarget(null)}
+          onUpdated={(nextScan) => {
+            setDocuments((prev) =>
+              prev.map((d) => (d.id === scanTarget.id ? { ...d, signedScan: nextScan } : d)),
+            );
+            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          }}
+        />
+      )}
     </div>
   );
 };

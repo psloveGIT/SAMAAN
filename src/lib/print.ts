@@ -85,29 +85,27 @@ function buildStandalonePrintableHtml(title?: string): string {
   const printOverrideCss = `
     <style>
       @page {
-        margin: 12mm;
+        margin: 8mm;
+        background: #ffffff;
       }
       @media screen, print {
-        html, body {
+        :root, html, html.dark, html.eye-comfort, body {
           background: #ffffff !important;
+          background-color: #ffffff !important;
+          background-image: none !important;
           color: #0f172a !important;
-          color-scheme: only light !important;
+          color-scheme: light !important;
           margin: 0 !important;
           padding: 0 !important;
-        }
-        body {
-          padding: 6mm !important;
-          box-sizing: border-box !important;
-        }
-        @media print {
-          body {
-            padding: 1.5mm !important;
-          }
+          min-height: 0 !important;
         }
         [data-samaan-print-portal="true"],
         [id$="-print-root"] {
           display: block !important;
           width: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #ffffff !important;
         }
         .no-print, .print\\:hidden { display: none !important; }
         .print\\:block { display: block !important; }

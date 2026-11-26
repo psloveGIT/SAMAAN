@@ -643,7 +643,6 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
               ${buildIsolatedPrintPortalCss('samaan-label-print-root', {
                 orientation: 'portrait',
                 isFa,
-                marginMm: 12,
                 showBrowserPageFooter: false,
               })}
               @media print {
@@ -1073,7 +1072,7 @@ export const StorageLabelView: React.FC<StorageLabelViewProps> = ({ refreshSigna
       {previewModalOpen && quadPages.length > 0 && (
         <div
           data-testid="storage-label-preview-modal"
-          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5"
+          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 print:hidden"
         >
           <div className="w-full max-w-4xl max-h-[94vh] rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] flex flex-col overflow-hidden shadow-2xl">
             {/* Modal Header */}

@@ -52,6 +52,7 @@ import { OfficialMivSheet } from './MivView.tsx';
 import { OfficialSubstitutionSheet } from './OfficialSubstitutionSheet.tsx';
 import { OperationalViewModeTabs } from './OperationalViewModeTabs.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
+import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SubstitutionItemPicker } from './SubstitutionItemPicker.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
@@ -98,6 +99,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   const [detailedItems, setDetailedItems] = useState<DetailedComputed[]>([]);
   const [mivDocuments, setMivDocuments] = useState<MivDocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [scanTarget, setScanTarget] = useState<SubstitutionRecord | null>(null);
   const [historySearch, setHistorySearch] = useState('');
 
   // Step 1 state (Section A — items needing replacement + global fields)
@@ -1728,19 +1730,20 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                     <th className="px-3 py-2.5 text-start whitespace-nowrap">{isFa ? 'فوریت' : 'Urgency'}</th>
                     <th className="px-3 py-2.5 text-start min-w-[180px]">{isFa ? 'اقلام بخش الف' : 'Section A'}</th>
                     <th className="px-3 py-2.5 text-start min-w-[180px]">{isFa ? 'اقلام جایگزین (بخش ب)' : 'Section B'}</th>
+                    <th className="px-3 py-2.5 text-start whitespace-nowrap">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
                     <th className="px-3 py-2.5 text-center whitespace-nowrap">{isFa ? 'عملیات' : 'Actions'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="py-10 text-center text-[var(--text-muted)]">
+                      <td colSpan={9} className="py-10 text-center text-[var(--text-muted)]">
                         {t.controls.loading}
                       </td>
                     </tr>
                   ) : historyPagination.pageItems.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-10 text-center text-[var(--text-muted)]">
+                      <td colSpan={9} className="py-10 text-center text-[var(--text-muted)]">
                         {isFa ? 'هیچ فرم جایگزینی ثبت نشده است.' : 'No substitution records found.'}
                       </td>
                     </tr>
@@ -1749,7 +1752,13 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                       const origCount = rec.originalItems?.length || 1;
                       const subCount = rec.substituteItems?.length || 1;
                       return (
-                        <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/50">
+                        <tr
+                          key={rec.id}
+                          data-testid={`sub-history-row-${rec.id}`}
+                          onClick={() => setScanTarget(rec)}
+                          title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
+                          className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer"
+                        >
                           <td dir="ltr" className="px-3 py-2.5 font-mono font-bold text-[var(--accent-primary)] whitespace-nowrap">
                             {rec.docNo}
                           </td>
@@ -1788,6 +1797,16 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                             </div>
                           </td>
                           <td className="px-3 py-2.5 whitespace-nowrap">
+                            <SignedScanRowButton
+                              signedScan={rec.signedScan}
+                              recordLabel={rec.docNo}
+                              onClick={() => setScanTarget(rec)}
+                            />
+                          </td>
+                          <td
+                            className="px-3 py-2.5 whitespace-nowrap"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <div className="flex items-center justify-center gap-1.5">
                               <button
                                 type="button"
@@ -1997,7 +2016,6 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                       ? 'portrait'
                       : 'mixed',
                 isFa,
-                marginMm: 12,
                 showBrowserPageFooter: false,
               })}
             </style>
@@ -2047,6 +2065,24 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Signed Form Scan Viewer / Uploader Modal */}
+      {scanTarget && (
+        <SignedScanModal
+          open={Boolean(scanTarget)}
+          collection="substitutions"
+          recordId={scanTarget.id}
+          recordLabel={scanTarget.docNo}
+          signedScan={scanTarget.signedScan}
+          onClose={() => setScanTarget(null)}
+          onUpdated={(nextScan) => {
+            setRecords((prev) =>
+              prev.map((r) => (r.id === scanTarget.id ? { ...r, signedScan: nextScan } : r)),
+            );
+            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          }}
+        />
+      )}
     </div>
   );
 };

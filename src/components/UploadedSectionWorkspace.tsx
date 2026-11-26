@@ -253,7 +253,6 @@ export const UploadedSectionWorkspace: React.FC<UploadedSectionWorkspaceProps> =
               {buildIsolatedPrintPortalCss('samaan-uploaded-section-print-root', {
                 orientation: isLandscape ? 'landscape' : 'portrait',
                 isFa,
-                marginMm: 12,
               })}
             </style>
             <UploadedFormA4Sheet
