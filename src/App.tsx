@@ -262,19 +262,19 @@ const SamaanWorkspace: React.FC = () => {
     setActiveTab('detailed');
   };
 
+  const switchTabClean = (tab: NavTabKey) => {
+    if (tab !== 'detailed') {
+      setDetailedShipmentFilter('');
+      setDetailedPackageFilter('');
+    }
+    setActiveTab(tab);
+  };
+
   // Global customizable keyboard shortcuts handler
   useEffect(() => {
     if (!user) return;
     const canEditUser = user.role === 'admin' || user.role === 'operator';
     const isFa = prefs.language === 'fa';
-
-    const switchTabClean = (tab: NavTabKey) => {
-      if (tab !== 'detailed') {
-        setDetailedShipmentFilter('');
-        setDetailedPackageFilter('');
-      }
-      setActiveTab(tab);
-    };
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const win = window as unknown as { __samaanCapturingShortcut?: boolean };
@@ -524,6 +524,7 @@ const SamaanWorkspace: React.FC = () => {
                 autoOpenToken={detailedAutoOpenToken}
                 onConsumeAutoOpen={() => setDetailedAutoOpenToken(0)}
                 onDataChanged={bumpRefresh}
+                onNavigateGeneral={() => switchTabClean('general')}
               />
             )}
 

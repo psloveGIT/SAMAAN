@@ -51,37 +51,57 @@ test('normalizeDocNoKey normalizes Persian/Arabic digits, case, and whitespace',
   assert.equal(normalizeDocNoKey('NK-TE-MIV-٠٠٠٢'), 'NK-TE-MIV-0002');
 });
 
-test('assertUniqueDocNo rejects duplicates across all form types and trash, while allowing self-edit', () => {
+test('assertUniqueDocNo enforces per-section uniqueness independently while blocking duplicates within the same section and its trash', () => {
   const db = makeMockDb();
 
-  // Cross-form collision (trying to reuse OPI number in MIV)
-  const crossDup = assertUniqueDocNo(db, 'nk-tu-0001');
-  assert.equal(crossDup.ok, false);
-  assert.equal(crossDup.conflict?.scope, 'opi');
+  // Cross-form reuse is ALLOWED (OPI NK-TU-0001 does NOT block MER or MIV)
+  const crossAllowed = assertUniqueDocNo(db, 'nk-tu-0001', { scope: 'osdr' });
+  assert.equal(crossAllowed.ok, true);
 
-  // Persian-digit duplicate collision
-  const persianDup = assertUniqueDocNo(db, 'NK-TE-MIV-۰۰۰۱');
+  // Same-section duplicate in OPI is blocked
+  const opiDup = assertUniqueDocNo(db, 'nk-tu-0001', { scope: 'opi' });
+  assert.equal(opiDup.ok, false);
+  assert.equal(opiDup.conflict?.scope, 'opi');
+
+  // Persian-digit duplicate collision in MIV is blocked
+  const persianDup = assertUniqueDocNo(db, 'NK-TE-MIV-۰۰۰۱', { scope: 'miv' });
   assert.equal(persianDup.ok, false);
   assert.equal(persianDup.conflict?.scope, 'miv');
 
-  // Trash collision prevents reusing deleted number
-  const trashDup = assertUniqueDocNo(db, 'NK-TE-MIV-0009');
+  // Trash collision inside the same section prevents reusing deleted number (when trash entry has miv scope)
+  const dbWithMivTrash = {
+    ...db,
+    trash: [
+      {
+        id: 'tr-miv-1',
+        scope: 'miv' as unknown as 'detailed',
+        deletedAt: '2026-01-01',
+        deletedBy: 'admin',
+        targetLabel: 'NK-TE-MIV-0009',
+        data: { id: 'miv-old', docNo: 'NK-TE-MIV-0009' } as unknown as MivDocumentRecord,
+      },
+    ],
+  } as unknown as Partial<DatabaseSnapshot>;
+  const trashDup = assertUniqueDocNo(dbWithMivTrash, 'NK-TE-MIV-0009', { scope: 'miv' });
   assert.equal(trashDup.ok, false);
   assert.equal(trashDup.conflict?.scope, 'trash');
+  // Another section (e.g. GCV) is NOT blocked by MIV trash
+  assert.equal(assertUniqueDocNo(dbWithMivTrash, 'NK-TE-MIV-0009', { scope: 'gcv' }).ok, true);
 
   // Editing the same record with its own number succeeds
   const selfEdit = assertUniqueDocNo(db, 'NK-TE-MIV-0001', {
+    scope: 'miv',
     excludeScope: 'miv',
     excludeId: 'miv-1',
   });
   assert.equal(selfEdit.ok, true);
 
   // Brand-new unique number succeeds
-  const fresh = assertUniqueDocNo(db, 'NK-TE-MIV-0010');
+  const fresh = assertUniqueDocNo(db, 'NK-TE-MIV-0010', { scope: 'miv' });
   assert.equal(fresh.ok, true);
 
-  assert.equal(collectAllUsedDocNos(db).size, 6);
-  assert.equal(getAllUsedDocNumbers(db).includes('NK-TE-MIV-0009'), true);
+  assert.equal(collectAllUsedDocNos(db, { scope: 'opi' }).size, 1);
+  assert.equal(getAllUsedDocNumbers(dbWithMivTrash, 'miv').includes('NK-TE-MIV-0009'), true);
 });
 
 test('validateSignedScanPayload enforces MIME allowlist, base64 integrity, and filename sanitization', () => {

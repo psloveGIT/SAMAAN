@@ -186,32 +186,41 @@ export const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = (
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'space-between',
-                fontSize: '10px',
+                justifyContent: 'center',
+                fontSize: '9.8px',
                 fontWeight: 700,
                 textAlign: 'right',
-                gap: '6px',
+                gap: '16px',
+                height: '100%',
               }}
             >
-              <div>
-                <div>شماره OPI :</div>
-                <div
-                  dir="ltr"
-                  className="tabular-nums"
-                  style={{ marginTop: '2px', textAlign: 'left' }}
-                >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <span>شماره OPI :</span>
+                <span dir="ltr" className="tabular-nums" style={{ fontWeight: 800 }}>
                   {record.minutesNo || record.invitationNo}
-                </div>
+                </span>
               </div>
-              <div>
-                <div>تاریخ OPI :</div>
-                <div
-                  dir="ltr"
-                  className="tabular-nums"
-                  style={{ marginTop: '2px', textAlign: 'left' }}
-                >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <span>تاریخ OPI :</span>
+                <span dir="ltr" className="tabular-nums">
                   {formatDate(record.date)}
-                </div>
+                </span>
               </div>
             </div>
           }
@@ -459,80 +468,91 @@ export const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = (
                 </td>
               </tr>
             ))}
+            {/* Schedule Header & Value Rows inside same 6-col LTR table so dividers align strictly with Package No.|شرح کالا and شرح کالا|واحد (UOM) */}
+            <tr style={{ backgroundColor: '#e5e7eb', fontSize: '10px', fontWeight: 700 }}>
+              <td
+                colSpan={3}
+                dir="rtl"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 6px',
+                  textAlign: 'center',
+                }}
+              >
+                محل انجام OPI
+              </td>
+              <td
+                colSpan={1}
+                dir="rtl"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 6px',
+                  textAlign: 'center',
+                }}
+              >
+                تاریخ
+              </td>
+              <td
+                colSpan={2}
+                dir="rtl"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  padding: '5px 6px',
+                  textAlign: 'center',
+                }}
+              >
+                ساعت
+              </td>
+            </tr>
+            <tr style={{ fontSize: '10px', fontWeight: 600 }}>
+              <td
+                colSpan={3}
+                dir="rtl"
+                className="bidi-plaintext"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '7px 6px',
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                }}
+              >
+                {record.location || ''}
+              </td>
+              <td
+                colSpan={1}
+                dir="ltr"
+                className="tabular-nums"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '7px 6px',
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                }}
+              >
+                {formatDate(record.date)}
+              </td>
+              <td
+                colSpan={2}
+                dir="ltr"
+                className="tabular-nums"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  padding: '7px 6px',
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                }}
+              >
+                {record.time || ''}
+              </td>
+            </tr>
           </tbody>
         </table>
 
-        {/* 3-Cell Schedule Strip (RTL: ساعت | تاریخ | محل انجام OPI) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
-            backgroundColor: '#e5e7eb',
-            borderBottom: '1px solid #000000',
-            fontSize: '10px',
-            fontWeight: 700,
-            textAlign: 'center',
-          }}
-        >
-          <div style={{ borderLeft: '1px solid #000000', padding: '5px 6px' }}>ساعت</div>
-          <div style={{ borderLeft: '1px solid #000000', padding: '5px 6px' }}>تاریخ</div>
-          <div style={{ padding: '5px 6px' }}>محل انجام OPI</div>
-        </div>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
-            minHeight: '28px',
-            borderBottom: '1px solid #000000',
-            fontSize: '10px',
-            fontWeight: 600,
-            textAlign: 'center',
-            alignItems: 'center',
-          }}
-        >
-          <div
-            dir="ltr"
-            className="tabular-nums"
-            style={{
-              borderLeft: '1px solid #000000',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '4px 6px',
-            }}
-          >
-            {record.time || ''}
-          </div>
-          <div
-            dir="ltr"
-            className="tabular-nums"
-            style={{
-              borderLeft: '1px solid #000000',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '4px 6px',
-            }}
-          >
-            {formatDate(record.date)}
-          </div>
-          <div
-            className="bidi-plaintext"
-            style={{
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '4px 6px',
-            }}
-          >
-            {record.location || ''}
-          </div>
-        </div>
-
-        {/* Official Statement, Checkboxes & Other Notes */}
+        {/* Official Statement, Checkboxes (right-side / start in RTL) & Other Notes */}
         <div
           style={{
             padding: '10px 14px 14px',
@@ -558,12 +578,12 @@ export const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = (
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
+                justifyContent: 'flex-start',
+                gap: '8px',
               }}
             >
-              <span>{MD1_OPI_MINUTES_COMPLIANT_LABEL}</span>
               <MomCheckSquare checked={record.resultStatus === 'compliant'} />
+              <span>{MD1_OPI_MINUTES_COMPLIANT_LABEL}</span>
             </div>
 
             <div
@@ -572,12 +592,13 @@ export const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = (
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
+                justifyContent: 'flex-start',
+                gap: '8px',
               }}
             >
+              <MomCheckSquare checked={record.resultStatus === 'has_discrepancy'} />
               <span>
-                محموله ي بالا داراي مغايرت، برابر فرم{' '}
+                محموله‌ی بالا دارای مغایرت، برابر فرم{' '}
                 <span
                   dir="ltr"
                   className="tabular-nums"
@@ -591,14 +612,13 @@ export const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = (
                 >
                   {record.merNo?.trim() || '........................'}
                 </span>{' '}
-                <span dir="ltr">MER No.</span> مي باشد.
+                <span dir="ltr">MER No.</span> می‌باشد.
               </span>
-              <MomCheckSquare checked={record.resultStatus === 'has_discrepancy'} />
             </div>
           </div>
 
           <div style={{ marginTop: '10px', minHeight: '62px' }}>
-            <div style={{ fontWeight: 700 }}>ساير توضيحات:</div>
+            <div style={{ fontWeight: 700 }}>سایر توضیحات:</div>
             {record.notes && (
               <div
                 className="bidi-plaintext"
@@ -810,11 +830,12 @@ export const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({ report, form
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'space-between',
+                justifyContent: 'center',
                 fontSize: '10px',
                 fontWeight: 700,
                 textAlign: 'right',
-                gap: '6px',
+                gap: '14px',
+                height: '100%',
               }}
             >
               <div
@@ -823,10 +844,11 @@ export const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({ report, form
                   alignItems: 'baseline',
                   justifyContent: 'space-between',
                   gap: '8px',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 <span>شماره MER:</span>
-                <span dir="ltr" className="tabular-nums">
+                <span dir="ltr" className="tabular-nums" style={{ fontWeight: 800 }}>
                   {report.reportNo}
                 </span>
               </div>
@@ -836,6 +858,7 @@ export const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({ report, form
                   alignItems: 'baseline',
                   justifyContent: 'space-between',
                   gap: '8px',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 <span>تاریخ MER:</span>
@@ -1052,8 +1075,7 @@ export const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({ report, form
                     : line.damagedQty
                 : '';
               const discReason = line
-                ? line.discrepancyReason ||
-                  (line.discrepancyType === 'shortage' ? 'کسری' : 'مغایرت/آسیب‌دیدگی')
+                ? line.discrepancyReason || String(discQty)
                 : '';
 
               return (
@@ -1218,7 +1240,7 @@ export const OfficialMerSheet: React.FC<OfficialMerSheetProps> = ({ report, form
             isMd1Default ? 'تأمین تجهیزات توسعه یک :' : `${activeEmployer.equipmentSupplyLabel} :`,
             'فروشنده:',
             'دستگاه نظارت:',
-            'كارفرما:',
+            'کارفرما:',
           ].map((label, idx, arr) => (
             <div
               key={label}
@@ -1487,12 +1509,9 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
   const suggestedMerNo = useMemo(() => {
     const supplier = autoFill?.supplier || selectedInvitation?.supplier || '';
-    const usedNos = data?.allUsedDocNos || [
-      ...(data?.osdrReports || []).map((r) => r.reportNo),
-      ...(data?.minutes || []).map((m) => m.minutesNo),
-    ];
-    return generateMerReportNo(supplier, usedNos, extractPlantDocConfig(activeProject));
-  }, [autoFill?.supplier, selectedInvitation?.supplier, data?.allUsedDocNos, data?.osdrReports, data?.minutes, activeProject]);
+    const existingMerNos = (data?.osdrReports || []).map((r) => r.reportNo);
+    return generateMerReportNo(supplier, existingMerNos, extractPlantDocConfig(activeProject));
+  }, [autoFill?.supplier, selectedInvitation?.supplier, data?.osdrReports, activeProject]);
 
   // Auto-populate unique MER number when user picks has_discrepancy
   useEffect(() => {
@@ -1605,12 +1624,12 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
       return {
         ...prev,
         [row.id]: existing
-          ? { ...existing, checked: true }
+          ? { ...existing, checked: true, discrepancyText: existing.discrepantQty }
           : {
               checked: true,
               category: 'shortage',
               discrepantQty: '1',
-              discrepancyText: '',
+              discrepancyText: '1',
               remark: '',
             },
       };
@@ -1623,10 +1642,14 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         checked: true,
         category: 'shortage',
         discrepantQty: '0',
-        discrepancyText: '',
+        discrepancyText: '0',
         remark: '',
       };
-      return { ...prev, [rowId]: { ...cur, ...patch } };
+      const merged: MerRowDraft = { ...cur, ...patch };
+      if (patch.discrepantQty !== undefined) {
+        merged.discrepancyText = patch.discrepantQty;
+      }
+      return { ...prev, [rowId]: merged };
     });
   };
 
@@ -2319,7 +2342,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                         <span>
                           {isFa
-                            ? 'محموله ي بالا داراي مغايرت، برابر فرم MER No. مي باشد.'
+                            ? 'محموله‌ی بالا دارای مغایرت، برابر فرم MER No. می‌باشد.'
                             : 'Shipment has discrepancy — issue linked MER report'}
                         </span>
                       </div>
@@ -2398,17 +2421,17 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                         <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)] sticky top-0 z-10">
                           <tr>
                             <th className="p-2 text-center w-10">{isFa ? 'انتخاب' : 'Sel'}</th>
-                            <th className="p-2 text-start">Package Item</th>
-                            <th className="p-2 text-start">Tag No.</th>
-                            <th className="p-2 text-start">PL/Package No.</th>
-                            <th className="p-2 text-start">{isFa ? 'شرح (Description)' : 'Description'}</th>
-                            <th className="p-2 text-center">UOM</th>
-                            <th className="p-2 text-center">Pkg Qty</th>
+                            <th className="p-2 text-start">{isFa ? 'شماره آیتم' : 'Package Item'}</th>
+                            <th className="p-2 text-start">{isFa ? 'کد کالا (تگ)' : 'Tag No.'}</th>
+                            <th className="p-2 text-start">{isFa ? 'پکینگ / نگله' : 'PL/Package No.'}</th>
+                            <th className="p-2 text-start">{isFa ? 'شرح کالا' : 'Description'}</th>
+                            <th className="p-2 text-center">{isFa ? 'واحد' : 'UOM'}</th>
+                            <th className="p-2 text-center">{isFa ? 'مقدار پکینگ' : 'Pkg Qty'}</th>
                             <th className="p-2 text-start min-w-[130px]">{isFa ? 'نوع مغایرت' : 'Category'}</th>
-                            <th className="p-2 text-center w-24">Discrepant Qty</th>
-                            <th className="p-2 text-center w-20">Received Qty</th>
-                            <th className="p-2 text-start min-w-[150px]">Discrepancy</th>
-                            <th className="p-2 text-start min-w-[140px]">Remark</th>
+                            <th className="p-2 text-center w-24">{isFa ? 'تعداد مغایرت/کسری' : 'Discrepant Qty'}</th>
+                            <th className="p-2 text-center w-20">{isFa ? 'مقدار دریافتی' : 'Received Qty'}</th>
+                            <th className="p-2 text-center w-24">{isFa ? 'مغایرت' : 'Discrepancy'}</th>
+                            <th className="p-2 text-start min-w-[140px]">{isFa ? 'توضیحات' : 'Remark'}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-surface)]">
@@ -2492,26 +2515,15 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                                 <td className="p-2 text-center font-extrabold tabular-nums text-emerald-700 dark:text-emerald-400">
                                   {checked ? recvQty : '-'}
                                 </td>
-                                <td className="p-2">
+                                <td className="p-2 text-center">
                                   {checked ? (
-                                    <input
-                                      type="text"
+                                    <span
                                       data-testid={`mer-reason-${row.id}`}
-                                      value={draft.discrepancyText}
-                                      onChange={(e) =>
-                                        updateMerDraft(row.id, { discrepancyText: e.target.value })
-                                      }
-                                      placeholder={
-                                        draft.category === 'shortage'
-                                          ? isFa
-                                            ? 'مثلاً: کسری قطعه'
-                                            : 'Shortage...'
-                                          : isFa
-                                            ? 'مثلاً: آسیب‌دیدگی بدنه'
-                                            : 'Damaged...'
-                                      }
-                                      className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-                                    />
+                                      dir="ltr"
+                                      className="inline-flex items-center justify-center min-w-[44px] h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-xs font-mono font-bold tabular-nums text-[var(--text-primary)]"
+                                    >
+                                      {draft.discrepantQty || '0'}
+                                    </span>
                                   ) : (
                                     <span className="text-[var(--text-muted)]">-</span>
                                   )}

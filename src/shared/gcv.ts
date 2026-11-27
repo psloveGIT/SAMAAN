@@ -12,13 +12,13 @@ import {
 import { formatHeaderProjectTitle } from './opiInvitation.ts';
 
 export const MD1_GCV_FORM_CODE = 'MD1EX-FQP02/11-03';
-export const MD1_GCV_COMPANY_NAME = 'شركت احداث و توسعه نيروگاه‌هاي مپنا – توسعه يك (MD1)';
-export const MD1_GCV_TITLE_FA = 'رسيد مصرف مستقيم كالا';
+export const MD1_GCV_COMPANY_NAME = 'شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)';
+export const MD1_GCV_TITLE_FA = 'رسید مصرف مستقیم کالا';
 export const MD1_GCV_TITLE_EN = 'Not-Stored Goods Consumption Voucher';
 export const MD1_GCV_QA_NOTICE =
-  'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.';
+  'توجه: این فرم تحت کنترل واحد QA می‌باشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA می‌باشد.';
 export const MD1_GCV_COPY_TEXT =
-  'رونوشت: معاونت تامين ، امور مالي، واحد كنترل كالا و انبار، پيمانكار نصب';
+  'رونوشت: معاونت تأمین، امور مالی، واحد کنترل کالا و انبار، پیمانکار نصب';
 
 export type GcvPurchaseByOption = 'tehran_proc' | 'site_admin' | 'contractor_supplier';
 
@@ -27,9 +27,9 @@ export const GCV_PURCHASE_BY_OPTIONS: ReadonlyArray<{
   labelFa: string;
   labelEn: string;
 }> = [
-  { value: 'tehran_proc', labelFa: 'تداركات تهران', labelEn: 'Tehran Procurement' },
-  { value: 'site_admin', labelFa: 'مالي- اداري كارگاه', labelEn: 'Site Finance / Admin' },
-  { value: 'contractor_supplier', labelFa: 'پیمانکار تامین کننده', labelEn: 'Supplier Contractor' },
+  { value: 'tehran_proc', labelFa: 'تدارکات تهران', labelEn: 'Tehran Procurement' },
+  { value: 'site_admin', labelFa: 'مالی- اداری کارگاه', labelEn: 'Site Finance / Admin' },
+  { value: 'contractor_supplier', labelFa: 'پیمانکار تأمین کننده', labelEn: 'Supplier Contractor' },
 ] as const;
 
 export interface GcvHeaderAutoFill {
@@ -201,14 +201,164 @@ export function resolveGcvQuantities(
   return { formQty, syncDeliveredQty };
 }
 
+export type GcvGroupFieldKey =
+  | 'arrivalDate'
+  | 'billOfLadingNo'
+  | 'system'
+  | 'subSystem'
+  | 'island'
+  | 'supplier'
+  | 'unit';
+
+export const GCV_GROUP_FIELD_LABELS: Record<GcvGroupFieldKey, string> = {
+  arrivalDate: 'تاریخ ورود',
+  billOfLadingNo: 'شماره بارنامه',
+  system: 'سیستم',
+  subSystem: 'ساب سیستم',
+  island: 'جزیره',
+  supplier: 'تأمین کننده',
+  unit: 'واحد',
+};
+
+export interface GcvRowGroupProfile {
+  arrivalDate: string;
+  billOfLadingNo: string;
+  system: string;
+  subSystem: string;
+  island: string;
+  supplier: string;
+  unit: string;
+}
+
+export interface GcvCompatibilityResult {
+  compatible: boolean;
+  mismatchedFields: GcvGroupFieldKey[];
+  mismatchedLabelsFa: string[];
+  referenceProfile: GcvRowGroupProfile | null;
+}
+
+function normGroupVal(raw: string | undefined | null): string {
+  return String(raw || '')
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Resolves the 7 GCV grouping attributes for a Detailed Equipment row
+ * (looking up `billOfLadingNo` from its matching General Equipment row when present).
+ */
+export function getGcvRowGroupProfile(
+  row: Pick<
+    DetailedEntry,
+    'shipmentNo' | 'packageNo' | 'arrivalDate' | 'system' | 'subSystem' | 'island' | 'supplier' | 'unit'
+  >,
+  generalEntries: ReadonlyArray<
+    Pick<GeneralEntry, 'packingListNo' | 'packageNo' | 'billOfLadingNo' | 'arrivalDate' | 'supplier'>
+  > = [],
+): GcvRowGroupProfile {
+  const pkKey = normToken(row.shipmentNo);
+  const pkgKey = normToken(row.packageNo);
+  const matchingGens = pkKey
+    ? generalEntries.filter((g) => normToken(g.packingListNo) === pkKey)
+    : [];
+  const exactGens = pkgKey
+    ? matchingGens.filter((g) => !g.packageNo?.trim() || normToken(g.packageNo) === pkgKey)
+    : matchingGens;
+  const effectiveGens = exactGens.length > 0 ? exactGens : matchingGens;
+
+  const billOfLadingNo = uniqueJoined(effectiveGens.map((g) => g.billOfLadingNo));
+  const arrivalDate =
+    String(row.arrivalDate || '').trim() ||
+    uniqueJoined(effectiveGens.map((g) => g.arrivalDate));
+  const supplier =
+    String(row.supplier || '').trim() ||
+    uniqueJoined(effectiveGens.map((g) => g.supplier));
+
+  return {
+    arrivalDate,
+    billOfLadingNo,
+    system: String(row.system || '').trim(),
+    subSystem: String(row.subSystem || '').trim(),
+    island: String(row.island || '').trim(),
+    supplier,
+    unit: String(row.unit || '').trim(),
+  };
+}
+
+/**
+ * Enforces the 7-field identical grouping rule for issuing a single GCV form:
+ * All selected items must share identical `arrivalDate`, `billOfLadingNo`, `system`,
+ * `subSystem`, `island`, `supplier`, and `unit`.
+ */
+export function checkGcvRowsCompatibility(
+  rows: ReadonlyArray<
+    Pick<
+      DetailedEntry,
+      'shipmentNo' | 'packageNo' | 'arrivalDate' | 'system' | 'subSystem' | 'island' | 'supplier' | 'unit'
+    >
+  >,
+  generalEntries: ReadonlyArray<
+    Pick<GeneralEntry, 'packingListNo' | 'packageNo' | 'billOfLadingNo' | 'arrivalDate' | 'supplier'>
+  > = [],
+): GcvCompatibilityResult {
+  if (rows.length === 0) {
+    return {
+      compatible: true,
+      mismatchedFields: [],
+      mismatchedLabelsFa: [],
+      referenceProfile: null,
+    };
+  }
+  const referenceProfile = getGcvRowGroupProfile(rows[0], generalEntries);
+  if (rows.length === 1) {
+    return {
+      compatible: true,
+      mismatchedFields: [],
+      mismatchedLabelsFa: [],
+      referenceProfile,
+    };
+  }
+
+  const keys: GcvGroupFieldKey[] = [
+    'arrivalDate',
+    'billOfLadingNo',
+    'system',
+    'subSystem',
+    'island',
+    'supplier',
+    'unit',
+  ];
+  const mismatchedSet = new Set<GcvGroupFieldKey>();
+  for (let i = 1; i < rows.length; i += 1) {
+    const prof = getGcvRowGroupProfile(rows[i], generalEntries);
+    for (const k of keys) {
+      if (normGroupVal(prof[k]) !== normGroupVal(referenceProfile[k])) {
+        mismatchedSet.add(k);
+      }
+    }
+  }
+  const mismatchedFields = keys.filter((k) => mismatchedSet.has(k));
+  return {
+    compatible: mismatchedFields.length === 0,
+    mismatchedFields,
+    mismatchedLabelsFa: mismatchedFields.map((k) => GCV_GROUP_FIELD_LABELS[k]),
+    referenceProfile,
+  };
+}
+
 /**
  * Rules 1-11 through 1-20: Builds exact MD1EX-FQP02/11-03 line items from selected Detailed rows.
  * - Item No. (1-11): sequential 1..N (rendered in sheet)
- * - PL/Package No. (1-12): Detailed shipmentNo ("شماره محموله")
- * - Package Item (1-13): Detailed packageNo ("شماره نگله")
+ * - PL/Package No. (1-12): Detailed shipmentNo + packageNo ("شماره محموله / شماره نگله")
+ * - Package Item (1-13): Detailed itemNo ("شماره آیتم")
  * - Description (1-14): Detailed description ("شرح")
  * - Technical info/Size (1-15): Detailed size ("اندازه")
- * - Tag No. (1-16): Detailed itemNo ("شماره آیتم")
+ * - Tag No. (1-16): Detailed itemCode ("کد کالا")
  * - UOM (1-17): Detailed countingUnit ("واحد شمارش")
  * - Quantity (1-18): Detailed actualQty ("مقدار واقعی")
  * - Remark (1-20): Detailed notes ("توضیحات تجهیز") + userRemark stacked underneath
@@ -216,7 +366,7 @@ export function resolveGcvQuantities(
 export function buildGcvLineItems(
   selectedRows: ReadonlyArray<Pick<
     DetailedComputed,
-    'id' | 'shipmentNo' | 'packageNo' | 'itemNo' | 'description' | 'generalDescription' | 'size' | 'countingUnit' | 'packingQty' | 'actualQty' | 'notes'
+    'id' | 'shipmentNo' | 'packageNo' | 'itemNo' | 'itemCode' | 'description' | 'generalDescription' | 'size' | 'countingUnit' | 'packingQty' | 'actualQty' | 'notes'
   >>,
   userRemarksById: Readonly<Record<string, string>> = {},
 ): DocumentLineItem[] {
@@ -231,7 +381,7 @@ export function buildGcvLineItems(
       itemNo: (d.itemNo || '').trim(),
       description: preserveMultiline(d.description || d.generalDescription),
       technicalInfo: (d.size || '').trim(),
-      tagNo: (d.itemNo || '').trim(),
+      tagNo: (d.itemCode || '').trim(),
       uom: (d.countingUnit || '').trim(),
       qty: formQty,
       equipmentNotes,
@@ -242,15 +392,29 @@ export function buildGcvLineItems(
 }
 
 /**
+ * Formats the combined "PL/Package No." display value from shipmentNo ("شماره محموله")
+ * and packageNo ("شماره نگله").
+ */
+export function formatGcvPlPackageNo(
+  shipmentNo: string | undefined | null,
+  packageNo: string | undefined | null,
+): string {
+  const s = String(shipmentNo || '').trim();
+  const p = String(packageNo || '').trim();
+  if (s && p) return `${s} / ${p}`;
+  return s || p;
+}
+
+/**
  * Generates a unique, plant-aware GCV receipt number (e.g. NK-GCV-0001)
- * checked against ALL existing project document numbers.
+ * checked against existing GCV document numbers.
  */
 export function generateGcvReceiptNo(
-  allUsedDocNos: readonly string[],
+  existingGcvDocNos: readonly string[],
   activeProject?: Pick<
     ProjectInfo,
     'plantAbbreviation' | 'usePlantAbbreviationInDocs' | 'plantAbbreviationPosition'
   > | null,
 ): string {
-  return generateNextPlantAwareDocNo('GCV', allUsedDocNos, extractPlantDocConfig(activeProject));
+  return generateNextPlantAwareDocNo('GCV', existingGcvDocNos, extractPlantDocConfig(activeProject));
 }

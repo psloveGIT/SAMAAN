@@ -14,23 +14,23 @@ import { formatHeaderProjectTitle, stripProjectWord } from './opiInvitation.ts';
 import { resolveSupplierPrefix } from './substitution.ts';
 
 export const MD1_OPI_MINUTES_FORM_CODE = 'MD1EX-FQP02/06-03';
-export const MD1_OPI_MINUTES_COMPANY_NAME = 'شركت احداث و توسعه نيروگاه‌هاي مپنا – توسعه يك (MD1)';
-export const MD1_OPI_MINUTES_TITLE_FA = 'صورتجلسه گشايش و بازرسي بسته ها';
+export const MD1_OPI_MINUTES_COMPANY_NAME = 'شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)';
+export const MD1_OPI_MINUTES_TITLE_FA = 'صورتجلسه گشایش و بازرسی بسته‌ها';
 export const MD1_OPI_MINUTES_TITLE_EN = 'OPI – Minutes Of Meeting';
 export const MD1_OPI_MINUTES_STATEMENT =
-  'بسته  (Package)هاي بالا در حضور نمايندگان كارفرما، مشاور، مپنا و انباردار OPI شد و اقلام موجود برابر با Packing List هاي پيوست، تحويل انبارگرديد.';
+  'بسته (Package)های بالا در حضور نمایندگان کارفرما، مشاور، مپنا و انباردار OPI شد و اقلام موجود برابر با Packing List های پیوست، تحویل انبار گردید.';
 export const MD1_OPI_MINUTES_COMPLIANT_LABEL =
-  'محموله ي بالا فاقد هرگونه مغايرت و آسيب ديدگي مي باشد.';
+  'محموله‌ی بالا فاقد هرگونه مغایرت و آسیب‌دیدگی می‌باشد.';
 export const MD1_OPI_MINUTES_QA_NOTICE =
-  'توجه: این فرم تحت کنترل واحد QA میباشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QAمیباشد.';
+  'توجه: این فرم تحت کنترل واحد QA می‌باشد و هر گونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA می‌باشد.';
 export const MD1_OPI_MINUTES_COPY_TEXT =
-  'رونوشت: معاونت تأمین تجهیزات، فروشنده، دستگاه نظارت، كارفرما';
+  'رونوشت: معاونت تأمین تجهیزات، فروشنده، دستگاه نظارت، کارفرما';
 
 export const MD1_MER_FORM_CODE = 'MD1EX-FQP02/12-03';
-export const MD1_MER_TITLE_FA = 'گزارش مغايرت، كسري و آسيب ديدگي (مشاهده شده حین OPI)';
+export const MD1_MER_TITLE_FA = 'گزارش مغایرت، کسری و آسیب‌دیدگی (مشاهده شده حین OPI)';
 export const MD1_MER_TITLE_EN = 'Material Exceptions Report';
 export const MD1_MER_COPY_TEXT =
-  'رونوشت: معاونت تامين تجهيزات ، فروشنده، دستگاه نظارت، كارفرما';
+  'رونوشت: معاونت تأمین تجهیزات، فروشنده، دستگاه نظارت، کارفرما';
 
 export type MerDiscrepancyCategory = 'shortage' | 'damaged';
 
@@ -261,7 +261,7 @@ export interface MerDraftInput {
  * - Package Quantity (1-17): Detailed packingQty
  * - Discrepant Quantity (1-19): numeric >= 0 entered by user
  * - Received Quantity (1-18): Math.max(0, Package Quantity - Discrepant Quantity)
- * - Discrepancy (1-20): category label + optional user discrepancy text
+ * - Discrepancy (1-20): automatically synchronized equal to Discrepant Quantity
  * - Remark (1-21): user remark
  */
 export function buildMerReportItem(input: MerDraftInput): OsdrReportItem {
@@ -273,8 +273,7 @@ export function buildMerReportItem(input: MerDraftInput): OsdrReportItem {
   const receivedQty = Math.max(0, roundQty(pkgQty - discrepantQty));
 
   const isShortage = input.category === 'shortage';
-  const defaultReason = isShortage ? 'کسری' : 'مغایرت/آسیب‌دیدگی';
-  const cleanReason = (input.discrepancyText || '').trim() || defaultReason;
+  const cleanReason = String(discrepantQty);
   const cleanRemark = (input.remark || '').trim();
 
   return {
@@ -301,9 +300,18 @@ export function buildMerReportItem(input: MerDraftInput): OsdrReportItem {
  * Formats the combined "توضیحات کسری/مغایرت" (`merDescription`) synced into Detailed Equipment
  * when a MER is issued for a discrepant row.
  */
-export function buildDetailedMerDescription(item: Pick<OsdrReportItem, 'discrepancyReason' | 'discrepancyType' | 'remarks'>): string {
-  const reason = (item.discrepancyReason || '').trim() || (item.discrepancyType === 'shortage' ? 'کسری' : 'مغایرت/آسیب‌دیدگی');
+export function buildDetailedMerDescription(
+  item: Pick<OsdrReportItem, 'discrepancyReason' | 'discrepancyType' | 'remarks'> & {
+    discrepantQty?: number;
+  },
+): string {
+  const categoryLabel = item.discrepancyType === 'shortage' ? 'کسری' : 'مغایرت/آسیب‌دیدگی';
+  const qtyNum = Number(item.discrepantQty);
+  const base =
+    item.discrepantQty !== undefined && Number.isFinite(qtyNum)
+      ? `${categoryLabel} (${qtyNum})`
+      : categoryLabel;
   const rem = (item.remarks || '').trim();
-  if (rem && rem !== reason) return `${reason} - ${rem}`;
-  return reason || rem;
+  if (rem && rem !== base) return `${base} - ${rem}`;
+  return base || rem;
 }

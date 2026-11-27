@@ -305,3 +305,39 @@ export function shouldCloseShortage(
   const target = Math.max(0, Number(shortage ?? 0)) + Math.max(0, Number(damagedQty ?? 0));
   return Number.isFinite(a) && a > 0 && target > 0 && Math.abs(a - target) < 1e-6;
 }
+
+/**
+ * Checks whether a re-procurement item's quantity plus the shortage row's existing actualQty
+ * equals (or covers) the shortage row's packingQty, in which case "دارای کسری" should be cleared.
+ */
+export function shouldResolveShortageBadge(
+  newPackingQty: number | null | undefined,
+  targetActualQty: number | null | undefined,
+  targetPackingQty: number | null | undefined,
+): boolean {
+  const newQty = Number(newPackingQty ?? 0);
+  const actual = Number(targetActualQty ?? 0);
+  const packing = Number(targetPackingQty ?? 0);
+  if (!Number.isFinite(newQty) || !Number.isFinite(actual) || !Number.isFinite(packing)) return false;
+  if (newQty <= 0 || packing <= 0) return false;
+  return Math.abs(newQty + actual - packing) < 1e-6 || newQty + actual >= packing - 1e-6;
+}
+
+/**
+ * Formats the text written into the NEW re-procurement item's "توضیحات کسری/مغایرت" (merDescription):
+ *   "تأمین کسری پکینگ <shortagePackingNo>"
+ */
+export function buildNewItemShortageReprocDescription(
+  shortagePackingNos: ReadonlyArray<string | undefined | null>,
+): string {
+  const unique = Array.from(
+    new Set(
+      shortagePackingNos
+        .map((s) => String(s || '').trim())
+        .filter(Boolean),
+    ),
+  );
+  if (unique.length === 0) return '';
+  return `تأمین کسری پکینگ ${unique.join(' ، ')}`;
+}
+

@@ -9,6 +9,7 @@ import {
   Edit3,
   FileText,
   History,
+  Pencil,
   Plus,
   Printer,
   Redo2,
@@ -31,6 +32,7 @@ import {
 import {
   DEFAULT_SUPPLY_URGENCY,
   MD1_SUBSTITUTION_FORM_CODE,
+  SUBSTITUTION_DEFAULT_COST_BEARERS,
   SUPPLY_URGENCY_OPTIONS,
   buildSubstitutionHeaderMeta,
   generateNextSubstitutionDocNo,
@@ -119,6 +121,12 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
   const [editingRecord, setEditingRecord] = useState<SubstitutionRecord | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Explicit Step 2 Auto-MIV pre-registration state (must register MIV before completing Substitution)
+  const [preIssuedMivDocs, setPreIssuedMivDocs] = useState<MivDocumentRecord[]>([]);
+  const [preIssuedSubSig, setPreIssuedSubSig] = useState('');
+  const [preIssuingMiv, setPreIssuingMiv] = useState(false);
+  const [cancellingPreMiv, setCancellingPreMiv] = useState(false);
+
   // Print preview modal state (Substitution Form + Auto-Issued MIV Voucher(s))
   const [printBundle, setPrintBundle] = useState<{
     record: SubstitutionRecord;
@@ -168,6 +176,17 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
   const step1List = useMemo(() => Object.values(step1Rows), [step1Rows]);
   const step2List = useMemo(() => Object.values(step2Rows), [step2Rows]);
+
+  const currentStep2Sig = useMemo(
+    () =>
+      step2List
+        .map((r) => `${r.item.id}:${parseStrictPositiveNumber(r.qtyStr) ?? r.qtyStr}:${r.stockSource}:${r.remarks.trim()}`)
+        .sort()
+        .join('|'),
+    [step2List],
+  );
+
+  const hasValidPreIssuedMiv = preIssuedMivDocs.length > 0 && preIssuedSubSig === currentStep2Sig;
 
   const commitStep1Selection = useCallback(
     (updater: (prev: Record<string, Step1RowDraft>) => Record<string, Step1RowDraft>) => {
@@ -502,6 +521,8 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     setStep2UndoStack([]);
     setStep2RedoStack([]);
     setEditingRecord(null);
+    setPreIssuedMivDocs([]);
+    setPreIssuedSubSig('');
     setSupplyUrgency(DEFAULT_SUPPLY_URGENCY);
     setReason('');
     setReprocureBy('');
@@ -595,6 +616,8 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     }
 
     setEditingRecord(rec);
+    setPreIssuedMivDocs([]);
+    setPreIssuedSubSig('');
     setStep1Rows(nextStep1);
     setStep1UndoStack([]);
     setStep1RedoStack([]);
@@ -610,6 +633,158 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
     setSupplierNotes(rec.supplierNotes || '');
     setStep(1);
     setViewMode('create');
+  };
+
+  /**
+   * Step 2 explicit Auto-MIV pre-registration:
+   * Registers the warehouse exit MIV document(s) first and deducts stock so the user
+   * receives the exact MIV number(s) before finalizing the Substitution form.
+   */
+  const handlePreIssueAutoMiv = async () => {
+    const err1 = validateStep1();
+    if (err1) {
+      notify('error', err1);
+      setStep(1);
+      return;
+    }
+    const err2 = validateStep2();
+    if (err2) {
+      notify('error', err2);
+      setStep(2);
+      return;
+    }
+
+    setPreIssuingMiv(true);
+    try {
+      // If user previously pre-issued a draft MIV and then changed Step 2, cancel old pre-issued MIV first
+      if (preIssuedMivDocs.length > 0) {
+        for (const oldPre of preIssuedMivDocs) {
+          await apiRequest(`/api/miv/${oldPre.id}`, { method: 'DELETE' });
+        }
+      }
+
+      const docDate = editingRecord?.date || getTodayIso();
+      const targetDocNo = editingRecord?.docNo || autoSubDocNo;
+      const mapnaItems = step2List.filter((r) => r.stockSource === 'mapna');
+      const contractorItems = step2List.filter((r) => r.stockSource === 'contractor');
+
+      const removedIds = new Set(preIssuedMivDocs.map((d) => d.id));
+      const usedMivNos = mivDocuments
+        .filter((m) => !removedIds.has(m.id))
+        .map((m) => m.docNo);
+
+      const newlyIssued: MivDocumentRecord[] = [];
+      const issueGroup = async (
+        docType: 'miv_mapna' | 'miv_contractor',
+        groupRows: Step2RowDraft[],
+      ) => {
+        if (groupRows.length === 0) return;
+        const mivHeader = buildMivHeaderAutoFill(
+          groupRows.map((r) => r.item),
+          activeProject,
+        );
+        const mivParty = mivHeader.party || previewHeaderMeta.installerContractor;
+        const mivSystemIsland =
+          mivHeader.islandSystem ||
+          [previewHeaderMeta.system, previewHeaderMeta.island].filter(Boolean).join('/');
+        const mivUnit = mivHeader.unit || previewHeaderMeta.unit;
+        const mivReceiptNo = mivHeader.receiptNo || '';
+        const mivNo = generateMivDocumentNo(
+          mivParty || primarySupplier,
+          usedMivNos,
+          plantDocConfig,
+        );
+        usedMivNos.push(mivNo);
+
+        const res = await apiRequest<{ document: MivDocumentRecord }>('/api/miv', {
+          method: 'POST',
+          body: JSON.stringify({
+            docType,
+            docNo: mivNo,
+            date: docDate,
+            projectName: mivHeader.projectName || previewHeaderMeta.projectName,
+            contractNo: mivHeader.contractNo || previewHeaderMeta.contractNo,
+            party: mivParty,
+            islandSystem: mivSystemIsland,
+            unit: mivUnit,
+            receiptNo: mivReceiptNo,
+            receiver: mivParty,
+            notes: `صدور خودکار بابت فرم جایگزینی شماره ${targetDocNo}`,
+            items: groupRows.map((row) => {
+              const qtyVal = parseStrictPositiveNumber(row.qtyStr)!;
+              const userRemark = row.remarks.trim() || `جایگزینی ${targetDocNo}`;
+              const stackedRemark = buildMivLineRemark(row.item.notes, userRemark);
+              return {
+                detailedId: row.item.id,
+                qty: qtyVal,
+                requestedQty: qtyVal,
+                shipmentNo: row.item.shipmentNo || '',
+                packageNo: row.item.packageNo || '',
+                technicalInfo: row.item.size || '',
+                tagNo: row.item.itemNo || '',
+                codeNo: row.item.itemCode || '',
+                location: row.item.storageLocation || '',
+                uom: row.item.countingUnit || '',
+                opiNo: row.item.opiNo || '',
+                equipmentNotes: row.item.notes || '',
+                userRemark,
+                remark: stackedRemark,
+                sourceWarehouse: docType === 'miv_mapna' ? 'employer' : 'contractor',
+              };
+            }),
+          }),
+        });
+        newlyIssued.push(res.document);
+      };
+
+      await issueGroup('miv_mapna', mapnaItems);
+      await issueGroup('miv_contractor', contractorItems);
+
+      setPreIssuedMivDocs(newlyIssued);
+      setPreIssuedSubSig(currentStep2Sig);
+      onDataChanged();
+      await loadData();
+
+      const mivLabels = newlyIssued.map((d) => d.docNo).join(' , ');
+      notify(
+        'success',
+        isFa
+          ? `حواله خروج از انبار (${mivLabels}) با موفقیت ثبت و موجودی کسر شد. اکنون می‌توانید فرم جایگزینی را نهایی کنید.`
+          : `Auto-MIV (${mivLabels}) registered and stock deducted. You can now finalize the Substitution form.`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError) {
+        notify('error', err.message);
+      } else {
+        notify('error', isFa ? 'خطا در ثبت حواله خودکار خروج از انبار.' : 'Failed to register auto-MIV.');
+      }
+    } finally {
+      setPreIssuingMiv(false);
+    }
+  };
+
+  const handleCancelPreIssuedMiv = async () => {
+    if (preIssuedMivDocs.length === 0) return;
+    setCancellingPreMiv(true);
+    try {
+      for (const doc of preIssuedMivDocs) {
+        await apiRequest(`/api/miv/${doc.id}`, { method: 'DELETE' });
+      }
+      setPreIssuedMivDocs([]);
+      setPreIssuedSubSig('');
+      onDataChanged();
+      await loadData();
+      notify(
+        'info',
+        isFa
+          ? 'حواله ثبت‌شده لغو و موجودی انبار بازگردانی شد. می‌توانید اقلام جایگزین را ویرایش کنید.'
+          : 'Pre-registered MIV cancelled and stock restored.',
+      );
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setCancellingPreMiv(false);
+    }
   };
 
   const handleSubmitSubstitution = async () => {
@@ -690,7 +865,31 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
       let combinedMivNo = editingRecord?.mivNo || '';
       let mivDocIds: string[] = editingRecord?.mivDocIds || (editingRecord?.mivDocId ? [editingRecord.mivDocId] : []);
 
-      if (needsMivReissue) {
+      if (!editingRecord && !hasValidPreIssuedMiv) {
+        notify(
+          'error',
+          isFa
+            ? 'لطفاً ابتدا با دکمه «ثبت حواله خودکار خروج از انبار» حواله اقلام جایگزین را ثبت کنید و سپس فرم جایگزینی را تکمیل نمایید.'
+            : 'Please register the Auto-MIV first before finalizing the Substitution form.',
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      if (hasValidPreIssuedMiv) {
+        // Reuse the MIV document(s) already explicitly registered in Step 2!
+        if (editingRecord) {
+          const oldLinkedMivs = resolveLinkedMivDocs(editingRecord);
+          for (const oldDoc of oldLinkedMivs) {
+            if (!preIssuedMivDocs.some((p) => p.id === oldDoc.id)) {
+              await apiRequest(`/api/miv/${oldDoc.id}`, { method: 'DELETE' });
+            }
+          }
+        }
+        issuedMivDocs = preIssuedMivDocs;
+        combinedMivNo = issuedMivDocs.map((d) => d.docNo).join(', ');
+        mivDocIds = issuedMivDocs.map((d) => d.id);
+      } else if (needsMivReissue) {
         const oldLinkedMivs = editingRecord ? resolveLinkedMivDocs(editingRecord) : [];
         // Reverse old MIVs first so stock is cleanly restored before issuing updated MIVs
         for (const oldDoc of oldLinkedMivs) {
@@ -1091,8 +1290,8 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                     </h2>
                     <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
                       {isFa
-                        ? 'مانند بخش جزئیات تجهیزات فیلتر کنید و یک یا چند ردیف را علامت بزنید.'
-                        : 'Filter just like Detailed Equipment and check one or more rows.'}
+                        ? 'فقط اقلامی نمایش داده می‌شوند که قبلاً برای آن‌ها حواله خروج از انبار (MIV) صادر شده است. مانند جزئیات تجهیزات فیلتر و انتخاب کنید.'
+                        : 'Only items previously issued via MIV are shown. Filter and select one or more rows.'}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1160,6 +1359,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
 
                 <SubstitutionItemPicker
                   stockOnly={false}
+                  mivIssuedOnly={true}
                   refreshSignal={refreshSignal}
                   selectedMap={step1SelectedMap}
                   onToggleRow={toggleStep1Row}
@@ -1222,7 +1422,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                           <th className="px-2.5 py-2 text-start whitespace-nowrap">{isFa ? 'آیتم' : 'Item'}</th>
                           <th className="px-2.5 py-2 text-start min-w-[180px]">{isFa ? 'شرح مواد / تجهیزات' : 'Description'}</th>
                           <th className="px-2.5 py-2 text-start whitespace-nowrap">Tag No.</th>
-                          <th className="px-2.5 py-2 text-start w-28">{isFa ? 'تعداد (عدد) *' : 'Qty *'}</th>
+                          <th className="px-2.5 py-2 text-start w-36">{isFa ? 'تعداد *' : 'Qty *'}</th>
                           <th className="px-2.5 py-2 text-start min-w-[200px]">{isFa ? 'توضیحات اختصاصی ردیف' : 'Row Remarks'}</th>
                           <th className="px-2 py-2 w-10" />
                         </tr>
@@ -1245,26 +1445,31 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                                 {row.item.itemCode || '—'}
                               </td>
                               <td className="px-2.5 py-2">
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  dir="ltr"
-                                  data-testid={`step1-qty-${row.item.id}`}
-                                  aria-label={isFa ? `تعداد ${row.item.description}` : `Qty ${row.item.description}`}
-                                  value={row.qtyStr}
-                                  onChange={(e) => {
-                                    const cleaned = sanitizeNumericQtyInput(e.target.value);
-                                    setStep1Rows((prev) => ({
-                                      ...prev,
-                                      [row.item.id]: { ...prev[row.item.id], qtyStr: cleaned },
-                                    }));
-                                  }}
-                                  className={`w-24 h-8 px-2.5 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono font-bold tabular-nums focus:outline-none ${
-                                    qtyValid
-                                      ? 'border-[var(--border-subtle)] focus:border-[var(--accent-primary)]'
-                                      : 'border-[var(--status-danger)] text-[var(--status-danger)]'
-                                  }`}
-                                />
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    dir="ltr"
+                                    data-testid={`step1-qty-${row.item.id}`}
+                                    aria-label={isFa ? `تعداد ${row.item.description}` : `Qty ${row.item.description}`}
+                                    value={row.qtyStr}
+                                    onChange={(e) => {
+                                      const cleaned = sanitizeNumericQtyInput(e.target.value);
+                                      setStep1Rows((prev) => ({
+                                        ...prev,
+                                        [row.item.id]: { ...prev[row.item.id], qtyStr: cleaned },
+                                      }));
+                                    }}
+                                    className={`w-20 h-8 px-2 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono font-bold tabular-nums focus:outline-none ${
+                                      qtyValid
+                                        ? 'border-[var(--border-subtle)] focus:border-[var(--accent-primary)]'
+                                        : 'border-[var(--status-danger)] text-[var(--status-danger)]'
+                                    }`}
+                                  />
+                                  <span className="text-[10.5px] font-semibold text-[var(--text-muted)] whitespace-nowrap">
+                                    {row.item.countingUnit || (isFa ? 'عدد' : 'EA')}
+                                  </span>
+                                </div>
                               </td>
                               <td className="px-2.5 py-2">
                                 <input
@@ -1393,11 +1598,37 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                       id="sub-cost"
                       data-testid="sub-cost-input"
                       type="text"
+                      list="sub-cost-bearer-list"
                       value={costBorneBy}
                       onChange={(e) => setCostBorneBy(e.target.value)}
-                      placeholder={isFa ? 'مثلاً: پیمانکار نصب / فروشنده / کارفرما' : 'e.g. Installation Contractor / Supplier'}
+                      placeholder={isFa ? 'انتخاب از گزینه‌های پیش‌فرض یا تایپ آزاد...' : 'Select a default or type freely...'}
                       className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
                     />
+                    <datalist id="sub-cost-bearer-list">
+                      {SUBSTITUTION_DEFAULT_COST_BEARERS.map((opt) => (
+                        <option key={opt} value={opt} />
+                      ))}
+                    </datalist>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {SUBSTITUTION_DEFAULT_COST_BEARERS.map((opt) => {
+                        const active = costBorneBy.trim() === opt;
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            data-testid={`sub-cost-preset-${opt}`}
+                            onClick={() => setCostBorneBy(opt)}
+                            className={`px-2 py-0.5 rounded-md border text-[10.5px] font-semibold transition-colors ${
+                              active
+                                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                                : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                            }`}
+                          >
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
@@ -1531,7 +1762,7 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                           <th className="px-2.5 py-2 text-start whitespace-nowrap">Tag No.</th>
                           <th className="px-2.5 py-2 text-start whitespace-nowrap">{isFa ? 'محل برداشت موجودی' : 'Stock Pool'}</th>
                           <th className="px-2.5 py-2 text-center whitespace-nowrap">{isFa ? 'موجودی مجاز' : 'Available'}</th>
-                          <th className="px-2.5 py-2 text-start w-28">{isFa ? 'تعداد (عدد) *' : 'Qty *'}</th>
+                          <th className="px-2.5 py-2 text-start w-36">{isFa ? 'تعداد *' : 'Qty *'}</th>
                           <th className="px-2.5 py-2 text-start min-w-[170px]">{isFa ? 'توضیحات (اختیاری)' : 'Remarks'}</th>
                           <th className="px-2 py-2 w-10" />
                         </tr>
@@ -1595,26 +1826,32 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                                 {maxAvail}
                               </td>
                               <td className="px-2.5 py-2">
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  dir="ltr"
-                                  data-testid={`step2-qty-${row.item.id}`}
-                                  aria-label={isFa ? `تعداد جایگزین ${row.item.description}` : `Substitute qty ${row.item.description}`}
-                                  value={row.qtyStr}
-                                  onChange={(e) => {
-                                    const cleaned = sanitizeNumericQtyInput(e.target.value);
-                                    setStep2Rows((prev) => ({
-                                      ...prev,
-                                      [row.item.id]: { ...prev[row.item.id], qtyStr: cleaned },
-                                    }));
-                                  }}
-                                  className={`w-24 h-8 px-2.5 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono font-bold tabular-nums focus:outline-none ${
-                                    qtyValid
-                                      ? 'border-[var(--border-subtle)] focus:border-[var(--accent-primary)]'
-                                      : 'border-[var(--status-danger)] text-[var(--status-danger)]'
-                                  }`}
-                                />
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    dir="ltr"
+                                    data-testid={`step2-qty-${row.item.id}`}
+                                    aria-label={isFa ? `تعداد جایگزین ${row.item.description}` : `Substitute qty ${row.item.description}`}
+                                    value={row.qtyStr}
+                                    disabled={hasValidPreIssuedMiv}
+                                    onChange={(e) => {
+                                      const cleaned = sanitizeNumericQtyInput(e.target.value);
+                                      setStep2Rows((prev) => ({
+                                        ...prev,
+                                        [row.item.id]: { ...prev[row.item.id], qtyStr: cleaned },
+                                      }));
+                                    }}
+                                    className={`w-20 h-8 px-2 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono font-bold tabular-nums focus:outline-none disabled:opacity-60 ${
+                                      qtyValid
+                                        ? 'border-[var(--border-subtle)] focus:border-[var(--accent-primary)]'
+                                        : 'border-[var(--status-danger)] text-[var(--status-danger)]'
+                                    }`}
+                                  />
+                                  <span className="text-[10.5px] font-semibold text-[var(--text-muted)] whitespace-nowrap">
+                                    {row.item.countingUnit || (isFa ? 'عدد' : 'EA')}
+                                  </span>
+                                </div>
                               </td>
                               <td className="px-2.5 py-2">
                                 <input
@@ -1652,6 +1889,33 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                 </div>
               )}
 
+              {/* Pre-Issued Auto-MIV Status Banner */}
+              {hasValidPreIssuedMiv && (
+                <div
+                  data-testid="sub-preissued-miv-banner"
+                  className="rounded-2xl border border-emerald-500/45 bg-emerald-500/10 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs"
+                >
+                  <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-semibold">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>
+                      {isFa
+                        ? `حواله خودکار خروج از انبار با شماره ${preIssuedMivDocs.map((d) => d.docNo).join(' , ')} ثبت و موجودی کسر شد. اکنون فرم جایگزینی را تکمیل و چاپ کنید.`
+                        : `Auto-MIV ${preIssuedMivDocs.map((d) => d.docNo).join(', ')} registered & stock deducted. You may now complete and print the Substitution form.`}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="sub-cancel-preissued-miv-btn"
+                    disabled={cancellingPreMiv || submitting}
+                    onClick={() => void handleCancelPreIssuedMiv()}
+                    className="h-8 px-3 rounded-lg border border-rose-500/40 bg-[var(--bg-surface)] hover:bg-rose-500/10 text-rose-700 dark:text-rose-300 text-[11px] font-bold inline-flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'لغو حواله ثبت‌شده' : 'Cancel Pre-Issued MIV'}</span>
+                  </button>
+                </div>
+              )}
+
               {/* Final Action Bar */}
               <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 flex flex-wrap items-center justify-between gap-3">
                 <button
@@ -1663,32 +1927,62 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                   <span>{isFa ? 'بازگشت به مرحله ۱' : 'Back to Step 1'}</span>
                 </button>
 
-                <button
-                  type="button"
-                  data-testid="sub-submit-btn"
-                  disabled={submitting}
-                  onClick={() => void handleSubmitSubstitution()}
-                  className="h-10 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-contrast)] text-xs font-bold flex items-center gap-2 shadow-sm transition-colors"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>
-                    {submitting
-                      ? isFa
-                        ? editingRecord
-                          ? 'در حال ذخیره تغییرات فرم جایگزینی...'
-                          : 'در حال صدور حواله و ثبت فرم جایگزینی...'
-                        : editingRecord
-                          ? 'Saving changes...'
-                          : 'Issuing MIV & saving...'
-                      : editingRecord
+                <div className="flex flex-wrap items-center gap-2">
+                  {!editingRecord && !hasValidPreIssuedMiv && (
+                    <button
+                      type="button"
+                      data-testid="sub-preissue-miv-btn"
+                      disabled={preIssuingMiv || submitting || step2List.length === 0}
+                      onClick={() => void handlePreIssueAutoMiv()}
+                      className="h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-45 text-white text-xs font-bold flex items-center gap-2 shadow-sm transition-colors"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>
+                        {preIssuingMiv
+                          ? isFa
+                            ? 'در حال ثبت حواله خروج...'
+                            : 'Registering Auto-MIV...'
+                          : isFa
+                            ? '۱. ثبت حواله خودکار خروج از انبار'
+                            : '1. Register Auto-MIV Exit'}
+                      </span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    data-testid="sub-submit-btn"
+                    disabled={submitting || preIssuingMiv || (!editingRecord && !hasValidPreIssuedMiv)}
+                    onClick={() => void handleSubmitSubstitution()}
+                    title={
+                      !editingRecord && !hasValidPreIssuedMiv
                         ? isFa
-                          ? 'ذخیره تغییرات فرم جایگزینی و پیش‌نمایش چاپ'
-                          : 'Save Substitution Changes & Print Preview'
-                        : isFa
-                          ? 'ثبت فرم جایگزینی، صدور خودکار حواله و پیش‌نمایش چاپ'
-                          : 'Save Substitution, Auto-Issue MIV & Print Preview'}
-                  </span>
-                </button>
+                          ? 'ابتدا حواله خودکار خروج از انبار را ثبت کنید'
+                          : 'Register Auto-MIV first'
+                        : undefined
+                    }
+                    className="h-10 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] disabled:opacity-45 text-[var(--accent-contrast)] text-xs font-bold flex items-center gap-2 shadow-sm transition-colors"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>
+                      {submitting
+                        ? isFa
+                          ? editingRecord
+                            ? 'در حال ذخیره تغییرات فرم جایگزینی...'
+                            : 'در حال ثبت فرم جایگزینی...'
+                          : editingRecord
+                            ? 'Saving changes...'
+                            : 'Saving substitution...'
+                        : editingRecord
+                          ? isFa
+                            ? 'ذخیره تغییرات فرم جایگزینی و پیش‌نمایش چاپ'
+                            : 'Save Substitution Changes & Print Preview'
+                          : isFa
+                            ? '۲. ثبت کامل فرم جایگزینی و پیش‌نمایش چاپ'
+                            : '2. Complete Substitution & Print Preview'}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1807,15 +2101,16 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                             className="px-3 py-2.5 whitespace-nowrap"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div className="flex items-center justify-center gap-1.5">
+                            <div className="flex items-center justify-center gap-1">
                               <button
                                 type="button"
                                 data-testid={`sub-preview-btn-${rec.docNo}`}
+                                aria-label={isFa ? `چاپ همزمان ${rec.docNo}` : `Print ${rec.docNo}`}
+                                title={isFa ? `مشاهده و چاپ همزمان ${rec.docNo}` : `Preview & Print ${rec.docNo}`}
                                 onClick={() => openRecordPreview(rec)}
-                                className="h-8 px-2.5 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)] text-[11px] font-semibold inline-flex items-center gap-1 transition-colors"
+                                className="p-1.5 rounded-lg text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] transition-colors"
                               >
                                 <Printer className="w-3.5 h-3.5" />
-                                <span>{isFa ? 'چاپ همزمان' : 'Print'}</span>
                               </button>
                               {canEdit && (
                                 <button
@@ -1824,10 +2119,9 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                                   aria-label={isFa ? `ویرایش ${rec.docNo}` : `Edit ${rec.docNo}`}
                                   title={isFa ? `ویرایش فرم ${rec.docNo}` : `Edit ${rec.docNo}`}
                                   onClick={() => handleStartEdit(rec)}
-                                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[11px] font-semibold inline-flex items-center gap-1 transition-colors"
+                                  className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-500/10 transition-colors"
                                 >
-                                  <Edit3 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                                  <span>{isFa ? 'ویرایش' : 'Edit'}</span>
+                                  <Pencil className="w-3.5 h-3.5" />
                                 </button>
                               )}
                               {canEdit && (
@@ -1835,8 +2129,9 @@ export const SubstitutionView: React.FC<SubstitutionViewProps> = ({
                                   type="button"
                                   data-testid={`sub-delete-btn-${rec.docNo}`}
                                   aria-label={isFa ? `حذف ${rec.docNo}` : `Delete ${rec.docNo}`}
+                                  title={isFa ? `حذف فرم ${rec.docNo}` : `Delete ${rec.docNo}`}
                                   onClick={() => setDeleteTarget(rec)}
-                                  className="p-1.5 rounded-lg text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
+                                  className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-500/10 transition-colors"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>

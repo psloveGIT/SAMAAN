@@ -173,5 +173,5 @@ test('buildReplacementCauseLines omits old prefix and buildReplacementAgreementT
 
   assert.equal(MD1_SUBSTITUTION_FORM_CODE, 'MD1EX-FQP02/10-03');
   assert.ok(MD1_SUBSTITUTION_QA_NOTICE.includes('QA'));
-  assert.equal(MD1_SUBSTITUTION_COPY_TEXT, 'رونوشت: معاونت تامين ، فروشنده، پيمانكار نصب');
+  assert.equal(MD1_SUBSTITUTION_COPY_TEXT, 'رونوشت: معاونت تأمین، فروشنده، پیمانکار نصب');
 });

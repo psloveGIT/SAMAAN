@@ -153,26 +153,22 @@ test('filterEligibleGeneralForOpi includes only rows without opiInvitationNo unl
   );
 });
 
-test('computeOpenOpiInvitations implements Dashboard Note (تبصره) accurately', () => {
-  const general = [
-    // PK-100: invitation issued, ZERO detailed rows -> OPEN
-    { packingListNo: 'PK-100', opiInvitationNo: 'NK-TU-0001', opiInvitationDate: '2026-05-10' },
-    // PK-200: invitation issued, 2 detailed rows, only 1 has opiNo -> OPEN
-    { packingListNo: 'PK-200', opiInvitationNo: 'NK-ME-0001', opiInvitationDate: '2026-05-11' },
-    // PK-300: invitation issued, ALL detailed rows have opiNo -> CLOSED (not in open list)
-    { packingListNo: 'PK-300', opiInvitationNo: 'NK-PS-0001', opiInvitationDate: '2026-05-12' },
-    // PK-400: no invitation -> ignored
-    { packingListNo: 'PK-400', opiInvitationNo: '', opiInvitationDate: '' },
+test('computeOpenOpiInvitations lists issued OPI invitations that do not yet have an OPI Minutes record', () => {
+  const invitations = [
+    { invitationNo: 'NK-TU-0001', date: '2026-05-10', packingNos: ['PK-100'] },
+    { invitationNo: 'NK-ME-0001', date: '2026-05-11', packingNos: ['PK-200'] },
+    { invitationNo: 'NK-PS-0001', date: '2026-05-12', packingNos: ['PK-300'] },
   ];
-
+  const minutes = [
+    { invitationNo: 'NK-PS-0001', minutesNo: 'NK-PS-0001' },
+  ];
   const detailed = [
     { shipmentNo: 'PK-200', opiNo: 'NK-ME-0001' },
     { shipmentNo: 'PK-200', opiNo: '' },
     { shipmentNo: 'PK-300', opiNo: 'NK-PS-0001' },
-    { shipmentNo: 'PK-300', opiNo: 'NK-PS-0001' },
   ];
 
-  const open = computeOpenOpiInvitations(general, detailed);
+  const open = computeOpenOpiInvitations([], detailed, invitations, minutes);
   assert.equal(open.length, 2);
   assert.equal(open[0].invitationNo, 'NK-ME-0001');
   assert.equal(open[0].date, '2026-05-11');
@@ -185,7 +181,7 @@ test('computeOpenOpiInvitations implements Dashboard Note (تبصره) accuratel
   assert.equal(open[1].linkedDetailedRows, 0);
 });
 
-test('computeOpenOpiInvitations handles multiline stacked opiNo, slash codes, Persian digits, and split-package invitations without false positives', () => {
+test('computeOpenOpiInvitations handles Persian digits in minutes matching and closes once OPI Minutes is issued', () => {
   assert.deepEqual(splitOpiDocumentTokens('OPI/1404/01\nOPI/1404/02'), [
     'OPI/1404/01',
     'OPI/1404/02',
@@ -195,32 +191,15 @@ test('computeOpenOpiInvitations handles multiline stacked opiNo, slash codes, Pe
     'NK-TU-0002',
   ]);
 
-  const general = [
-    // Stacked multiline in Detailed opiNo -> CLOSED
-    { packingListNo: 'PK-ML-1', opiInvitationNo: 'NK-TU-0001', opiInvitationDate: '2026-06-01' },
-    // Slash-containing invitation numbers stacked in Detailed opiNo -> CLOSED
-    { packingListNo: 'PK-ML-2', opiInvitationNo: 'OPI/1404/05', opiInvitationDate: '2026-06-01' },
-    // Stacked multiline in BOTH General and Detailed -> CLOSED
-    { packingListNo: 'PK-ML-3', opiInvitationNo: 'INV-A\nINV-B', opiInvitationDate: '2026-06-01' },
-    // Split packing: row 1 has INV-C, row 2 has INV-D -> both CLOSED
-    { packingListNo: 'PK-ML-4', opiInvitationNo: 'INV-C', opiInvitationDate: '2026-06-01' },
-    { packingListNo: 'PK-ML-4', opiInvitationNo: 'INV-D', opiInvitationDate: '2026-06-02' },
-    // Partial packing: row 1 has stacked numbers, row 2 is BLANK -> STILL OPEN
-    { packingListNo: 'PK-OPEN-1', opiInvitationNo: 'NK-ME-0099', opiInvitationDate: '2026-06-03' },
+  const invitations = [
+    { invitationNo: 'NK-TU-0001', date: '2026-06-01', packingNos: ['PK-1'] },
+    { invitationNo: 'NK-ME-0099', date: '2026-06-03', packingNos: ['PK-2'] },
+  ];
+  const minutes = [
+    { invitationNo: 'NK-TU-۰۰۰۱', minutesNo: 'NK-TU-۰۰۰۱' },
   ];
 
-  const detailed = [
-    { shipmentNo: 'PK-ML-1', opiNo: 'NK-TU-۰۰۰۱\nNK-TU-۰۰۰۲' },
-    { shipmentNo: 'PK-ML-1', opiNo: 'NK-TU-0001\nNK-TU-0003' },
-    { shipmentNo: 'PK-ML-2', opiNo: 'OPI/1404/05\nOPI/1404/06' },
-    { shipmentNo: 'PK-ML-3', opiNo: 'INV-A\nINV-B' },
-    { shipmentNo: 'PK-ML-4', opiNo: 'INV-C' },
-    { shipmentNo: 'PK-ML-4', opiNo: 'INV-D' },
-    { shipmentNo: 'PK-OPEN-1', opiNo: 'NK-ME-0099\nNK-ME-0100' },
-    { shipmentNo: 'PK-OPEN-1', opiNo: '' },
-  ];
-
-  const open = computeOpenOpiInvitations(general, detailed);
+  const open = computeOpenOpiInvitations([], [], invitations, minutes);
   assert.deepEqual(
     open.map((x) => x.invitationNo),
     ['NK-ME-0099'],

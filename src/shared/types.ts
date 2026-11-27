@@ -442,6 +442,7 @@ export interface DetailedEntry {
   itemImage?: string; // تصویر اصلی تجهیز (Data URL فشرده‌شده)
   itemImageThumb?: string; // تصویر بندانگشتی جهت نمایش سریع در جدول
   shortageBackfills: ShortageBackfillRecord[]; // Later deliveries filling کسری
+  shortageResolved?: boolean; // Set true when shortage is fully covered by a re-procurement item (clears "دارای کسری" without double-counting stock)
   createdAt: string;
   updatedAt: string;
   createdBy: string;
@@ -1107,6 +1108,7 @@ export interface ErrorReportRecord {
 }
 
 export interface ReprocurementApplyPayload {
+  sourceDetailedId?: string;
   sourceShipmentNo: string;
   sourcePackingQty: number;
   sourceCountingUnit?: string;

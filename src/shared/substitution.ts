@@ -14,11 +14,19 @@ function normalizeDigits(raw: string): string {
 export const MD1_SUBSTITUTION_FORM_CODE = 'MD1EX-FQP02/10-03';
 export const MD1_SUBSTITUTION_TITLE_FA = 'فرم درخواست جایگزینی مواد و تجهیزات';
 export const MD1_SUBSTITUTION_QA_NOTICE =
-  'توجه : اين فرم تحت كنترل واحد QA مي‌باشد و هرگونه تغيير در آن غير مجاز بوده و منوط به اخذ مجوز از واحد QA مي‌باشد.';
-export const MD1_SUBSTITUTION_COPY_TEXT = 'رونوشت: معاونت تامين ، فروشنده، پيمانكار نصب';
+  'توجه : این فرم تحت کنترل واحد QA می‌باشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA می‌باشد.';
+export const MD1_SUBSTITUTION_COPY_TEXT = 'رونوشت: معاونت تأمین، فروشنده، پیمانکار نصب';
 export const DEFAULT_SUPPLY_URGENCY = 'عادی';
 export const SUPPLY_URGENCY_OPTIONS = ['عادی', 'اضطراری'] as const;
 export type SupplyUrgencyValue = (typeof SUPPLY_URGENCY_OPTIONS)[number];
+export const SUBSTITUTION_DEFAULT_COST_BEARERS = [
+  'نصب نیرو نصب',
+  'نصب نیرو ساختمان',
+  'مپنا توسعه یک',
+  'توگا',
+  'مکو',
+  'پارس',
+] as const;
 
 /**
  * Common Persian -> Latin transliteration map for generating deterministic 2-letter

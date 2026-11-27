@@ -116,7 +116,7 @@ const Md1StorageLabelCard: React.FC<Md1StorageLabelCardProps> = ({
           }}
         >
           <div style={{ fontSize: compact ? '8.5px' : '9px', fontWeight: 800 }}>
-            شركت احداث و توسعه نيروگاه‌هاي مپنا – توسعه يك (MD1)
+            شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
           </div>
           <div style={{ fontSize: compact ? '8px' : '8.5px', fontWeight: 700, marginTop: '1px' }}>
             پروژه {data.project || '.................'}

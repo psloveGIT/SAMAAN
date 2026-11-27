@@ -21,7 +21,7 @@ import {
 } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { inferSizeFromDescription } from '../shared/sizeExtractor.ts';
-import { combineGcvRemark, GCV_PURCHASE_BY_OPTIONS } from '../shared/gcv.ts';
+import { checkGcvRowsCompatibility, combineGcvRemark, GCV_PURCHASE_BY_OPTIONS } from '../shared/gcv.ts';
 import { buildDetailedMerDescription } from '../shared/opiMinutes.ts';
 import { buildYearMonths, getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
 import {
@@ -125,10 +125,12 @@ import {
 } from '../shared/substitution.ts';
 import {
   appendMultilineLine,
+  buildNewItemShortageReprocDescription,
   buildShortageReprocurementNote,
   buildSubstitutionReprocurementNote,
   shouldCloseShortage,
   shouldCloseSubstitution,
+  shouldResolveShortageBadge,
 } from '../shared/reprocurementMatch.ts';
 import {
   buildMivLineRemark,
@@ -1423,7 +1425,7 @@ async function handleStaticApiRequestInner<T>(
     if (!formId || !docNo) {
       throw new StaticEngineError(errMsg('فرم و شماره سند الزامی است', 'Form ID and document number are required'), 400);
     }
-    const uniqCheck = assertUniqueDocNo(db, docNo);
+    const uniqCheck = assertUniqueDocNo(db, docNo, { scope: 'customForms' });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -1459,7 +1461,7 @@ async function handleStaticApiRequestInner<T>(
     }
     if (body.docNo !== undefined) {
       const nextDocNo = normKey(String(body.docNo || ''));
-      const uniqCheck = assertUniqueDocNo(db, nextDocNo, { excludeScope: 'customForms', excludeId: target.id });
+      const uniqCheck = assertUniqueDocNo(db, nextDocNo, { scope: 'customForms', excludeScope: 'customForms', excludeId: target.id });
       if (!uniqCheck.ok) {
         throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
       }
@@ -2445,6 +2447,7 @@ async function handleStaticApiRequestInner<T>(
     const hasEmployerStock = query.get('hasEmployerStock') === 'true';
     const hasContractorStock = query.get('hasContractorStock') === 'true';
     const hasAnyStock = query.get('hasAnyStock') === 'true';
+    const mivIssuedOnly = query.get('mivIssuedOnly') === 'true';
     const noGcvOnly = query.get('noGcvOnly') === 'true';
     const allowGcvReceiptNo = normKey(query.get('allowGcvReceiptNo')).toUpperCase();
     const chemicalExpiry = (query.get('chemicalExpiry') || '').trim();
@@ -2523,6 +2526,14 @@ async function handleStaticApiRequestInner<T>(
       if (hasEmployerStock && (comp.opiPending || comp.mapnaInventory <= 0)) continue;
       if (hasContractorStock && (comp.opiPending || comp.contractorInventory <= 0)) continue;
       if (hasAnyStock && (comp.opiPending || (comp.mapnaInventory <= 0 && comp.contractorInventory <= 0))) continue;
+      if (mivIssuedOnly) {
+        const hasMivIssued =
+          Boolean(normKey(d.mivContractorNo)) ||
+          toNum(d.mivContractorQty) > 0 ||
+          Boolean(normKey(d.mivMapnaNo)) ||
+          toNum(d.mivMapnaQty) > 0;
+        if (!hasMivIssued) continue;
+      }
       if (noGcvOnly) {
         const existingGcv = normKey(d.gcvReceiptNo);
         if (existingGcv) {
@@ -2869,6 +2880,7 @@ async function handleStaticApiRequestInner<T>(
       }
     }
 
+    const matchedShortagePackings: string[] = [];
     for (const target of payload.shortageTargets || []) {
       const row = db.detailed.find((d) => d.id === target.detailedId);
       if (!row) continue;
@@ -2877,12 +2889,31 @@ async function handleStaticApiRequestInner<T>(
       const noteLine = buildShortageReprocurementNote(sourcePackingQty, unitLabel, sourceShipmentNo);
       trackRow(row);
       row.merDescription = appendMultilineLine(row.merDescription, noteLine);
-      if (shouldCloseShortage(sourcePackingQty, computed.shortage, computed.damagedQty)) {
+      if (row.shipmentNo?.trim()) {
+        matchedShortagePackings.push(row.shipmentNo.trim());
+      }
+      if (
+        shouldCloseShortage(sourcePackingQty, computed.shortage, computed.damagedQty) ||
+        shouldResolveShortageBadge(sourcePackingQty, row.actualQty, row.packingQty)
+      ) {
         row.merStatus = 'بسته';
+        row.shortageResolved = true;
         closedShortageRowIds.add(row.id);
       }
       row.updatedAt = now;
       updatedShortageRowIds.add(row.id);
+    }
+
+    if (matchedShortagePackings.length > 0 && payload.sourceDetailedId) {
+      const sourceRow = db.detailed.find((d) => d.id === payload.sourceDetailedId);
+      if (sourceRow) {
+        const newItemNote = buildNewItemShortageReprocDescription(matchedShortagePackings);
+        if (newItemNote) {
+          trackRow(sourceRow);
+          sourceRow.merDescription = appendMultilineLine(sourceRow.merDescription, newItemNote);
+          sourceRow.updatedAt = now;
+        }
+      }
     }
 
     const historyChanges: HistoryChange[] = [];
@@ -3774,7 +3805,7 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'siteEntry' });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -3882,7 +3913,7 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'siteEntry', excludeId: rec.id });
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'siteEntry', excludeScope: 'siteEntry', excludeId: rec.id });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -4000,7 +4031,7 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'opi' });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -4114,7 +4145,7 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'opi', excludeId: rec.id });
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'opi', excludeScope: 'opi', excludeId: rec.id });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -4345,6 +4376,7 @@ async function handleStaticApiRequestInner<T>(
       );
     }
     const uniqCheck = assertUniqueDocNo(db, cleanNo, {
+      scope: 'opiMinutes',
       allowPairedOpiInvitationNo: cleanInvNo || undefined,
     });
     if (!uniqCheck.ok) {
@@ -4364,18 +4396,9 @@ async function handleStaticApiRequestInner<T>(
           400,
         );
       }
-      const merUniq = assertUniqueDocNo(db, cleanMerNo);
+      const merUniq = assertUniqueDocNo(db, cleanMerNo, { scope: 'osdr' });
       if (!merUniq.ok) {
         throw new StaticEngineError(errMsg(merUniq.errorFa!, merUniq.errorEn!), 409);
-      }
-      if (normKey(cleanMerNo).toUpperCase() === normKey(cleanNo).toUpperCase()) {
-        throw new StaticEngineError(
-          errMsg(
-            'شماره گزارش مغایرت (MER) نمی‌تواند با شماره صورتجلسه OPI یکسان باشد.',
-            'MER Report No. cannot be identical to the OPI Minutes No.',
-          ),
-          409,
-        );
       }
     }
 
@@ -4506,6 +4529,7 @@ async function handleStaticApiRequestInner<T>(
       );
     }
     const uniqCheck = assertUniqueDocNo(db, cleanNo, {
+      scope: 'opiMinutes',
       excludeScope: 'opiMinutes',
       excludeId: rec.id,
       allowPairedOpiInvitationNo: nextInvNo || undefined,
@@ -4538,6 +4562,7 @@ async function handleStaticApiRequestInner<T>(
         );
       }
       const merUniq = assertUniqueDocNo(db, nextMerNo, {
+        scope: 'osdr',
         excludeScope: 'osdr',
         excludeId: existingMer?.id,
       });
@@ -4744,7 +4769,7 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'osdr' });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -4795,7 +4820,7 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'osdr', excludeId: rec.id });
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'osdr', excludeScope: 'osdr', excludeId: rec.id });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -4882,15 +4907,17 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'gcv' });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
 
     const lineItems: DocumentLineItem[] = [];
+    const matchedDetailedRows: DetailedEntry[] = [];
     for (const reqItem of items) {
       const d = db.detailed.find((x) => x.id === reqItem.detailedId);
       if (!d) throw new StaticEngineError(errMsg('آیتم یافت نشد', 'Item not found'), 404);
+      matchedDetailedRows.push(d);
       const hasActual = d.actualQty !== null && d.actualQty !== undefined && Number.isFinite(Number(d.actualQty));
       const hasPacking = d.packingQty !== null && d.packingQty !== undefined && Number.isFinite(Number(d.packingQty));
       const reqQtyNum = Number(reqItem.qty);
@@ -4916,12 +4943,22 @@ async function handleStaticApiRequestInner<T>(
         qty: formQty,
         syncDeliveredQty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
         equipmentNotes: eqNotes,
         userRemark: usrRem,
         remark: combinedRem,
       });
+    }
+    const compat = checkGcvRowsCompatibility(matchedDetailedRows, db.general);
+    if (!compat.compatible) {
+      throw new StaticEngineError(
+        errMsg(
+          `اقلام انتخابی باید در فیلدهای تاریخ ورود، شماره بارنامه، سیستم، ساب سیستم، جزیره، تأمین کننده و واحد کاملاً یکسان باشند (مغایرت در: ${compat.mismatchedLabelsFa.join('، ')})`,
+          `Selected GCV items must match on arrival date, bill of lading, system, sub-system, island, supplier, and unit (mismatch: ${compat.mismatchedFields.join(', ')})`,
+        ),
+        400,
+      );
     }
 
     const now = new Date().toISOString();
@@ -4998,15 +5035,17 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'gcv', excludeId: existing.id });
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'gcv', excludeScope: 'gcv', excludeId: existing.id });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
 
     const nextLines: DocumentLineItem[] = [];
+    const matchedDetailedRows: DetailedEntry[] = [];
     for (const reqItem of items) {
       const d = db.detailed.find((x) => x.id === reqItem.detailedId);
       if (!d) throw new StaticEngineError(errMsg('آیتم یافت نشد', 'Item not found'), 404);
+      matchedDetailedRows.push(d);
       const hasActual = d.actualQty !== null && d.actualQty !== undefined && Number.isFinite(Number(d.actualQty));
       const hasPacking = d.packingQty !== null && d.packingQty !== undefined && Number.isFinite(Number(d.packingQty));
       const reqQtyNum = Number(reqItem.qty);
@@ -5032,12 +5071,22 @@ async function handleStaticApiRequestInner<T>(
         qty: formQty,
         syncDeliveredQty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
         equipmentNotes: eqNotes,
         userRemark: usrRem,
         remark: combinedRem,
       });
+    }
+    const compat = checkGcvRowsCompatibility(matchedDetailedRows, db.general);
+    if (!compat.compatible) {
+      throw new StaticEngineError(
+        errMsg(
+          `اقلام انتخابی باید در فیلدهای تاریخ ورود، شماره بارنامه، سیستم، ساب سیستم، جزیره، تأمین کننده و واحد کاملاً یکسان باشند (مغایرت در: ${compat.mismatchedLabelsFa.join('، ')})`,
+          `Selected GCV items must match on arrival date, bill of lading, system, sub-system, island, supplier, and unit (mismatch: ${compat.mismatchedFields.join(', ')})`,
+        ),
+        400,
+      );
     }
 
     const now = new Date().toISOString();
@@ -5143,7 +5192,7 @@ async function handleStaticApiRequestInner<T>(
     if (!cleanNo || !items.length) {
       throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'miv' });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -5340,7 +5389,7 @@ async function handleStaticApiRequestInner<T>(
     if (!cleanNo || !items.length) {
       throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'miv', excludeId: existing.id });
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'miv', excludeScope: 'miv', excludeId: existing.id });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -5860,7 +5909,7 @@ async function handleStaticApiRequestInner<T>(
         400,
       );
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'substitutions' });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -5949,7 +5998,7 @@ async function handleStaticApiRequestInner<T>(
     if (raw.docNo !== undefined) {
       const cleanNo = normKey(raw.docNo);
       if (!cleanNo) throw new StaticEngineError(errMsg('شماره سند جایگزینی الزامی است', 'Document No. is required'), 400);
-      const uniqCheck = assertUniqueDocNo(db, cleanNo, { excludeScope: 'substitutions', excludeId: rec.id });
+      const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'substitutions', excludeScope: 'substitutions', excludeId: rec.id });
       if (!uniqCheck.ok) {
         throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
       }
@@ -6736,7 +6785,7 @@ async function handleStaticApiRequestInner<T>(
         countingUnit: d.countingUnit,
       }));
     const expiringChemicals = getExpiringChemicals(detailedComputed, 30);
-    const openOpiInvitations = computeOpenOpiInvitations(db.general, db.detailed, db.opiInvitations);
+    const openOpiInvitations = computeOpenOpiInvitations(db.general, db.detailed, db.opiInvitations, db.opiMinutes);
 
     return {
       counts: {

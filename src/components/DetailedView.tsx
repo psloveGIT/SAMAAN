@@ -11,7 +11,6 @@ import {
   FlaskConical,
   Image as ImageIcon,
   Link2,
-  PackagePlus,
   Plus,
   Sparkles,
   Trash2,
@@ -114,6 +113,7 @@ interface DetailedViewProps {
   autoOpenToken?: number;
   onConsumeAutoOpen?: () => void;
   onDataChanged: () => void;
+  onNavigateGeneral?: () => void;
 }
 
 function emptyDetailedDraft(): Partial<DetailedEntry> {
@@ -198,6 +198,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   autoOpenToken = 0,
   onConsumeAutoOpen,
   onDataChanged,
+  onNavigateGeneral,
 }) => {
   const { prefs, t, user, notify, formatDate, triggerAutoSnapshot } = useApp();
   const isFa = prefs.language === 'fa';
@@ -265,6 +266,15 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     enableSub: boolean;
     enableShortage: boolean;
   }>({ open: false, sourceItem: null, enableSub: false, enableShortage: false });
+  const [pkgCountAlert, setPkgCountAlert] = useState<{
+    type: 'under' | 'over';
+    mode: 'close' | 'next';
+    shipmentNo: string;
+    packageNo: string;
+    declared: number;
+    projectedCount: number;
+    existingCount: number;
+  } | null>(null);
 
   // Safe Delete Confirmation
   const [deleteTarget, setDeleteTarget] = useState<DetailedComputed | null>(null);
@@ -713,7 +723,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
       { key: 'generalDescription', group: 'specs' as DetailedGroupId, header: t.headers.generalDescription, hideInTable: true, get: (r: DetailedComputed) => r.generalDescription },
       { key: 'description', group: 'specs' as DetailedGroupId, header: t.headers.description, get: (r: DetailedComputed) => r.description },
       { key: 'size', group: 'specs' as DetailedGroupId, header: t.headers.size, isLtr: true, get: (r: DetailedComputed) => r.size },
-      { key: 'itemCode', group: 'specs' as DetailedGroupId, header: t.headers.itemCode, isLtr: true, hideInTable: true, get: (r: DetailedComputed) => r.itemCode },
+      { key: 'itemCode', group: 'specs' as DetailedGroupId, header: t.headers.itemCode, isLtr: true, get: (r: DetailedComputed) => r.itemCode },
       { key: 'storageLocation', group: 'specs' as DetailedGroupId, header: t.headers.storageLocation, get: (r: DetailedComputed) => r.storageLocation },
       { key: 'receiver', group: 'specs' as DetailedGroupId, header: t.headers.receiver, hideInTable: true, get: (r: DetailedComputed) => r.receiver },
       { key: 'supplier', group: 'specs' as DetailedGroupId, header: t.headers.supplier, hideInTable: true, get: (r: DetailedComputed) => r.supplier },
@@ -898,7 +908,10 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     });
   };
 
-  const submitDetailedForm = async (mode: 'close' | 'next') => {
+  const submitDetailedForm = async (
+    mode: 'close' | 'next',
+    opts?: { skipPkgCountCheck?: boolean; navigateGeneralAfter?: boolean },
+  ) => {
     setRowError('');
     if (!draft.shipmentNo?.trim()) {
       setRowError(isFa ? 'شماره پکینگ لیست / محموله الزامی است.' : 'Shipment / Packing List No. is required.');
@@ -928,6 +941,41 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           : 'For chemicals, please enter chemical type or expiration date.',
       );
       return;
+    }
+
+    if (
+      !editingId &&
+      !opts?.skipPkgCountCheck &&
+      linkedGeneral?.expectedItemCount &&
+      linkedGeneral.expectedItemCount > 0
+    ) {
+      const declared = linkedGeneral.expectedItemCount;
+      const existingCount = linkedGeneral.existingDetailedCount || 0;
+      const projectedCount = existingCount + 1;
+      if (projectedCount > declared) {
+        setPkgCountAlert({
+          type: 'over',
+          mode,
+          shipmentNo: (draft.shipmentNo || '').trim(),
+          packageNo: (draft.packageNo || '').trim() || '-',
+          declared,
+          projectedCount,
+          existingCount,
+        });
+        return;
+      }
+      if (mode === 'close' && projectedCount < declared) {
+        setPkgCountAlert({
+          type: 'under',
+          mode,
+          shipmentNo: (draft.shipmentNo || '').trim(),
+          packageNo: (draft.packageNo || '').trim() || '-',
+          declared,
+          projectedCount,
+          existingCount,
+        });
+        return;
+      }
     }
 
     const finalGenDesc = draft.generalDescription?.trim()
@@ -1087,7 +1135,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
           setSaving(false);
           return;
         } else {
-          notify('success', isFa ? 'آیتم جزئیات ثبت و فرم بسته شد.' : 'Detailed item saved and closed.');
+          notify('success', isFa ? 'جزئیات آیتم ثبت و فرم بسته شد.' : 'Detailed item saved and closed.');
           setFormModalOpen(false);
           setIsSubReprocurement(false);
           setIsShortageReprocurement(false);
@@ -1098,6 +1146,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               enableSub: enableSubFlag,
               enableShortage: enableShortageFlag,
             });
+          } else if (opts?.navigateGeneralAfter) {
+            onNavigateGeneral?.();
           }
         }
       }
@@ -1664,7 +1714,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 className="h-9 px-3.5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shadow-[0_1px_2px_rgba(13,122,114,0.24)] transition-all"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>{isFa ? 'ثبت آیتم جزئیات' : 'Add Detailed Item'}</span>
+                <span>{isFa ? 'ثبت جزئیات آیتم' : 'Add Detailed Item'}</span>
               </button>
             )}
           </div>
@@ -2362,22 +2412,6 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         </button>
                         {canEdit && (
                           <>
-                            {row.hasShortage && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setBackfillTarget(row);
-                                  setBackfillQty(String(row.shortage));
-                                  setBackfillShipmentNo(row.shipmentNo);
-                                  setBackfillPackageNo(row.packageNo);
-                                  setBackfillDate(getTodayIso());
-                                }}
-                                className="px-2 py-1 rounded bg-[var(--status-danger-bg)] text-[var(--status-danger)] hover:opacity-90 text-[11px] font-semibold flex items-center gap-1"
-                              >
-                                <PackagePlus className="w-3 h-3" />
-                                <span>{t.shortage.backfillBtn}</span>
-                              </button>
-                            )}
                             <button
                               type="button"
                               onClick={() => openEditModal(row)}
@@ -2742,7 +2776,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
             <div className="px-6 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <h3 className="text-sm font-bold">
-                  {editingId ? t.controls.edit : isFa ? 'ثبت آیتم جزئیات' : 'Add Detailed Item'}
+                  {editingId ? t.controls.edit : isFa ? 'ثبت جزئیات آیتم' : 'Add Detailed Item'}
                 </h3>
                 <span className="px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-[11px] font-medium tabular-nums">
                   {editingId
@@ -2791,11 +2825,21 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
               {/* Package Item Count Progress Strip (when package itemCount is defined in General) */}
               {!editingId && linkedGeneral?.expectedItemCount ? (
-                <div className="p-3 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-xs flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-semibold text-[var(--accent-primary)] tabular-nums">
-                    {isFa
-                      ? `پیشرفت ثبت اقلام نگله «${draft.packageNo || '-'}»: در حال ثبت آیتم ${(linkedGeneral.existingDetailedCount || 0) + 1} از ${linkedGeneral.expectedItemCount}`
-                      : `Package "${draft.packageNo || '-'}" progress: Entering item ${(linkedGeneral.existingDetailedCount || 0) + 1} of ${linkedGeneral.expectedItemCount}`}
+                <div
+                  className={`p-3 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
+                    (linkedGeneral.existingDetailedCount || 0) >= linkedGeneral.expectedItemCount
+                      ? 'border-[var(--status-danger)]/50 bg-[var(--status-danger-bg)] text-[var(--status-danger)]'
+                      : 'border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  }`}
+                >
+                  <div className="font-semibold tabular-nums">
+                    {(linkedGeneral.existingDetailedCount || 0) >= linkedGeneral.expectedItemCount
+                      ? isFa
+                        ? `ظرفیت اعلامی نگله «${draft.packageNo || '-'}» (${linkedGeneral.expectedItemCount} آیتم) تکمیل شده است؛ برای افزودن آیتم بیشتر ابتدا تعداد آیتم را در بخش کلی افزایش دهید.`
+                        : `Declared count (${linkedGeneral.expectedItemCount}) for package "${draft.packageNo || '-'}" is already reached.`
+                      : isFa
+                        ? `پیشرفت ثبت اقلام نگله «${draft.packageNo || '-'}»: در حال ثبت آیتم ${(linkedGeneral.existingDetailedCount || 0) + 1} از ${linkedGeneral.expectedItemCount}`
+                        : `Package "${draft.packageNo || '-'}" progress: Entering item ${(linkedGeneral.existingDetailedCount || 0) + 1} of ${linkedGeneral.expectedItemCount}`}
                   </div>
                   <span className="text-[11px] text-[var(--text-secondary)] tabular-nums">
                     {isFa
@@ -2805,25 +2849,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </div>
               ) : null}
 
-              {/* General Auto-Sync Status Banner */}
-              {linkedGeneral ? (
-                <div className="p-3 rounded-xl border border-[var(--status-success)] bg-[var(--status-success-bg)] text-xs flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 font-semibold text-[var(--status-success)]">
-                    <Link2 className="w-4 h-4 shrink-0" />
-                    <span>
-                      {isFa
-                        ? 'اطلاعات مشترک به‌صورت خودکار از بخش کلی (جنرال) فراخوانی شد'
-                        : 'Shared metadata synced automatically from General'}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-[var(--text-secondary)] flex flex-wrap gap-3 tabular-nums">
-                    {linkedGeneral.island && <span>{t.headers.island}: {linkedGeneral.island}</span>}
-                    {linkedGeneral.system && <span>{t.headers.system}: {linkedGeneral.system}</span>}
-                    {linkedGeneral.subSystem && <span>{t.headers.subSystem}: {linkedGeneral.subSystem}</span>}
-                    {linkedGeneral.unit && <span>{t.headers.unit}: {linkedGeneral.unit}</span>}
-                  </div>
-                </div>
-              ) : draft.shipmentNo?.trim() ? (
+              {!linkedGeneral && draft.shipmentNo?.trim() ? (
                 <div className="p-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-[11px] text-[var(--text-muted)]">
                   {isFa
                     ? 'این شماره پکینگ لیست در بخش کلی یافت نشد؛ در صورت نیاز اطلاعات جزیره و سیستم را به‌صورت دستی تکمیل کنید.'
@@ -3431,6 +3457,96 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Package Item Count Mismatch Alert Modal */}
+      {pkgCountAlert && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" data-testid="pkg-count-alert-modal">
+          <div className="w-full max-w-lg rounded-2xl border border-[var(--status-warning)]/60 bg-[var(--bg-surface)] shadow-xl overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] bg-[var(--status-warning-bg)] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-[var(--status-warning)] font-bold text-sm">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>
+                  {pkgCountAlert.type === 'over'
+                    ? isFa
+                      ? 'هشدار مغایرت تعداد آیتم نگله (بیش از تعداد اعلامی)'
+                      : 'Package Item Count Exceeded'
+                    : isFa
+                      ? 'هشدار تکمیل‌نشدن تعداد آیتم‌های نگله'
+                      : 'Package Item Count Incomplete'}
+                </span>
+              </div>
+              <button type="button" onClick={() => setPkgCountAlert(null)}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4 text-xs leading-6 text-[var(--text-primary)]">
+              {pkgCountAlert.type === 'over' ? (
+                <p>
+                  {isFa
+                    ? `برای شماره نگله «${pkgCountAlert.packageNo}» (پکینگ ${pkgCountAlert.shipmentNo}) در بخش ثبت کلی پکینگ، تعداد ${formatDisplayNumber(pkgCountAlert.declared, 'fa')} آیتم اعلام شده و تاکنون ${formatDisplayNumber(pkgCountAlert.existingCount, 'fa')} آیتم ثبت شده است. نمی‌توان آیتم اضافه‌تر ثبت کرد؛ یا از ثبت منصرف شوید و یا به صفحه کلی تجهیزات برگشته و تعداد آیتم این نگله را افزایش دهید.`
+                    : `Package "${pkgCountAlert.packageNo}" (${pkgCountAlert.shipmentNo}) declares ${pkgCountAlert.declared} items in General and already has ${pkgCountAlert.existingCount} items recorded. Return to General Equipment to increase the item count before adding more.`}
+                </p>
+              ) : (
+                <p>
+                  {isFa
+                    ? `برای شماره نگله «${pkgCountAlert.packageNo}» (پکینگ ${pkgCountAlert.shipmentNo}) در بخش ثبت کلی پکینگ، تعداد ${formatDisplayNumber(pkgCountAlert.declared, 'fa')} آیتم اعلام شده است، اما با ثبت این آیتم مجموعاً ${formatDisplayNumber(pkgCountAlert.projectedCount, 'fa')} آیتم ثبت می‌شود. می‌توانید ثبت آیتم باقی‌مانده را ادامه دهید یا به صفحه کلی تجهیزات برگشته و تعداد آیتم این نگله را به ${formatDisplayNumber(pkgCountAlert.projectedCount, 'fa')} تغییر دهید.`
+                    : `Package "${pkgCountAlert.packageNo}" (${pkgCountAlert.shipmentNo}) declares ${pkgCountAlert.declared} items, but saving this item brings the total to ${pkgCountAlert.projectedCount}. Continue adding the remaining item(s) or return to General Equipment to update the count to ${pkgCountAlert.projectedCount}.`}
+                </p>
+              )}
+              <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-[var(--border-subtle)]">
+                <button
+                  type="button"
+                  onClick={() => setPkgCountAlert(null)}
+                  className="h-9 px-3.5 rounded-lg border border-[var(--border-subtle)] text-xs font-medium"
+                >
+                  {isFa ? 'انصراف' : 'Cancel'}
+                </button>
+                {pkgCountAlert.type === 'over' ? (
+                  <button
+                    type="button"
+                    data-testid="pkg-count-go-general-btn"
+                    onClick={() => {
+                      setPkgCountAlert(null);
+                      setFormModalOpen(false);
+                      onNavigateGeneral?.();
+                    }}
+                    className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold"
+                  >
+                    {isFa ? 'مراجعه به صفحه کلی تجهیزات' : 'Go to General Equipment'}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      data-testid="pkg-count-save-and-general-btn"
+                      onClick={() => {
+                        setPkgCountAlert(null);
+                        void submitDetailedForm('close', { skipPkgCountCheck: true, navigateGeneralAfter: true });
+                      }}
+                      className="h-9 px-3.5 rounded-lg border border-[var(--status-warning)] bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-xs font-semibold"
+                    >
+                      {isFa
+                        ? `ثبت و بازگشت به کلی جهت تغییر به ${formatDisplayNumber(pkgCountAlert.projectedCount, 'fa')}`
+                        : `Save & Go to General (${pkgCountAlert.projectedCount})`}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="pkg-count-save-and-continue-btn"
+                      onClick={() => {
+                        setPkgCountAlert(null);
+                        void submitDetailedForm('next', { skipPkgCountCheck: true });
+                      }}
+                      className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold"
+                    >
+                      {isFa ? 'ثبت این آیتم و ورود آیتم بعدی' : 'Save & Enter Next Item'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

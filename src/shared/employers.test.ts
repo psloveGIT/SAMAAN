@@ -24,7 +24,7 @@ test('BUILT_IN_EMPLOYERS defines MD1, MD2, MD3 with exact user metadata and logo
   assert.equal(md1.nameFa, 'مپنا توسعه یک');
   assert.equal(md1.nameEn, 'Mapna Power Plants Construction & Development Co.');
   assert.equal(md1.shortName, 'MD1');
-  assert.equal(md1.companyFullName, 'شركت احداث و توسعه نيروگاه‌های مپنا – توسعه یک (MD1)');
+  assert.equal(md1.companyFullName, 'شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)');
   assert.equal(md1.docCodePrefix, 'MD1EX-FQP02');
   assert.equal(md1.imsSubtitle, 'سیستم مدیریت یکپارچه');
   assert.equal(md1.address, 'تهران - بزرگراه نلسون ماندلا - جنوب چهارراه حقانی - نبش کوچه کیان - پلاک 13');
@@ -42,7 +42,7 @@ test('BUILT_IN_EMPLOYERS defines MD1, MD2, MD3 with exact user metadata and logo
   assert.equal(md2.isBuiltIn, true);
   assert.equal(md2.nameFa, 'مپنا توسعه دو');
   assert.equal(md2.shortName, 'MD2');
-  assert.equal(md2.companyFullName, 'شركت احداث و توسعه نيروگاه‌های حرارتی مپنا – توسعه دو (MD2)');
+  assert.equal(md2.companyFullName, 'شرکت احداث و توسعه نیروگاه‌های حرارتی مپنا – توسعه دو (MD2)');
   assert.equal(md2.docCodePrefix, 'MD2EX-FQP02');
   assert.equal(md2.address, 'تهران - بزرگراه آفریقا - جنوب چهارراه حقانی - شماره 15');
   assert.equal(md2.phone, '+98-21-45357000');
@@ -58,7 +58,7 @@ test('BUILT_IN_EMPLOYERS defines MD1, MD2, MD3 with exact user metadata and logo
   assert.equal(md3.isBuiltIn, true);
   assert.equal(md3.nameFa, 'مپنا توسعه سه');
   assert.equal(md3.shortName, 'MD3');
-  assert.equal(md3.companyFullName, 'شركت احداث و توسعه پروژه‌های ویژه مپنا – توسعه سه (MD3)');
+  assert.equal(md3.companyFullName, 'شرکت احداث و توسعه پروژه‌های ویژه مپنا – توسعه سه (MD3)');
   assert.equal(md3.docCodePrefix, 'MD3EX-FQP02');
   assert.equal(md3.address, 'تهران - بزرگراه نلسون ماندلا - جنوب چهار راه حقانی - نبش کوچه ژوبین - پلاک 15');
   assert.equal(md3.phone, '+98-21-84620000');

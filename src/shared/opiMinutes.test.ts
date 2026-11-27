@@ -9,7 +9,7 @@ import {
   generateMerReportNo,
 } from './opiMinutes.ts';
 import { assertUniqueDocNo } from './docUniqueness.ts';
-import type { GeneralEntry, OpiInvitationRecord, OpiMinutesRecord } from './types.ts';
+import type { GeneralEntry, OpiInvitationRecord, OpiMinutesRecord, OsdrReportRecord } from './types.ts';
 
 function makeInvitation(overrides: Partial<OpiInvitationRecord> = {}): OpiInvitationRecord {
   return {
@@ -136,9 +136,10 @@ test('buildMerReportItem computes Received Quantity = Package Quantity - Discrep
   assert.equal(shortageItem.packingQty, 10);
   assert.equal(shortageItem.actualQty, 7);
   assert.equal(shortageItem.discrepantQty, 3);
+  assert.equal(shortageItem.discrepancyReason, '3');
   assert.equal(shortageItem.shortage, 3);
   assert.equal(shortageItem.damagedQty, 0);
-  assert.equal(buildDetailedMerDescription(shortageItem), 'کسری در بسته‌بندی - پیگیری از سازنده');
+  assert.equal(buildDetailedMerDescription(shortageItem), 'کسری (3) - پیگیری از سازنده');
 
   const zeroDisc = buildMerReportItem({
     detailed: {
@@ -158,6 +159,7 @@ test('buildMerReportItem computes Received Quantity = Package Quantity - Discrep
   });
   assert.equal(zeroDisc.actualQty, 4);
   assert.equal(zeroDisc.discrepantQty, 0);
+  assert.equal(zeroDisc.discrepancyReason, '0');
   assert.equal(zeroDisc.damagedQty, 0);
 });
 
@@ -174,22 +176,28 @@ test('findDetailedRowsForInvitation matches Detailed rows across all invitation 
   );
 });
 
-test('assertUniqueDocNo allows OPI Minute to share its paired OPI Invitation number while blocking duplicates', () => {
+test('assertUniqueDocNo enforces per-section uniqueness independently (MER starts from 0001 even if OPI used NK-TU-0001)', () => {
   const db = {
     opiInvitations: [makeInvitation({ id: 'inv-1', invitationNo: 'NK-TU-0001' })],
     opiMinutes: [] as OpiMinutesRecord[],
+    osdrReports: [] as OsdrReportRecord[],
   };
-  // Allowed when explicitly paired with invitation NK-TU-0001
+  // MER scope is independent of OPI Invitations -> NK-TU-0001 is allowed in MER!
+  assert.equal(assertUniqueDocNo(db, 'NK-TU-0001', { scope: 'osdr' }).ok, true);
+  // Duplicate inside OPI Invitations is blocked
+  assert.equal(assertUniqueDocNo(db, 'NK-TU-0001', { scope: 'opi' }).ok, false);
+  // OPI Minute can share its paired invitation no when no OPI Minute has it yet
   assert.equal(
-    assertUniqueDocNo(db, 'NK-TU-0001', { allowPairedOpiInvitationNo: 'NK-TU-0001' }).ok,
+    assertUniqueDocNo(db, 'NK-TU-0001', { scope: 'opiMinutes', allowPairedOpiInvitationNo: 'NK-TU-0001' }).ok,
     true,
   );
-  // Blocked for any non-paired form (e.g. MER or GCV)
-  assert.equal(assertUniqueDocNo(db, 'NK-TU-0001').ok, false);
-  // Blocked if a second OPI Minute tries to reuse NK-TU-0001
+  // Duplicate inside OPI Minutes is blocked
   db.opiMinutes.push({ id: 'min-1', minutesNo: 'NK-TU-0001' } as OpiMinutesRecord);
   assert.equal(
-    assertUniqueDocNo(db, 'NK-TU-0001', { allowPairedOpiInvitationNo: 'NK-TU-0001' }).ok,
+    assertUniqueDocNo(db, 'NK-TU-0001', { scope: 'opiMinutes', allowPairedOpiInvitationNo: 'NK-TU-0001' }).ok,
     false,
   );
+  // Duplicate inside MER (osdr) is blocked once used in osdrReports
+  db.osdrReports.push({ id: 'mer-1', reportNo: 'NK-TU-0001' } as OsdrReportRecord);
+  assert.equal(assertUniqueDocNo(db, 'NK-TU-0001', { scope: 'osdr' }).ok, false);
 });

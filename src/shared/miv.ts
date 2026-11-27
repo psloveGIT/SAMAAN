@@ -36,7 +36,7 @@ interface ContractorRule {
  * Exact contractor abbreviation rules per MD1EX-FQP02/05-03 specification (1-22-1 to 1-22-15).
  */
 const CONTRACTOR_ABBR_RULES: readonly ContractorRule[] = [
-  { code: 'NNE', patterns: ['نصب نیرو نصب', 'نصب نيرو نصب', 'نصب‌نیرو‌نصب', 'nne'] },
+  { code: 'NNE', patterns: ['نصب نیرو نصب', 'نصب‌نیرو‌نصب', 'nne'] },
   { code: 'OXN', patterns: ['اکسین صنعت', 'اکسین‌صنعت', 'oxn', 'oxin'] },
   { code: 'ALA', patterns: ['اعلا نیرو', 'اعلاء نیرو', 'اعلانیرو', 'ala'] },
   { code: 'IRT', patterns: ['ایران ترانسفورمر', 'ایران ترانسفو', 'ایران‌ترانسفورمر', 'irt', 'iran transformer'] },
@@ -45,8 +45,8 @@ const CONTRACTOR_ABBR_RULES: readonly ContractorRule[] = [
   { code: 'KHJ', patterns: ['خواجوی', 'خواجویی', 'khj', 'khajavi', 'khajooi'] },
   { code: 'TU', patterns: ['توگا', 'توربین سازی مپنا', 'tuga', 'toga', 'tu'] },
   { code: 'HABA', patterns: ['حریق بان', 'حریقبان', 'حریق‌بان', 'haba', 'harighban'] },
-  { code: 'FAB', patterns: ['فابکو', 'فابكو', 'fabco', 'fab'] },
-  { code: 'MECO', patterns: ['مکو', 'مكو', 'meco'] },
+  { code: 'FAB', patterns: ['فابکو', 'fabco', 'fab'] },
+  { code: 'MECO', patterns: ['مکو', 'meco'] },
   { code: 'MAHAM', patterns: ['مهام شرق', 'مهام‌شرق', 'maham'] },
   {
     code: 'NNC',

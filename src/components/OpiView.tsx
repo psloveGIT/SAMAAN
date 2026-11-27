@@ -24,11 +24,11 @@ import { getTodayIso } from '../shared/jalali.ts';
 import {
   buildOpiInvitationHeaderAutoFill,
   buildOpiInvitationLineItems,
-  buildOpiLocationOptions,
   filterEligibleGeneralForOpi,
   formatHeaderProjectTitle,
   generateOpiInvitationNo,
   MD1_OPI_INVITATION_FORM_CODE,
+  OPI_FIXED_LOCATIONS,
   stripProjectWord,
 } from '../shared/opiInvitation.ts';
 import { computeAutoColumnWidths, type AutoColumnDescriptor } from '../shared/printAutoLayout.ts';
@@ -152,11 +152,12 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'space-between',
+                justifyContent: 'center',
                 fontSize: '9.6px',
                 fontWeight: 700,
                 textAlign: 'right',
-                gap: '4px',
+                gap: '16px',
+                height: '100%',
               }}
             >
               <div
@@ -462,80 +463,89 @@ const OfficialOpiInvitationSheet: React.FC<OfficialOpiSheetProps> = ({
                 </td>
               </tr>
             ))}
+            {/* Schedule Header & Value Rows inside same 6-col LTR table so dividers align strictly with Package No.|شرح کالا and شرح کالا|واحد (UOM) */}
+            <tr style={{ backgroundColor: '#e5e7eb', fontSize: '10.5px', fontWeight: 700 }}>
+              <td
+                colSpan={3}
+                dir="rtl"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 6px',
+                  textAlign: 'center',
+                }}
+              >
+                مکان
+              </td>
+              <td
+                colSpan={1}
+                dir="rtl"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  borderRight: '1px solid #000000',
+                  padding: '5px 6px',
+                  textAlign: 'center',
+                }}
+              >
+                تاریخ
+              </td>
+              <td
+                colSpan={2}
+                dir="rtl"
+                style={{
+                  borderBottom: '1px solid #000000',
+                  padding: '5px 6px',
+                  textAlign: 'center',
+                }}
+              >
+                زمان
+              </td>
+            </tr>
+            <tr style={{ fontSize: '10.5px', fontWeight: 600 }}>
+              <td
+                colSpan={3}
+                dir="rtl"
+                data-testid="opi-sheet-location"
+                className="bidi-plaintext"
+                style={{
+                  borderRight: '1px solid #000000',
+                  padding: '14px 6px',
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                }}
+              >
+                {record.location || ''}
+              </td>
+              <td
+                colSpan={1}
+                dir="ltr"
+                data-testid="opi-sheet-date"
+                className="tabular-nums"
+                style={{
+                  borderRight: '1px solid #000000',
+                  padding: '14px 6px',
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                }}
+              >
+                {formatDate(record.date)}
+              </td>
+              <td
+                colSpan={2}
+                dir="ltr"
+                data-testid="opi-sheet-time"
+                className="tabular-nums"
+                style={{
+                  padding: '14px 6px',
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                }}
+              >
+                {record.time || ''}
+              </td>
+            </tr>
           </tbody>
         </table>
-
-        {/* Time / Date / Location Footer Table (Rules 1-18..1-20) */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
-            backgroundColor: '#e5e7eb',
-            borderBottom: '1px solid #000000',
-            fontSize: '10.5px',
-            fontWeight: 700,
-            textAlign: 'center',
-          }}
-        >
-          <div style={{ borderLeft: '1px solid #000000', padding: '5px 6px' }}>زمان</div>
-          <div style={{ borderLeft: '1px solid #000000', padding: '5px 6px' }}>تاریخ</div>
-          <div style={{ padding: '5px 6px' }}>مکان</div>
-        </div>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
-            minHeight: '48px',
-            fontSize: '10.5px',
-            fontWeight: 600,
-            textAlign: 'center',
-            alignItems: 'center',
-          }}
-        >
-          <div
-            dir="ltr"
-            data-testid="opi-sheet-time"
-            className="tabular-nums"
-            style={{
-              borderLeft: '1px solid #000000',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '6px',
-            }}
-          >
-            {record.time || ''}
-          </div>
-          <div
-            dir="ltr"
-            data-testid="opi-sheet-date"
-            className="tabular-nums"
-            style={{
-              borderLeft: '1px solid #000000',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '6px',
-            }}
-          >
-            {formatDate(record.date)}
-          </div>
-          <div
-            data-testid="opi-sheet-location"
-            className="bidi-plaintext"
-            style={{
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '6px',
-            }}
-          >
-            {record.location || ''}
-          </div>
-        </div>
       </div>
 
       {/* Separate Lower Approval Frame */}
@@ -790,17 +800,6 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
   );
 
   const selectedRows = useMemo(() => Object.values(selectedMap), [selectedMap]);
-
-  // Location suggestions strictly derived via Storage Label 20-rule Persian Warehouse mapping
-  const locationSuggestions = useMemo(
-    () =>
-      buildOpiLocationOptions(
-        data?.detailedItems || [],
-        invitationsList,
-        selectedRows.map((r) => r.packingListNo),
-      ),
-    [data?.detailedItems, invitationsList, selectedRows],
-  );
 
   // Auto-fill header fields & official MD1 document number (<PLANT>-<SUPPLIER>-####)
   const autoHeader = useMemo(
@@ -1639,21 +1638,23 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                         <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
                           {isFa ? 'مکان OPI *' : 'OPI Location *'}
                         </label>
-                        <input
-                          type="text"
+                        <select
                           required
                           data-testid="opi-schedule-location"
-                          list="samaan-opi-locations"
                           value={location}
                           onChange={(e) => setLocation(e.target.value)}
-                          placeholder={isFa ? 'مثال: انبار روباز' : 'e.g. انبار روباز'}
-                          className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                        />
-                        <datalist id="samaan-opi-locations">
-                          {locationSuggestions.map((loc) => (
-                            <option key={loc} value={loc} />
+                          className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+                        >
+                          <option value="">{isFa ? '— انتخاب مکان OPI —' : '— Select OPI Location —'}</option>
+                          {OPI_FIXED_LOCATIONS.map((loc) => (
+                            <option key={loc} value={loc}>
+                              {loc}
+                            </option>
                           ))}
-                        </datalist>
+                          {location && !(OPI_FIXED_LOCATIONS as readonly string[]).includes(location) && (
+                            <option value={location}>{location}</option>
+                          )}
+                        </select>
                       </div>
                     </div>
                   </div>
@@ -1860,32 +1861,35 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                               <button
                                 type="button"
                                 data-testid={`opi-print-btn-${inv.id}`}
+                                title={isFa ? 'پیش‌نمایش و چاپ دعوتنامه' : 'Print OPI Invitation'}
+                                aria-label={isFa ? `چاپ ${inv.invitationNo}` : `Print ${inv.invitationNo}`}
                                 onClick={() => {
                                   setPrintInvWasUndone(false);
                                   setPrintInvitation(inv);
                                 }}
-                                className="h-7 px-2.5 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)] text-[var(--accent-primary)] text-[11px] font-semibold inline-flex items-center gap-1 transition-colors"
+                                className="p-1.5 rounded-lg text-[var(--accent-primary)] hover:bg-[var(--accent-soft)]"
                               >
                                 <Printer className="w-3.5 h-3.5" />
-                                <span>{isFa ? 'چاپ' : 'Print'}</span>
                               </button>
                               {canEdit && (
                                 <>
                                   <button
                                     type="button"
                                     data-testid={`opi-edit-btn-${inv.id}`}
+                                    title={isFa ? 'ویرایش' : 'Edit'}
                                     aria-label={isFa ? `ویرایش ${inv.invitationNo}` : `Edit ${inv.invitationNo}`}
                                     onClick={() => startEditInvitation(inv)}
-                                    className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                                    className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-500/10"
                                   >
                                     <Pencil className="w-3.5 h-3.5" />
                                   </button>
                                   <button
                                     type="button"
                                     data-testid={`opi-delete-btn-${inv.id}`}
+                                    title={isFa ? 'حذف' : 'Delete'}
                                     aria-label={isFa ? `حذف ${inv.invitationNo}` : `Delete ${inv.invitationNo}`}
                                     onClick={() => setDeleteTarget(inv)}
-                                    className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)] text-[var(--text-secondary)]"
+                                    className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-500/10"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>

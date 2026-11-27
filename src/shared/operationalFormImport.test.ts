@@ -373,7 +373,7 @@ test('Substitution, MTO Estimate, Stocktake, Periodic Inspection, and Custom For
   assert.equal(subRes.imported, 1);
   assert.equal(subRes.linkedDetailed, 1);
   assert.equal(db.detailed[0].repNo, 'REP-77');
-  assert.equal(db.detailed[0].repStatus, 'تایید شده');
+  assert.equal(db.detailed[0].repStatus, 'باز');
   assert.equal(db.substitutions?.[0].detailedId, 'det-1');
 
   // MTO Estimate

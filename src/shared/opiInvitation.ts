@@ -3,6 +3,7 @@ import type {
   GeneralEntry,
   OpiInvitationLineItem,
   OpiInvitationRecord,
+  OpiMinutesRecord,
   ProjectInfo,
 } from './types.ts';
 import type { PlantDocNumberConfig } from './docNumbering.ts';
@@ -30,6 +31,20 @@ function preserveMultilineText(raw: string | undefined | null): string {
 }
 
 export const MD1_OPI_INVITATION_FORM_CODE = 'MD1EX-FQP02/02-03';
+
+export const OPI_FIXED_LOCATIONS = [
+  'انبار سوله',
+  'انبار روباز',
+  'اتاق تأمین تجهیزات',
+  'سایت',
+  'اتاق توگا',
+  'اتاق مکو',
+  'اتاق پارس',
+  'اتاق ابزار دقیق',
+  'اتاق مواد شیمیایی',
+] as const;
+
+export type OpiFixedLocation = (typeof OPI_FIXED_LOCATIONS)[number];
 
 export interface OpiInvitationHeaderAutoFill {
   headerProjectTitle: string; // Rule 1-1: e.g. "پروژه نکا"
@@ -325,22 +340,25 @@ export function buildOpiLocationOptions(
 }
 
 /**
- * تبصره (Note) — Open OPI Invitations computation for Dashboard:
- * If a packing list in General Equipment has an OPI Invitation No. issued,
- * and NOT ALL Detailed Equipment rows for that packing list have an OPI Invitation No.
- * (including when zero Detailed rows exist yet, or when zero Detailed rows match that
- * invitation number), then the invitation is OPEN and listed under "دعوتنامه‌های باز".
- *
- * Correctly supports multiline / stacked invitation numbers in Detailed's `opiNo`
- * column (e.g. "NK-TU-0001\nNK-TU-0002"), slash-containing numbers ("OPI/1404/01"),
- * Persian/Arabic digits, and multi-invitation split packings without false positives.
+ * Open OPI Invitations computation for Analytical Dashboard ("دعوتنامه‌های باز"):
+ * Every issued OPI Invitation (`opiInvitations`) that does NOT yet have a corresponding
+ * OPI Minutes of Meeting (`opiMinutes`) issued for it is considered OPEN.
  */
 export function computeOpenOpiInvitations(
-  generalEntries: readonly Pick<GeneralEntry, 'packingListNo' | 'opiInvitationNo' | 'opiInvitationDate'>[],
+  _generalEntries: readonly Pick<GeneralEntry, 'packingListNo' | 'opiInvitationNo' | 'opiInvitationDate'>[],
   detailedItems: readonly Pick<DetailedEntry, 'shipmentNo' | 'opiNo'>[],
-  opiInvitations: readonly Pick<OpiInvitationRecord, 'invitationNo' | 'date' | 'packingNos'>[] = [],
+  opiInvitations: readonly Pick<OpiInvitationRecord, 'invitationNo' | 'date' | 'packingNos' | 'items'>[] = [],
+  opiMinutes: readonly Pick<OpiMinutesRecord, 'invitationNo' | 'minutesNo'>[] = [],
 ): OpenOpiInvitationItem[] {
-  // Index detailed rows by normalized packingListNo / shipmentNo
+  const closedByMinutes = new Set<string>();
+  for (const m of opiMinutes) {
+    const invKey = normalizeDocToken(m.invitationNo);
+    const minKey = normalizeDocToken(m.minutesNo);
+    if (invKey) closedByMinutes.add(invKey);
+    if (minKey) closedByMinutes.add(minKey);
+  }
+
+  // Index detailed rows by normalized packingListNo / shipmentNo for summary counts
   const detailedByPacking = new Map<string, Array<{ opiTokens: Set<string> }>>();
   for (const d of detailedItems) {
     const pk = normalizeDocToken(d.shipmentNo);
@@ -353,124 +371,50 @@ export function computeOpenOpiInvitations(
     bucket.push({ opiTokens: new Set(splitOpiDocumentTokens(d.opiNo)) });
   }
 
-  // Build map of invitationNoKey -> { invitationNo, date, packings (norm -> display) }
-  const invMap = new Map<
-    string,
-    {
-      invitationNo: string;
-      date: string;
-      packings: Map<string, string>;
-    }
-  >();
-
-  // Helper to register an invitation + packing pair (supports multiline values in General too)
-  const register = (invNoRaw: string | undefined, dateRaw: string | undefined, pkRaw: string | undefined) => {
-    const pk = String(pkRaw || '').trim();
-    const pkKey = normalizeDocToken(pk);
-    if (!pkKey) return;
-
-    const rawInvLines = String(invNoRaw || '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (rawInvLines.length === 0) return;
-
-    const rawDateLines = String(dateRaw || '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    rawInvLines.forEach((lineInv, idx) => {
-      // Split inline comma/semicolon/spaced-slash lists if present
-      const parts = /\s+\/\s+|[,،;؛|]/.test(lineInv)
-        ? lineInv.split(/\s+\/\s+|[,،;؛|]+/).map((s) => s.trim()).filter(Boolean)
-        : [lineInv];
-      const lineDate = rawDateLines[idx] || rawDateLines[0] || '';
-      for (const invNo of parts) {
-        const invKey = normalizeDocToken(invNo);
-        if (!invKey) continue;
-        let entry = invMap.get(invKey);
-        if (!entry) {
-          entry = {
-            invitationNo: invNo,
-            date: lineDate,
-            packings: new Map<string, string>(),
-          };
-          invMap.set(invKey, entry);
-        } else if (!entry.date && lineDate) {
-          entry.date = lineDate;
-        }
-        if (!entry.packings.has(pkKey)) {
-          entry.packings.set(pkKey, pk);
-        }
-      }
-    });
-  };
-
-  // Source 1: General Equipment rows that have opiInvitationNo
-  for (const g of generalEntries) {
-    register(g.opiInvitationNo, g.opiInvitationDate, g.packingListNo);
-  }
-
-  // Fill missing dates from opiInvitations records when available
-  for (const inv of opiInvitations) {
-    const key = normalizeDocToken(inv.invitationNo);
-    if (!key) continue;
-    const existing = invMap.get(key);
-    if (existing && !existing.date && inv.date) {
-      existing.date = inv.date.trim();
-    }
-  }
-
   const openList: OpenOpiInvitationItem[] = [];
+  const seenInv = new Set<string>();
 
-  for (const [invKey, entry] of invMap.entries()) {
-    const missingDetailedPackings: string[] = [];
+  for (const inv of opiInvitations) {
+    const invNo = String(inv.invitationNo || '').trim();
+    const invKey = normalizeDocToken(invNo);
+    if (!invKey || seenInv.has(invKey)) continue;
+    seenInv.add(invKey);
+
+    if (closedByMinutes.has(invKey)) continue;
+
+    const pkMap = new Map<string, string>();
+    for (const pk of inv.packingNos || []) {
+      const clean = String(pk || '').trim();
+      const k = normalizeDocToken(clean);
+      if (k && !pkMap.has(k)) pkMap.set(k, clean);
+    }
+    for (const it of inv.items || []) {
+      const clean = String(it.packingListNo || '').trim();
+      const k = normalizeDocToken(clean);
+      if (k && !pkMap.has(k)) pkMap.set(k, clean);
+    }
+
+    const packingNos = Array.from(pkMap.values());
     let totalDetailedRows = 0;
     let linkedDetailedRows = 0;
-
-    for (const [pkKey, pkDisplay] of entry.packings.entries()) {
+    for (const pkKey of pkMap.keys()) {
       const detRows = detailedByPacking.get(pkKey) || [];
-      if (detRows.length === 0) {
-        // Packing has OPI invitation in General, but zero Detailed rows exist yet -> OPEN
-        missingDetailedPackings.push(pkDisplay);
-        continue;
-      }
       totalDetailedRows += detRows.length;
-      let exactMatched = 0;
-      let rowsWithAnyOpi = 0;
       for (const row of detRows) {
-        if (row.opiTokens.size > 0) {
-          rowsWithAnyOpi += 1;
-        }
         if (row.opiTokens.has(invKey)) {
-          exactMatched += 1;
+          linkedDetailedRows += 1;
         }
-      }
-      // A packing is closed for this invitation when:
-      //  - at least one Detailed row explicitly carries this invitationNo (including inside stacked multiline values), AND
-      //  - EVERY Detailed row in the packing already has at least one invitationNo assigned (no blank rows remaining).
-      const isClosedForPacking = exactMatched > 0 && rowsWithAnyOpi === detRows.length;
-      linkedDetailedRows += isClosedForPacking ? detRows.length : exactMatched;
-      if (!isClosedForPacking) {
-        missingDetailedPackings.push(pkDisplay);
       }
     }
 
-    if (missingDetailedPackings.length > 0) {
-      openList.push({
-        invitationNo: entry.invitationNo,
-        date: entry.date,
-        packingNos: Array.from(entry.packings.values()),
-        missingDetailedPackings,
-        totalDetailedRows,
-        linkedDetailedRows,
-      });
-    }
+    openList.push({
+      invitationNo: invNo,
+      date: String(inv.date || '').trim(),
+      packingNos,
+      missingDetailedPackings: packingNos,
+      totalDetailedRows,
+      linkedDetailedRows,
+    });
   }
 
   // Sort newest date first, then invitationNo descending

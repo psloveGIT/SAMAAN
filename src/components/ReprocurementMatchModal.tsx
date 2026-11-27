@@ -208,6 +208,7 @@ export const ReprocurementMatchModal: React.FC<ReprocurementMatchModalProps> = (
     }
 
     const payload: ReprocurementApplyPayload = {
+      sourceDetailedId: sourceItem.id,
       sourceShipmentNo: sourceItem.shipmentNo,
       sourcePackingQty: sourceItem.packingQty,
       sourceCountingUnit: sourceItem.countingUnit,

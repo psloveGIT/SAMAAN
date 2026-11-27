@@ -254,6 +254,7 @@ interface BuiltInSheetHeaderRowProps {
   projectTitle?: string;
   extraCenterSlot?: React.ReactNode;
   leftMetaSlot?: React.ReactNode;
+  leftMetaNoPadding?: boolean;
   logoHeight?: number;
   compact?: boolean;
 }
@@ -264,6 +265,7 @@ export const BuiltInSheetHeaderRow: React.FC<BuiltInSheetHeaderRowProps> = ({
   projectTitle,
   extraCenterSlot,
   leftMetaSlot,
+  leftMetaNoPadding = false,
   logoHeight = 54,
   compact = false,
 }) => {
@@ -324,7 +326,7 @@ export const BuiltInSheetHeaderRow: React.FC<BuiltInSheetHeaderRowProps> = ({
         justifyContent: 'center',
         textAlign: 'center',
         lineHeight: 1.55,
-        padding: compact ? '2px 6px' : '4px 10px',
+        padding: compact ? '5px 8px' : '6px 12px',
         flex: 1,
         minWidth: 0,
       }}
@@ -353,6 +355,8 @@ export const BuiltInSheetHeaderRow: React.FC<BuiltInSheetHeaderRowProps> = ({
     </div>
   );
 
+  const metaPad = leftMetaNoPadding ? 0 : compact ? '5px 8px' : '6px 10px';
+
   return (
     <div
       dir="rtl"
@@ -360,41 +364,119 @@ export const BuiltInSheetHeaderRow: React.FC<BuiltInSheetHeaderRowProps> = ({
         display: 'flex',
         alignItems: 'stretch',
         borderBottom: `1.5px solid ${borderCol}`,
-        padding: compact ? '4px 8px' : '5px 10px',
-        gap: '8px',
+        padding: 0,
+        gap: 0,
       }}
     >
       {layout === 'left_logo' ? (
         <>
           {leftMetaSlot && (
-            <div style={{ minWidth: '175px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <div
+              style={{
+                minWidth: '175px',
+                flexShrink: 0,
+                borderLeft: `1px solid ${borderCol}`,
+                padding: metaPad,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+              }}
+            >
               {leftMetaSlot}
             </div>
           )}
           {centerBlock}
           {primaryCell && (
-            <div style={{ width: '120px', flexShrink: 0, borderRight: `1px solid ${borderCol}` }}>
+            <div
+              style={{
+                width: '125px',
+                flexShrink: 0,
+                borderRight: `1px solid ${borderCol}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
               {primaryCell}
             </div>
           )}
         </>
       ) : layout === 'split_dual_logo' ? (
         <>
-          {primaryCell && <div style={{ width: '115px', flexShrink: 0 }}>{primaryCell}</div>}
+          {primaryCell && (
+            <div
+              style={{
+                width: '120px',
+                flexShrink: 0,
+                borderLeft: `1px solid ${borderCol}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {primaryCell}
+            </div>
+          )}
           {centerBlock}
-          {secondaryCell && <div style={{ width: '115px', flexShrink: 0 }}>{secondaryCell}</div>}
+          {secondaryCell && (
+            <div
+              style={{
+                width: '115px',
+                flexShrink: 0,
+                borderRight: `1px solid ${borderCol}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {secondaryCell}
+            </div>
+          )}
           {leftMetaSlot && (
-            <div style={{ minWidth: '175px', flexShrink: 0, borderRight: `1px solid ${borderCol}`, paddingRight: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <div
+              style={{
+                minWidth: '175px',
+                flexShrink: 0,
+                borderRight: `1px solid ${borderCol}`,
+                padding: metaPad,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+              }}
+            >
               {leftMetaSlot}
             </div>
           )}
         </>
       ) : (
         <>
-          {primaryCell && <div style={{ width: '120px', flexShrink: 0 }}>{primaryCell}</div>}
+          {primaryCell && (
+            <div
+              style={{
+                width: '125px',
+                flexShrink: 0,
+                borderLeft: `1px solid ${borderCol}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {primaryCell}
+            </div>
+          )}
           {centerBlock}
           {leftMetaSlot && (
-            <div style={{ minWidth: '175px', flexShrink: 0, borderRight: `1px solid ${borderCol}`, paddingRight: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <div
+              style={{
+                minWidth: '175px',
+                flexShrink: 0,
+                borderRight: `1px solid ${borderCol}`,
+                padding: metaPad,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+              }}
+            >
               {leftMetaSlot}
             </div>
           )}

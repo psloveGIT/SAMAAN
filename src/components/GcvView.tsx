@@ -21,9 +21,12 @@ import { triggerAppPrint } from '../lib/print.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import {
   buildGcvHeaderAutoFill,
+  checkGcvRowsCompatibility,
   combineGcvRemark,
+  formatGcvPlPackageNo,
   GCV_PURCHASE_BY_OPTIONS,
   generateGcvReceiptNo,
+  getGcvRowGroupProfile,
   MD1_GCV_COMPANY_NAME,
   MD1_GCV_COPY_TEXT,
   MD1_GCV_FORM_CODE,
@@ -153,37 +156,44 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           design={effectiveDesign}
           projectTitle={projectHeaderTitle}
           compact
+          leftMetaNoPadding
           leftMetaSlot={
             <div
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'space-between',
+                height: '100%',
                 fontSize: '10px',
                 fontWeight: 700,
                 textAlign: 'right',
-                gap: '6px',
               }}
             >
               <div
                 style={{
+                  flex: 1,
                   display: 'flex',
-                  alignItems: 'baseline',
+                  alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: '8px',
+                  padding: '6px 8px',
+                  borderBottom: '1px solid #000000',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 <span>شماره:</span>
-                <span dir="ltr" className="tabular-nums">
+                <span dir="ltr" className="tabular-nums" style={{ fontWeight: 800 }}>
                   {doc.receiptNo}
                 </span>
               </div>
               <div
                 style={{
+                  flex: 1,
                   display: 'flex',
-                  alignItems: 'baseline',
+                  alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: '8px',
+                  padding: '6px 8px',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 <span>تاریخ:</span>
@@ -200,7 +210,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           borderColor={effectiveDesign.accentColor}
         />
 
-        {/* Metadata Strip Row 1 (5 columns RTL: درخواست خرید | تامین کننده | کارشناس خرید | شماره بسته خريد | Realised Note No.) */}
+        {/* Metadata Strip Row 1 (5 columns RTL: درخواست خرید | تامین کننده | کارشناس خرید | شماره بسته خرید | Realised Note No.) */}
         <div
           style={{
             display: 'grid',
@@ -225,7 +235,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             <span className="bidi-plaintext">{doc.buyerName || ''}</span>
           </div>
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
-            <strong style={{ fontWeight: 700 }}>شماره بسته خريد: </strong>
+            <strong style={{ fontWeight: 700 }}>شماره بسته خرید: </strong>
             <span dir="ltr" className="tabular-nums">
               {doc.purchasePackageNo || ''}
             </span>
@@ -236,7 +246,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           </div>
         </div>
 
-        {/* Metadata Strip Row 2 (3 columns RTL with vertical dividers: خريد توسط | جزیره:/سیستم: | شماره بارنامه:) */}
+        {/* Metadata Strip Row 2 (3 columns RTL with vertical dividers: خرید توسط | جزیره:/سیستم: | شماره بارنامه:) */}
         <div
           style={{
             display: 'grid',
@@ -257,7 +267,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
               gap: '12px',
             }}
           >
-            <strong style={{ fontWeight: 700 }}>خريد توسط:</strong>
+            <strong style={{ fontWeight: 700 }}>خرید توسط:</strong>
             {(['tehran_proc', 'site_admin', 'contractor_supplier'] as const).map((opt) => (
               <span
                 key={opt}
@@ -277,11 +287,11 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
               padding: '5px 8px',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              justifyContent: 'flex-start',
               gap: '4px',
             }}
           >
-            <strong style={{ fontWeight: 700 }}>جزیره:/سیستم: </strong>
+            <strong style={{ fontWeight: 700 }}>جزیره/سیستم: </strong>
             <span className="bidi-plaintext">{doc.islandSystem || ''}</span>
           </div>
 
@@ -290,7 +300,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
               padding: '5px 8px',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              justifyContent: 'flex-start',
               gap: '4px',
             }}
           >
@@ -418,18 +428,23 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
               const detailed = row ? detailedById.get(row.detailedId) : undefined;
               const isLast = idx === paddedRows.length - 1;
               const rowBottomBorder = isLast ? 'none' : '1px solid #000000';
-              // Rule 1-12: PL/Package No. = Detailed shipmentNo ("شماره محموله")
-              const plText = row ? (row.shipmentNo || detailed?.shipmentNo || '') : '';
-              // Rule 1-13: Package Item = Detailed packageNo ("شماره نگله")
-              const pkgItemText = row ? (row.packageNo || detailed?.packageNo || '') : '';
+              // Rule 1-12: PL/Package No. = shipmentNo/packageNo
+              const plText = row
+                ? formatGcvPlPackageNo(
+                    row.shipmentNo || detailed?.shipmentNo,
+                    row.packageNo || detailed?.packageNo,
+                  )
+                : '';
+              // Rule 1-13: Package Item = Detailed itemNo ("شماره آیتم")
+              const pkgItemText = row ? (row.itemNo || detailed?.itemNo || '') : '';
               // Rule 1-14: Description = Detailed description ("شرح")
               const descText = row
                 ? row.description || detailed?.description || detailed?.generalDescription || ''
                 : '';
               // Rule 1-15: Technical info/Size = Detailed size ("اندازه")
               const techText = row ? (row.technicalInfo || detailed?.size || '') : '';
-              // Rule 1-16: Tag No. = Detailed itemNo ("شماره آیتم")
-              const tagText = row ? (row.tagNo || row.itemNo || detailed?.itemNo || '') : '';
+              // Rule 1-16: Tag No. = Detailed itemCode ("کد کالا")
+              const tagText = row ? (row.tagNo || detailed?.itemCode || '') : '';
               // Rule 1-17: UOM = Detailed countingUnit ("واحد شمارش")
               const uomText = row ? (row.uom || detailed?.countingUnit || '') : '';
               // Rule 1-20: Remark = Detailed equipment notes + userRemark stacked underneath
@@ -590,14 +605,14 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           }}
         >
           <div style={{ borderLeft: '1px solid #000000', padding: '4px 8px' }}>
-            تحویل گيرنده / پیمانکار نصب
+            تحویل گیرنده / پیمانکار نصب
           </div>
           <div style={{ padding: '4px 8px' }}>
-            {isMd1Default ? 'شركت توسعه یک مپنا' : activeEmployer.companyFullName}
+            {isMd1Default ? 'شرکت توسعه یک مپنا' : activeEmployer.companyFullName}
           </div>
         </div>
 
-        {/* Row 3: 4 Equal Signature Boxes (verbatim MD1EX-FQP02/11-03) */}
+        {/* Row 3: 4 Equal Signature Boxes */}
         <div
           style={{
             display: 'grid',
@@ -618,7 +633,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>انباردار</div>
+              <div style={{ fontWeight: 700 }}>انباردار:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
@@ -636,7 +651,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>مدير پروژه / سرپرست كارگاه/ دفتر فنی:</div>
+              <div style={{ fontWeight: 700 }}>مدیر پروژه / سرپرست کارگاه/ دفتر فنی:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
@@ -671,7 +686,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             }}
           >
             <div>
-              <div style={{ fontWeight: 700 }}>مدير پروژه/ سرپرست كارگاه:</div>
+              <div style={{ fontWeight: 700 }}>مدیر پروژه/ سرپرست کارگاه:</div>
               <div style={{ fontWeight: 600, marginTop: '2px' }}>تاریخ و امضاء:</div>
             </div>
             <div style={{ fontSize: '9px' }} className="bidi-plaintext">
@@ -813,10 +828,10 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   const suggestedReceiptNo = useMemo(
     () =>
       generateGcvReceiptNo(
-        data?.allUsedDocNos || (data?.documents || []).map((d) => d.receiptNo),
+        (data?.documents || []).map((d) => d.receiptNo),
         activeProject,
       ),
-    [data?.allUsedDocNos, data?.documents, activeProject],
+    [data?.documents, activeProject],
   );
 
   // Auto-populate unique receipt number when creating a new GCV
@@ -827,6 +842,14 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
   }, [editingDoc, receiptNoTouched, suggestedReceiptNo]);
 
   const selectedList = useMemo(() => Object.values(selectedMap), [selectedMap]);
+
+  const activeGroupProfile = useMemo(
+    () =>
+      selectedList.length > 0
+        ? getGcvRowGroupProfile(selectedList[0], data?.generalEntries || [])
+        : null,
+    [selectedList, data?.generalEntries],
+  );
 
   const autoFilledHeader = useMemo(
     () => buildGcvHeaderAutoFill(selectedList, data?.generalEntries || [], activeProject),
@@ -853,12 +876,24 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
       const next = { ...selectedMap };
       if (next[item.id]) {
         delete next[item.id];
-      } else {
-        next[item.id] = item;
+        commitSelection(next);
+        return;
       }
+      const candidateList = [...Object.values(next), item];
+      const check = checkGcvRowsCompatibility(candidateList, data?.generalEntries || []);
+      if (!check.compatible) {
+        notify(
+          'warning',
+          isFa
+            ? `اقلام یک رسید مصرف باید در فیلدهای تاریخ ورود، شماره بارنامه، سیستم، ساب سیستم، جزیره، تأمین‌کننده و واحد یکسان باشند. مغایرت در: ${check.mismatchedLabelsFa.join('، ')}`
+            : `All GCV items must share identical group fields. Mismatch in: ${check.mismatchedLabelsFa.join(', ')}`,
+        );
+        return;
+      }
+      next[item.id] = item;
       commitSelection(next);
     },
-    [selectedMap, commitSelection],
+    [selectedMap, commitSelection, data?.generalEntries, notify, isFa],
   );
 
   const handleTogglePage = useCallback(
@@ -866,12 +901,33 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
       const next = { ...selectedMap };
       if (allSelected) {
         for (const r of rows) delete next[r.id];
-      } else {
-        for (const r of rows) next[r.id] = r;
+        commitSelection(next);
+        return;
+      }
+      let skipped = 0;
+      const skippedFields = new Set<string>();
+      for (const r of rows) {
+        if (next[r.id]) continue;
+        const candidateList = [...Object.values(next), r];
+        const check = checkGcvRowsCompatibility(candidateList, data?.generalEntries || []);
+        if (check.compatible) {
+          next[r.id] = r;
+        } else {
+          skipped += 1;
+          for (const lbl of check.mismatchedLabelsFa) skippedFields.add(lbl);
+        }
+      }
+      if (skipped > 0) {
+        notify(
+          'warning',
+          isFa
+            ? `${skipped} ردیف به دلیل یکسان نبودن فیلدهای گروه (${Array.from(skippedFields).join('، ')}) انتخاب نشد.`
+            : `${skipped} row(s) skipped due to differing GCV group fields.`,
+        );
       }
       commitSelection(next);
     },
-    [selectedMap, commitSelection],
+    [selectedMap, commitSelection, data?.generalEntries, notify, isFa],
   );
 
   const handleSelectionUndo = () => {
@@ -996,7 +1052,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         detailedId: d.id,
         qty: formQty,
         technicalInfo: (d.size || '').trim(),
-        tagNo: (d.itemNo || '').trim(),
+        tagNo: (d.itemCode || '').trim(),
         uom: (d.countingUnit || '').trim(),
         equipmentNotes: eqNotes,
         userRemark: usrRem,
@@ -1339,6 +1395,24 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                 </button>
               </div>
 
+              {activeGroupProfile && (
+                <div
+                  data-testid="gcv-group-lock-strip"
+                  className="p-2.5 rounded-xl border border-[var(--accent-primary)]/35 bg-[var(--accent-soft)]/50 text-[11px] flex flex-wrap items-center gap-x-4 gap-y-1 text-[var(--text-primary)]"
+                >
+                  <strong className="text-[var(--accent-primary)]">
+                    {isFa ? 'گروه مجاز انتخاب هم‌زمان:' : 'Locked GCV Group:'}
+                  </strong>
+                  <span>{isFa ? 'تاریخ ورود:' : 'Arrival:'} <strong dir="ltr">{activeGroupProfile.arrivalDate ? formatDate(activeGroupProfile.arrivalDate) : '—'}</strong></span>
+                  <span>{isFa ? 'بارنامه:' : 'Waybill:'} <strong dir="ltr">{activeGroupProfile.billOfLadingNo || '—'}</strong></span>
+                  <span>{isFa ? 'سیستم:' : 'System:'} <strong>{activeGroupProfile.system || '—'}</strong></span>
+                  <span>{isFa ? 'ساب سیستم:' : 'Sub-System:'} <strong>{activeGroupProfile.subSystem || '—'}</strong></span>
+                  <span>{isFa ? 'جزیره:' : 'Island:'} <strong>{activeGroupProfile.island || '—'}</strong></span>
+                  <span>{isFa ? 'تأمین‌کننده:' : 'Supplier:'} <strong>{activeGroupProfile.supplier || '—'}</strong></span>
+                  <span>{isFa ? 'واحد:' : 'Unit:'} <strong>{activeGroupProfile.unit || '—'}</strong></span>
+                </div>
+              )}
+
               {/* Detailed-Equipment-grade Picker filtered to rows with NO gcvReceiptNo */}
               <SubstitutionItemPicker
                 noGcvOnly={true}
@@ -1450,7 +1524,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
 
                 <div>
                   <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                    {isFa ? 'شماره بسته خريد' : 'Purchase Package No.'}
+                    {isFa ? 'شماره بسته خرید' : 'Purchase Package No.'}
                   </label>
                   <input
                     type="text"
@@ -1467,7 +1541,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               {/* Purchase By Radio Cards (Rule 1-8) */}
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-[var(--text-primary)]">
-                  {isFa ? 'خريد توسط (انتخاب یک گزینه الزامی است) *' : 'Purchased By (Required) *'}
+                  {isFa ? 'خرید توسط (انتخاب یک گزینه الزامی است) *' : 'Purchased By (Required) *'}
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                   {GCV_PURCHASE_BY_OPTIONS.map((opt) => {
@@ -1647,10 +1721,10 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                           <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/40">
                             <td className="p-2 text-center tabular-nums font-semibold">{idx + 1}</td>
                             <td className="p-2 font-mono tabular-nums" dir="ltr">
-                              {item.shipmentNo}
+                              {formatGcvPlPackageNo(item.shipmentNo, item.packageNo) || '-'}
                             </td>
                             <td className="p-2 font-mono tabular-nums" dir="ltr">
-                              {item.packageNo}
+                              {item.itemNo || '-'}
                             </td>
                             <td className="p-2 max-w-[220px]">
                               <div className="line-clamp-2 bidi-plaintext">
@@ -1659,7 +1733,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                             </td>
                             <td className="p-2 bidi-plaintext">{item.size || '-'}</td>
                             <td className="p-2 font-mono tabular-nums" dir="ltr">
-                              {item.itemNo || '-'}
+                              {item.itemCode || '-'}
                             </td>
                             <td className="p-2 text-center">{item.countingUnit || '-'}</td>
                             <td className="p-2 text-center font-extrabold tabular-nums text-[var(--accent-primary)]">

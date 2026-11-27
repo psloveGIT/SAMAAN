@@ -62,13 +62,26 @@ const SCOPE_LABEL_EN: Record<UniqueDocScope | 'trash', string> = {
   trash: 'Trash',
 };
 
+const TRASH_SCOPE_MAP: Record<UniqueDocScope, ReadonlyArray<string>> = {
+  opi: ['opi', 'opiInvitations'],
+  miv: ['miv', 'mivDocuments'],
+  substitutions: ['substitutions'],
+  siteEntry: ['siteEntry', 'siteEntryMinutes'],
+  opiMinutes: ['opiMinutes'],
+  osdr: ['osdr', 'osdrReports'],
+  gcv: ['gcv', 'gcvDocuments'],
+  customForms: ['customForms', 'customFormSubmissions'],
+};
+
 /**
- * Collects EVERY assigned document number across ALL form collections in the project
- * (plus non-purged trash entries) so no document number can ever be repeated.
+ * Collects used document numbers for a specific form section (`scope`), OR across all sections
+ * if `scope` is omitted. Uniqueness is enforced strictly within each form section independently
+ * (e.g. NK-TU-0001 cannot be duplicated inside OPI Invitations, but CAN be used in MER).
  */
 export function collectAllUsedDocNos(
   db: Partial<DatabaseSnapshot>,
   options?: {
+    scope?: UniqueDocScope;
     excludeScope?: UniqueDocScope;
     excludeId?: string;
     excludeIds?: readonly string[];
@@ -78,6 +91,7 @@ export function collectAllUsedDocNos(
   const excludedSet = new Set<string>(options?.excludeIds || []);
   if (options?.excludeId) excludedSet.add(options.excludeId);
   const excludeScope = options?.excludeScope;
+  const targetScope = options?.scope;
   const pairedOpiKey = options?.allowPairedOpiInvitationNo
     ? normalizeDocNoKey(options.allowPairedOpiInvitationNo)
     : '';
@@ -94,34 +108,62 @@ export function collectAllUsedDocNos(
     }
   };
 
-  for (const r of db.opiInvitations || []) register('opi', r.id, r.invitationNo);
-  for (const r of db.mivDocuments || []) register('miv', r.id, r.docNo);
-  for (const r of db.substitutions || []) register('substitutions', r.id, r.docNo);
-  for (const r of db.siteEntryMinutes || []) register('siteEntry', r.id, r.minutesNo);
-  for (const r of db.opiMinutes || []) register('opiMinutes', r.id, r.minutesNo);
-  for (const r of db.osdrReports || []) register('osdr', r.id, r.reportNo);
-  for (const r of db.gcvDocuments || []) register('gcv', r.id, r.receiptNo);
-  for (const r of db.customFormSubmissions || []) register('customForms', r.id, r.docNo);
+  if (!targetScope || targetScope === 'opi') {
+    for (const r of db.opiInvitations || []) register('opi', r.id, r.invitationNo);
+  }
+  if (!targetScope || targetScope === 'miv') {
+    for (const r of db.mivDocuments || []) register('miv', r.id, r.docNo);
+  }
+  if (!targetScope || targetScope === 'substitutions') {
+    for (const r of db.substitutions || []) register('substitutions', r.id, r.docNo);
+  }
+  if (!targetScope || targetScope === 'siteEntry') {
+    for (const r of db.siteEntryMinutes || []) register('siteEntry', r.id, r.minutesNo);
+  }
+  if (!targetScope || targetScope === 'opiMinutes') {
+    for (const r of db.opiMinutes || []) register('opiMinutes', r.id, r.minutesNo);
+  }
+  if (!targetScope || targetScope === 'osdr') {
+    for (const r of db.osdrReports || []) register('osdr', r.id, r.reportNo);
+  }
+  if (!targetScope || targetScope === 'gcv') {
+    for (const r of db.gcvDocuments || []) register('gcv', r.id, r.receiptNo);
+  }
+  if (!targetScope || targetScope === 'customForms') {
+    for (const r of db.customFormSubmissions || []) register('customForms', r.id, r.docNo);
+  }
 
-  // Also include deleted rows sitting in Trash so form numbers referenced on them are never inadvertently recycled
+  // Only check Trash items belonging to the same section when targetScope is provided
+  const allowedTrashScopes = targetScope ? new Set(TRASH_SCOPE_MAP[targetScope]) : null;
   for (const item of db.trash || []) {
     const rawItem = item as unknown as Record<string, unknown>;
+    const itemScope = String(rawItem?.scope || '');
+    if (allowedTrashScopes && !allowedTrashScopes.has(itemScope)) continue;
     const payload = (rawItem?.data ?? rawItem?.payload) as Record<string, unknown> | undefined;
     if (!payload || typeof payload !== 'object') continue;
-    const candidates = [
-      payload.docNo,
-      payload.invitationNo,
-      payload.minutesNo,
-      payload.reportNo,
-      payload.receiptNo,
-      payload.opiInvitationNo,
-      payload.mivContractorNo,
-      payload.mivMapnaNo,
-      payload.smrContractorNo,
-      payload.smrMapnaNo,
-      payload.gcvReceiptNo,
-      payload.repNo,
-    ];
+    const candidates = targetScope
+      ? targetScope === 'opi'
+        ? [payload.invitationNo]
+        : targetScope === 'miv'
+          ? [payload.docNo]
+          : targetScope === 'substitutions'
+            ? [payload.docNo]
+            : targetScope === 'siteEntry'
+              ? [payload.minutesNo]
+              : targetScope === 'opiMinutes'
+                ? [payload.minutesNo]
+                : targetScope === 'osdr'
+                  ? [payload.reportNo]
+                  : targetScope === 'gcv'
+                    ? [payload.receiptNo]
+                    : [payload.docNo]
+      : [
+          payload.docNo,
+          payload.invitationNo,
+          payload.minutesNo,
+          payload.reportNo,
+          payload.receiptNo,
+        ];
     for (const rawCand of candidates) {
       if (typeof rawCand !== 'string' || !rawCand.trim()) continue;
       for (const token of rawCand.split(/[,،]+/)) {
@@ -134,20 +176,24 @@ export function collectAllUsedDocNos(
 }
 
 /**
- * Returns a flat array of all currently used document numbers across the project
- * (useful to pass into auto-numbering generators so generated numbers never collide).
+ * Returns used document numbers for a specific section (or all sections if scope is omitted).
  */
-export function getAllUsedDocNumbers(db: Partial<DatabaseSnapshot>): string[] {
-  return Array.from(collectAllUsedDocNos(db).values()).map((e) => e.docNo);
+export function getAllUsedDocNumbers(
+  db: Partial<DatabaseSnapshot>,
+  scope?: UniqueDocScope,
+): string[] {
+  return Array.from(collectAllUsedDocNos(db, scope ? { scope } : undefined).values()).map((e) => e.docNo);
 }
 
 /**
- * Strictly asserts that `rawDocNo` is globally unique across all forms in the project.
+ * Asserts that `rawDocNo` is unique within the specified form section (`options.scope`),
+ * or globally if `options.scope` is omitted.
  */
 export function assertUniqueDocNo(
   db: Partial<DatabaseSnapshot>,
   rawDocNo: string | undefined | null,
   options?: {
+    scope?: UniqueDocScope;
     excludeScope?: UniqueDocScope;
     excludeId?: string;
     excludeIds?: readonly string[];
@@ -163,15 +209,21 @@ export function assertUniqueDocNo(
       errorEn: 'Document / form number is required.',
     };
   }
-  const used = collectAllUsedDocNos(db, options);
+  const effectiveScope = options?.scope ?? options?.excludeScope;
+  const used = collectAllUsedDocNos(db, {
+    ...options,
+    scope: effectiveScope,
+  });
   const conflict = used.get(normalizedKey);
   if (conflict) {
+    const scopeNameFa = effectiveScope ? SCOPE_LABEL_FA[effectiveScope] : SCOPE_LABEL_FA[conflict.scope];
+    const scopeNameEn = effectiveScope ? SCOPE_LABEL_EN[effectiveScope] : SCOPE_LABEL_EN[conflict.scope];
     return {
       ok: false,
       normalizedKey,
       conflict,
-      errorFa: `شماره فرم «${String(rawDocNo || '').trim()}» تکراری است و قبلاً در بخش «${SCOPE_LABEL_FA[conflict.scope]}» ثبت شده است. شماره هر فرم باید یکتا باشد.`,
-      errorEn: `Form number "${String(rawDocNo || '').trim()}" is already used in ${SCOPE_LABEL_EN[conflict.scope]}. Every form number must be unique.`,
+      errorFa: `شماره فرم «${String(rawDocNo || '').trim()}» در بخش «${scopeNameFa}» تکراری است. شماره هر فرم در هر بخش باید یکتا باشد.`,
+      errorEn: `Form number "${String(rawDocNo || '').trim()}" is already used in ${scopeNameEn}. Every form number within a section must be unique.`,
     };
   }
   return { ok: true, normalizedKey };

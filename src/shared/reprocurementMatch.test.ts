@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import type { DetailedComputed, SubstitutionRecord } from './types';
 import {
   appendMultilineLine,
+  buildNewItemShortageReprocDescription,
   buildShortageReprocurementNote,
   buildSubstitutionReprocurementNote,
   matchOpenShortages,
   matchOpenSubstitutions,
   shouldCloseShortage,
   shouldCloseSubstitution,
+  shouldResolveShortageBadge,
 } from './reprocurementMatch';
 
 function makeDetailed(overrides: Partial<DetailedComputed>): DetailedComputed {
@@ -161,4 +163,10 @@ test('exact re-procurement sentence builders, multiline append, and auto-close c
   assert.equal(shouldCloseSubstitution(3, 5), false);
   assert.equal(shouldCloseShortage(4, 3, 1), true);
   assert.equal(shouldCloseShortage(3, 3, 1), false);
+  assert.equal(shouldResolveShortageBadge(3, 7, 10), true);
+  assert.equal(shouldResolveShortageBadge(2, 7, 10), false);
+  assert.equal(
+    buildNewItemShortageReprocDescription(['PK-100', 'PK-200']),
+    'تأمین کسری پکینگ PK-100 ، PK-200',
+  );
 });

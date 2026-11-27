@@ -60,7 +60,7 @@ import {
 } from './src/shared/normalizers.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from './src/shared/generalDescription.ts';
 import { inferSizeFromDescription } from './src/shared/sizeExtractor.ts';
-import { combineGcvRemark, GCV_PURCHASE_BY_OPTIONS } from './src/shared/gcv.ts';
+import { checkGcvRowsCompatibility, combineGcvRemark, GCV_PURCHASE_BY_OPTIONS } from './src/shared/gcv.ts';
 import { buildDetailedMerDescription } from './src/shared/opiMinutes.ts';
 import { extractEquipmentOffline } from './src/shared/smartExtractor.ts';
 import { getLocalVersionPayload } from './src/shared/appVersion.ts';
@@ -148,10 +148,12 @@ import {
 } from './src/shared/substitution.ts';
 import {
   appendMultilineLine,
+  buildNewItemShortageReprocDescription,
   buildShortageReprocurementNote,
   buildSubstitutionReprocurementNote,
   shouldCloseShortage,
   shouldCloseSubstitution,
+  shouldResolveShortageBadge,
 } from './src/shared/reprocurementMatch.ts';
 import {
   buildMivLineRemark,
@@ -1048,7 +1050,7 @@ async function startServer() {
       res.status(400).json({ error: errMsg(req, 'فرم و شماره سند الزامی است', 'Form ID and document number are required') });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, docNo);
+    const uniqCheck = assertUniqueDocNo(store.db, docNo, { scope: 'customForms' });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -1092,7 +1094,7 @@ async function startServer() {
     const body = req.body as Partial<CustomFormSubmission>;
     if (body.docNo !== undefined) {
       const nextDocNo = normKey(body.docNo);
-      const uniqCheck = assertUniqueDocNo(store.db, nextDocNo, { excludeScope: 'customForms', excludeId: target.id });
+      const uniqCheck = assertUniqueDocNo(store.db, nextDocNo, { scope: 'customForms', excludeScope: 'customForms', excludeId: target.id });
       if (!uniqCheck.ok) {
         res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
         return;
@@ -2307,6 +2309,7 @@ async function startServer() {
     const hasEmployerStock = String(req.query.hasEmployerStock || '') === 'true';
     const hasContractorStock = String(req.query.hasContractorStock || '') === 'true';
     const hasAnyStock = String(req.query.hasAnyStock || '') === 'true';
+    const mivIssuedOnly = String(req.query.mivIssuedOnly || '') === 'true';
     const noGcvOnly = String(req.query.noGcvOnly || '') === 'true';
     const allowGcvReceiptNo = normKey(String(req.query.allowGcvReceiptNo || '')).toUpperCase();
     const chemicalExpiry = String(req.query.chemicalExpiry || '').trim();
@@ -2417,6 +2420,14 @@ async function startServer() {
       if (hasEmployerStock && (comp.opiPending || comp.mapnaInventory <= 0)) continue;
       if (hasContractorStock && (comp.opiPending || comp.contractorInventory <= 0)) continue;
       if (hasAnyStock && (comp.opiPending || (comp.mapnaInventory <= 0 && comp.contractorInventory <= 0))) continue;
+      if (mivIssuedOnly) {
+        const hasMivIssued =
+          Boolean(normKey(d.mivContractorNo)) ||
+          toNum(d.mivContractorQty) > 0 ||
+          Boolean(normKey(d.mivMapnaNo)) ||
+          toNum(d.mivMapnaQty) > 0;
+        if (!hasMivIssued) continue;
+      }
       if (noGcvOnly) {
         const existingGcv = normKey(d.gcvReceiptNo);
         if (existingGcv) {
@@ -2793,7 +2804,9 @@ async function startServer() {
       }
     }
 
-    // 2) Shortage re-procurement matches -> append to merDescription & auto-close merStatus if packingQty == shortage + damagedQty
+    // 2) Shortage re-procurement matches -> append to merDescription, clear "دارای کسری" badge when covered,
+    //    and write "تأمین کسری پکینگ <packingNo>" into the new item's merDescription
+    const matchedShortagePackings: string[] = [];
     for (const target of payload.shortageTargets || []) {
       const row = store.db.detailed.find((d) => d.id === target.detailedId);
       if (!row) continue;
@@ -2806,12 +2819,31 @@ async function startServer() {
       );
       trackRow(row);
       row.merDescription = appendMultilineLine(row.merDescription, noteLine);
-      if (shouldCloseShortage(sourcePackingQty, computed.shortage, computed.damagedQty)) {
+      if (row.shipmentNo?.trim()) {
+        matchedShortagePackings.push(row.shipmentNo.trim());
+      }
+      if (
+        shouldCloseShortage(sourcePackingQty, computed.shortage, computed.damagedQty) ||
+        shouldResolveShortageBadge(sourcePackingQty, row.actualQty, row.packingQty)
+      ) {
         row.merStatus = 'بسته';
+        row.shortageResolved = true;
         closedShortageRowIds.add(row.id);
       }
       row.updatedAt = now;
       updatedShortageRowIds.add(row.id);
+    }
+
+    if (matchedShortagePackings.length > 0 && payload.sourceDetailedId) {
+      const sourceRow = store.db.detailed.find((d) => d.id === payload.sourceDetailedId);
+      if (sourceRow) {
+        const newItemNote = buildNewItemShortageReprocDescription(matchedShortagePackings);
+        if (newItemNote) {
+          trackRow(sourceRow);
+          sourceRow.merDescription = appendMultilineLine(sourceRow.merDescription, newItemNote);
+          sourceRow.updatedAt = now;
+        }
+      }
     }
 
     for (const [id, before] of beforeMap.entries()) {
@@ -3935,7 +3967,7 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'siteEntry' });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -4050,7 +4082,7 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'siteEntry', excludeId: rec.id });
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'siteEntry', excludeScope: 'siteEntry', excludeId: rec.id });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -4184,7 +4216,7 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'opi' });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -4317,7 +4349,7 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'opi', excludeId: rec.id });
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'opi', excludeScope: 'opi', excludeId: rec.id });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -4567,6 +4599,7 @@ async function startServer() {
       return;
     }
     const uniqCheck = assertUniqueDocNo(store.db, cleanNo, {
+      scope: 'opiMinutes',
       allowPairedOpiInvitationNo: cleanInvNo || undefined,
     });
     if (!uniqCheck.ok) {
@@ -4588,19 +4621,9 @@ async function startServer() {
         });
         return;
       }
-      const merUniq = assertUniqueDocNo(store.db, cleanMerNo);
+      const merUniq = assertUniqueDocNo(store.db, cleanMerNo, { scope: 'osdr' });
       if (!merUniq.ok) {
         res.status(409).json({ error: errMsg(req, merUniq.errorFa!, merUniq.errorEn!) });
-        return;
-      }
-      if (normKey(cleanMerNo).toUpperCase() === normKey(cleanNo).toUpperCase()) {
-        res.status(409).json({
-          error: errMsg(
-            req,
-            'شماره گزارش مغایرت (MER) نمی‌تواند با شماره صورتجلسه OPI یکسان باشد.',
-            'MER Report No. cannot be identical to the OPI Minutes No.',
-          ),
-        });
         return;
       }
     }
@@ -4747,6 +4770,7 @@ async function startServer() {
       return;
     }
     const uniqCheck = assertUniqueDocNo(store.db, cleanNo, {
+      scope: 'opiMinutes',
       excludeScope: 'opiMinutes',
       excludeId: rec.id,
       allowPairedOpiInvitationNo: nextInvNo || undefined,
@@ -4781,6 +4805,7 @@ async function startServer() {
         return;
       }
       const merUniq = assertUniqueDocNo(store.db, nextMerNo, {
+        scope: 'osdr',
         excludeScope: 'osdr',
         excludeId: existingMer?.id,
       });
@@ -5005,7 +5030,7 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'osdr' });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -5066,7 +5091,7 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'osdr', excludeId: rec.id });
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'osdr', excludeScope: 'osdr', excludeId: rec.id });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -5169,19 +5194,21 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'gcv' });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
 
     const lineItems: DocumentLineItem[] = [];
+    const matchedDetailedRows: DetailedEntry[] = [];
     for (const reqItem of items) {
       const d = store.db.detailed.find((x) => x.id === reqItem.detailedId);
       if (!d) {
         res.status(404).json({ error: errMsg(req, 'آیتم جزئیات یافت نشد', 'Detailed item not found') });
         return;
       }
+      matchedDetailedRows.push(d);
       const hasActual = d.actualQty !== null && d.actualQty !== undefined && Number.isFinite(Number(d.actualQty));
       const hasPacking = d.packingQty !== null && d.packingQty !== undefined && Number.isFinite(Number(d.packingQty));
       const reqQtyNum = Number(reqItem.qty);
@@ -5207,12 +5234,23 @@ async function startServer() {
         qty: formQty,
         syncDeliveredQty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
         equipmentNotes: eqNotes,
         userRemark: usrRem,
         remark: combinedRem,
       });
+    }
+    const compat = checkGcvRowsCompatibility(matchedDetailedRows, store.db.general);
+    if (!compat.compatible) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          `اقلام انتخابی باید در فیلدهای تاریخ ورود، شماره بارنامه، سیستم، ساب سیستم، جزیره، تأمین کننده و واحد کاملاً یکسان باشند (مغایرت در: ${compat.mismatchedLabelsFa.join('، ')})`,
+          `Selected GCV items must match on arrival date, bill of lading, system, sub-system, island, supplier, and unit (mismatch: ${compat.mismatchedFields.join(', ')})`,
+        ),
+      });
+      return;
     }
 
     const now = new Date().toISOString();
@@ -5300,19 +5338,21 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'gcv', excludeId: existing.id });
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'gcv', excludeScope: 'gcv', excludeId: existing.id });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
     }
 
     const nextLines: DocumentLineItem[] = [];
+    const matchedDetailedRows: DetailedEntry[] = [];
     for (const reqItem of items) {
       const d = store.db.detailed.find((x) => x.id === reqItem.detailedId);
       if (!d) {
         res.status(404).json({ error: errMsg(req, 'آیتم جزئیات یافت نشد', 'Detailed item not found') });
         return;
       }
+      matchedDetailedRows.push(d);
       const hasActual = d.actualQty !== null && d.actualQty !== undefined && Number.isFinite(Number(d.actualQty));
       const hasPacking = d.packingQty !== null && d.packingQty !== undefined && Number.isFinite(Number(d.packingQty));
       const reqQtyNum = Number(reqItem.qty);
@@ -5338,12 +5378,23 @@ async function startServer() {
         qty: formQty,
         syncDeliveredQty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
+        tagNo: normKey(reqItem.tagNo) || d.itemCode || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
         equipmentNotes: eqNotes,
         userRemark: usrRem,
         remark: combinedRem,
       });
+    }
+    const compat = checkGcvRowsCompatibility(matchedDetailedRows, store.db.general);
+    if (!compat.compatible) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          `اقلام انتخابی باید در فیلدهای تاریخ ورود، شماره بارنامه، سیستم، ساب سیستم، جزیره، تأمین کننده و واحد کاملاً یکسان باشند (مغایرت در: ${compat.mismatchedLabelsFa.join('، ')})`,
+          `Selected GCV items must match on arrival date, bill of lading, system, sub-system, island, supplier, and unit (mismatch: ${compat.mismatchedFields.join(', ')})`,
+        ),
+      });
+      return;
     }
 
     const now = new Date().toISOString();
@@ -5461,7 +5512,7 @@ async function startServer() {
       res.status(400).json({ error: errMsg(req, 'شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required') });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'miv' });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -5669,7 +5720,7 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'miv', excludeId: existing.id });
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'miv', excludeScope: 'miv', excludeId: existing.id });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -6111,7 +6162,7 @@ async function startServer() {
       });
       return;
     }
-    const uniqCheck = assertUniqueDocNo(store.db, cleanNo);
+    const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'substitutions' });
     if (!uniqCheck.ok) {
       res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
       return;
@@ -6213,7 +6264,7 @@ async function startServer() {
         res.status(400).json({ error: errMsg(req, 'شماره سند جایگزینی الزامی است', 'Document No. is required') });
         return;
       }
-      const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { excludeScope: 'substitutions', excludeId: rec.id });
+      const uniqCheck = assertUniqueDocNo(store.db, cleanNo, { scope: 'substitutions', excludeScope: 'substitutions', excludeId: rec.id });
       if (!uniqCheck.ok) {
         res.status(409).json({ error: errMsg(req, uniqCheck.errorFa!, uniqCheck.errorEn!) });
         return;
@@ -7186,6 +7237,7 @@ async function startServer() {
       store.db.general,
       store.db.detailed,
       store.db.opiInvitations,
+      store.db.opiMinutes,
     );
 
     res.json({

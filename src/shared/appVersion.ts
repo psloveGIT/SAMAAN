@@ -16,11 +16,30 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.17.0';
-export const APP_BUILD_ID = '2026.06.05-1';
-export const APP_RELEASED_AT = '2026-06-05';
+export const APP_VERSION = '2.18.0';
+export const APP_BUILD_ID = '2026.06.06-1';
+export const APP_RELEASED_AT = '2026-06-06';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.18.0',
+    buildId: '2026.06.06-1',
+    releasedAt: '2026-06-06',
+    titleFa: 'رفع جامع ۱۸ باگ و بهینه‌سازی دقیق فرم‌های چاپی، ثبت جزئیات، دعوتنامه و صورتجلسه OPI، گزارش MER، رسید مصرف، حواله انبار و جایگزینی',
+    titleEn: 'Comprehensive 18-Point Bug Fix & Print Form Precision Upgrade Across Detailed Equipment, OPI, MER, GCV, MIV & Substitution',
+    changesFa: [
+      'ثبت جزئیات تجهیزات: تغییر نام به «ثبت جزئیات آیتم»، نمایش پیش‌فرض ستون «کد کالا»، حذف کادر سبز فراخوانی خودکار و دکمه «تکمیل/جبران کسری»، کنترل هوشمند تعداد آیتم‌های اعلامی هر نگله (در حالت کم‌تر یا بیش‌تر)، و رفع کامل برچسب «دارای کسری» پس از تأمین مجدد همراه با ثبت خودکار «تأمین کسری پکینگ ...»',
+      'دعوتنامه و صورتجلسه OPI و گزارش MER: محدودسازی «مکان OPI» به ۹ مکان استاندارد فارسی، هم‌راستایی دقیق ستون‌های زمان‌بندی و خطوط جداکننده در چاپ، اصلاح چک‌باکس‌ها و شماره‌گذاری مستقل MER از 0001، فارسی‌سازی جدول انتخاب اقلام MER و همگام‌سازی خودکار مغایرت، و تطبیق دعوتنامه‌های باز داشبورد با صورتجلسه‌های ثبت‌شده',
+      'رسید مصرف مستقیم کالا (GCV): اعمال قید یکسان بودن ۷ فیلد کلیدی ردیف‌های انتخابی، اصلاح خطوط جداکننده و راست‌چینی سربرگ، و تصحیح ستون‌های PL/Package No.، Package Item و Tag No.',
+      'حواله انبار (MIV) و فرم جایگزینی: افزودن دکمه‌های سریع «کل کارفرما» و «کل پیمانکار» در حواله، تک‌خطی کردن برچسب‌های سربرگ حواله، فیلتر بخش الف جایگزینی صرفاً برای اقلام حواله‌شده، نمایش واحد واقعی شمارش، گزینه‌های پیش‌فرض هزینه تأمین مجدد، ثبت مرحله‌ای حواله خروج پیش از تکمیل جایگزینی، یکسان‌سازی آیکون‌های سابقه در تمام فرم‌ها و تبدیل سراسری حروف «ي/ك» به «ی/ک»',
+    ],
+    changesEn: [
+      'Detailed Equipment: Renamed to "ثبت جزئیات آیتم", exposed Item Code column by default, removed redundant auto-sync banner and shortage backfill button, enforced General package itemCount on both under-count and over-count, and cleanly cleared shortage badges upon reprocuration without double-counting',
+      'OPI Invitation, OPI Minutes & MER: Restricted OPI Location to 9 standard Persian locations, aligned schedule dividers and full-height logo/meta borders, placed RTL checkboxes at line start, started MER numbering independently from 0001 with Persian picker headers and auto-synced Discrepancy, and synced Dashboard Open OPI Invitations against recorded OPI Minutes',
+      'Direct Consumption Voucher (GCV): Enforced 7-field identical group constraint, aligned seamless header dividers, right-aligned metadata labels, and corrected PL/Package No., Package Item, and Tag No. bindings',
+      'MIV & Substitution: Added one-click Full Employer / Full Contractor quantity buttons and single-line header labels in MIV, filtered Substitution Section A strictly to MIV-issued items, showed actual per-row counting units, added default cost bearer presets, required explicit Auto-MIV registration before completing Substitution, standardized icon-only History actions across all forms, and normalized all Persian ی/ک characters',
+    ],
+  },
   {
     version: '2.17.0',
     buildId: '2026.06.05-1',

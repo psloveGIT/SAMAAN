@@ -22,6 +22,8 @@ interface DetailedPickerResponse {
 interface SubstitutionItemPickerProps {
   /** When true, only loads Detailed rows with positive Employer OR Contractor stock (`hasAnyStock=true`). */
   stockOnly?: boolean;
+  /** When true, only loads Detailed rows that have been issued via MIV (`mivIssuedOnly=true`). */
+  mivIssuedOnly?: boolean;
   /** When true, only loads Detailed rows that do NOT yet have a GCV receipt number (`noGcvOnly=true`). */
   noGcvOnly?: boolean;
   /** When editing an existing GCV receipt, also allow rows belonging to this receipt number. */
@@ -40,6 +42,7 @@ interface SubstitutionItemPickerProps {
 
 export const SubstitutionItemPicker: React.FC<SubstitutionItemPickerProps> = ({
   stockOnly = false,
+  mivIssuedOnly = false,
   noGcvOnly = false,
   allowGcvReceiptNo = '',
   refreshSignal,
@@ -67,6 +70,7 @@ export const SubstitutionItemPicker: React.FC<SubstitutionItemPickerProps> = ({
   const buildFilterParams = useCallback(() => {
     const params = new URLSearchParams();
     if (stockOnly) params.set('hasAnyStock', 'true');
+    if (mivIssuedOnly) params.set('mivIssuedOnly', 'true');
     if (noGcvOnly) params.set('noGcvOnly', 'true');
     if (allowGcvReceiptNo.trim()) params.set('allowGcvReceiptNo', allowGcvReceiptNo.trim());
     if (q.trim()) params.set('q', q.trim());
@@ -85,7 +89,7 @@ export const SubstitutionItemPicker: React.FC<SubstitutionItemPickerProps> = ({
       params.set('sortDir', sortDir);
     }
     return params;
-  }, [stockOnly, noGcvOnly, allowGcvReceiptNo, q, selectedPackings, customFilters, colFilters, prefs.calendar, sortBy, sortDir]);
+  }, [stockOnly, mivIssuedOnly, noGcvOnly, allowGcvReceiptNo, q, selectedPackings, customFilters, colFilters, prefs.calendar, sortBy, sortDir]);
 
   const loadData = useCallback(async () => {
     const seq = ++loadSeqRef.current;

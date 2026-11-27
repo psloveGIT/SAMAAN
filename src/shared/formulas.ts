@@ -154,7 +154,7 @@ export function computeDetailedEntry(entry: DetailedEntry): DetailedComputed {
     effectiveActualQty,
     mapnaInventory,
     contractorInventory,
-    hasShortage: shortage > 0,
+    hasShortage: shortage > 0 && !entry.shortageResolved,
     hasDamaged: damagedQty > 0,
     opiPending: !opiRecorded,
     hasImage: Boolean(entry.itemImage || entry.itemImageThumb),

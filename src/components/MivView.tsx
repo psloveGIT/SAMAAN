@@ -226,7 +226,7 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                   }}
                 >
                   <div style={{ fontSize: '10.5px', fontWeight: 800 }}>
-                    شركت احداث و توسعه نيروگاه‌هاي مپنا – توسعه يك (MD1)
+                    شرکت احداث و توسعه نیروگاه‌های مپنا – توسعه یک (MD1)
                   </div>
                   <div
                     data-testid="miv-sheet-project-title"
@@ -320,15 +320,14 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '5px',
+                    gap: '4px',
                     padding: '5px 7px',
                     borderLeft: '1px solid #000000',
                   }}
                 >
-                  <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
-                    <div>شماره قرارداد/</div>
-                    <div>درخواست خرید:</div>
-                  </div>
+                  <strong style={{ fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    شماره قرارداد/درخواست خرید:
+                  </strong>
                   <span
                     dir="ltr"
                     data-testid="miv-sheet-contract-no"
@@ -343,15 +342,14 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '5px',
+                    gap: '4px',
                     padding: '5px 7px',
                     borderLeft: '1px solid #000000',
                   }}
                 >
-                  <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
-                    <div>پیمانکار/</div>
-                    <div>درخواست کننده:</div>
-                  </div>
+                  <strong style={{ fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    پیمانکار/درخواست کننده:
+                  </strong>
                   <span data-testid="miv-sheet-party" className="bidi-plaintext">
                     {doc.party || ''}
                   </span>
@@ -362,15 +360,14 @@ export const OfficialMivSheet: React.FC<OfficialMivSheetProps> = ({
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '5px',
+                    gap: '4px',
                     padding: '5px 7px',
                     borderLeft: '1px solid #000000',
                   }}
                 >
-                  <div style={{ fontWeight: 700, lineHeight: 1.3, flexShrink: 0 }}>
-                    <div>سیستم/</div>
-                    <div>جزیره:</div>
-                  </div>
+                  <strong style={{ fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    سیستم/جزیره:
+                  </strong>
                   <span data-testid="miv-sheet-system-island" className="bidi-plaintext">
                     {doc.islandSystem || ''}
                   </span>
@@ -1892,8 +1889,8 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                           <th className="px-2.5 py-2 whitespace-nowrap">{isFa ? 'محموله / نگله' : 'Pkg No / Item'}</th>
                           <th className="px-2.5 py-2 min-w-[200px]">{isFa ? 'شرح کالا و مشخصات' : 'Description & Specs'}</th>
                           <th className="px-2.5 py-2 whitespace-nowrap">{isFa ? 'موجودی مجاز' : 'Available Stock'}</th>
-                          <th className="px-2.5 py-2 whitespace-nowrap min-w-[140px]">
-                            {isFa ? 'تعداد خروجی (عدد) *' : 'Issue Qty (Numeric) *'}
+                          <th className="px-2.5 py-2 whitespace-nowrap min-w-[160px]">
+                            {isFa ? 'تعداد خروجی *' : 'Issue Qty *'}
                           </th>
                           <th className="px-2.5 py-2 min-w-[240px]">
                             {isFa ? 'توضیحات حواله (Remark - اختیاری)' : 'MIV Remark (Optional)'}
@@ -1967,24 +1964,57 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                                 )}
                               </td>
                               <td className="px-2.5 py-2">
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  dir="ltr"
-                                  data-testid={`miv-qty-input-${item.id}`}
-                                  aria-label={isFa ? `تعداد برای ${item.description}` : `Quantity for ${item.description}`}
-                                  value={qtyMap[item.id] ?? ''}
-                                  onChange={(e) => {
-                                    const clean = sanitizeNumericQtyInput(e.target.value);
-                                    setQtyMap((prev) => ({ ...prev, [item.id]: clean }));
-                                  }}
-                                  placeholder="0"
-                                  className={`w-28 h-9 px-2.5 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono font-bold tabular-nums text-center focus:outline-none ${
-                                    !v.valid
-                                      ? 'border-[var(--status-danger)] text-[var(--status-danger)]'
-                                      : 'border-[var(--border-subtle)] text-[var(--text-primary)] focus:border-[var(--accent-primary)]'
-                                  }`}
-                                />
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    dir="ltr"
+                                    data-testid={`miv-qty-input-${item.id}`}
+                                    aria-label={isFa ? `تعداد برای ${item.description}` : `Quantity for ${item.description}`}
+                                    value={qtyMap[item.id] ?? ''}
+                                    onChange={(e) => {
+                                      const clean = sanitizeNumericQtyInput(e.target.value);
+                                      setQtyMap((prev) => ({ ...prev, [item.id]: clean }));
+                                    }}
+                                    placeholder="0"
+                                    className={`w-24 h-9 px-2 rounded-lg border bg-[var(--bg-canvas)] text-xs font-mono font-bold tabular-nums text-center focus:outline-none ${
+                                      !v.valid
+                                        ? 'border-[var(--status-danger)] text-[var(--status-danger)]'
+                                        : 'border-[var(--border-subtle)] text-[var(--text-primary)] focus:border-[var(--accent-primary)]'
+                                    }`}
+                                  />
+                                  <span className="text-[10.5px] font-semibold text-[var(--text-muted)] whitespace-nowrap">
+                                    {item.countingUnit || (isFa ? 'عدد' : 'EA')}
+                                  </span>
+                                </div>
+                                <div className="mt-1.5 flex items-center justify-center gap-1 flex-wrap">
+                                  <button
+                                    type="button"
+                                    data-testid={`miv-fill-emp-${item.id}`}
+                                    disabled={v.mapna <= 0}
+                                    onClick={() => {
+                                      setQtyMap((prev) => ({ ...prev, [item.id]: String(v.mapna) }));
+                                      setSourceWarehouseMap((prev) => ({ ...prev, [item.id]: 'employer' }));
+                                    }}
+                                    title={isFa ? `درج کل موجودی انبار کارفرما (${v.mapna})` : `Fill full Employer stock (${v.mapna})`}
+                                    className="px-1.5 py-0.5 rounded border border-emerald-500/35 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-35 disabled:cursor-not-allowed text-[10px] font-bold text-emerald-700 dark:text-emerald-300 transition-colors whitespace-nowrap"
+                                  >
+                                    {isFa ? 'کل کارفرما' : 'All Emp'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    data-testid={`miv-fill-con-${item.id}`}
+                                    disabled={v.contractor <= 0}
+                                    onClick={() => {
+                                      setQtyMap((prev) => ({ ...prev, [item.id]: String(v.contractor) }));
+                                      setSourceWarehouseMap((prev) => ({ ...prev, [item.id]: 'contractor' }));
+                                    }}
+                                    title={isFa ? `درج کل موجودی انبار پیمانکار (${v.contractor})` : `Fill full Contractor stock (${v.contractor})`}
+                                    className="px-1.5 py-0.5 rounded border border-sky-500/35 bg-sky-500/10 hover:bg-sky-500/20 disabled:opacity-35 disabled:cursor-not-allowed text-[10px] font-bold text-sky-700 dark:text-sky-300 transition-colors whitespace-nowrap"
+                                  >
+                                    {isFa ? 'کل پیمانکار' : 'All Con'}
+                                  </button>
+                                </div>
                                 {!v.valid && v.error && (
                                   <div
                                     data-testid={`miv-qty-error-${item.id}`}
@@ -2184,10 +2214,10 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                             setPrintDoc(doc);
                           }}
                           title={isFa ? 'مشاهده و چاپ حواله' : 'Preview & Print'}
-                          className="h-7 px-2.5 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-soft)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)] text-[var(--accent-primary)] text-[11px] font-semibold inline-flex items-center gap-1 transition-colors"
+                          aria-label={isFa ? `چاپ ${doc.docNo}` : `Print ${doc.docNo}`}
+                          className="p-1.5 rounded-lg text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] transition-colors"
                         >
                           <Printer className="w-3.5 h-3.5" />
-                          <span>{isFa ? 'چاپ' : 'Print'}</span>
                         </button>
                         {canEdit && (
                           <>
@@ -2197,7 +2227,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                               onClick={() => void startEdit(doc)}
                               title={isFa ? 'ویرایش حواله' : 'Edit MIV'}
                               aria-label={isFa ? `ویرایش ${doc.docNo}` : `Edit ${doc.docNo}`}
-                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]"
+                              className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-500/10 transition-colors"
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
@@ -2207,7 +2237,7 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                               onClick={() => setDeleteTarget(doc)}
                               title={isFa ? 'حذف حواله و بازگردانی موجودی' : 'Delete MIV & restore stock'}
                               aria-label={isFa ? `حذف ${doc.docNo}` : `Delete ${doc.docNo}`}
-                              className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--status-danger-bg)] hover:text-[var(--status-danger)]"
+                              className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-500/10 transition-colors"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>

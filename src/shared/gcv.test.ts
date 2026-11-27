@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   buildGcvHeaderAutoFill,
   buildGcvLineItems,
+  checkGcvRowsCompatibility,
   combineGcvRemark,
   filterEligibleDetailedForGcv,
+  formatGcvPlPackageNo,
   formatIslandSystemPairs,
   generateGcvReceiptNo,
   resolveGcvQuantities,
@@ -77,7 +79,7 @@ test('combineGcvRemark stacks equipment notes on top of user remark without dupl
   assert.equal(combineGcvRemark('یکسان', 'یکسان'), 'یکسان');
 });
 
-test('buildGcvLineItems follows exact MD1EX-FQP02/11-03 column mappings (Rules 1-12..1-20)', () => {
+test('buildGcvLineItems follows updated MD1EX-FQP02/11-03 column mappings (PL/Package No., Package Item, Tag No.)', () => {
   const lines = buildGcvLineItems(
     [
       {
@@ -85,6 +87,7 @@ test('buildGcvLineItems follows exact MD1EX-FQP02/11-03 column mappings (Rules 1
         shipmentNo: 'PK-99',
         packageNo: 'PKG-04',
         itemNo: '12',
+        itemCode: 'MAT-8877',
         description: 'GATE VALVE DN50',
         generalDescription: 'Valve',
         size: 'DN50 PN16',
@@ -98,18 +101,42 @@ test('buildGcvLineItems follows exact MD1EX-FQP02/11-03 column mappings (Rules 1
   );
 
   assert.equal(lines.length, 1);
-  assert.equal(lines[0].shipmentNo, 'PK-99'); // 1-12 PL/Package No.
-  assert.equal(lines[0].packageNo, 'PKG-04'); // 1-13 Package Item
-  assert.equal(lines[0].description, 'GATE VALVE DN50'); // 1-14 Description
-  assert.equal(lines[0].technicalInfo, 'DN50 PN16'); // 1-15 Technical info/Size
-  assert.equal(lines[0].tagNo, '12'); // 1-16 Tag No. = Detailed itemNo
-  assert.equal(lines[0].uom, 'عدد'); // 1-17 UOM
-  assert.equal(lines[0].qty, 8); // 1-18 Quantity = actualQty
-  assert.equal(lines[0].remark, 'توضیح فنی تجهیز\nتحویل مستقیم به خط نصب'); // 1-20 Remark stacked
+  assert.equal(formatGcvPlPackageNo(lines[0].shipmentNo, lines[0].packageNo), 'PK-99 / PKG-04'); // PL/Package No.
+  assert.equal(lines[0].itemNo, '12'); // Package Item = Detailed itemNo
+  assert.equal(lines[0].description, 'GATE VALVE DN50'); // Description
+  assert.equal(lines[0].technicalInfo, 'DN50 PN16'); // Technical info/Size
+  assert.equal(lines[0].tagNo, 'MAT-8877'); // Tag No. = Detailed itemCode
+  assert.equal(lines[0].uom, 'عدد'); // UOM
+  assert.equal(lines[0].qty, 8); // Quantity = actualQty
+  assert.equal(lines[0].remark, 'توضیح فنی تجهیز\nتحویل مستقیم به خط نصب');
   assert.deepEqual(resolveGcvQuantities({ packingQty: 10, actualQty: 8 }), {
     formQty: 8,
     syncDeliveredQty: 10,
   });
+});
+
+test('checkGcvRowsCompatibility enforces identical 7 fields (arrivalDate, billOfLadingNo, system, subSystem, island, supplier, unit)', () => {
+  const general = [
+    { packingListNo: 'PK-1', packageNo: '1', billOfLadingNo: 'BL-10', arrivalDate: '2026-05-01', supplier: 'TUGA' },
+    { packingListNo: 'PK-2', packageNo: '1', billOfLadingNo: 'BL-20', arrivalDate: '2026-05-01', supplier: 'TUGA' },
+  ];
+  const baseRow = {
+    shipmentNo: 'PK-1',
+    packageNo: '1',
+    arrivalDate: '2026-05-01',
+    system: 'GT',
+    subSystem: 'Lube',
+    island: 'Power',
+    supplier: 'TUGA',
+    unit: '1',
+  };
+  assert.equal(checkGcvRowsCompatibility([baseRow, { ...baseRow }], general).compatible, true);
+  const diffRes = checkGcvRowsCompatibility(
+    [baseRow, { ...baseRow, shipmentNo: 'PK-2', unit: '2' }],
+    general,
+  );
+  assert.equal(diffRes.compatible, false);
+  assert.deepEqual(diffRes.mismatchedFields, ['billOfLadingNo', 'unit']);
 });
 
 test('formatIslandSystemPairs and generateGcvReceiptNo avoid duplicates and respect plant code', () => {
