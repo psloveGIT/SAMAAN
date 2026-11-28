@@ -118,6 +118,29 @@ test('buildMivHeaderAutoFill maps exact fields per 1-1, 1-3, 1-5, 1-6, 1-7, 1-8'
 
   const emptyContract = buildMivHeaderAutoFill(sample, { name: 'نکا' });
   assert.equal(emptyContract.contractNo, '');
+
+  // Receiver-only rule: supplier must NOT override missing receiver
+  const supplierOnly = [
+    {
+      id: 'd2',
+      supplier: 'توگا',
+      receiver: '',
+      mivReceiver: '',
+      system: 'GT',
+      island: 'Power',
+      unit: '1',
+    } as DetailedComputed,
+  ];
+  const noReceiverFill = buildMivHeaderAutoFill(supplierOnly, { name: 'نکا' });
+  assert.equal(noReceiverFill.party, '');
+  assert.equal(noReceiverFill.contractorForDocNo, '');
+
+  // Short ASCII patterns must not falsely match inside unrelated words
+  assert.notEqual(resolveContractorAbbreviation('Turbo Compressor Co'), 'TU');
+  assert.notEqual(resolveContractorAbbreviation('Alstom Power'), 'ALA');
+  assert.notEqual(resolveContractorAbbreviation('Komatsu Heavy'), 'OM');
+  assert.equal(resolveContractorAbbreviation('TU'), 'TU');
+  assert.equal(resolveContractorAbbreviation('OM'), 'OM');
 });
 
 test('paginateMivRows splits long item lists into numbered A4 pages', () => {

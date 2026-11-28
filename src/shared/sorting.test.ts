@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from './sorting.ts';
+import {
+  sortDetailedEntries,
+  sortGeneralEntries,
+  sortGeneralEntriesByArrivalDesc,
+  sortTransitEntries,
+} from './sorting.ts';
 import type { DetailedEntry, GeneralEntry, TransitEntry } from './types.ts';
 
 function makeGen(overrides: Partial<GeneralEntry>): GeneralEntry {
@@ -88,4 +93,18 @@ test('sortGeneralEntries sorts 5,000 entries under 200ms', () => {
   sortGeneralEntries(rows);
   const elapsed = performance.now() - start;
   assert.ok(elapsed < 200, `Expected <200ms to sort 5,000 rows, got ${elapsed.toFixed(1)}ms`);
+});
+
+test('sortGeneralEntriesByArrivalDesc sorts newest arrivalDate first and places empty dates last', () => {
+  const rows: GeneralEntry[] = [
+    makeGen({ id: 'old', arrivalDate: '2025-01-10', packingListNo: 'PK-1', packageNo: '1' }),
+    makeGen({ id: 'empty', arrivalDate: '', packingListNo: 'PK-9', packageNo: '1' }),
+    makeGen({ id: 'newest', arrivalDate: '2026-05-20', packingListNo: 'PK-2', packageNo: '1' }),
+    makeGen({ id: 'mid', arrivalDate: '2025-11-05', packingListNo: 'PK-3', packageNo: '1' }),
+  ];
+  const sorted = sortGeneralEntriesByArrivalDesc(rows);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    ['newest', 'mid', 'old', 'empty'],
+  );
 });

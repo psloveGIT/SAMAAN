@@ -72,16 +72,32 @@ export function filterOpenInvitationsForMinutes(
   editingMinuteId?: string | null,
 ): OpiInvitationRecord[] {
   const usedInvNos = new Set<string>();
+  const usedInvIds = new Set<string>();
+  const editingMinute = editingMinuteId
+    ? existingMinutes.find((m) => m.id === editingMinuteId) || null
+    : null;
+  const editingInvId = (editingMinute?.invitationId || '').trim();
+  const editingInvNoKey = normToken(editingMinute?.invitationNo || editingMinute?.minutesNo);
+
   for (const m of existingMinutes) {
     if (editingMinuteId && m.id === editingMinuteId) continue;
+    const invId = (m.invitationId || '').trim();
     const invKey = normToken(m.invitationNo);
     const minKey = normToken(m.minutesNo);
+    if (invId) usedInvIds.add(invId);
     if (invKey) usedInvNos.add(invKey);
     if (minKey) usedInvNos.add(minKey);
   }
   return invitations.filter((inv) => {
     const key = normToken(inv.invitationNo);
     if (!key) return false;
+    if (editingMinute) {
+      if ((editingInvId && inv.id === editingInvId) || (editingInvNoKey && key === editingInvNoKey)) {
+        return true;
+      }
+    }
+    if (inv.status === 'completed') return false;
+    if (usedInvIds.has(inv.id)) return false;
     return !usedInvNos.has(key);
   });
 }
@@ -256,11 +272,30 @@ export interface MerDraftInput {
 }
 
 /**
+ * Computes MER "Received Quantity" (مقدار دریافتی):
+ * - For "مغایرت / آسیب‌دیدگی" (`damaged`): received quantity equals `discrepantQty`
+ *   (the discrepant/damaged units were physically received, not missing).
+ * - For "کسری" (`shortage`): `Math.max(0, packingQty - discrepantQty)`.
+ */
+export function computeMerReceivedQty(
+  packingQty: number,
+  category: MerDiscrepancyCategory,
+  discrepantQty: number,
+): number {
+  const safePkg = Number.isFinite(packingQty) ? Math.max(0, packingQty) : 0;
+  const safeDisc = Number.isFinite(discrepantQty) && discrepantQty >= 0 ? roundQty(discrepantQty) : 0;
+  if (category === 'damaged') {
+    return safeDisc;
+  }
+  return Math.max(0, roundQty(safePkg - safeDisc));
+}
+
+/**
  * Rules 1-12 through 1-21 of MD1EX-FQP02/12-03:
  * Builds official MER report item rows:
  * - Package Quantity (1-17): Detailed packingQty
  * - Discrepant Quantity (1-19): numeric >= 0 entered by user
- * - Received Quantity (1-18): Math.max(0, Package Quantity - Discrepant Quantity)
+ * - Received Quantity (1-18): computeMerReceivedQty(pkgQty, category, discrepantQty)
  * - Discrepancy (1-20): automatically synchronized equal to Discrepant Quantity
  * - Remark (1-21): user remark
  */
@@ -270,7 +305,7 @@ export function buildMerReportItem(input: MerDraftInput): OsdrReportItem {
     : 0;
   const rawDisc = Number(input.discrepantQty);
   const discrepantQty = Number.isFinite(rawDisc) && rawDisc >= 0 ? roundQty(rawDisc) : 0;
-  const receivedQty = Math.max(0, roundQty(pkgQty - discrepantQty));
+  const receivedQty = computeMerReceivedQty(pkgQty, input.category, discrepantQty);
 
   const isShortage = input.category === 'shortage';
   const cleanReason = String(discrepantQty);

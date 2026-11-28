@@ -223,7 +223,6 @@ export type GcvGroupFieldKey =
   | 'arrivalDate'
   | 'billOfLadingNo'
   | 'system'
-  | 'subSystem'
   | 'island'
   | 'supplier'
   | 'unit';
@@ -232,7 +231,6 @@ export const GCV_GROUP_FIELD_LABELS: Record<GcvGroupFieldKey, string> = {
   arrivalDate: 'تاریخ ورود',
   billOfLadingNo: 'شماره بارنامه',
   system: 'سیستم',
-  subSystem: 'ساب سیستم',
   island: 'جزیره',
   supplier: 'تأمین کننده',
   unit: 'واحد',
@@ -309,9 +307,9 @@ export function getGcvRowGroupProfile(
 }
 
 /**
- * Enforces the 7-field identical grouping rule for issuing a single GCV form:
+ * Enforces the 6-field identical grouping rule for issuing a single GCV form:
  * All selected items must share identical `arrivalDate`, `billOfLadingNo`, `system`,
- * `subSystem`, `island`, `supplier`, and `unit`.
+ * `island`, `supplier`, and `unit` (subSystem is intentionally unrestricted).
  */
 export function checkGcvRowsCompatibility(
   rows: ReadonlyArray<
@@ -346,7 +344,6 @@ export function checkGcvRowsCompatibility(
     'arrivalDate',
     'billOfLadingNo',
     'system',
-    'subSystem',
     'island',
     'supplier',
     'unit',

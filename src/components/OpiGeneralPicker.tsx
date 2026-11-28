@@ -8,13 +8,15 @@ import {
   type CustomFieldFilter,
 } from '../shared/customFilters.ts';
 import { compileColFilters, matchesCompiledColFilters } from '../shared/tableQuery.ts';
-import { sortGeneralEntries } from '../shared/sorting.ts';
+import { sortGeneralEntries, sortGeneralEntriesByArrivalDesc } from '../shared/sorting.ts';
 import type { GeneralEntry } from '../shared/types.ts';
 import { ExcelColumnFilter } from './ExcelColumnFilter.tsx';
 import { MultiPackingAndFieldFilter } from './MultiPackingAndFieldFilter.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
+
+export type OpiPickerHideableColumn = 'packageType' | 'purchasePackageNo' | 'island';
 
 interface OpiGeneralPickerProps {
   /** Eligible General Equipment rows (already filtered to exclude rows with opiInvitationNo). */
@@ -35,6 +37,10 @@ interface OpiGeneralPickerProps {
   showSiteEntryStatus?: boolean;
   /** Custom empty-state message when rows array is empty. */
   emptyMessage?: string;
+  /** Default arrivalDate sort direction (newest-to-oldest by default). */
+  defaultArrivalSortDir?: 'desc' | 'asc';
+  /** Optional columns to hide from the picker table. */
+  hiddenColumns?: ReadonlyArray<OpiPickerHideableColumn>;
 }
 
 const FA_COLLATOR = new Intl.Collator('fa', { numeric: true, sensitivity: 'base' });
@@ -49,9 +55,21 @@ export const OpiGeneralPicker: React.FC<OpiGeneralPickerProps> = ({
   testIdPrefix = 'opi-picker',
   showSiteEntryStatus = false,
   emptyMessage,
+  defaultArrivalSortDir = 'desc',
+  hiddenColumns,
 }) => {
   const { prefs, t, formatDate } = useApp();
   const isFa = prefs.language === 'fa';
+  const hiddenSet = useMemo(() => new Set<OpiPickerHideableColumn>(hiddenColumns || []), [hiddenColumns]);
+  const showPackageType = !hiddenSet.has('packageType');
+  const showPurchasePackageNo = !hiddenSet.has('purchasePackageNo');
+  const showIsland = !hiddenSet.has('island');
+  const totalColSpan =
+    8 +
+    (showPackageType ? 1 : 0) +
+    (showPurchasePackageNo ? 1 : 0) +
+    (showIsland ? 1 : 0) +
+    (showSiteEntryStatus ? 1 : 0);
 
   const [q, setQ] = useState('');
   const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
@@ -114,8 +132,10 @@ export const OpiGeneralPicker: React.FC<OpiGeneralPickerProps> = ({
         return FA_COLLATOR.compare(av, bv) * dir;
       });
     }
-    return sortGeneralEntries(matched);
-  }, [rows, q, selectedPackings, customFilters, compiledColFilters, prefs.calendar, sortBy, sortDir]);
+    return defaultArrivalSortDir === 'asc'
+      ? sortGeneralEntries([...matched])
+      : sortGeneralEntriesByArrivalDesc(matched);
+  }, [rows, q, selectedPackings, customFilters, compiledColFilters, prefs.calendar, sortBy, sortDir, defaultArrivalSortDir]);
 
   const pagination = useClientPagination(filteredRows, 25);
   const pageRows = pagination.pageItems;
@@ -278,18 +298,24 @@ export const OpiGeneralPicker: React.FC<OpiGeneralPickerProps> = ({
                 <th className="py-2 px-2.5 text-start whitespace-nowrap">
                   {renderColHeader('itemDescription', t.headers.itemDescription)}
                 </th>
-                <th className="py-2 px-2.5 text-start whitespace-nowrap">
-                  {renderColHeader('packageType', t.headers.packageType)}
-                </th>
+                {showPackageType && (
+                  <th className="py-2 px-2.5 text-start whitespace-nowrap">
+                    {renderColHeader('packageType', t.headers.packageType)}
+                  </th>
+                )}
                 <th className="py-2 px-2.5 text-start whitespace-nowrap">
                   {renderColHeader('supplier', t.headers.supplier)}
                 </th>
-                <th className="py-2 px-2.5 text-start whitespace-nowrap">
-                  {renderColHeader('purchasePackageNo', t.headers.purchasePackageNo)}
-                </th>
-                <th className="py-2 px-2.5 text-start whitespace-nowrap">
-                  {renderColHeader('island', t.headers.island)}
-                </th>
+                {showPurchasePackageNo && (
+                  <th className="py-2 px-2.5 text-start whitespace-nowrap">
+                    {renderColHeader('purchasePackageNo', t.headers.purchasePackageNo)}
+                  </th>
+                )}
+                {showIsland && (
+                  <th className="py-2 px-2.5 text-start whitespace-nowrap">
+                    {renderColHeader('island', t.headers.island)}
+                  </th>
+                )}
                 <th className="py-2 px-2.5 text-start whitespace-nowrap">
                   {renderColHeader('system', t.headers.system)}
                 </th>
@@ -309,13 +335,13 @@ export const OpiGeneralPicker: React.FC<OpiGeneralPickerProps> = ({
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={showSiteEntryStatus ? 12 : 11} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={totalColSpan} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={showSiteEntryStatus ? 12 : 11} className="py-10 text-center text-[var(--text-muted)]">
+                  <td colSpan={totalColSpan} className="py-10 text-center text-[var(--text-muted)]">
                     {rows.length === 0
                       ? emptyMessage ||
                         (isFa
@@ -360,18 +386,24 @@ export const OpiGeneralPicker: React.FC<OpiGeneralPickerProps> = ({
                       >
                         {row.itemDescription || '—'}
                       </td>
-                      <td className="py-2 px-2.5 whitespace-nowrap bidi-plaintext">
-                        {row.packageType || '—'}
-                      </td>
+                      {showPackageType && (
+                        <td className="py-2 px-2.5 whitespace-nowrap bidi-plaintext">
+                          {row.packageType || '—'}
+                        </td>
+                      )}
                       <td className="py-2 px-2.5 whitespace-nowrap bidi-plaintext">
                         {row.supplier || '—'}
                       </td>
-                      <td className="py-2 px-2.5 font-mono tabular-nums whitespace-nowrap" dir="ltr">
-                        {row.purchasePackageNo || '—'}
-                      </td>
-                      <td className="py-2 px-2.5 whitespace-nowrap bidi-plaintext">
-                        {row.island || '—'}
-                      </td>
+                      {showPurchasePackageNo && (
+                        <td className="py-2 px-2.5 font-mono tabular-nums whitespace-nowrap" dir="ltr">
+                          {row.purchasePackageNo || '—'}
+                        </td>
+                      )}
+                      {showIsland && (
+                        <td className="py-2 px-2.5 whitespace-nowrap bidi-plaintext">
+                          {row.island || '—'}
+                        </td>
+                      )}
                       <td className="py-2 px-2.5 whitespace-nowrap bidi-plaintext">
                         {row.system || '—'}
                       </td>

@@ -115,7 +115,7 @@ test('buildGcvLineItems follows updated MD1EX-FQP02/11-03 column mappings (PL/Pa
   });
 });
 
-test('checkGcvRowsCompatibility enforces identical 7 fields (arrivalDate, billOfLadingNo, system, subSystem, island, supplier, unit)', () => {
+test('checkGcvRowsCompatibility enforces identical 6 fields (arrivalDate, billOfLadingNo, system, island, supplier, unit) and allows differing subSystem', () => {
   const general = [
     { packingListNo: 'PK-1', packageNo: '1', billOfLadingNo: 'BL-10', arrivalDate: '2026-05-01', supplier: 'TUGA' },
     { packingListNo: 'PK-2', packageNo: '1', billOfLadingNo: 'BL-20', arrivalDate: '2026-05-01', supplier: 'TUGA' },
@@ -130,7 +130,7 @@ test('checkGcvRowsCompatibility enforces identical 7 fields (arrivalDate, billOf
     supplier: 'TUGA',
     unit: '1',
   };
-  assert.equal(checkGcvRowsCompatibility([baseRow, { ...baseRow }], general).compatible, true);
+  assert.equal(checkGcvRowsCompatibility([baseRow, { ...baseRow, subSystem: 'Cooling' }], general).compatible, true);
   const diffRes = checkGcvRowsCompatibility(
     [baseRow, { ...baseRow, shipmentNo: 'PK-2', unit: '2' }],
     general,

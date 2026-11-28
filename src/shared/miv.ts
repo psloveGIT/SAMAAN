@@ -227,11 +227,19 @@ export function resolveContractorAbbreviation(contractorName: string | undefined
   if (!norm) return 'MD1';
 
   const compact = norm.replace(/\s+/g, '');
+  const tokens = new Set(norm.split(' ').filter(Boolean));
 
   for (const rule of CONTRACTOR_ABBR_RULES) {
     for (const pat of rule.patterns) {
       const pNorm = normalizeContractorKey(pat);
       const pCompact = pNorm.replace(/\s+/g, '');
+      const isShortAscii = /^[a-z0-9\s]+$/.test(pNorm) && pCompact.length <= 4;
+      if (isShortAscii) {
+        if (norm === pNorm || compact === pCompact || tokens.has(pNorm)) {
+          return rule.code;
+        }
+        continue;
+      }
       if (
         norm === pNorm ||
         compact === pCompact ||
@@ -459,10 +467,10 @@ export function buildMivHeaderAutoFill(
   // Rule 1-3: strictly use contractRef ("کد / شماره قرارداد مرجع"); leave empty if absent
   const contractNo = (activeProject?.contractRef || '').trim();
   // Rule 1-5: پیمانکار/درخواست کننده = "تحویل گیرنده" (receiver) from Detailed Equipment
-  const party = uniqueNonEmpty(selectedItems.map((it) => it.receiver));
+  const party = uniqueNonEmpty(selectedItems.map((it) => it.receiver || it.mivReceiver));
   const contractorForDocNo =
     selectedItems.map((it) => (it.receiver || '').trim()).find(Boolean) ||
-    selectedItems.map((it) => (it.supplier || '').trim()).find(Boolean) ||
+    selectedItems.map((it) => (it.mivReceiver || '').trim()).find(Boolean) ||
     '';
 
   // Rule 1-6: سیستم/جزیره = "@/@" (system/island)

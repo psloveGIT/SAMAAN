@@ -994,7 +994,14 @@ export async function handleStaticApiRequest<T>(url: string, options: RequestIni
       currentUserObj?.fullName || currentUserObj?.username || 'system',
     );
   }
-  return result;
+  if (result === null || result === undefined || typeof result !== 'object') {
+    return result;
+  }
+  try {
+    return structuredClone(result);
+  } catch {
+    return JSON.parse(JSON.stringify(result)) as T;
+  }
 }
 
 async function handleStaticApiRequestInner<T>(

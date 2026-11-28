@@ -95,6 +95,46 @@ export function sortGeneralEntries(rows: GeneralEntry[]): GeneralEntry[] {
 }
 
 /**
+ * Sorts General entries from newest Arrival Date to oldest Arrival Date
+ * (empty arrival dates always placed at the end).
+ * Tie-breakers: Packing List No. (natural asc), Package No. (natural asc), createdAt (desc), id.
+ */
+export function sortGeneralEntriesByArrivalDesc(rows: GeneralEntry[]): GeneralEntry[] {
+  if (rows.length <= 1) return rows;
+  const keyed = rows.map((row) => {
+    const pk = normVal(row.packingListNo);
+    const pkg = normVal(row.packageNo);
+    return {
+      row,
+      date: normVal(row.arrivalDate),
+      pk,
+      pkNum: toFinitePureNum(pk),
+      pkg,
+      pkgNum: toFinitePureNum(pkg),
+      createdAt: row.createdAt || '',
+      id: row.id || '',
+    };
+  });
+  keyed.sort((a, b) => {
+    if (a.date !== b.date) {
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return a.date > b.date ? -1 : 1;
+    }
+
+    const byPacking = comparePreNormalizedNatural(a.pk, a.pkNum, b.pk, b.pkNum);
+    if (byPacking !== 0) return byPacking;
+
+    const byPkg = comparePreNormalizedNatural(a.pkg, a.pkgNum, b.pkg, b.pkgNum);
+    if (byPkg !== 0) return byPkg;
+
+    if (a.createdAt !== b.createdAt) return a.createdAt > b.createdAt ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  return keyed.map((k) => k.row);
+}
+
+/**
  * Sorts Detailed entries deterministically:
  * 1. Arrival Date (تاریخ ورود)
  * 2. Shipment / Packing List No. (شماره پکینگ / محموله)

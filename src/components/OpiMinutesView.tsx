@@ -23,6 +23,7 @@ import { formatHeaderProjectTitle, stripProjectWord } from '../shared/opiInvitat
 import {
   buildMerReportItem,
   buildOpiMinutesAutoFill,
+  computeMerReceivedQty,
   filterOpenInvitationsForMinutes,
   findDetailedRowsForInvitation,
   generateMerReportNo,
@@ -598,21 +599,17 @@ export const OfficialOpiMinutesSheet: React.FC<OfficialOpiMinutesSheetProps> = (
             >
               <MomCheckSquare checked={record.resultStatus === 'has_discrepancy'} />
               <span>
-                محموله‌ی بالا دارای مغایرت، برابر فرم{' '}
-                <span
-                  dir="ltr"
-                  className="tabular-nums"
-                  style={{
-                    fontWeight: 700,
-                    display: 'inline-block',
-                    minWidth: '105px',
-                    textAlign: 'center',
-                    borderBottom: record.merNo ? '1px dotted #000000' : 'none',
-                  }}
-                >
-                  {record.merNo?.trim() || '........................'}
-                </span>{' '}
-                <span dir="ltr">MER No.</span> می‌باشد.
+                {record.merNo?.trim() ? (
+                  <>
+                    محموله‌ی بالا دارای مغایرت، برابر فرم{' '}
+                    <span dir="ltr" className="tabular-nums" style={{ fontWeight: 700 }}>
+                      MER No. {record.merNo.trim()}
+                    </span>{' '}
+                    است.
+                  </>
+                ) : (
+                  'محموله‌ی بالا دارای مغایرت است.'
+                )}
               </span>
             </div>
           </div>
@@ -1344,6 +1341,19 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
 
   // Edit / Delete / Print / Scan state
   const [editingMinutes, setEditingMinutes] = useState<OpiMinutesRecord | null>(null);
+  const [editingStandaloneMer, setEditingStandaloneMer] = useState<OsdrReportRecord | null>(null);
+  const [standaloneMerReportNo, setStandaloneMerReportNo] = useState('');
+  const [standaloneMerDate, setStandaloneMerDate] = useState('');
+  const [standaloneMerNotes, setStandaloneMerNotes] = useState('');
+  const [standaloneMerItems, setStandaloneMerItems] = useState<
+    Array<{
+      item: OsdrReportItem;
+      category: MerDiscrepancyCategory;
+      discrepantQty: string;
+      remarks: string;
+    }>
+  >([]);
+  const [savingStandaloneMer, setSavingStandaloneMer] = useState(false);
   const [deleteMinutesTarget, setDeleteMinutesTarget] = useState<OpiMinutesRecord | null>(null);
   const [deleteMerTarget, setDeleteMerTarget] = useState<OsdrReportRecord | null>(null);
   const [printBundle, setPrintBundle] = useState<{
@@ -1615,6 +1625,141 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const findLinkedMinutesForMer = useCallback(
+    (rep: OsdrReportRecord): OpiMinutesRecord | null => {
+      const minutes = data?.minutes || [];
+      if (rep.opiMinutesId) {
+        const byId = minutes.find((m) => m.id === rep.opiMinutesId);
+        if (byId) return byId;
+      }
+      const byLinkedMerId = minutes.find((m) => m.linkedMerId === rep.id);
+      if (byLinkedMerId) return byLinkedMerId;
+      if (rep.reportNo) {
+        const byMerNo = minutes.find((m) => m.merNo === rep.reportNo);
+        if (byMerNo) return byMerNo;
+      }
+      if (rep.opiMinutesNo) {
+        const byMinNo = minutes.find((m) => m.minutesNo === rep.opiMinutesNo);
+        if (byMinNo) return byMinNo;
+      }
+      return null;
+    },
+    [data?.minutes],
+  );
+
+  const startEditMer = (rep: OsdrReportRecord) => {
+    const linkedMin = findLinkedMinutesForMer(rep);
+    if (linkedMin) {
+      startEditMinutes(linkedMin);
+      return;
+    }
+    setEditingStandaloneMer(rep);
+    setStandaloneMerReportNo(rep.reportNo);
+    setStandaloneMerDate(rep.date);
+    setStandaloneMerNotes(rep.notes || '');
+    setStandaloneMerItems(
+      (rep.items || []).map((item) => {
+        const cat: MerDiscrepancyCategory =
+          item.discrepancyType === 'shortage' ? 'shortage' : 'damaged';
+        const disc =
+          item.discrepantQty !== undefined
+            ? item.discrepantQty
+            : cat === 'shortage'
+              ? item.shortage
+              : item.damagedQty;
+        return {
+          item,
+          category: cat,
+          discrepantQty: String(disc ?? 0),
+          remarks: item.remarks || '',
+        };
+      }),
+    );
+  };
+
+  const handleSaveStandaloneMer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStandaloneMer) return;
+    const cleanNo = standaloneMerReportNo.trim();
+    if (!cleanNo) {
+      notify(
+        'warning',
+        isFa ? 'شماره گزارش مغایرت (MER) الزامی است.' : 'MER Report No. is required.',
+      );
+      return;
+    }
+    const nextItems: OsdrReportItem[] = [];
+    for (const row of standaloneMerItems) {
+      const parsedQty = Number(row.discrepantQty === '' ? 0 : row.discrepantQty);
+      if (!Number.isFinite(parsedQty) || parsedQty < 0) {
+        notify(
+          'warning',
+          isFa
+            ? `مقدار مغایرت/کسری برای آیتم ${row.item.itemNo || row.item.packageNo} باید عددی و غیرمنفی باشد.`
+            : `Discrepant Quantity for item ${row.item.itemNo || row.item.packageNo} must be a non-negative number.`,
+        );
+        return;
+      }
+      const pkgQty = Number(row.item.packingQty ?? 0);
+      const safeDisc = Math.max(0, Math.round((parsedQty + Number.EPSILON) * 1000) / 1000);
+      const recvQty = computeMerReceivedQty(pkgQty, row.category, safeDisc);
+      nextItems.push({
+        ...row.item,
+        actualQty: recvQty,
+        shortage: row.category === 'shortage' ? safeDisc : 0,
+        surplus: 0,
+        damagedQty: row.category === 'damaged' ? safeDisc : 0,
+        discrepantQty: safeDisc,
+        discrepancyType: row.category,
+        discrepancyReason: String(safeDisc),
+        remarks: row.remarks.trim(),
+      });
+    }
+
+    setSavingStandaloneMer(true);
+    try {
+      const res = await apiRequest<{ report: OsdrReportRecord }>(
+        `/api/osdr/${editingStandaloneMer.id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            reportNo: cleanNo,
+            date: standaloneMerDate || editingStandaloneMer.date,
+            packingListNo: editingStandaloneMer.packingListNo,
+            items: nextItems,
+            notes: standaloneMerNotes.trim(),
+          }),
+        },
+      );
+      notify(
+        'success',
+        isFa
+          ? `گزارش مغایرت شماره ${res.report.reportNo} ویرایش و همگام‌سازی شد.`
+          : `MER Report ${res.report.reportNo} updated and synced.`,
+      );
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              osdrReports: (prev.osdrReports || []).map((r) =>
+                r.id === res.report.id ? res.report : r,
+              ),
+            }
+          : prev,
+      );
+      setEditingStandaloneMer(null);
+      setPrintBundleWasUndone(false);
+      setPrintBundle({ minutes: null, mer: res.report });
+      triggerAutoSnapshot(`Edit MER ${res.report.reportNo}`);
+      onDataChanged();
+      await loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setSavingStandaloneMer(false);
+    }
+  };
+
   const toggleMerRow = (row: DetailedComputed) => {
     setMerDrafts((prev) => {
       const existing = prev[row.id];
@@ -1774,6 +1919,23 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               : `OPI Minutes ${res.record.minutesNo} updated.`,
         );
         resetForm();
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                minutes: (prev.minutes || []).map((m) =>
+                  m.id === res.record.id ? res.record : m,
+                ),
+                osdrReports: res.merReport
+                  ? (prev.osdrReports || []).some((r) => r.id === res.merReport!.id)
+                    ? (prev.osdrReports || []).map((r) =>
+                        r.id === res.merReport!.id ? res.merReport! : r,
+                      )
+                    : [res.merReport, ...(prev.osdrReports || [])]
+                  : prev.osdrReports || [],
+              }
+            : prev,
+        );
         setPrintBundleWasUndone(false);
         setPrintBundle({ minutes: res.record, mer: res.merReport || null });
         triggerAutoSnapshot(`Edit OPI Minutes ${res.record.minutesNo}`);
@@ -1798,6 +1960,29 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
               : `OPI Minutes ${res.record.minutesNo} issued and synced to Detailed Equipment.`,
         );
         resetForm();
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                minutes: [
+                  res.record,
+                  ...(prev.minutes || []).filter((m) => m.id !== res.record.id),
+                ],
+                osdrReports: res.merReport
+                  ? [
+                      res.merReport,
+                      ...(prev.osdrReports || []).filter((r) => r.id !== res.merReport!.id),
+                    ]
+                  : prev.osdrReports || [],
+                invitations: (prev.invitations || []).map((inv) =>
+                  inv.id === selectedInvitation.id ||
+                  inv.invitationNo === selectedInvitation.invitationNo
+                    ? { ...inv, status: 'completed' as const }
+                    : inv,
+                ),
+              }
+            : prev,
+        );
         setPrintBundleWasUndone(false);
         setPrintBundle({ minutes: res.record, mer: res.merReport || null });
         triggerAutoSnapshot(
@@ -2342,7 +2527,7 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                         <span>
                           {isFa
-                            ? 'محموله‌ی بالا دارای مغایرت، برابر فرم MER No. می‌باشد.'
+                            ? 'محموله‌ی بالا دارای مغایرت است.'
                             : 'Shipment has discrepancy — issue linked MER report'}
                         </span>
                       </div>
@@ -2440,9 +2625,11 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                             const checked = Boolean(draft?.checked);
                             const pkgQty = Number(row.packingQty ?? 0);
                             const discNum = Number(draft?.discrepantQty === '' ? 0 : draft?.discrepantQty ?? 0);
-                            const recvQty = Number.isFinite(discNum) && discNum >= 0
-                              ? Math.max(0, Math.round((pkgQty - discNum + Number.EPSILON) * 1000) / 1000)
-                              : pkgQty;
+                            const recvQty = computeMerReceivedQty(
+                              pkgQty,
+                              draft?.category || 'shortage',
+                              Number.isFinite(discNum) && discNum >= 0 ? discNum : 0,
+                            );
 
                             return (
                               <tr
@@ -2915,6 +3102,17 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
                               {canEdit && (
                                 <button
                                   type="button"
+                                  data-testid={`mer-edit-btn-${rep.reportNo}`}
+                                  onClick={() => startEditMer(rep)}
+                                  title={isFa ? 'ویرایش گزارش MER' : 'Edit MER Report'}
+                                  className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-500/10"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {canEdit && (
+                                <button
+                                  type="button"
                                   data-testid={`mer-delete-btn-${rep.reportNo}`}
                                   onClick={() => setDeleteMerTarget(rep)}
                                   title={isFa ? 'حذف گزارش MER' : 'Delete MER'}
@@ -3121,6 +3319,197 @@ export const OpiMinutesView: React.FC<OpiMinutesViewProps> = ({
         onCancel={() => setDeleteMerTarget(null)}
         onConfirm={handleConfirmDeleteMer}
       />
+
+      {/* Standalone MER Edit Modal (for MER reports without a linked OPI Minutes) */}
+      {editingStandaloneMer && (
+        <div
+          data-testid="standalone-mer-edit-modal"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 print:hidden"
+        >
+          <form
+            onSubmit={handleSaveStandaloneMer}
+            className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-2xl max-h-[92vh] flex flex-col overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-amber-600 shrink-0" />
+                <h3 className="text-sm font-bold text-[var(--text-primary)]">
+                  {isFa
+                    ? `ویرایش گزارش مغایرت (MER) — ${editingStandaloneMer.reportNo}`
+                    : `Edit MER Report — ${editingStandaloneMer.reportNo}`}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingStandaloneMer(null)}
+                className="p-1.5 rounded-lg hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'شماره گزارش مغایرت (MER) *' : 'MER Report No. *'}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    dir="ltr"
+                    data-testid="standalone-mer-no-input"
+                    value={standaloneMerReportNo}
+                    onChange={(e) => setStandaloneMerReportNo(e.target.value)}
+                    className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono font-bold tabular-nums text-left"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-1">
+                    {isFa ? 'تاریخ گزارش' : 'Report Date'}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={standaloneMerDate}
+                    onChange={(e) => setStandaloneMerDate(e.target.value)}
+                    className="w-full h-9 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono tabular-nums text-left"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
+                <table className="w-full text-xs border-collapse">
+                  <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
+                    <tr>
+                      <th className="p-2 text-start">{isFa ? 'کد / آیتم' : 'Item / Tag'}</th>
+                      <th className="p-2 text-start">{isFa ? 'شرح کالا' : 'Description'}</th>
+                      <th className="p-2 text-center">{isFa ? 'مقدار پکینگ' : 'Pkg Qty'}</th>
+                      <th className="p-2 text-start">{isFa ? 'نوع مغایرت' : 'Category'}</th>
+                      <th className="p-2 text-center">{isFa ? 'تعداد مغایرت/کسری' : 'Discrepant Qty'}</th>
+                      <th className="p-2 text-center">{isFa ? 'مقدار دریافتی' : 'Received Qty'}</th>
+                      <th className="p-2 text-start">{isFa ? 'توضیحات' : 'Remark'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {standaloneMerItems.map((entry, idx) => {
+                      const pkgQty = Number(entry.item.packingQty ?? 0);
+                      const discNum = Number(entry.discrepantQty === '' ? 0 : entry.discrepantQty);
+                      const recvQty = computeMerReceivedQty(
+                        pkgQty,
+                        entry.category,
+                        Number.isFinite(discNum) && discNum >= 0 ? discNum : 0,
+                      );
+                      return (
+                        <tr key={`${entry.item.detailedId}-${idx}`}>
+                          <td className="p-2 font-mono tabular-nums" dir="ltr">
+                            {entry.item.itemNo || entry.item.itemCode || '-'}
+                          </td>
+                          <td className="p-2 bidi-plaintext max-w-[200px] truncate">
+                            {entry.item.description || '-'}
+                          </td>
+                          <td className="p-2 text-center font-mono tabular-nums" dir="ltr">
+                            {pkgQty}
+                          </td>
+                          <td className="p-2">
+                            <select
+                              value={entry.category}
+                              onChange={(e) => {
+                                const nextCat = e.target.value as MerDiscrepancyCategory;
+                                setStandaloneMerItems((prev) =>
+                                  prev.map((it, i) =>
+                                    i === idx ? { ...it, category: nextCat } : it,
+                                  ),
+                                );
+                              }}
+                              className="h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                            >
+                              <option value="shortage">{isFa ? 'کسری (Shortage)' : 'Shortage'}</option>
+                              <option value="damaged">
+                                {isFa ? 'مغایرت / آسیب‌دیدگی' : 'Discrepancy / Damaged'}
+                              </option>
+                            </select>
+                          </td>
+                          <td className="p-2 text-center">
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              dir="ltr"
+                              value={entry.discrepantQty}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setStandaloneMerItems((prev) =>
+                                  prev.map((it, i) =>
+                                    i === idx ? { ...it, discrepantQty: val } : it,
+                                  ),
+                                );
+                              }}
+                              className="w-20 h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-mono text-center tabular-nums"
+                            />
+                          </td>
+                          <td className="p-2 text-center font-mono font-bold tabular-nums" dir="ltr">
+                            {recvQty}
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              value={entry.remarks}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setStandaloneMerItems((prev) =>
+                                  prev.map((it, i) => (i === idx ? { ...it, remarks: val } : it)),
+                                );
+                              }}
+                              className="w-full h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-1">
+                  {isFa ? 'سایر توضیحات' : 'Notes'}
+                </label>
+                <textarea
+                  rows={2}
+                  value={standaloneMerNotes}
+                  onChange={(e) => setStandaloneMerNotes(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setEditingStandaloneMer(null)}
+                className="h-9 px-3.5 rounded-xl border border-[var(--border-subtle)] text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]"
+              >
+                {isFa ? 'انصراف' : 'Cancel'}
+              </button>
+              <button
+                type="submit"
+                disabled={savingStandaloneMer}
+                data-testid="standalone-mer-save-btn"
+                className="h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold"
+              >
+                {savingStandaloneMer
+                  ? isFa
+                    ? 'در حال ذخیره...'
+                    : 'Saving...'
+                  : isFa
+                    ? 'ذخیره ویرایش گزارش MER'
+                    : 'Save MER Changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Minutes History Print Report */}
       <PrintReportModal

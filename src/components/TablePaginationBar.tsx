@@ -21,7 +21,7 @@ export function useClientPagination<T>(items: T[], defaultPageSize = 50) {
   const pageItems = useMemo(() => {
     const start = (safePage - 1) * pageSize;
     return items.slice(start, start + pageSize);
-  }, [items, safePage, pageSize]);
+  }, [items, items.length, safePage, pageSize]);
 
   const handlePageSizeChange = (nextSize: number) => {
     setPageSize(nextSize);

@@ -899,7 +899,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
         notify(
           'warning',
           isFa
-            ? `اقلام یک رسید مصرف باید در فیلدهای تاریخ ورود، شماره بارنامه، سیستم، ساب سیستم، جزیره، تأمین‌کننده و واحد یکسان باشند. مغایرت در: ${check.mismatchedLabelsFa.join('، ')}`
+            ? `اقلام یک رسید مصرف باید در فیلدهای تاریخ ورود، شماره بارنامه، سیستم، جزیره، تأمین‌کننده و واحد یکسان باشند. مغایرت در: ${check.mismatchedLabelsFa.join('، ')}`
             : `All GCV items must share identical group fields. Mismatch in: ${check.mismatchedLabelsFa.join(', ')}`,
         );
         return;
@@ -1421,7 +1421,6 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                   <span>{isFa ? 'تاریخ ورود:' : 'Arrival:'} <strong dir="ltr">{activeGroupProfile.arrivalDate ? formatDate(activeGroupProfile.arrivalDate) : '—'}</strong></span>
                   <span>{isFa ? 'بارنامه:' : 'Waybill:'} <strong dir="ltr">{activeGroupProfile.billOfLadingNo || '—'}</strong></span>
                   <span>{isFa ? 'سیستم:' : 'System:'} <strong>{activeGroupProfile.system || '—'}</strong></span>
-                  <span>{isFa ? 'ساب سیستم:' : 'Sub-System:'} <strong>{activeGroupProfile.subSystem || '—'}</strong></span>
                   <span>{isFa ? 'جزیره:' : 'Island:'} <strong>{activeGroupProfile.island || '—'}</strong></span>
                   <span>{isFa ? 'تأمین‌کننده:' : 'Supplier:'} <strong>{activeGroupProfile.supplier || '—'}</strong></span>
                   <span>{isFa ? 'واحد:' : 'Unit:'} <strong>{activeGroupProfile.unit || '—'}</strong></span>
@@ -1432,6 +1431,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               <SubstitutionItemPicker
                 noGcvOnly={true}
                 allowGcvReceiptNo={editingDoc?.receiptNo || ''}
+                hideMerColumn={true}
                 refreshSignal={refreshSignal}
                 selectedMap={selectedMap}
                 onToggleRow={handleToggleRow}

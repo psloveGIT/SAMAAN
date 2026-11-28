@@ -38,6 +38,8 @@ interface SubstitutionItemPickerProps {
   onTogglePage: (rows: DetailedComputed[], allSelected: boolean) => void;
   /** Test id prefix to distinguish Section A vs Section B pickers. */
   testIdPrefix: string;
+  /** When true (and not stockOnly), hides the MER / OSDR No. column. */
+  hideMerColumn?: boolean;
 }
 
 export const SubstitutionItemPicker: React.FC<SubstitutionItemPickerProps> = ({
@@ -50,9 +52,12 @@ export const SubstitutionItemPicker: React.FC<SubstitutionItemPickerProps> = ({
   onToggleRow,
   onTogglePage,
   testIdPrefix,
+  hideMerColumn = false,
 }) => {
   const { prefs, t, notify } = useApp();
   const isFa = prefs.language === 'fa';
+  const showMerColumn = !stockOnly && !hideMerColumn;
+  const totalColSpan = stockOnly ? 11 : showMerColumn ? 10 : 9;
 
   const [q, setQ] = useState('');
   const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
@@ -285,9 +290,11 @@ export const SubstitutionItemPicker: React.FC<SubstitutionItemPickerProps> = ({
                     <th className="px-2.5 py-2 text-start whitespace-nowrap">
                       {renderColHeader('receiver', isFa ? 'تحویل‌گیرنده / پیمانکار نصب' : 'Receiver / Installer')}
                     </th>
-                    <th className="px-2.5 py-2 text-start whitespace-nowrap">
-                      {renderColHeader('merNo', isFa ? 'شماره کسری/مغایرت (MER)' : 'MER / OSDR No.')}
-                    </th>
+                    {showMerColumn && (
+                      <th className="px-2.5 py-2 text-start whitespace-nowrap">
+                        {renderColHeader('merNo', isFa ? 'شماره کسری/مغایرت (MER)' : 'MER / OSDR No.')}
+                      </th>
+                    )}
                   </>
                 )}
               </tr>
@@ -295,13 +302,13 @@ export const SubstitutionItemPicker: React.FC<SubstitutionItemPickerProps> = ({
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={stockOnly ? 11 : 10} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={totalColSpan} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={stockOnly ? 11 : 10} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={totalColSpan} className="py-8 text-center text-[var(--text-muted)]">
                     {stockOnly
                       ? isFa
                         ? 'کالایی با موجودی فعال (کارفرما یا پیمانکار) با این فیلتر یافت نشد.'
@@ -374,9 +381,11 @@ export const SubstitutionItemPicker: React.FC<SubstitutionItemPickerProps> = ({
                           <td className="px-2.5 py-2 text-[var(--text-secondary)] whitespace-nowrap">
                             {item.receiver || '—'}
                           </td>
-                          <td dir="ltr" className="px-2.5 py-2 font-mono text-[var(--text-secondary)] whitespace-nowrap">
-                            {item.merNo || '—'}
-                          </td>
+                          {showMerColumn && (
+                            <td dir="ltr" className="px-2.5 py-2 font-mono text-[var(--text-secondary)] whitespace-nowrap">
+                              {item.merNo || '—'}
+                            </td>
+                          )}
                         </>
                       )}
                     </tr>

@@ -4,6 +4,7 @@ import {
   buildDetailedMerDescription,
   buildMerReportItem,
   buildOpiMinutesAutoFill,
+  computeMerReceivedQty,
   filterOpenInvitationsForMinutes,
   findDetailedRowsForInvitation,
   generateMerReportNo,
@@ -41,22 +42,28 @@ function makeInvitation(overrides: Partial<OpiInvitationRecord> = {}): OpiInvita
   };
 }
 
-test('filterOpenInvitationsForMinutes hides invitations that already have an OPI Minute issued', () => {
+test('filterOpenInvitationsForMinutes hides invitations that already have an OPI Minute issued or completed status', () => {
   const inv1 = makeInvitation({ id: 'inv-1', invitationNo: 'NK-TU-0001' });
   const inv2 = makeInvitation({ id: 'inv-2', invitationNo: 'NK-TU-0002' });
+  const inv3 = makeInvitation({ id: 'inv-3', invitationNo: 'NK-TU-0003', status: 'completed' });
   const min1 = {
     id: 'min-1',
+    invitationId: 'inv-1',
     minutesNo: 'NK-TU-0001',
     invitationNo: 'NK-TU-0001',
   } as OpiMinutesRecord;
 
   assert.deepEqual(
-    filterOpenInvitationsForMinutes([inv1, inv2], [min1]).map((i) => i.id),
+    filterOpenInvitationsForMinutes([inv1, inv2, inv3], [min1]).map((i) => i.id),
     ['inv-2'],
   );
-  // Editing min1 keeps inv1 available
+  // Editing min1 keeps inv1 available even if completed
   assert.deepEqual(
-    filterOpenInvitationsForMinutes([inv1, inv2], [min1], 'min-1').map((i) => i.id),
+    filterOpenInvitationsForMinutes(
+      [{ ...inv1, status: 'completed' }, inv2, inv3],
+      [min1],
+      'min-1',
+    ).map((i) => i.id),
     ['inv-1', 'inv-2'],
   );
 });
@@ -115,7 +122,7 @@ test('generateMerReportNo uses <PLANT>-<SUPPLIER>-#### and skips already-used nu
   assert.equal(parsMer, 'NK-PS-0001');
 });
 
-test('buildMerReportItem computes Received Quantity = Package Quantity - Discrepant Quantity and supports 0', () => {
+test('buildMerReportItem computes Received Quantity = Package - Discrepant for shortage and = Discrepant for damaged', () => {
   const shortageItem = buildMerReportItem({
     detailed: {
       id: 'd1',
@@ -141,7 +148,7 @@ test('buildMerReportItem computes Received Quantity = Package Quantity - Discrep
   assert.equal(shortageItem.damagedQty, 0);
   assert.equal(buildDetailedMerDescription(shortageItem), 'کسری (3) - پیگیری از سازنده');
 
-  const zeroDisc = buildMerReportItem({
+  const damagedAll = buildMerReportItem({
     detailed: {
       id: 'd2',
       shipmentNo: 'PK-100',
@@ -154,13 +161,18 @@ test('buildMerReportItem computes Received Quantity = Package Quantity - Discrep
       packingQty: 4,
     },
     category: 'damaged',
-    discrepantQty: 0,
-    discrepancyText: 'مغایرت ظاهری بدون کسری',
+    discrepantQty: 4,
+    discrepancyText: 'آسیب‌دیدگی کامل بسته',
   });
-  assert.equal(zeroDisc.actualQty, 4);
-  assert.equal(zeroDisc.discrepantQty, 0);
-  assert.equal(zeroDisc.discrepancyReason, '0');
-  assert.equal(zeroDisc.damagedQty, 0);
+  assert.equal(damagedAll.actualQty, 4);
+  assert.equal(damagedAll.discrepantQty, 4);
+  assert.equal(damagedAll.discrepancyReason, '4');
+  assert.equal(damagedAll.damagedQty, 4);
+  assert.equal(damagedAll.shortage, 0);
+
+  assert.equal(computeMerReceivedQty(10, 'shortage', 3), 7);
+  assert.equal(computeMerReceivedQty(4, 'damaged', 4), 4);
+  assert.equal(computeMerReceivedQty(4, 'damaged', 2), 2);
 });
 
 test('findDetailedRowsForInvitation matches Detailed rows across all invitation packings', () => {

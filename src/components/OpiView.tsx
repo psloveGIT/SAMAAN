@@ -1341,7 +1341,7 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                     </button>
                   </div>
 
-                  {/* General Equipment Picker (Eligible rows without opiInvitationNo) */}
+                  {/* General Equipment Picker (Eligible rows without opiInvitationNo, newest arrival first) */}
                   <OpiGeneralPicker
                     rows={eligibleGeneralRows}
                     loading={loading}
@@ -1350,6 +1350,8 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                     onToggleBatch={handleToggleBatch}
                     refreshSignal={refreshSignal + pickerRefresh}
                     testIdPrefix="opi-picker"
+                    defaultArrivalSortDir="desc"
+                    hiddenColumns={['purchasePackageNo', 'island', 'packageType']}
                   />
                 </div>
               ) : (
@@ -1635,26 +1637,52 @@ export const OpiView: React.FC<OpiViewProps> = ({ refreshSignal, onDataChanged }
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
+                        <label
+                          htmlFor="opi-schedule-location-input"
+                          className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1"
+                        >
                           {isFa ? 'مکان OPI *' : 'OPI Location *'}
                         </label>
-                        <select
-                          required
-                          data-testid="opi-schedule-location"
-                          value={location}
-                          onChange={(e) => setLocation(e.target.value)}
-                          className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
-                        >
-                          <option value="">{isFa ? '— انتخاب مکان OPI —' : '— Select OPI Location —'}</option>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            id="opi-schedule-location-input"
+                            type="text"
+                            required
+                            list="opi-schedule-location-presets"
+                            data-testid="opi-schedule-location"
+                            value={location}
+                            onChange={(e) => setLocation(e.target.value)}
+                            placeholder={
+                              isFa
+                                ? 'انتخاب از گزینه‌های پیش‌فرض یا تایپ مکان دلخواه...'
+                                : 'Choose preset or type custom location...'
+                            }
+                            className="flex-1 min-w-0 h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
+                          />
+                          <select
+                            aria-label={isFa ? 'انتخاب سریع مکان پیش‌فرض OPI' : 'Quick select preset OPI location'}
+                            data-testid="opi-schedule-location-preset-select"
+                            value={
+                              (OPI_FIXED_LOCATIONS as readonly string[]).includes(location) ? location : ''
+                            }
+                            onChange={(e) => {
+                              if (e.target.value) setLocation(e.target.value);
+                            }}
+                            className="h-9 max-w-[135px] px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                          >
+                            <option value="">{isFa ? 'پیش‌فرض‌ها...' : 'Presets...'}</option>
+                            {OPI_FIXED_LOCATIONS.map((loc) => (
+                              <option key={loc} value={loc}>
+                                {loc}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <datalist id="opi-schedule-location-presets">
                           {OPI_FIXED_LOCATIONS.map((loc) => (
-                            <option key={loc} value={loc}>
-                              {loc}
-                            </option>
+                            <option key={loc} value={loc} />
                           ))}
-                          {location && !(OPI_FIXED_LOCATIONS as readonly string[]).includes(location) && (
-                            <option value={location}>{location}</option>
-                          )}
-                        </select>
+                        </datalist>
                       </div>
                     </div>
                   </div>

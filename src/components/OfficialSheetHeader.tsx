@@ -257,6 +257,7 @@ interface BuiltInSheetHeaderRowProps {
   leftMetaNoPadding?: boolean;
   logoHeight?: number;
   compact?: boolean;
+  balanceCenter?: boolean;
 }
 
 export const BuiltInSheetHeaderRow: React.FC<BuiltInSheetHeaderRowProps> = ({
@@ -268,6 +269,7 @@ export const BuiltInSheetHeaderRow: React.FC<BuiltInSheetHeaderRowProps> = ({
   leftMetaNoPadding = false,
   logoHeight = 54,
   compact = false,
+  balanceCenter = false,
 }) => {
   const layout = design.headerLayout;
   const borderCol = design.accentColor || '#000000';
@@ -465,7 +467,7 @@ export const BuiltInSheetHeaderRow: React.FC<BuiltInSheetHeaderRowProps> = ({
             </div>
           )}
           {centerBlock}
-          {leftMetaSlot && (
+          {leftMetaSlot ? (
             <div
               style={{
                 minWidth: '175px',
@@ -479,7 +481,15 @@ export const BuiltInSheetHeaderRow: React.FC<BuiltInSheetHeaderRowProps> = ({
             >
               {leftMetaSlot}
             </div>
-          )}
+          ) : balanceCenter && primaryCell ? (
+            <div
+              aria-hidden="true"
+              style={{
+                width: '125px',
+                flexShrink: 0,
+              }}
+            />
+          ) : null}
         </>
       )}
     </div>

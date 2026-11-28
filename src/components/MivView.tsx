@@ -775,9 +775,13 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   const [docNoTouched, setDocNoTouched] = useState(false);
   const [date, setDate] = useState(getTodayIso());
   const [party, setParty] = useState('');
+  const [partyTouched, setPartyTouched] = useState(false);
   const [islandSystem, setIslandSystem] = useState('');
+  const [islandSystemTouched, setIslandSystemTouched] = useState(false);
   const [unit, setUnit] = useState('');
+  const [unitTouched, setUnitTouched] = useState(false);
   const [receiptNo, setReceiptNo] = useState('');
+  const [receiptNoTouched, setReceiptNoTouched] = useState(false);
   const [storekeeper, setStorekeeper] = useState('');
   const [equipmentSupply, setEquipmentSupply] = useState('');
   const [techOffice, setTechOffice] = useState('');
@@ -962,20 +966,35 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
   );
 
   // Auto-computed suggested MIV document number per Rule 1-22: <PLANT>-<CONTRACTOR>-MIV-####
-  const existingDocNos = useMemo(
-    () =>
-      documents
-        .filter((d) => !editingDoc || d.id !== editingDoc.id)
-        .map((d) => d.docNo),
-    [documents, editingDoc],
-  );
+  const existingDocNos = useMemo(() => {
+    const out: string[] = [];
+    for (const d of documents) {
+      if (editingDoc && d.id === editingDoc.id) continue;
+      if (d.docNo) out.push(d.docNo);
+    }
+    const editNoNorm = (editingDoc?.docNo || '').trim().toUpperCase();
+    for (const d of Object.values(detailedCache)) {
+      for (const rawField of [d.mivContractorNo, d.mivMapnaNo]) {
+        if (!rawField) continue;
+        for (const tok of String(rawField).split(/[\n,،;؛|]+/)) {
+          const clean = tok.trim();
+          if (!clean) continue;
+          if (editNoNorm && clean.toUpperCase() === editNoNorm) continue;
+          out.push(clean);
+        }
+      }
+    }
+    return out;
+  }, [documents, detailedCache, editingDoc]);
 
   const autoHeader = useMemo(
     () => buildMivHeaderAutoFill(selectedItems, activeProject),
     [selectedItems, activeProject],
   );
 
-  const contractorForCode = party.trim() || autoHeader.contractorForDocNo;
+  const contractorForCode = partyTouched
+    ? party.trim() || autoHeader.contractorForDocNo
+    : autoHeader.contractorForDocNo || party.trim();
   const contractorAbbrPreview = useMemo(
     () => resolveContractorAbbreviation(contractorForCode),
     [contractorForCode],
@@ -1010,13 +1029,16 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
 
     const filled = buildMivHeaderAutoFill(selectedItems, activeProject);
     if (!editingDoc) {
-      if (!party.trim() && filled.party) setParty(filled.party);
-      if (!islandSystem.trim() && filled.islandSystem) setIslandSystem(filled.islandSystem);
-      if (!unit.trim() && filled.unit) setUnit(filled.unit);
-      if (!receiptNo.trim() && filled.receiptNo) setReceiptNo(filled.receiptNo);
+      if (!partyTouched) setParty(filled.party);
+      if (!islandSystemTouched) setIslandSystem(filled.islandSystem);
+      if (!unitTouched) setUnit(filled.unit);
+      if (!receiptNoTouched) setReceiptNo(filled.receiptNo);
       if (!docNoTouched) {
+        const effectiveContractor = partyTouched
+          ? party.trim() || filled.contractorForDocNo
+          : filled.contractorForDocNo;
         const nextNo = generateMivDocumentNo(
-          (party.trim() || filled.contractorForDocNo),
+          effectiveContractor,
           existingDocNos,
           buildMivPlantDocConfig(activeProject),
         );
@@ -1085,9 +1107,13 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     setDocNoTouched(false);
     setDate(getTodayIso());
     setParty('');
+    setPartyTouched(false);
     setIslandSystem('');
+    setIslandSystemTouched(false);
     setUnit('');
+    setUnitTouched(false);
     setReceiptNo('');
+    setReceiptNoTouched(false);
     setStorekeeper('');
     setEquipmentSupply('');
     setTechOffice('');
@@ -1169,9 +1195,13 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
     setDocNoTouched(true);
     setDate(doc.date || getTodayIso());
     setParty(doc.party || '');
+    setPartyTouched(true);
     setIslandSystem(doc.islandSystem || '');
+    setIslandSystemTouched(true);
     setUnit(doc.unit || '');
+    setUnitTouched(true);
     setReceiptNo(doc.receiptNo || '');
+    setReceiptNoTouched(true);
     setStorekeeper(doc.storekeeper || '');
     setEquipmentSupply(doc.equipmentSupply || '');
     setTechOffice(doc.techOffice || '');
@@ -1737,7 +1767,10 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                         data-testid="miv-party-input"
                         type="text"
                         value={party}
-                        onChange={(e) => setParty(e.target.value)}
+                        onChange={(e) => {
+                          setParty(e.target.value);
+                          setPartyTouched(true);
+                        }}
                         className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                       />
                     </div>
@@ -1754,7 +1787,10 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                         data-testid="miv-system-island-input"
                         type="text"
                         value={islandSystem}
-                        onChange={(e) => setIslandSystem(e.target.value)}
+                        onChange={(e) => {
+                          setIslandSystem(e.target.value);
+                          setIslandSystemTouched(true);
+                        }}
                         className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                       />
                     </div>
@@ -1771,7 +1807,10 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                         data-testid="miv-unit-input"
                         type="text"
                         value={unit}
-                        onChange={(e) => setUnit(e.target.value)}
+                        onChange={(e) => {
+                          setUnit(e.target.value);
+                          setUnitTouched(true);
+                        }}
                         className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs text-[var(--text-primary)] bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                       />
                     </div>
@@ -1789,7 +1828,10 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
                         type="text"
                         dir="ltr"
                         value={receiptNo}
-                        onChange={(e) => setReceiptNo(e.target.value)}
+                        onChange={(e) => {
+                          setReceiptNo(e.target.value);
+                          setReceiptNoTouched(true);
+                        }}
                         className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
                       />
                     </div>
@@ -2354,8 +2396,13 @@ export const MivView: React.FC<MivViewProps> = ({ refreshSignal, onDataChanged }
               </div>
             )}
 
-            <div className="p-4 sm:p-6 overflow-auto bg-slate-200/75 dark:bg-slate-900/70">
-              <div className={printDocWasUndone ? 'opacity-50 pointer-events-none' : ''}>
+            <div className="flex-1 overflow-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-900">
+              <div
+                data-testid="miv-preview-white-frame"
+                className={`max-w-[1120px] mx-auto bg-white p-5 rounded-xl shadow-md ${
+                  printDocWasUndone ? 'opacity-50 pointer-events-none' : ''
+                }`}
+              >
                 <OfficialMivSheet
                   doc={printDoc}
                   detailedItems={detailedItemsList}

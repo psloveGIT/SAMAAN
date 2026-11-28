@@ -205,6 +205,7 @@ export const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
           employer={activeEmployer}
           design={effectiveDesign}
           projectTitle={projectHeaderTitle}
+          balanceCenter
           extraCenterSlot={
             <div
               style={{
@@ -231,23 +232,29 @@ export const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
         {/* Release Note No & Arrival Notice No Strip */}
         <div
           dir="ltr"
+          data-testid="site-entry-sheet-notice-strip"
           style={{
             display: 'grid',
             gridTemplateColumns: '1fr 1fr',
             borderBottom: '1.5px solid #000000',
-            padding: '4px 10px',
             fontSize: '10.2px',
             fontWeight: 700,
-            alignItems: 'center',
+            alignItems: 'stretch',
           }}
         >
-          <div style={{ textAlign: 'left' }}>
+          <div
+            style={{
+              textAlign: 'left',
+              padding: '4px 10px',
+              borderRight: '1px solid #000000',
+            }}
+          >
             <span>Release Note No: </span>
             <span className="tabular-nums" style={{ fontWeight: 700 }}>
               {record.releaseNoteNo || ''}
             </span>
           </div>
-          <div style={{ textAlign: 'left' }}>
+          <div style={{ textAlign: 'left', padding: '4px 10px' }}>
             <span>Arrival Notice No: </span>
             <span className="tabular-nums" style={{ fontWeight: 700 }}>
               {record.minutesNo || ''}
@@ -259,31 +266,33 @@ export const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
         <div
           style={{
             borderBottom: '1.5px solid #000000',
-            padding: '6px 10px 7px',
             fontSize: '9.8px',
-            lineHeight: 1.9,
+            lineHeight: 1.85,
             textAlign: 'right',
           }}
         >
-          {/* Row 1: Requester/Contractor | Contract No | Arrival Date */}
+          {/* Row 1: Requester/Contractor | Contract No | Arrival Date (full-width bottom divider) */}
           <div
+            data-testid="site-entry-sheet-row1"
             style={{
               display: 'grid',
               gridTemplateColumns: '1.65fr 1fr 0.85fr',
               gap: '8px',
+              padding: '4px 10px',
+              borderBottom: '1px solid #000000',
             }}
           >
-            <div>
+            <div style={{ textAlign: 'right' }}>
               <span style={{ fontWeight: 700 }}>نام پیمانکار/درخواست کننده: </span>
               <span className="bidi-plaintext">{record.supplier || ''}</span>
             </div>
-            <div>
+            <div style={{ textAlign: 'right' }}>
               <span style={{ fontWeight: 700 }}>شماره قرارداد: </span>
               <span dir="ltr" className="tabular-nums">
                 {displayContractNo}
               </span>
             </div>
-            <div>
+            <div style={{ textAlign: 'right' }}>
               <span style={{ fontWeight: 700 }}>تاریخ: </span>
               <span dir="ltr" className="tabular-nums">
                 {displayDate ? formatDate(displayDate) : ''}
@@ -291,17 +300,29 @@ export const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             </div>
           </div>
 
-          {/* Row 2: Goods Usage | Unit / System / Island */}
+          {/* Row 2: Goods Usage | Unit | System | Island (bordered right-aligned cells) */}
           <div
+            data-testid="site-entry-sheet-row2"
             style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '10px',
+              display: 'grid',
+              gridTemplateColumns: '2.25fr 0.7fr 0.85fr 0.8fr',
+              borderBottom: '1px solid #000000',
+              textAlign: 'right',
+              alignItems: 'stretch',
             }}
           >
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-start',
+                gap: '8px',
+                flexWrap: 'wrap',
+                padding: '4px 10px',
+                borderLeft: '1px solid #000000',
+                textAlign: 'right',
+              }}
+            >
               <span style={{ fontWeight: 700 }}>کاربرد کالا:</span>
               <span data-testid="site-entry-usage-project" data-checked={goodsUsage === 'project' ? 'true' : 'false'}>
                 <FormCheckSquare checked={goodsUsage === 'project'} label="کالای پروژه" />
@@ -313,66 +334,83 @@ export const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
                 <FormCheckSquare checked={goodsUsage === 'general'} label="مصرف عمومی" />
               </span>
             </div>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '18px' }}>
-              <span>
-                <strong style={{ fontWeight: 700 }}>واحد: </strong>
-                <span className="bidi-plaintext">{record.unit || ''}</span>
-              </span>
-              <span>
-                <strong style={{ fontWeight: 700 }}>سیستم: </strong>
-                <span className="bidi-plaintext">{record.system || ''}</span>
-              </span>
-              <span>
-                <strong style={{ fontWeight: 700 }}>جزیره: </strong>
-                <span className="bidi-plaintext">{record.island || ''}</span>
-              </span>
+            <div
+              style={{
+                padding: '4px 8px',
+                borderLeft: '1px solid #000000',
+                textAlign: 'right',
+              }}
+            >
+              <strong style={{ fontWeight: 700 }}>واحد: </strong>
+              <span className="bidi-plaintext">{record.unit || ''}</span>
+            </div>
+            <div
+              style={{
+                padding: '4px 8px',
+                borderLeft: '1px solid #000000',
+                textAlign: 'right',
+              }}
+            >
+              <strong style={{ fontWeight: 700 }}>سیستم: </strong>
+              <span className="bidi-plaintext">{record.system || ''}</span>
+            </div>
+            <div
+              style={{
+                padding: '4px 8px',
+                textAlign: 'right',
+              }}
+            >
+              <strong style={{ fontWeight: 700 }}>جزیره: </strong>
+              <span className="bidi-plaintext">{record.island || ''}</span>
             </div>
           </div>
 
-          {/* Row 3: Origin | Arrival Date | Carrier | Unloading Location */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '0.85fr 0.95fr 1.05fr 1.35fr',
-              gap: '8px',
-            }}
-          >
-            <div>
-              <span style={{ fontWeight: 700 }}>مبدا: </span>
-              <span className="bidi-plaintext">{record.origin || ''}</span>
+          {/* Row 3, 4 & 5: Origin | Arrival Date | Carrier | Unloading Location + Vehicle details */}
+          <div style={{ padding: '4px 10px 6px' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '0.85fr 0.95fr 1.05fr 1.35fr',
+                gap: '8px',
+              }}
+            >
+              <div>
+                <span style={{ fontWeight: 700 }}>مبدا: </span>
+                <span className="bidi-plaintext">{record.origin || ''}</span>
+              </div>
+              <div>
+                <span style={{ fontWeight: 700 }}>تاریخ ورود: </span>
+                <span dir="ltr" className="tabular-nums">
+                  {displayDate ? formatDate(displayDate) : ''}
+                </span>
+              </div>
+              <div>
+                <span style={{ fontWeight: 700 }}>شرکت حمل کننده: </span>
+                <span className="bidi-plaintext">{record.carrierCompany || ''}</span>
+              </div>
+              <div>
+                <span style={{ fontWeight: 700 }}>محل تردد / تخلیه و بارگیری: </span>
+                <span className="bidi-plaintext">{record.trafficLocation || ''}</span>
+              </div>
             </div>
-            <div>
-              <span style={{ fontWeight: 700 }}>تاریخ ورود: </span>
-              <span dir="ltr" className="tabular-nums">
-                {displayDate ? formatDate(displayDate) : ''}
+
+            {/* Row 4 & 5: Vehicle model appears in BOTH vehicle specification slots (Rule 1-9) */}
+            <div style={{ marginTop: '2px' }}>
+              <span style={{ fontWeight: 700 }}>مشخصات وسیله نقلیه حامل کالا / تجهیز: </span>
+              <span className="bidi-plaintext" style={{ fontWeight: 700 }}>
+                {record.vehicleType || ''}
               </span>
             </div>
             <div>
-              <span style={{ fontWeight: 700 }}>شرکت حمل کننده: </span>
-              <span className="bidi-plaintext">{record.carrierCompany || ''}</span>
+              <span>وسیله نقلیه </span>
+              <DotValue value={record.vehicleType} dots=". . . . . . . . . . . . . . ." />
+              <span> به شماره پلاک </span>
+              <DotValue value={record.vehicleNo} dots=". . . . . . . . . . . . ." />
+              <span> با شماره بارنامه </span>
+              <DotValue value={record.waybillNo} dots=". . . . . . . . . . . . ." />
+              <span> همراه با راننده آن آقای </span>
+              <DotValue value={record.driverName} dots=". . . . . . . . . . . . . . ." />
             </div>
-            <div>
-              <span style={{ fontWeight: 700 }}>محل تردد / تخلیه و بارگیری: </span>
-              <span className="bidi-plaintext">{record.trafficLocation || ''}</span>
-            </div>
-          </div>
-
-          {/* Row 4 & 5: Vehicle model appears in BOTH vehicle specification slots (Rule 1-9) */}
-          <div style={{ marginTop: '2px' }}>
-            <span style={{ fontWeight: 700 }}>مشخصات وسیله نقلیه حامل کالا / تجهیز: </span>
-            <span className="bidi-plaintext" style={{ fontWeight: 700 }}>
-              {record.vehicleType || ''}
-            </span>
-          </div>
-          <div>
-            <span>وسیله نقلیه </span>
-            <DotValue value={record.vehicleType} dots=". . . . . . . . . . . . . . ." />
-            <span> به شماره پلاک </span>
-            <DotValue value={record.vehicleNo} dots=". . . . . . . . . . . . ." />
-            <span> با شماره بارنامه </span>
-            <DotValue value={record.waybillNo} dots=". . . . . . . . . . . . ." />
-            <span> همراه با راننده آن آقای </span>
-            <DotValue value={record.driverName} dots=". . . . . . . . . . . . . . ." />
           </div>
         </div>
 
@@ -640,29 +678,29 @@ export const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
           </tbody>
         </table>
 
-        {/* Storekeeper / Contractor PM / Notes Strip */}
+        {/* Storekeeper / Contractor PM / Notes Strip (separated by vertical dividers) */}
         <div
+          data-testid="site-entry-sheet-bottom-strip"
           style={{
             borderTop: '1.5px solid #000000',
             borderBottom: '1.5px solid #000000',
-            padding: '5px 10px',
-            minHeight: '46px',
+            minHeight: '48px',
             display: 'grid',
             gridTemplateColumns: '1fr 1.25fr 1.25fr',
-            gap: '10px',
             fontSize: '9.5px',
             textAlign: 'right',
+            alignItems: 'stretch',
           }}
         >
-          <div>
+          <div style={{ padding: '5px 8px', borderLeft: '1px solid #000000' }}>
             <div style={{ fontWeight: 700 }}>انباردار / پیمانکار:</div>
             <div style={{ marginTop: '3px' }}>{record.warehouseKeeper || ''}</div>
           </div>
-          <div>
+          <div style={{ padding: '5px 8px', borderLeft: '1px solid #000000' }}>
             <div style={{ fontWeight: 700 }}>مدیر پروژه / سرپرست کارگاه پیمانکار:</div>
             <div style={{ marginTop: '3px' }}>{record.contractorManager || ''}</div>
           </div>
-          <div>
+          <div style={{ padding: '5px 8px' }}>
             <div style={{ fontWeight: 700 }}>توضیحات:</div>
             <div className="bidi-plaintext" style={{ marginTop: '3px' }}>
               {record.notes || ''}
@@ -868,8 +906,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   const [data, setData] = useState<SiteEntryApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Step 1: General row selection + status filter
-  const [entryFilterMode, setEntryFilterMode] = useState<'all' | 'without_minutes' | 'with_minutes'>('all');
+  // Step 1: General row selection (strictly rows without Site Entry Minutes)
   const [selectedMap, setSelectedMap] = useState<Record<string, GeneralEntry>>({});
 
   // Step 2: Goods usage, remarks, optional header overrides
@@ -949,14 +986,22 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   const minutesPagination = useClientPagination(filteredHistory, 25);
 
   const pickerRows = useMemo(() => {
-    if (entryFilterMode === 'without_minutes') {
-      return generalEntries.filter((g) => !hasSiteEntryMinutes(g) || Boolean(selectedMap[g.id]));
-    }
-    if (entryFilterMode === 'with_minutes') {
-      return generalEntries.filter((g) => hasSiteEntryMinutes(g) || Boolean(selectedMap[g.id]));
-    }
-    return generalEntries;
-  }, [generalEntries, entryFilterMode, selectedMap]);
+    const editingGeneralIds = new Set(editingRecord?.generalIds || []);
+    const editingMinutesNoNorm = (editingRecord?.minutesNo || '').trim().toUpperCase();
+    return generalEntries.filter((g) => {
+      if (!hasSiteEntryMinutes(g)) return true;
+      if (editingRecord) {
+        if (editingGeneralIds.has(g.id)) return true;
+        if (
+          editingMinutesNoNorm &&
+          (g.mapnaEntryMinutesNo || '').trim().toUpperCase() === editingMinutesNoNorm
+        ) {
+          return true;
+        }
+      }
+      return false;
+    });
+  }, [generalEntries, editingRecord]);
 
   const missingCount = useMemo(
     () => generalEntries.filter((g) => !hasSiteEntryMinutes(g)).length,
@@ -1370,51 +1415,14 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
             </div>
           </div>
 
-          {/* STEP 1: Filter & Select General Equipment Rows */}
+          {/* STEP 1: Filter & Select General Equipment Rows (Only Missing Entry Minutes, Newest Arrival First) */}
           {step === 1 && (
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setEntryFilterMode('all')}
-                    className={`h-8 px-3 rounded-lg border font-medium transition-colors ${
-                      entryFilterMode === 'all'
-                        ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                    }`}
-                  >
-                    {isFa
-                      ? `همه ردیف‌ها (${generalEntries.length.toLocaleString('fa-IR')})`
-                      : `All Rows (${generalEntries.length})`}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEntryFilterMode('without_minutes')}
-                    data-testid="site-entry-filter-missing"
-                    className={`h-8 px-3 rounded-lg border font-medium transition-colors ${
-                      entryFilterMode === 'without_minutes'
-                        ? 'border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-300'
-                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                    }`}
-                  >
-                    {isFa
-                      ? `فاقد صورتجلسه ورود (${missingCount.toLocaleString('fa-IR')})`
-                      : `Missing Entry Minutes (${missingCount})`}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEntryFilterMode('with_minutes')}
-                    className={`h-8 px-3 rounded-lg border font-medium transition-colors ${
-                      entryFilterMode === 'with_minutes'
-                        ? 'border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:text-emerald-300'
-                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                    }`}
-                  >
-                    {isFa
-                      ? `دارای صورتجلسه (${(generalEntries.length - missingCount).toLocaleString('fa-IR')})`
-                      : `Issued (${generalEntries.length - missingCount})`}
-                  </button>
+                <div className="text-xs font-medium text-[var(--text-secondary)]">
+                  {isFa
+                    ? `ردیف‌های فاقد صورتجلسه ورود: ${missingCount.toLocaleString('fa-IR')} ردیف (مرتب‌شده از جدیدترین تاریخ ورود)`
+                    : `Rows without Site Entry Minutes: ${missingCount} (sorted newest arrival first)`}
                 </div>
 
                 <button
@@ -1441,11 +1449,11 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
                 onToggleBatch={handleToggleBatch}
                 refreshSignal={refreshSignal}
                 testIdPrefix="site-entry-picker"
-                showSiteEntryStatus
+                defaultArrivalSortDir="desc"
                 emptyMessage={
                   isFa
-                    ? 'هیچ ردیفی در جدول ثبت کلی تجهیزات با این وضعیت یافت نشد.'
-                    : 'No General Equipment rows match this filter.'
+                    ? 'همه ردیف‌های جدول ثبت کلی تجهیزات دارای صورتجلسه ورود هستند.'
+                    : 'All General Equipment rows already have Site Entry Minutes.'
                 }
               />
             </div>
