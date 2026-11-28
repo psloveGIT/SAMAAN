@@ -16,11 +16,30 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.20.0';
-export const APP_BUILD_ID = '2026.06.08-1';
-export const APP_RELEASED_AT = '2026-06-08';
+export const APP_VERSION = '2.20.1';
+export const APP_BUILD_ID = '2026.06.09-1';
+export const APP_RELEASED_AT = '2026-06-09';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.20.1',
+    buildId: '2026.06.09-1',
+    releasedAt: '2026-06-09',
+    titleFa: 'رفع جامع باگ‌های دعوتنامه و صورتجلسه OPI، گزارش مغایرت MER، صورتجلسه ورود کالا، رسید مصرف مستقیم، حواله انبار و فیلتر محافظت چشم',
+    titleEn: 'Comprehensive Bug Fixes Across OPI Invitation, Site Entry Minutes, OPI Minutes & MER, GCV, MIV & Light-Mode Eye Protection',
+    changesFa: [
+      'دعوتنامه گشایش بسته‌ها: مرتب‌سازی جدول انتخاب از جدیدترین به قدیمی‌ترین تاریخ ورود، پنهان‌سازی ستون‌های «شماره بسته خرید»، «جزیره» و «نوع بسته‌بندی»، و افزودن امکان تایپ دلخواه در کنار انتخاب‌های پیش‌فرض برای فیلد «مکان OPI»',
+      'صورتجلسه ورود کالا (MD1EX-FQP02/15-01): مرتب‌سازی جدول از جدیدترین به قدیمی‌ترین تاریخ ورود، نمایش صرفاً ردیف‌های فاقد صورتجلسه ورود و حذف دکمه‌های فیلتر اضافی بالای صفحه، وسط‌چینی کامل سربرگ فرم و افزودن خطوط جداکننده دقیق میان Release Note/Arrival Notice، ردیف‌های اطلاعات سربرگ (با راست‌چینی کاربرد کالا، واحد، سیستم و جزیره) و کادر امضای انباردار، مدیر پروژه و توضیحات',
+      'صورتجلسه گشایش و گزارش مغایرت (MD1EX-FQP02/06-03 و MER): حذف نقطه‌چین‌های بخش مغایرت و قرارگیری مرتب شماره MER کنار متن، رفع کامل باگ نمایش ردیف‌های سابقه صورتجلسه و MER در حالت پیش‌فرض، حذف فوری ردیف‌های صادرشده از مرحله اول بدون نیاز به جابه‌جایی صفحه، افزودن دکمه ویرایش به سابقه گزارش مغایرت و اصلاح محاسبه «مقدار دریافتی» در حالت «مغایرت / آسیب‌دیدگی» برابر با «تعداد مغایرت/کسری»',
+      'رسید مصرف مستقیم (GCV)، حواله انبار (MIV) و محافظت چشم: حذف ستون MER از جدول انتخاب رسید مصرف و حذف قید یکسان‌بودن «ساب سیستم»، تثبیت شماره‌گذاری پیمانکاری حواله انبار صرفاً بر اساس «تحویل گیرنده» و افزودن کادر سفید استاندارد در پیش‌نمایش چاپ حواله (مشابه رسید مصرف)، و رفع کارکرد فیلتر نور آبی محافظت چشم در حالت روز',
+    ],
+    changesEn: [
+      'OPI Invitation: Sorted picker table newest-to-oldest by arrival date, hid Purchase Package No., Island, and Package Type columns, and allowed free-text custom entry alongside default presets in OPI Location',
+      'Site Entry Minutes (MD1EX-FQP02/15-01): Sorted picker newest-to-oldest, restricted picker strictly to rows without Site Entry Minutes while removing redundant top filter buttons, horizontally centered the sheet header block, and added crisp vertical/horizontal dividers across Release Note / Arrival Notice, right-aligned Goods Usage / Unit / System / Island cells, and the bottom Storekeeper / Contractor PM / Notes strip',
+      'OPI Minutes & MER (MD1EX-FQP02/06-03 & MER): Removed dotted lines in the discrepancy clause and placed MER No. cleanly inline, fixed invisible default History rows for both OPI Minutes and MER tables, ensured issued invitations disappear immediately from Step 1 without navigating away, added an Edit button and edit workflow to MER History, and fixed Damaged MER Received Qty to equal Discrepant Qty instead of 0',
+      'GCV, MIV & Eye Protection: Hid the MER column and removed the identical Sub-System constraint in GCV, hardened MIV contractor-coded numbering strictly from Receiver and wrapped MIV Print Preview in the standard white card frame matching GCV, and fixed the blue-light Eye Protection filter in Light Mode',
+    ],
+  },
   {
     version: '2.20.0',
     buildId: '2026.06.08-1',
