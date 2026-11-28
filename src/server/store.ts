@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { Pool } from 'pg';
 import {
   DEFAULT_EMPLOYER_ID,
   ensureDefaultEmployers,
@@ -50,6 +51,27 @@ import { sortDetailedEntries, sortGeneralEntries, sortTransitEntries } from '../
 import { registerCategoryTokens, sanitizeCategoryStore } from '../shared/categoryCascade.ts';
 import { WarehouseHistoryManager, type HistoryStatus } from '../shared/undoHistory.ts';
 import type { StoredUser } from './auth.ts';
+import {
+  DEFAULT_SEED_PROJECTS,
+  ensureAuthSecretInDb,
+  getPool,
+  isDefaultProjectId,
+  resolveStorageMode,
+  runMigrations,
+  seedDefaultEmployersAndProjects,
+  withTransaction,
+  type StorageMode,
+} from './db.ts';
+import { extractAttachmentsInRecord } from './fileStorage.ts';
+import {
+  ALL_PROJECT_COLLECTIONS,
+  migrateJsonToPostgres,
+  type ProjectCollectionName,
+} from './migrateJsonToPostgres.ts';
+
+export { ALL_PROJECT_COLLECTIONS, type ProjectCollectionName };
+
+export const VALID_COLLECTION_SET = new Set<string>(ALL_PROJECT_COLLECTIONS);
 
 export interface PersistedDatabase {
   version: number;
@@ -73,6 +95,14 @@ export interface PersistedDatabase {
   materialEstimates: MaterialEstimateRecord[];
   periodicInspections: PeriodicInspectionRecord[];
   customFormSubmissions: CustomFormSubmission[];
+}
+
+export interface PostgresRecordRow {
+  collection_name: string;
+  record_id: string;
+  data: unknown;
+  version: number;
+  deleted_at: string | Date | null;
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -104,10 +134,10 @@ export function createEmptyCategories(): CategoryStore {
   };
 }
 
-function createEmptyDb(): PersistedDatabase {
+export function createEmptyDb(sessionSecret?: string): PersistedDatabase {
   return {
     version: 2,
-    sessionSecret: crypto.randomBytes(32).toString('hex'),
+    sessionSecret: sessionSecret || crypto.randomBytes(32).toString('hex'),
     users: [],
     general: [],
     detailed: [],
@@ -134,6 +164,129 @@ export function normKey(v: string | undefined | null): string {
   return (v || '').trim();
 }
 
+export function makeRecordKey(collectionName: string, recordId: string): string {
+  return `${collectionName}:${recordId}`;
+}
+
+function normalizeLoadedDatabase(
+  parsed: Partial<PersistedDatabase>,
+  fallbackSecret?: string,
+): PersistedDatabase {
+  const empty = createEmptyDb(fallbackSecret);
+  const mergedCategories: CategoryStore = {
+    ...createEmptyCategories(),
+    ...(parsed.categories || {}),
+    transitStatus: getTransitStatusOptions(parsed.categories?.transitStatus),
+  };
+  const detailedList: DetailedEntry[] = (Array.isArray(parsed.detailed) ? parsed.detailed : []).map((d) => ({
+    ...d,
+    countingUnit: normalizeCountingUnitToFa(d.countingUnit),
+  }));
+  const transitList: TransitEntry[] = (Array.isArray(parsed.transit) ? parsed.transit : []).map((t) => ({
+    ...t,
+    overallStatus: normalizeTransitStatus(t.overallStatus, mergedCategories.transitStatus),
+  }));
+  const materialEstimatesList: MaterialEstimateRecord[] = (
+    Array.isArray(parsed.materialEstimates) ? parsed.materialEstimates : []
+  ).map((m) => ({
+    ...m,
+    countingUnit: normalizeCountingUnitToFa(m.countingUnit),
+  }));
+
+  return {
+    version: parsed.version || 2,
+    sessionSecret: parsed.sessionSecret || empty.sessionSecret,
+    users: Array.isArray(parsed.users) ? parsed.users : [],
+    general: Array.isArray(parsed.general) ? parsed.general : [],
+    detailed: detailedList,
+    transit: transitList,
+    packingMeta: parsed.packingMeta || {},
+    categories: mergedCategories,
+    auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
+    trash: Array.isArray(parsed.trash) ? parsed.trash : [],
+    opiInvitations: Array.isArray(parsed.opiInvitations) ? parsed.opiInvitations : [],
+    siteEntryMinutes: Array.isArray(parsed.siteEntryMinutes) ? parsed.siteEntryMinutes : [],
+    opiMinutes: Array.isArray(parsed.opiMinutes) ? parsed.opiMinutes : [],
+    osdrReports: Array.isArray(parsed.osdrReports) ? parsed.osdrReports : [],
+    substitutions: Array.isArray(parsed.substitutions) ? parsed.substitutions : [],
+    gcvDocuments: Array.isArray(parsed.gcvDocuments) ? parsed.gcvDocuments : [],
+    mivDocuments: Array.isArray(parsed.mivDocuments) ? parsed.mivDocuments : [],
+    bmrDocuments: Array.isArray(parsed.bmrDocuments) ? parsed.bmrDocuments : [],
+    materialEstimates: materialEstimatesList,
+    periodicInspections: Array.isArray(parsed.periodicInspections) ? parsed.periodicInspections : [],
+    customFormSubmissions: Array.isArray(parsed.customFormSubmissions) ? parsed.customFormSubmissions : [],
+  };
+}
+
+interface RecordSnapshotItem {
+  collectionName: ProjectCollectionName;
+  recordId: string;
+  json: string;
+}
+
+function collectCurrentRecordMap(
+  projectId: string,
+  db: PersistedDatabase,
+  extractInlineFiles: boolean,
+): Map<string, RecordSnapshotItem> {
+  const out = new Map<string, RecordSnapshotItem>();
+
+  const processRecord = (
+    collectionName: ProjectCollectionName,
+    recordId: string,
+    recordValue: unknown,
+  ) => {
+    if (extractInlineFiles && recordValue && typeof recordValue === 'object') {
+      extractAttachmentsInRecord(projectId, recordValue, {
+        onError: (err, fieldPath) => {
+          console.warn(
+            `[store] Skipped extracting invalid attachment at ${projectId}/${collectionName}/${recordId}.${fieldPath}:`,
+            err,
+          );
+        },
+      });
+    }
+    const key = makeRecordKey(collectionName, recordId);
+    out.set(key, {
+      collectionName,
+      recordId,
+      json: JSON.stringify(recordValue),
+    });
+  };
+
+  for (const collectionName of ALL_PROJECT_COLLECTIONS) {
+    if (collectionName === 'categories') {
+      processRecord('categories', 'singleton', db.categories);
+      continue;
+    }
+
+    if (collectionName === 'packingMeta') {
+      const metaObj = db.packingMeta || {};
+      for (const packingKey of Object.keys(metaObj)) {
+        const cleanKey = packingKey.trim();
+        if (!cleanKey) continue;
+        processRecord('packingMeta', cleanKey, metaObj[packingKey]);
+      }
+      continue;
+    }
+
+    const arr = db[collectionName] as unknown as Array<Record<string, unknown>>;
+    if (!Array.isArray(arr)) continue;
+    for (let i = 0; i < arr.length; i += 1) {
+      const item = arr[i];
+      if (!item || typeof item !== 'object') continue;
+      let recordId = typeof item.id === 'string' && item.id.trim() ? item.id.trim() : '';
+      if (!recordId) {
+        recordId = crypto.randomUUID();
+        item.id = recordId;
+      }
+      processRecord(collectionName, recordId, item);
+    }
+  }
+
+  return out;
+}
+
 export class SamaanStore {
   public db: PersistedDatabase;
   public generalRowNos = new Set<string>();
@@ -144,16 +297,278 @@ export class SamaanStore {
   public transitByPacking = new Map<string, TransitEntry[]>();
   public history = new WarehouseHistoryManager(50);
 
-  private saveTimer: NodeJS.Timeout | null = null;
-  public readonly dbFile: string;
+  /**
+   * Synchronized per-record optimistic locking version map (`collection:recordId -> version`),
+   * kept strictly aligned with PostgreSQL `project_records.version`.
+   */
+  public recordVersions = new Map<string, number>();
 
-  constructor(dbFile: string = DB_FILE) {
+  private persistedSnapshots = new Map<string, string>();
+  private stagedSnapshots = new Map<string, string>();
+  private writeChain: Promise<void> = Promise.resolve();
+  private pendingWriteCount = 0;
+  private lastFlushError: Error | null = null;
+  private saveTimer: NodeJS.Timeout | null = null;
+  private currentActor = 'system';
+
+  public readonly dbFile: string;
+  public readonly projectId: string;
+  public readonly storageMode: StorageMode;
+  private readonly poolOverride?: Pool;
+
+  constructor(
+    dbFile: string = DB_FILE,
+    options?: {
+      projectId?: string;
+      storageMode?: StorageMode;
+      skipDiskLoad?: boolean;
+      sessionSecret?: string;
+      pool?: Pool;
+    },
+  ) {
     this.dbFile = dbFile;
-    this.db = this.loadFromDisk();
+    this.projectId = (options?.projectId || 'default').trim().toLowerCase() || 'default';
+    this.storageMode = options?.storageMode || 'json';
+    this.poolOverride = options?.pool;
+
+    if (options?.skipDiskLoad || this.storageMode === 'postgres') {
+      this.db = createEmptyDb(options?.sessionSecret);
+    } else {
+      this.db = this.loadFromDisk();
+    }
+
     this.renumberScope('general');
     this.renumberScope('detailed');
     this.renumberScope('transit');
     this.rebuildIndexes();
+
+    if (this.storageMode === 'json') {
+      const initialMap = collectCurrentRecordMap(this.projectId, this.db, false);
+      for (const [key, item] of initialMap.entries()) {
+        this.persistedSnapshots.set(key, item.json);
+        this.stagedSnapshots.set(key, item.json);
+        if (!this.recordVersions.has(key)) {
+          this.recordVersions.set(key, 1);
+        }
+      }
+    }
+  }
+
+  public setActor(actor?: string | null): void {
+    const clean = String(actor || '').trim();
+    this.currentActor = clean || 'system';
+  }
+
+  public getRecordVersion(collectionName: ProjectCollectionName, recordId: string): number {
+    return this.recordVersions.get(makeRecordKey(collectionName, recordId)) || 0;
+  }
+
+  public setRecordVersion(
+    collectionName: ProjectCollectionName,
+    recordId: string,
+    version: number,
+  ): void {
+    this.recordVersions.set(makeRecordKey(collectionName, recordId), version);
+  }
+
+  public hasPendingWrites(): boolean {
+    return this.pendingWriteCount > 0;
+  }
+
+  /**
+   * Awaits completion of all queued PostgreSQL commits (or JSON flushes).
+   * Rejects if any queued PostgreSQL transaction failed so HTTP handlers never
+   * return 200 OK before data is durably committed.
+   */
+  public async awaitFlush(): Promise<void> {
+    if (this.storageMode === 'json' && this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+      this.writeAtomic(this.db);
+    }
+    await this.writeChain;
+    if (this.lastFlushError) {
+      const err = this.lastFlushError;
+      this.lastFlushError = null;
+      throw err;
+    }
+  }
+
+  /**
+   * Hydrates this in-memory store directly from PostgreSQL `project_records` rows,
+   * preserving exact database `version` numbers in `recordVersions`.
+   */
+  public hydrateFromPostgresRows(rows: PostgresRecordRow[], sessionSecret: string): void {
+    const partial: Partial<PersistedDatabase> = {
+      version: 2,
+      sessionSecret,
+      users: [],
+      general: [],
+      detailed: [],
+      transit: [],
+      packingMeta: {},
+      categories: createEmptyCategories(),
+      auditLogs: [],
+      trash: [],
+      opiInvitations: [],
+      siteEntryMinutes: [],
+      opiMinutes: [],
+      osdrReports: [],
+      substitutions: [],
+      gcvDocuments: [],
+      mivDocuments: [],
+      bmrDocuments: [],
+      materialEstimates: [],
+      periodicInspections: [],
+      customFormSubmissions: [],
+    };
+
+    this.recordVersions.clear();
+    this.persistedSnapshots.clear();
+    this.stagedSnapshots.clear();
+
+    for (const row of rows) {
+      const col = row.collection_name as ProjectCollectionName;
+      if (!VALID_COLLECTION_SET.has(col)) continue;
+      const key = makeRecordKey(col, row.record_id);
+      this.recordVersions.set(key, Number(row.version) || 1);
+
+      if (row.deleted_at) {
+        // Keep deleted row's latest version in recordVersions for conflict checks,
+        // but omit from active in-memory collection arrays.
+        continue;
+      }
+
+      if (col === 'categories') {
+        if (row.data && typeof row.data === 'object' && !Array.isArray(row.data)) {
+          partial.categories = row.data as CategoryStore;
+        }
+        continue;
+      }
+
+      if (col === 'packingMeta') {
+        if (!partial.packingMeta) partial.packingMeta = {};
+        partial.packingMeta[row.record_id] = row.data as PackingStatusMeta;
+        continue;
+      }
+
+      const list = partial[col] as unknown as Array<Record<string, unknown>>;
+      if (Array.isArray(list) && row.data && typeof row.data === 'object') {
+        list.push(row.data as Record<string, unknown>);
+      }
+    }
+
+    // Keep auditLogs newest-first
+    if (Array.isArray(partial.auditLogs)) {
+      partial.auditLogs.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+    }
+
+    this.db = normalizeLoadedDatabase(partial, sessionSecret);
+    this.renumberScope('general');
+    this.renumberScope('detailed');
+    this.renumberScope('transit');
+    this.rebuildIndexes(false);
+
+    // Record exact hydrated baseline so subsequent diffs only flush real mutations
+    const baseline = collectCurrentRecordMap(this.projectId, this.db, false);
+    for (const [key, item] of baseline.entries()) {
+      this.persistedSnapshots.set(key, item.json);
+      this.stagedSnapshots.set(key, item.json);
+    }
+  }
+
+  /**
+   * Synchronizes an already-committed PostgreSQL sync upsert into the in-memory store
+   * without triggering a redundant write back to PostgreSQL.
+   */
+  public applyCommittedSyncUpsert(
+    collectionName: ProjectCollectionName,
+    recordId: string,
+    data: unknown,
+    version: number,
+  ): void {
+    const key = makeRecordKey(collectionName, recordId);
+    const cloned = JSON.parse(JSON.stringify(data));
+
+    if (collectionName === 'categories') {
+      if (cloned && typeof cloned === 'object' && !Array.isArray(cloned)) {
+        this.db.categories = {
+          ...createEmptyCategories(),
+          ...(cloned as Partial<CategoryStore>),
+          transitStatus: getTransitStatusOptions((cloned as Partial<CategoryStore>).transitStatus),
+        };
+      }
+    } else if (collectionName === 'packingMeta') {
+      this.db.packingMeta[recordId] = cloned as PackingStatusMeta;
+    } else {
+      const arr = this.db[collectionName] as unknown as Array<Record<string, unknown>>;
+      if (cloned && typeof cloned === 'object') {
+        (cloned as Record<string, unknown>).id = recordId;
+        const idx = arr.findIndex((item) => item && item.id === recordId);
+        if (idx >= 0) {
+          arr[idx] = cloned as Record<string, unknown>;
+        } else if (collectionName === 'auditLogs') {
+          arr.unshift(cloned as Record<string, unknown>);
+        } else {
+          arr.push(cloned as Record<string, unknown>);
+        }
+      }
+    }
+
+    const serialized = JSON.stringify(
+      collectionName === 'categories'
+        ? this.db.categories
+        : collectionName === 'packingMeta'
+          ? this.db.packingMeta[recordId]
+          : cloned,
+    );
+    this.recordVersions.set(key, version);
+    this.persistedSnapshots.set(key, serialized);
+    this.stagedSnapshots.set(key, serialized);
+  }
+
+  /**
+   * Synchronizes an already-committed PostgreSQL sync soft-delete into the in-memory store.
+   */
+  public applyCommittedSyncDelete(
+    collectionName: ProjectCollectionName,
+    recordId: string,
+    version: number,
+  ): void {
+    const key = makeRecordKey(collectionName, recordId);
+
+    if (collectionName === 'categories') {
+      this.db.categories = createEmptyCategories();
+    } else if (collectionName === 'packingMeta') {
+      delete this.db.packingMeta[recordId];
+    } else {
+      const arr = this.db[collectionName] as unknown as Array<Record<string, unknown>>;
+      const idx = arr.findIndex((item) => item && item.id === recordId);
+      if (idx >= 0) {
+        arr.splice(idx, 1);
+      }
+    }
+
+    this.recordVersions.set(key, version);
+    this.persistedSnapshots.delete(key);
+    this.stagedSnapshots.delete(key);
+  }
+
+  public finalizeSyncRefresh(touchedCollections: Set<ProjectCollectionName>): void {
+    if (touchedCollections.has('general')) this.renumberScope('general');
+    if (touchedCollections.has('detailed')) this.renumberScope('detailed');
+    if (touchedCollections.has('transit')) this.renumberScope('transit');
+    if (
+      touchedCollections.has('general') ||
+      touchedCollections.has('detailed') ||
+      touchedCollections.has('transit') ||
+      touchedCollections.has('categories')
+    ) {
+      this.rebuildIndexes(!touchedCollections.has('categories'));
+    }
+    if (this.storageMode === 'json') {
+      this.writeAtomic(this.db);
+    }
   }
 
   private loadFromDisk(): PersistedDatabase {
@@ -169,43 +584,7 @@ export class SamaanStore {
       }
       const raw = fs.readFileSync(this.dbFile, 'utf8');
       const parsed = JSON.parse(raw) as Partial<PersistedDatabase>;
-      const empty = createEmptyDb();
-      const mergedCategories: CategoryStore = {
-        ...createEmptyCategories(),
-        ...(parsed.categories || {}),
-        transitStatus: getTransitStatusOptions(parsed.categories?.transitStatus),
-      };
-      const detailedList: DetailedEntry[] = (Array.isArray(parsed.detailed) ? parsed.detailed : []).map((d) => ({
-        ...d,
-        countingUnit: normalizeCountingUnitToFa(d.countingUnit),
-      }));
-      const transitList: TransitEntry[] = (Array.isArray(parsed.transit) ? parsed.transit : []).map((t) => ({
-        ...t,
-        overallStatus: normalizeTransitStatus(t.overallStatus, mergedCategories.transitStatus),
-      }));
-      return {
-        version: parsed.version || 2,
-        sessionSecret: parsed.sessionSecret || empty.sessionSecret,
-        users: Array.isArray(parsed.users) ? parsed.users : [],
-        general: Array.isArray(parsed.general) ? parsed.general : [],
-        detailed: detailedList,
-        transit: transitList,
-        packingMeta: parsed.packingMeta || {},
-        categories: mergedCategories,
-        auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
-        trash: Array.isArray(parsed.trash) ? parsed.trash : [],
-        opiInvitations: Array.isArray(parsed.opiInvitations) ? parsed.opiInvitations : [],
-        siteEntryMinutes: Array.isArray(parsed.siteEntryMinutes) ? parsed.siteEntryMinutes : [],
-        opiMinutes: Array.isArray(parsed.opiMinutes) ? parsed.opiMinutes : [],
-        osdrReports: Array.isArray(parsed.osdrReports) ? parsed.osdrReports : [],
-        substitutions: Array.isArray(parsed.substitutions) ? parsed.substitutions : [],
-        gcvDocuments: Array.isArray(parsed.gcvDocuments) ? parsed.gcvDocuments : [],
-        mivDocuments: Array.isArray(parsed.mivDocuments) ? parsed.mivDocuments : [],
-        bmrDocuments: Array.isArray(parsed.bmrDocuments) ? parsed.bmrDocuments : [],
-        materialEstimates: Array.isArray(parsed.materialEstimates) ? parsed.materialEstimates : [],
-        periodicInspections: Array.isArray(parsed.periodicInspections) ? parsed.periodicInspections : [],
-        customFormSubmissions: Array.isArray(parsed.customFormSubmissions) ? parsed.customFormSubmissions : [],
-      };
+      return normalizeLoadedDatabase(parsed);
     } catch (err) {
       console.error('Failed to load local database file, starting fresh:', err);
       return createEmptyDb();
@@ -222,15 +601,151 @@ export class SamaanStore {
     fs.renameSync(tmp, this.dbFile);
   }
 
-  public saveImmediate(): void {
+  private enqueuePostgresDeltaFlush(actor: string): void {
+    const currentMap = collectCurrentRecordMap(this.projectId, this.db, true);
+
+    const upserts: RecordSnapshotItem[] = [];
+    const deletes: Array<{ key: string; collectionName: ProjectCollectionName; recordId: string }> = [];
+
+    for (const [key, item] of currentMap.entries()) {
+      const prevJson = this.stagedSnapshots.get(key);
+      if (prevJson !== item.json) {
+        upserts.push(item);
+      }
+    }
+
+    for (const prevKey of this.stagedSnapshots.keys()) {
+      if (!currentMap.has(prevKey)) {
+        const sepIdx = prevKey.indexOf(':');
+        if (sepIdx > 0) {
+          const collectionName = prevKey.slice(0, sepIdx) as ProjectCollectionName;
+          const recordId = prevKey.slice(sepIdx + 1);
+          deletes.push({ key: prevKey, collectionName, recordId });
+        }
+      }
+    }
+
+    if (upserts.length === 0 && deletes.length === 0) {
+      return;
+    }
+
+    // Advance staged snapshots immediately so sequential mutations compute minimal deltas
+    for (const u of upserts) {
+      this.stagedSnapshots.set(makeRecordKey(u.collectionName, u.recordId), u.json);
+    }
+    for (const d of deletes) {
+      this.stagedSnapshots.delete(d.key);
+    }
+
+    this.pendingWriteCount += 1;
+    const runFlush = async () => {
+      try {
+        const committedVersions = await withTransaction(async (client) => {
+          const nextVersions = new Map<string, number>();
+
+          for (const u of upserts) {
+            const res = await client.query<{ version: number }>(
+              `INSERT INTO project_records (project_id, collection_name, record_id, data, version, updated_at, updated_by, deleted_at)
+               VALUES ($1, $2, $3, $4::jsonb, 1, NOW(), $5, NULL)
+               ON CONFLICT (project_id, collection_name, record_id) DO UPDATE
+                 SET data = EXCLUDED.data,
+                     version = project_records.version + 1,
+                     updated_at = NOW(),
+                     updated_by = EXCLUDED.updated_by,
+                     deleted_at = NULL
+               RETURNING version`,
+              [this.projectId, u.collectionName, u.recordId, u.json, actor],
+            );
+            const ver = Number(res.rows[0]?.version || 1);
+            nextVersions.set(makeRecordKey(u.collectionName, u.recordId), ver);
+          }
+
+          for (const d of deletes) {
+            const res = await client.query<{ version: number }>(
+              `UPDATE project_records
+               SET deleted_at = NOW(),
+                   version = version + 1,
+                   updated_at = NOW(),
+                   updated_by = $4
+               WHERE project_id = $1 AND collection_name = $2 AND record_id = $3 AND deleted_at IS NULL
+               RETURNING version`,
+              [this.projectId, d.collectionName, d.recordId, actor],
+            );
+            if (res.rows[0]?.version !== undefined) {
+              nextVersions.set(d.key, Number(res.rows[0].version));
+            }
+          }
+
+          return nextVersions;
+        }, this.poolOverride);
+
+        // Strictly synchronize in-memory recordVersions and persistedSnapshots with committed DB state
+        for (const [key, ver] of committedVersions.entries()) {
+          this.recordVersions.set(key, ver);
+        }
+        for (const u of upserts) {
+          this.persistedSnapshots.set(makeRecordKey(u.collectionName, u.recordId), u.json);
+        }
+        for (const d of deletes) {
+          this.persistedSnapshots.delete(d.key);
+        }
+      } catch (err) {
+        // Restore stagedSnapshots to committed state so future writes retry cleanly
+        this.stagedSnapshots = new Map(this.persistedSnapshots);
+        const errorObj = err instanceof Error ? err : new Error(String(err));
+        this.lastFlushError = errorObj;
+        console.error(`[store] PostgreSQL flush failed for project ${this.projectId}:`, errorObj);
+      } finally {
+        this.pendingWriteCount = Math.max(0, this.pendingWriteCount - 1);
+      }
+    };
+
+    this.writeChain = this.writeChain.then(runFlush, runFlush);
+  }
+
+  private syncJsonVersionsAndExtract(): void {
+    const currentMap = collectCurrentRecordMap(this.projectId, this.db, true);
+    for (const [key, item] of currentMap.entries()) {
+      const prevJson = this.persistedSnapshots.get(key);
+      if (prevJson !== item.json) {
+        const nextVer = (this.recordVersions.get(key) || 0) + 1;
+        this.recordVersions.set(key, nextVer);
+        this.persistedSnapshots.set(key, item.json);
+        this.stagedSnapshots.set(key, item.json);
+      }
+    }
+    for (const prevKey of Array.from(this.persistedSnapshots.keys())) {
+      if (!currentMap.has(prevKey)) {
+        const nextVer = (this.recordVersions.get(prevKey) || 0) + 1;
+        this.recordVersions.set(prevKey, nextVer);
+        this.persistedSnapshots.delete(prevKey);
+        this.stagedSnapshots.delete(prevKey);
+      }
+    }
+  }
+
+  public saveImmediate(actor?: string): void {
+    const effectiveActor = actor || this.currentActor || 'system';
+    if (this.storageMode === 'postgres') {
+      this.enqueuePostgresDeltaFlush(effectiveActor);
+      return;
+    }
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
+    this.syncJsonVersionsAndExtract();
     this.writeAtomic(this.db);
   }
 
-  public scheduleSave(): void {
+  public scheduleSave(actor?: string): void {
+    const effectiveActor = actor || this.currentActor || 'system';
+    if (this.storageMode === 'postgres') {
+      // In PostgreSQL mode always enqueue immediately so Express can await durable commit
+      this.enqueuePostgresDeltaFlush(effectiveActor);
+      return;
+    }
+    this.syncJsonVersionsAndExtract();
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
@@ -459,7 +974,6 @@ export class SamaanStore {
 
   public getLastDetailedDefaults() {
     if (this.db.detailed.length === 0) return { shipmentNo: '', packageNo: '', countingUnit: 'عدد' };
-    // Pick most recently created/updated detailed item rather than sorted index 0
     let latest = this.db.detailed[0];
     for (const d of this.db.detailed) {
       if ((d.createdAt || '') > (latest.createdAt || '')) {
@@ -498,10 +1012,6 @@ export class SamaanStore {
     }
   }
 
-  /**
-   * Automatically updates `در راه` (In-Transit) status to `رسیده` when a Packing List No.
-   * is entered in `جنرال` or `دیتیل`.
-   */
   public syncTransitArrival(packingNo: string, user: UserAccount): number {
     const pk = normKey(packingNo);
     if (!pk) return 0;
@@ -618,7 +1128,7 @@ export class SamaanStore {
       targetId: 'database',
       summary: `بازیابی کامل نسخه پشتیبان (${this.db.general.length} جنرال، ${this.db.detailed.length} دیتیل، ${this.db.transit.length} در راه)`,
     });
-    this.saveImmediate();
+    this.saveImmediate(user.username);
   }
 
   public applyHistoryAction(
@@ -647,7 +1157,7 @@ export class SamaanStore {
           ? `بازگردانی عملیات (Undo): ${res.command.labelFa}`
           : `انجام مجدد عملیات (Redo): ${res.command.labelFa}`,
     });
-    this.saveImmediate();
+    this.saveImmediate(user.username);
     return {
       labelFa: res.command.labelFa,
       labelEn: res.command.labelEn,
@@ -666,15 +1176,199 @@ function sanitizeProjectId(raw: string): string {
   return (raw || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
 }
 
+function ensureDefaultProjectsInList(
+  existing: ProjectInfo[],
+  validEmployerIds: Set<string>,
+): ProjectInfo[] {
+  const byId = new Map<string, ProjectInfo>();
+  for (const p of existing) {
+    if (p && p.id) {
+      const cleanId = sanitizeProjectId(p.id);
+      if (!cleanId) continue;
+      const cleanAbbr = sanitizePlantAbbreviation(p.plantAbbreviation);
+      const pos: PlantAbbreviationPosition =
+        p.plantAbbreviationPosition === 'before_number' ? 'before_number' : 'prefix';
+      const empId =
+        typeof p.employerId === 'string' && validEmployerIds.has(p.employerId.trim())
+          ? p.employerId.trim()
+          : DEFAULT_EMPLOYER_ID;
+      byId.set(cleanId, {
+        ...p,
+        id: cleanId,
+        contractRef: typeof p.contractRef === 'string' && p.contractRef.trim() ? p.contractRef.trim() : undefined,
+        employerId: empId,
+        employerConfig: sanitizeEmployerConfig(p.employerConfig),
+        plantAbbreviation: cleanAbbr || undefined,
+        usePlantAbbreviationInDocs: Boolean(p.usePlantAbbreviationInDocs && cleanAbbr),
+        plantAbbreviationPosition: pos,
+        isDefault: Boolean(p.isDefault || isDefaultProjectId(cleanId)),
+      });
+    }
+  }
+
+  const orderedDefaults: ProjectInfo[] = DEFAULT_SEED_PROJECTS.map((seed) => {
+    const saved = byId.get(seed.id);
+    if (saved) {
+      return { ...saved, isDefault: true };
+    }
+    return { ...seed };
+  });
+
+  const customProjects = Array.from(byId.values()).filter((p) => !isDefaultProjectId(p.id));
+  return [...orderedDefaults, ...customProjects];
+}
+
 export class ProjectManager {
   private registry: ProjectRegistryData;
   private stores = new Map<string, SamaanStore>();
+  private storageMode: StorageMode = 'json';
+  private initialized = false;
+  private registryWriteChain: Promise<void> = Promise.resolve();
+  private pendingRegistryWrites = 0;
+  private lastRegistryError: Error | null = null;
 
   constructor() {
-    this.registry = this.loadRegistry();
+    // Load synchronous JSON defaults initially; `await projectManager.init()` upgrades to PostgreSQL on server boot.
+    this.registry = this.loadRegistryFromJson();
   }
 
-  private loadRegistry(): ProjectRegistryData {
+  public getStorageMode(): StorageMode {
+    return this.storageMode;
+  }
+
+  public hasPendingWrites(): boolean {
+    return this.pendingRegistryWrites > 0;
+  }
+
+  public async awaitRegistryFlush(): Promise<void> {
+    await this.registryWriteChain;
+    if (this.lastRegistryError) {
+      const err = this.lastRegistryError;
+      this.lastRegistryError = null;
+      throw err;
+    }
+  }
+
+  private enqueueRegistryWrite(task: () => Promise<void>): void {
+    if (this.storageMode !== 'postgres') return;
+    this.pendingRegistryWrites += 1;
+    const wrapped = async () => {
+      try {
+        await task();
+      } catch (err) {
+        const errorObj = err instanceof Error ? err : new Error(String(err));
+        this.lastRegistryError = errorObj;
+        console.error('[ProjectManager] PostgreSQL registry write failed:', errorObj);
+      } finally {
+        this.pendingRegistryWrites = Math.max(0, this.pendingRegistryWrites - 1);
+      }
+    };
+    this.registryWriteChain = this.registryWriteChain.then(wrapped, wrapped);
+  }
+
+  /**
+   * Initializes persistence backend on server boot.
+   * When `SAMAAN_STORAGE_MODE=postgres` (or `DATABASE_URL` is configured):
+   * 1. Runs `001_init.sql` migrations
+   * 2. Seeds built-in employers & default projects (one per built-in employer)
+   * 3. Runs one-time idempotent JSON-to-PostgreSQL migration if not yet completed
+   * 4. Hydrates employers, projects, and all project stores with exact `version` numbers
+   */
+  public async init(): Promise<void> {
+    if (this.initialized) return;
+    this.storageMode = resolveStorageMode();
+
+    if (this.storageMode === 'json') {
+      this.registry = this.loadRegistryFromJson();
+      this.initialized = true;
+      console.log('[store] Storage initialized in JSON mode.');
+      return;
+    }
+
+    await runMigrations();
+    await seedDefaultEmployersAndProjects();
+    const migration = await migrateJsonToPostgres();
+    if (!migration.skipped) {
+      console.log(
+        `[store] Migrated legacy JSON to PostgreSQL: ${migration.employersImported} employers, ${migration.projectsImported} projects, ${migration.recordsImported} records, ${migration.attachmentsExtracted} extracted attachments, ${migration.globalLogsImported} global logs.`,
+      );
+    }
+
+    const pool = getPool();
+    const authSecret = await ensureAuthSecretInDb(pool);
+
+    const empRes = await pool.query<{ id: string; is_default: boolean; data: EmployerProfile }>(
+      `SELECT id, is_default, data FROM employers ORDER BY is_default DESC, created_at ASC`,
+    );
+    const loadedEmployers = empRes.rows
+      .map((r) => sanitizeEmployerProfile({ ...r.data, id: r.id, isBuiltIn: r.is_default || isBuiltInEmployerId(r.id) }))
+      .filter((e): e is EmployerProfile => Boolean(e));
+    const employers = ensureDefaultEmployers(loadedEmployers);
+    const validEmpIds = new Set(employers.map((e) => e.id));
+
+    const projRes = await pool.query<{
+      id: string;
+      employer_id: string;
+      is_default: boolean;
+      meta: ProjectInfo;
+      session_secret: string;
+      created_at: Date;
+    }>(
+      `SELECT id, employer_id, is_default, meta, session_secret, created_at
+       FROM projects
+       ORDER BY is_default DESC, created_at ASC`,
+    );
+
+    const projects: ProjectInfo[] = projRes.rows.map((r) => {
+      const m = r.meta || ({} as ProjectInfo);
+      const cleanAbbr = sanitizePlantAbbreviation(m.plantAbbreviation);
+      const pos: PlantAbbreviationPosition =
+        m.plantAbbreviationPosition === 'before_number' ? 'before_number' : 'prefix';
+      return {
+        ...m,
+        id: r.id,
+        name: String(m.name || r.id).trim(),
+        employerId: validEmpIds.has(r.employer_id) ? r.employer_id : DEFAULT_EMPLOYER_ID,
+        isDefault: Boolean(r.is_default || isDefaultProjectId(r.id)),
+        plantAbbreviation: cleanAbbr || undefined,
+        usePlantAbbreviationInDocs: Boolean(m.usePlantAbbreviationInDocs && cleanAbbr),
+        plantAbbreviationPosition: pos,
+        createdAt: m.createdAt || r.created_at.toISOString(),
+      };
+    });
+
+    this.registry = {
+      authSecret,
+      projects,
+      employers,
+    };
+
+    this.stores.clear();
+    for (const row of projRes.rows) {
+      const projStore = new SamaanStore(this.resolveDbPath(row.id), {
+        projectId: row.id,
+        storageMode: 'postgres',
+        skipDiskLoad: true,
+        sessionSecret: row.session_secret,
+      });
+
+      const recRes = await pool.query<PostgresRecordRow>(
+        `SELECT collection_name, record_id, data, version, deleted_at
+         FROM project_records
+         WHERE project_id = $1`,
+        [row.id],
+      );
+      projStore.hydrateFromPostgresRows(recRes.rows, row.session_secret);
+      this.stores.set(row.id, projStore);
+    }
+
+    this.initialized = true;
+    console.log(
+      `[store] Storage initialized in PostgreSQL mode (${employers.length} employers, ${projects.length} projects hydrated).`,
+    );
+  }
+
+  private loadRegistryFromJson(): ProjectRegistryData {
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -687,55 +1381,34 @@ export class ProjectManager {
               .filter((e): e is EmployerProfile => Boolean(e))
           : [];
         const employers = ensureDefaultEmployers(rawEmployers);
-        const rawList = Array.isArray(parsed.projects) && parsed.projects.length > 0
-          ? parsed.projects
-          : [{ id: 'default', name: 'پروژه پیش‌فرض', code: '', contractRef: '', employerId: DEFAULT_EMPLOYER_ID, createdAt: new Date().toISOString() }];
-        const projects: ProjectInfo[] = rawList.map((p) => {
-          const cleanAbbr = sanitizePlantAbbreviation(p.plantAbbreviation);
-          const pos: PlantAbbreviationPosition =
-            p.plantAbbreviationPosition === 'before_number' ? 'before_number' : 'prefix';
-          return {
-            ...p,
-            contractRef: typeof p.contractRef === 'string' && p.contractRef.trim() ? p.contractRef.trim() : undefined,
-            employerId: typeof p.employerId === 'string' && p.employerId.trim() ? p.employerId.trim() : DEFAULT_EMPLOYER_ID,
-            employerConfig: sanitizeEmployerConfig(p.employerConfig),
-            plantAbbreviation: cleanAbbr || undefined,
-            usePlantAbbreviationInDocs: Boolean(p.usePlantAbbreviationInDocs && cleanAbbr),
-            plantAbbreviationPosition: pos,
-          };
-        });
+        const validEmpIds = new Set(employers.map((e) => e.id));
+        const rawList = Array.isArray(parsed.projects) ? parsed.projects : [];
+        const projects = ensureDefaultProjectsInList(rawList, validEmpIds);
         const loaded: ProjectRegistryData = {
           authSecret: parsed.authSecret || crypto.randomBytes(32).toString('hex'),
           projects,
           employers,
         };
-        if (rawEmployers.length !== employers.length) {
-          this.saveRegistryData(loaded);
+        if (rawEmployers.length !== employers.length || rawList.length !== projects.length) {
+          this.saveRegistryDataJson(loaded);
         }
         return loaded;
       }
     } catch (err) {
-      console.error('Failed to load project registry, initializing default:', err);
+      console.error('Failed to load project registry, initializing defaults:', err);
     }
+    const employers = ensureDefaultEmployers([]);
+    const validEmpIds = new Set(employers.map((e) => e.id));
     const initial: ProjectRegistryData = {
       authSecret: crypto.randomBytes(32).toString('hex'),
-      projects: [
-        {
-          id: 'default',
-          name: 'پروژه پیش‌فرض',
-          code: '',
-          contractRef: '',
-          employerId: DEFAULT_EMPLOYER_ID,
-          createdAt: new Date().toISOString(),
-        },
-      ],
-      employers: ensureDefaultEmployers([]),
+      projects: ensureDefaultProjectsInList([], validEmpIds),
+      employers,
     };
-    this.saveRegistryData(initial);
+    this.saveRegistryDataJson(initial);
     return initial;
   }
 
-  private saveRegistryData(data: ProjectRegistryData): void {
+  private saveRegistryDataJson(data: ProjectRegistryData): void {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
@@ -759,7 +1432,7 @@ export class ProjectManager {
 
   private resolveDbPath(id: string): string {
     if (id === 'default') return DB_FILE;
-    if (!fs.existsSync(PROJECTS_DIR)) {
+    if (this.storageMode === 'json' && !fs.existsSync(PROJECTS_DIR)) {
       fs.mkdirSync(PROJECTS_DIR, { recursive: true });
     }
     return path.join(PROJECTS_DIR, `${id}.json`);
@@ -777,7 +1450,11 @@ export class ProjectManager {
     const id = this.resolveProjectId(rawProjectId);
     let existing = this.stores.get(id);
     if (!existing) {
-      existing = new SamaanStore(this.resolveDbPath(id));
+      existing = new SamaanStore(this.resolveDbPath(id), {
+        projectId: id,
+        storageMode: this.storageMode,
+        skipDiskLoad: this.storageMode === 'postgres',
+      });
       this.stores.set(id, existing);
     }
     return existing;
@@ -808,10 +1485,14 @@ export class ProjectManager {
         .slice(0, 20) || 'project';
     const rand = crypto.randomBytes(3).toString('hex');
     const id = `proj-${baseSlug}-${rand}`;
-    const empId =
+
+    const requestedEmpId =
       typeof params.employerId === 'string' && params.employerId.trim()
         ? params.employerId.trim()
         : DEFAULT_EMPLOYER_ID;
+    const employerExists = this.listEmployers().some((e) => e.id === requestedEmpId);
+    const empId = employerExists ? requestedEmpId : DEFAULT_EMPLOYER_ID;
+
     const info: ProjectInfo = {
       id,
       name: cleanName,
@@ -822,16 +1503,59 @@ export class ProjectManager {
       plantAbbreviation: cleanAbbr || undefined,
       usePlantAbbreviationInDocs: Boolean(params.usePlantAbbreviationInDocs && cleanAbbr),
       plantAbbreviationPosition: abbrPos,
+      isDefault: false,
       createdAt: new Date().toISOString(),
     };
-    this.registry.projects.push(info);
-    this.saveRegistryData(this.registry);
 
-    const newStore = this.getStore(id);
-    if (params.copyUsersFromStore && params.copyUsersFromStore.db.users.length > 0) {
-      newStore.db.users = JSON.parse(JSON.stringify(params.copyUsersFromStore.db.users)) as StoredUser[];
-      newStore.saveImmediate();
+    const sessionSecret = crypto.randomBytes(32).toString('hex');
+    const newStore = new SamaanStore(this.resolveDbPath(id), {
+      projectId: id,
+      storageMode: this.storageMode,
+      skipDiskLoad: this.storageMode === 'postgres',
+      sessionSecret,
+    });
+
+    this.registry.projects.push(info);
+    this.stores.set(id, newStore);
+
+    if (this.storageMode === 'postgres') {
+      const copiedUsers =
+        params.copyUsersFromStore && params.copyUsersFromStore.db.users.length > 0
+          ? (JSON.parse(JSON.stringify(params.copyUsersFromStore.db.users)) as StoredUser[])
+          : [];
+      if (copiedUsers.length > 0) {
+        newStore.db.users = copiedUsers;
+      }
+
+      this.enqueueRegistryWrite(async () => {
+        await withTransaction(async (client) => {
+          await client.query(
+            `INSERT INTO projects (id, employer_id, is_default, meta, session_secret, created_at, updated_at)
+             VALUES ($1, $2, FALSE, $3::jsonb, $4, $5::timestamptz, NOW())`,
+            [info.id, empId, JSON.stringify(info), sessionSecret, info.createdAt],
+          );
+
+          for (const u of copiedUsers) {
+            const res = await client.query<{ version: number }>(
+              `INSERT INTO project_records (project_id, collection_name, record_id, data, version, updated_at, updated_by, deleted_at)
+               VALUES ($1, 'users', $2, $3::jsonb, 1, NOW(), 'system', NULL)
+               ON CONFLICT (project_id, collection_name, record_id) DO UPDATE
+                 SET data = EXCLUDED.data, version = project_records.version + 1, updated_at = NOW(), deleted_at = NULL
+               RETURNING version`,
+              [info.id, u.id, JSON.stringify(u)],
+            );
+            newStore.applyCommittedSyncUpsert('users', u.id, u, Number(res.rows[0]?.version || 1));
+          }
+        });
+      });
+    } else {
+      this.saveRegistryDataJson(this.registry);
+      if (params.copyUsersFromStore && params.copyUsersFromStore.db.users.length > 0) {
+        newStore.db.users = JSON.parse(JSON.stringify(params.copyUsersFromStore.db.users)) as StoredUser[];
+        newStore.saveImmediate();
+      }
     }
+
     return info;
   }
 
@@ -851,6 +1575,7 @@ export class ProjectManager {
     const clean = sanitizeProjectId(id);
     const target = this.registry.projects.find((p) => p.id === clean);
     if (!target) return null;
+
     if (params.name !== undefined && normKey(params.name)) {
       target.name = normKey(params.name);
     }
@@ -861,7 +1586,12 @@ export class ProjectManager {
       target.contractRef = normKey(params.contractRef) || undefined;
     }
     if (params.employerId !== undefined) {
-      target.employerId = typeof params.employerId === 'string' ? params.employerId.trim() : '';
+      const nextEmpId = typeof params.employerId === 'string' ? params.employerId.trim() : '';
+      if (nextEmpId && this.listEmployers().some((e) => e.id === nextEmpId)) {
+        target.employerId = nextEmpId;
+      } else if (!nextEmpId) {
+        target.employerId = DEFAULT_EMPLOYER_ID;
+      }
     }
     if (params.employerConfig !== undefined) {
       target.employerConfig = sanitizeEmployerConfig(params.employerConfig);
@@ -882,25 +1612,50 @@ export class ProjectManager {
       target.plantAbbreviationPosition =
         params.plantAbbreviationPosition === 'before_number' ? 'before_number' : 'prefix';
     }
-    this.saveRegistryData(this.registry);
+
+    if (this.storageMode === 'postgres') {
+      const snapshot = { ...target };
+      this.enqueueRegistryWrite(async () => {
+        await getPool().query(
+          `UPDATE projects
+           SET employer_id = $2,
+               meta = $3::jsonb,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [snapshot.id, snapshot.employerId || DEFAULT_EMPLOYER_ID, JSON.stringify(snapshot)],
+        );
+      });
+    } else {
+      this.saveRegistryDataJson(this.registry);
+    }
+
     return target;
   }
 
   public deleteProject(id: string): { ok: boolean; reason?: 'not_found' | 'cannot_delete_default' } {
     const clean = sanitizeProjectId(id);
-    if (clean === 'default') return { ok: false, reason: 'cannot_delete_default' };
     const idx = this.registry.projects.findIndex((p) => p.id === clean);
     if (idx === -1) return { ok: false, reason: 'not_found' };
+    const target = this.registry.projects[idx];
+    if (target.isDefault || isDefaultProjectId(clean)) {
+      return { ok: false, reason: 'cannot_delete_default' };
+    }
 
     this.registry.projects.splice(idx, 1);
-    this.saveRegistryData(this.registry);
-
     this.stores.delete(clean);
-    const dbPath = path.join(PROJECTS_DIR, `${clean}.json`);
-    try {
-      if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-    } catch (err) {
-      console.error('Failed to delete project DB file:', err);
+
+    if (this.storageMode === 'postgres') {
+      this.enqueueRegistryWrite(async () => {
+        await getPool().query(`DELETE FROM projects WHERE id = $1 AND is_default = FALSE`, [clean]);
+      });
+    } else {
+      this.saveRegistryDataJson(this.registry);
+      const dbPath = path.join(PROJECTS_DIR, `${clean}.json`);
+      try {
+        if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+      } catch (err) {
+        console.error('Failed to delete project DB file:', err);
+      }
     }
     return { ok: true };
   }
@@ -922,7 +1677,19 @@ export class ProjectManager {
     if (!sanitized) return null;
     this.registry.employers = ensureDefaultEmployers(this.registry.employers || []);
     this.registry.employers.push(sanitized);
-    this.saveRegistryData(this.registry);
+
+    if (this.storageMode === 'postgres') {
+      const snapshot = { ...sanitized };
+      this.enqueueRegistryWrite(async () => {
+        await getPool().query(
+          `INSERT INTO employers (id, is_default, data, created_at, updated_at)
+           VALUES ($1, FALSE, $2::jsonb, $3::timestamptz, NOW())`,
+          [snapshot.id, JSON.stringify(snapshot), snapshot.createdAt || new Date().toISOString()],
+        );
+      });
+    } else {
+      this.saveRegistryDataJson(this.registry);
+    }
     return sanitized;
   }
 
@@ -934,7 +1701,6 @@ export class ProjectManager {
     const prev = list[idx];
     const builtIn = Boolean(prev.isBuiltIn || isBuiltInEmployerId(prev.id));
     const rawObj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-    // Built-in employers are strictly read-only for profile/contact/logo fields; only uploadedForms may change.
     const merged = builtIn
       ? {
           ...prev,
@@ -957,11 +1723,35 @@ export class ProjectManager {
     if (!sanitized) return null;
     list[idx] = sanitized;
     this.registry.employers = ensureDefaultEmployers(list);
-    this.saveRegistryData(this.registry);
-    return this.registry.employers.find((e) => e.id === clean) || sanitized;
+    const result = this.registry.employers.find((e) => e.id === clean) || sanitized;
+
+    if (this.storageMode === 'postgres') {
+      const snapshot = { ...result };
+      this.enqueueRegistryWrite(async () => {
+        await getPool().query(
+          `UPDATE employers
+           SET data = $2::jsonb,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [snapshot.id, JSON.stringify(snapshot)],
+        );
+      });
+    } else {
+      this.saveRegistryDataJson(this.registry);
+    }
+    return result;
   }
 
-  public deleteEmployer(id: string): { ok: boolean; reason?: 'not_found' | 'cannot_delete_builtin' } {
+  /**
+   * Enforces strict 1:N integrity (Safeguard #1):
+   * - Built-in employers cannot be deleted.
+   * - Employers linked to one or more projects cannot be deleted (`ON DELETE RESTRICT` in PostgreSQL).
+   */
+  public deleteEmployer(id: string): {
+    ok: boolean;
+    reason?: 'not_found' | 'cannot_delete_builtin' | 'employer_has_projects';
+    projectCount?: number;
+  } {
     const clean = (id || '').trim();
     if (isBuiltInEmployerId(clean)) {
       return { ok: false, reason: 'cannot_delete_builtin' };
@@ -972,18 +1762,29 @@ export class ProjectManager {
     if (list[idx].isBuiltIn) {
       return { ok: false, reason: 'cannot_delete_builtin' };
     }
+
+    const referencingProjects = this.registry.projects.filter((p) => p.employerId === clean);
+    if (referencingProjects.length > 0) {
+      return {
+        ok: false,
+        reason: 'employer_has_projects',
+        projectCount: referencingProjects.length,
+      };
+    }
+
     list.splice(idx, 1);
     this.registry.employers = list;
-    for (const p of this.registry.projects) {
-      if (p.employerId === clean) {
-        p.employerId = DEFAULT_EMPLOYER_ID;
-      }
+
+    if (this.storageMode === 'postgres') {
+      this.enqueueRegistryWrite(async () => {
+        await getPool().query(`DELETE FROM employers WHERE id = $1 AND is_default = FALSE`, [clean]);
+      });
+    } else {
+      this.saveRegistryDataJson(this.registry);
     }
-    this.saveRegistryData(this.registry);
     return { ok: true };
   }
 }
 
 export const projectManager = new ProjectManager();
 export const store = projectManager.getStore('default');
-

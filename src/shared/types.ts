@@ -299,6 +299,7 @@ export interface ProjectInfo {
   contractRef?: string;
   employerId?: EmployerId;
   employerConfig?: EmployerCustomConfig;
+  isDefault?: boolean;
   createdAt: string;
 }
 
@@ -311,16 +312,48 @@ export interface UserPreferences {
   shortcuts?: Record<string, string>;
 }
 
+export type AppUserRole = 'SUPERUSER' | 'USER';
+export type AppUserStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
 export interface UserAccount {
   id: string;
   username: string;
   fullName: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
   role: UserRole;
+  appRole?: AppUserRole;
+  status?: AppUserStatus;
+  phoneVerified?: boolean;
+  totpEnabled?: boolean;
+  assignedProjectIds?: string[];
   active: boolean;
   preferences: UserPreferences;
   createdAt: string;
   lastLoginAt?: string;
   mustChangePassword?: boolean;
+}
+
+export interface AdminManagedUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  phone: string;
+  email: string;
+  role: AppUserRole;
+  status: AppUserStatus;
+  phoneVerified: boolean;
+  totpEnabled: boolean;
+  requestedEmployerId: string | null;
+  requestedProjectIds: string[];
+  assignedProjectIds: string[];
+  createdAt: string;
+  lastLoginAt?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
 }
 
 export interface PackingStatusMeta {

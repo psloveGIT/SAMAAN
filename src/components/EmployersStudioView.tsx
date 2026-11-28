@@ -43,7 +43,7 @@ export const EmployersStudioView: React.FC<EmployersStudioViewProps> = ({
   navigationToken = 0,
   onOpenFormSection,
 }) => {
-  const { prefs, employers, activeProject, renameProject, notify } = useApp();
+  const { isSuperuser, prefs, employers, activeProject, renameProject, notify } = useApp();
   const isFa = prefs.language === 'fa';
   const lang = prefs.language;
 
@@ -112,6 +112,27 @@ export const EmployersStudioView: React.FC<EmployersStudioViewProps> = ({
       setAssigning(false);
     }
   };
+
+  if (!isSuperuser) {
+    return (
+      <div
+        data-testid="employers-restricted-notice"
+        className="max-w-xl mx-auto my-8 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 text-center space-y-3"
+      >
+        <div className="w-11 h-11 mx-auto rounded-full bg-[var(--status-warning-bg)] text-[var(--status-warning)] flex items-center justify-center">
+          <Lock className="w-5 h-5" />
+        </div>
+        <h3 className="text-sm font-bold text-[var(--text-primary)]">
+          {isFa ? 'دسترسی محدود به مدیر ارشد سامانه' : 'Superuser Access Required'}
+        </h3>
+        <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+          {isFa
+            ? 'انتخاب، ایجاد، ویرایش و مدیریت کارفرمایان صرفاً برای مدیر ارشد سامانه (Superuser) مجاز است. کارفرمای پروژه فعال شما توسط مدیر سامانه تنظیم می‌شود.'
+            : 'Selecting, creating, editing, and managing employers is restricted strictly to the system Superuser.'}
+        </p>
+      </div>
+    );
+  }
 
   if (!selectedEmployer) return null;
 

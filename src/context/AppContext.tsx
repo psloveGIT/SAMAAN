@@ -78,6 +78,7 @@ export interface ToastMessage {
 
 interface AppContextValue {
   user: UserAccount | null;
+  isSuperuser: boolean;
   needsSetup: boolean;
   loadingAuth: boolean;
   prefs: UserPreferences;
@@ -158,6 +159,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [historyStatus, setHistoryStatus] = useState<HistoryStatus>(EMPTY_HISTORY_STATUS);
   const [historyBusy, setHistoryBusy] = useState(false);
 
+  const isSuperuser = useMemo(
+    () => Boolean(user && (user.appRole === 'SUPERUSER' || (!user.appRole && user.role === 'admin'))),
+    [user],
+  );
+
   const applyDocumentPrefs = useCallback((p: UserPreferences) => {
     const root = document.documentElement;
     root.lang = p.language;
@@ -190,8 +196,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshProjects = useCallback(async () => {
     try {
       const res = await apiRequest<{ projects: ProjectInfo[]; activeProjectId: string }>('/api/projects');
-      setProjects((res.projects || []).map((p) => ({ ...p })));
-      const resolved = res.activeProjectId || 'default';
+      const list = (res.projects || []).map((p) => ({ ...p }));
+      setProjects(list);
+      const resolved =
+        res.activeProjectId && list.some((p) => p.id === res.activeProjectId)
+          ? res.activeProjectId
+          : list[0]?.id || 'default';
       persistActiveProjectId(resolved);
       setActiveProjectIdState(resolved);
     } catch {
@@ -216,9 +226,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         apiRequest<{ employers: EmployerProfile[] }>('/api/employers').catch(() => null),
         apiRequest<{ needsSetup: boolean; user: UserAccount | null }>('/api/auth/status'),
       ]);
-      const resolvedProject = projRes?.activeProjectId || getActiveProjectId() || 'default';
+      const visibleProjects = (projRes?.projects || []).map((p) => ({ ...p }));
+      const storedProject = getActiveProjectId();
+      const resolvedProject =
+        projRes && visibleProjects.length > 0
+          ? visibleProjects.some((p) => p.id === projRes.activeProjectId)
+            ? projRes.activeProjectId
+            : visibleProjects.some((p) => p.id === storedProject)
+              ? storedProject
+              : visibleProjects[0].id
+          : projRes?.activeProjectId || storedProject || 'default';
       if (projRes) {
-        setProjects((projRes.projects || []).map((p) => ({ ...p })));
+        setProjects(visibleProjects);
         persistActiveProjectId(resolvedProject);
         setActiveProjectIdState(resolvedProject);
       }
@@ -559,11 +578,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setNeedsSetup(false);
       if (u) {
         void syncOfflineSessionUser(u, activeProjectId);
+        void refreshProjects();
+        void refreshEmployers();
       } else {
         clearOfflineSessionUser();
       }
     },
-    [activeProjectId],
+    [activeProjectId, refreshProjects, refreshEmployers],
   );
 
   const logout = useCallback(async () => {
@@ -620,6 +641,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const contextValue = useMemo<AppContextValue>(
     () => ({
       user,
+      isSuperuser,
       needsSetup,
       loadingAuth,
       prefs,
@@ -664,6 +686,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }),
     [
       user,
+      isSuperuser,
       needsSetup,
       loadingAuth,
       prefs,

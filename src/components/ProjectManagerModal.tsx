@@ -40,6 +40,7 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
 }) => {
   const {
     user,
+    isSuperuser,
     prefs,
     projects,
     employers,
@@ -201,33 +202,41 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
             <div className="flex items-center gap-2.5">
               <Building2 className="w-4 h-4 text-[var(--accent-primary)]" />
               <h3 className="text-sm font-bold text-[var(--text-primary)]">
-                {isFa ? 'مدیریت پروژه‌ها و انتخاب کارفرما' : 'Manage Projects & Assign Employers'}
+                {isSuperuser
+                  ? isFa
+                    ? 'مدیریت پروژه‌ها و انتخاب کارفرما'
+                    : 'Manage Projects & Assign Employers'
+                  : isFa
+                    ? 'انتخاب پروژه فعال'
+                    : 'Switch Active Project'}
               </h3>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (onOpenEmployersPage) {
-                    onClose();
-                    onOpenEmployersPage();
-                  } else {
-                    setRequestEmployerModalOpen(true);
-                  }
-                }}
-                className="h-8 px-3 rounded-lg border border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold flex items-center gap-1.5"
-              >
-                <Building2 className="w-3.5 h-3.5" />
-                <span>
-                  {onOpenEmployersPage
-                    ? isFa
-                      ? 'کارفرمایان و درخواست فرم'
-                      : 'Employers & Form Requests'
-                    : isFa
-                      ? 'درخواست کارفرمای جدید'
-                      : 'Request New Employer'}
-                </span>
-              </button>
+              {isSuperuser && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onOpenEmployersPage) {
+                      onClose();
+                      onOpenEmployersPage();
+                    } else {
+                      setRequestEmployerModalOpen(true);
+                    }
+                  }}
+                  className="h-8 px-3 rounded-lg border border-[var(--accent-primary)] text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>
+                    {onOpenEmployersPage
+                      ? isFa
+                        ? 'کارفرمایان و درخواست فرم'
+                        : 'Employers & Form Requests'
+                      : isFa
+                        ? 'درخواست کارفرمای جدید'
+                        : 'Request New Employer'}
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}
@@ -242,14 +251,20 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
             {/* Existing Projects List */}
             <div className="space-y-2">
               <div className="text-xs font-bold text-[var(--text-secondary)]">
-                {isFa ? 'انتخاب پروژه فعال:' : 'Select Active Project:'}
+                {isSuperuser
+                  ? isFa
+                    ? 'انتخاب پروژه فعال:'
+                    : 'Select Active Project:'
+                  : isFa
+                    ? 'پروژه‌های مجاز تخصیص‌یافته به حساب شما:'
+                    : 'Your Assigned Projects:'}
               </div>
               <div className="divide-y divide-[var(--border-subtle)] rounded-xl border border-[var(--border-subtle)] overflow-hidden">
                 {projects.map((p) => {
                   const isActive = p.id === activeProjectId;
-                  const isEditing = editingId === p.id;
-                  const isConfirmingDel = confirmDeleteId === p.id;
-                  const isDefault = p.id === 'default';
+                  const isEditing = isSuperuser && editingId === p.id;
+                  const isConfirmingDel = isSuperuser && confirmDeleteId === p.id;
+                  const isDefault = Boolean(p.isDefault || p.id === 'default');
                   const resolvedEmp = resolveEmployerProfile(p, employers);
 
                   return (
@@ -477,27 +492,30 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                               </button>
                             )}
 
-                            <button
-                              type="button"
-                              data-testid={`project-edit-btn-${p.id}`}
-                              aria-label={isFa ? 'ویرایش پروژه و کارفرما' : 'Edit project & employer'}
-                              title={isFa ? 'ویرایش پروژه و کارفرما' : 'Edit project & employer'}
-                              onClick={() => {
-                                setEditingId(p.id);
-                                setEditName(p.name);
-                                setEditCode(p.code || '');
-                                setEditPlantAbbreviation(p.plantAbbreviation || '');
-                                setEditUsePlantAbbr(Boolean(p.usePlantAbbreviationInDocs));
-                                setEditPlantAbbrPos(p.plantAbbreviationPosition || 'prefix');
-                                setEditContractRef(p.contractRef || '');
-                                setEditEmployerId(p.employerId || DEFAULT_EMPLOYER_ID);
-                              }}
-                              className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
+                            {isSuperuser && (
+                              <button
+                                type="button"
+                                data-testid={`project-edit-btn-${p.id}`}
+                                aria-label={isFa ? 'ویرایش پروژه و کارفرما' : 'Edit project & employer'}
+                                title={isFa ? 'ویرایش پروژه و کارفرما' : 'Edit project & employer'}
+                                onClick={() => {
+                                  setEditingId(p.id);
+                                  setEditName(p.name);
+                                  setEditCode(p.code || '');
+                                  setEditPlantAbbreviation(p.plantAbbreviation || '');
+                                  setEditUsePlantAbbr(Boolean(p.usePlantAbbreviationInDocs));
+                                  setEditPlantAbbrPos(p.plantAbbreviationPosition || 'prefix');
+                                  setEditContractRef(p.contractRef || '');
+                                  setEditEmployerId(p.employerId || DEFAULT_EMPLOYER_ID);
+                                }}
+                                className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
 
-                            {!isDefault &&
+                            {isSuperuser &&
+                              !isDefault &&
                               (isConfirmingDel ? (
                                 <div className="flex items-center gap-1">
                                   <button
@@ -535,11 +553,12 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
               </div>
             </div>
 
-            {/* Create New Project Form */}
-            <form
-              onSubmit={handleCreate}
-              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-subtle)]/40 p-4 space-y-3"
-            >
+            {/* Create New Project Form (SUPERUSER ONLY) */}
+            {isSuperuser && (
+              <form
+                onSubmit={handleCreate}
+                className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-subtle)]/40 p-4 space-y-3"
+              >
               <div className="flex items-center gap-2 text-xs font-bold text-[var(--text-primary)]">
                 <FolderPlus className="w-4 h-4 text-[var(--accent-primary)]" />
                 <span>{isFa ? 'ایجاد پروژه جدید و انتخاب کارفرما' : 'Create New Project & Assign Employer'}</span>
@@ -743,12 +762,13 @@ export const ProjectManagerModal: React.FC<ProjectManagerModalProps> = ({
                 </button>
               </div>
             </form>
+            )}
           </div>
         </div>
       </div>
 
       {/* Inline Request New Employer Modal when triggered inside Project Manager */}
-      {requestEmployerModalOpen && (
+      {isSuperuser && requestEmployerModalOpen && (
         <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-4xl max-h-[92vh] flex flex-col rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] shadow-2xl overflow-hidden">
             <div className="px-5 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between">

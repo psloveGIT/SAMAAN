@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   CheckCircle2,
@@ -6,6 +6,7 @@ import {
   Eye,
   FileCheck2,
   FileText,
+  Loader2,
   ScanLine,
   Trash2,
   Upload,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { fetchAuthenticatedMediaBlob, isProtectedApiFileUrl } from '../lib/authMedia.ts';
 import type { SignedScanAttachment, SignedScanCollectionKey } from '../shared/types.ts';
 import {
   ALLOWED_SIGNED_SCAN_MIMES,
@@ -136,24 +138,66 @@ export const SignedScanModal: React.FC<SignedScanModalProps> = ({
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
-  const previewUrl = useMemo(() => {
-    if (!open || !signedScan?.dataBase64) return null;
-    try {
-      const blob = base64ToBlob(signedScan.dataBase64, signedScan.mimeType || 'application/octet-stream');
-      return URL.createObjectURL(blob);
-    } catch {
-      return null;
-    }
-  }, [open, signedScan]);
-
   useEffect(() => {
+    const rawValue = (signedScan?.dataBase64 || '').trim();
+    if (!open || !rawValue) {
+      setPreviewUrl(null);
+      setLoadingPreview(false);
+      return;
+    }
+
+    let active = true;
+    let objectUrl: string | null = null;
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const mimeType = signedScan?.mimeType || 'application/octet-stream';
+
+    if (isProtectedApiFileUrl(rawValue)) {
+      setLoadingPreview(true);
+      setPreviewUrl(null);
+      fetchAuthenticatedMediaBlob(rawValue, {
+        signal: controller?.signal,
+        mimeTypeHint: mimeType,
+      })
+        .then((blob) => {
+          const nextUrl = URL.createObjectURL(blob);
+          if (!active) {
+            URL.revokeObjectURL(nextUrl);
+            return;
+          }
+          objectUrl = nextUrl;
+          setPreviewUrl(nextUrl);
+          setLoadingPreview(false);
+        })
+        .catch(() => {
+          if (!active) return;
+          setPreviewUrl(null);
+          setLoadingPreview(false);
+        });
+    } else {
+      try {
+        const cleanBase64 = rawValue.replace(/^data:[^;]+;base64,/i, '');
+        const blob = base64ToBlob(cleanBase64, mimeType);
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(objectUrl);
+      } catch {
+        setPreviewUrl(null);
+      }
+      setLoadingPreview(false);
+    }
+
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      active = false;
+      if (controller) controller.abort();
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
-  }, [previewUrl]);
+  }, [open, signedScan]);
 
   if (!open) return null;
 
@@ -380,7 +424,12 @@ export const SignedScanModal: React.FC<SignedScanModalProps> = ({
 
         {/* Body */}
         <div className="flex-1 overflow-auto p-4 sm:p-5 bg-[var(--bg-canvas)]/40">
-          {signedScan && previewUrl ? (
+          {signedScan && loadingPreview ? (
+            <div className="min-h-[45vh] flex flex-col items-center justify-center gap-2.5 text-xs text-[var(--text-muted)]">
+              <Loader2 className="w-6 h-6 animate-spin text-[var(--accent-primary)]" />
+              <span>{isFa ? 'در حال بارگذاری فایل اسکن امضاشده...' : 'Loading signed scan file...'}</span>
+            </div>
+          ) : signedScan && previewUrl ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-2 text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-3.5 py-2">
                 <span className="inline-flex items-center gap-1.5 font-semibold">

@@ -1,13 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Edit3,
-  Eye,
-  EyeOff,
+  Building2,
+  Check,
+  CheckCircle2,
+  Clock,
+  FolderKanban,
   History,
   KeyRound,
-  Plus,
+  Mail,
+  Phone,
   RefreshCw,
+  Save,
   Shield,
+  ShieldCheck,
+  ShieldOff,
   Trash2,
   UserCheck,
   UserX,
@@ -15,12 +21,18 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import type { AuditLogEntry, UserAccount, UserRole } from '../shared/types.ts';
+import type {
+  AdminManagedUser,
+  AppUserStatus,
+  AuditLogEntry,
+  ProjectInfo,
+} from '../shared/types.ts';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { TablePaginationBar } from './TablePaginationBar.tsx';
+import { TotpSecurityModal } from './TotpSecurityModal.tsx';
 
 interface AuditResponse {
   items: AuditLogEntry[];
@@ -30,13 +42,17 @@ interface AuditResponse {
   totalPages: number;
 }
 
-function generateRandomPassword(length = 8): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  let out = '';
-  for (let i = 0; i < length; i += 1) {
-    out += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return out;
+interface AdminEmployerSummary {
+  id: string;
+  nameFa: string;
+  nameEn: string;
+  shortName?: string;
+}
+
+interface AdminUsersResponse {
+  users: AdminManagedUser[];
+  projects: ProjectInfo[];
+  employers: AdminEmployerSummary[];
 }
 
 interface UsersAuditViewProps {
@@ -44,13 +60,13 @@ interface UsersAuditViewProps {
 }
 
 export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 0 }) => {
-  const { prefs, t, user, formatTimestamp, notify } = useApp();
+  const { prefs, t, user, isSuperuser, formatTimestamp, notify } = useApp();
   const isFa = prefs.language === 'fa';
-  const isAdmin = user?.role === 'admin';
   const auditSectionRef = useRef<HTMLDivElement | null>(null);
 
-  // Self-service password modal
+  // Self-service modals
   const [changeOwnPwOpen, setChangeOwnPwOpen] = useState(false);
+  const [totpModalOpen, setTotpModalOpen] = useState(false);
 
   // Audit Log state
   const [auditQuery, setAuditQuery] = useState('');
@@ -61,37 +77,16 @@ export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 
   const [pageSize, setPageSize] = useState(50);
   const [auditData, setAuditData] = useState<AuditResponse | null>(null);
 
-  // Users state (admin only)
-  const [users, setUsers] = useState<UserAccount[]>([]);
+  // Superuser Subscription Approval & Multi-Project Access Panel state
+  const [managedUsers, setManagedUsers] = useState<AdminManagedUser[]>([]);
+  const [allProjects, setAllProjects] = useState<ProjectInfo[]>([]);
+  const [allEmployers, setAllEmployers] = useState<AdminEmployerSummary[]>([]);
+  const [loadingAdmin, setLoadingAdmin] = useState(false);
+  const [statusTab, setStatusTab] = useState<'ALL' | AppUserStatus>('PENDING');
   const [userSearch, setUserSearch] = useState('');
-  const [userRoleFilter, setUserRoleFilter] = useState<'' | UserRole>('');
-  const [userStatusFilter, setUserStatusFilter] = useState<'' | 'active' | 'disabled'>('');
-
-  // Create user form
-  const [newUsername, setNewUsername] = useState('');
-  const [newFullName, setNewFullName] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [newRole, setNewRole] = useState<UserRole>('operator');
-  const [newMustChangePw, setNewMustChangePw] = useState(false);
-
-  // Edit User Modal
-  const [editTarget, setEditTarget] = useState<UserAccount | null>(null);
-  const [editUsername, setEditUsername] = useState('');
-  const [editFullName, setEditFullName] = useState('');
-  const [editRole, setEditRole] = useState<UserRole>('operator');
-  const [editActive, setEditActive] = useState(true);
-  const [editMustChangePw, setEditMustChangePw] = useState(false);
-
-  // Admin Reset Password Modal
-  const [resetTarget, setResetTarget] = useState<UserAccount | null>(null);
-  const [resetPassword, setResetPassword] = useState('');
-  const [resetConfirm, setResetConfirm] = useState('');
-  const [showResetPassword, setShowResetPassword] = useState(false);
-  const [resetMustChangePw, setResetMustChangePw] = useState(true);
-
-  // Delete User Confirmation Modal
-  const [deleteTarget, setDeleteTarget] = useState<UserAccount | null>(null);
+  const [draftProjectIds, setDraftProjectIds] = useState<Record<string, string[]>>({});
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminManagedUser | null>(null);
 
   const loadAudit = useCallback(async () => {
     try {
@@ -110,218 +105,283 @@ export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 
     }
   }, [page, pageSize, auditQuery, auditScope, fromDate, toDate, notify]);
 
-  const loadUsers = useCallback(async () => {
-    if (!isAdmin) return;
+  const loadAdminUsers = useCallback(async () => {
+    if (!isSuperuser) return;
+    setLoadingAdmin(true);
     try {
-      const res = await apiRequest<{ users: UserAccount[] }>('/api/users');
-      setUsers(res.users);
-    } catch {
-      // Ignore
+      const res = await apiRequest<AdminUsersResponse>('/api/admin/users');
+      setManagedUsers(res.users || []);
+      setAllProjects(res.projects || []);
+      setAllEmployers(res.employers || []);
+      setDraftProjectIds((prev) => {
+        const next: Record<string, string[]> = {};
+        for (const u of res.users || []) {
+          // For PENDING users without explicit assignments yet, pre-fill checkboxes with requested projects
+          if (u.status === 'PENDING' && u.assignedProjectIds.length === 0 && u.requestedProjectIds.length > 0) {
+            next[u.id] = prev[u.id] ?? [...u.requestedProjectIds];
+          } else {
+            next[u.id] = [...u.assignedProjectIds];
+          }
+        }
+        return next;
+      });
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setLoadingAdmin(false);
     }
-  }, [isAdmin]);
+  }, [isSuperuser, notify]);
 
   useEffect(() => {
-    loadAudit();
+    void loadAudit();
   }, [loadAudit, refreshSignal]);
 
   useEffect(() => {
-    loadUsers();
-  }, [loadUsers, refreshSignal]);
+    void loadAdminUsers();
+  }, [loadAdminUsers, refreshSignal]);
+
+  const statusCounts = useMemo(() => {
+    let pending = 0;
+    let approved = 0;
+    let rejected = 0;
+    for (const u of managedUsers) {
+      if (u.status === 'PENDING') pending += 1;
+      else if (u.status === 'APPROVED') approved += 1;
+      else if (u.status === 'REJECTED') rejected += 1;
+    }
+    return { pending, approved, rejected, total: managedUsers.length };
+  }, [managedUsers]);
+
+  // If no pending requests on first load, switch gracefully only if user hasn't interacted yet
+  const autoSwitchedTabRef = useRef(false);
+  useEffect(() => {
+    if (!autoSwitchedTabRef.current && managedUsers.length > 0) {
+      autoSwitchedTabRef.current = true;
+      if (statusCounts.pending === 0 && statusTab === 'PENDING') {
+        setStatusTab('ALL');
+      }
+    }
+  }, [managedUsers.length, statusCounts.pending, statusTab]);
+
+  const projectsByEmployer = useMemo(() => {
+    const employerMap = new Map<string, AdminEmployerSummary>();
+    for (const e of allEmployers) {
+      employerMap.set(e.id, e);
+    }
+    const groups = new Map<string, { employerLabel: string; projects: ProjectInfo[] }>();
+    for (const p of allProjects) {
+      const empId = p.employerId || 'unassigned';
+      const emp = employerMap.get(empId);
+      const label = emp
+        ? isFa
+          ? `${emp.nameFa}${emp.shortName ? ` (${emp.shortName})` : ''}`
+          : `${emp.nameEn}${emp.shortName ? ` (${emp.shortName})` : ''}`
+        : isFa
+          ? 'بدون کارفرما'
+          : 'Unassigned';
+      const bucket = groups.get(empId) || { employerLabel: label, projects: [] };
+      bucket.projects.push(p);
+      groups.set(empId, bucket);
+    }
+    return Array.from(groups.entries()).map(([employerId, value]) => ({
+      employerId,
+      employerLabel: value.employerLabel,
+      projects: value.projects,
+    }));
+  }, [allProjects, allEmployers, isFa]);
+
+  const employerLookup = useMemo(() => {
+    const map = new Map<string, AdminEmployerSummary>();
+    for (const e of allEmployers) map.set(e.id, e);
+    return map;
+  }, [allEmployers]);
+
+  const projectLookup = useMemo(() => {
+    const map = new Map<string, ProjectInfo>();
+    for (const p of allProjects) map.set(p.id, p);
+    return map;
+  }, [allProjects]);
 
   const filteredUsers = useMemo(() => {
     const q = userSearch.trim().toLowerCase();
-    return users.filter((u) => {
-      if (userRoleFilter && u.role !== userRoleFilter) return false;
-      if (userStatusFilter === 'active' && !u.active) return false;
-      if (userStatusFilter === 'disabled' && u.active) return false;
+    return managedUsers.filter((u) => {
+      if (statusTab !== 'ALL' && u.status !== statusTab) return false;
       if (q) {
-        const hay = `${u.username} ${u.fullName}`.toLowerCase();
+        const hay = `${u.fullName} ${u.firstName} ${u.lastName} ${u.phone} ${u.email}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [users, userSearch, userRoleFilter, userStatusFilter]);
+  }, [managedUsers, statusTab, userSearch]);
 
-  const activeCount = useMemo(() => users.filter((u) => u.active).length, [users]);
-  const adminCount = useMemo(() => users.filter((u) => u.role === 'admin' && u.active).length, [users]);
-
-  const handleCreateUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await apiRequest('/api/users', {
-        method: 'POST',
-        body: JSON.stringify({
-          username: newUsername,
-          fullName: newFullName || newUsername,
-          password: newPassword,
-          role: newRole,
-          mustChangePassword: newMustChangePw,
-        }),
-      });
-      setNewUsername('');
-      setNewFullName('');
-      setNewPassword('');
-      setNewMustChangePw(false);
-      notify('success', isFa ? 'حساب کاربری جدید ایجاد شد.' : 'User created.');
-      loadUsers();
-      loadAudit();
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    }
+  const toggleDraftProject = (userId: string, projectId: string) => {
+    setDraftProjectIds((prev) => {
+      const current = prev[userId] || [];
+      const next = current.includes(projectId)
+        ? current.filter((id) => id !== projectId)
+        : [...current, projectId];
+      return { ...prev, [userId]: next };
+    });
   };
 
-  const toggleUserActive = async (target: UserAccount) => {
-    try {
-      await apiRequest(`/api/users/${target.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ active: !target.active }),
-      });
+  const applyRequestedProjects = (u: AdminManagedUser) => {
+    const validRequested = u.requestedProjectIds.filter((id) => projectLookup.has(id));
+    setDraftProjectIds((prev) => ({ ...prev, [u.id]: validRequested }));
+  };
+
+  const selectAllProjectsForUser = (userId: string) => {
+    setDraftProjectIds((prev) => ({
+      ...prev,
+      [userId]: allProjects.map((p) => p.id),
+    }));
+  };
+
+  const clearProjectsForUser = (userId: string) => {
+    setDraftProjectIds((prev) => ({
+      ...prev,
+      [userId]: [],
+    }));
+  };
+
+  const handleUpdateAccess = async (
+    target: AdminManagedUser,
+    nextStatus?: AppUserStatus,
+  ) => {
+    const selectedIds = draftProjectIds[target.id] ?? target.assignedProjectIds;
+    if ((nextStatus === 'APPROVED' || (!nextStatus && target.status === 'APPROVED')) && selectedIds.length === 0) {
       notify(
-        'success',
-        !target.active
-          ? isFa ? 'حساب کاربری فعال شد.' : 'User activated.'
-          : isFa ? 'حساب کاربری غیرفعال شد.' : 'User disabled.',
-      );
-      loadUsers();
-      loadAudit();
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    }
-  };
-
-  const changeUserRole = async (target: UserAccount, role: UserRole) => {
-    try {
-      await apiRequest(`/api/users/${target.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ role }),
-      });
-      notify('success', isFa ? 'نقش کاربر به‌روزرسانی شد.' : 'User role updated.');
-      loadUsers();
-      loadAudit();
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    }
-  };
-
-  const openEditUserModal = (target: UserAccount) => {
-    setEditTarget(target);
-    setEditUsername(target.username);
-    setEditFullName(target.fullName);
-    setEditRole(target.role);
-    setEditActive(target.active);
-    setEditMustChangePw(Boolean(target.mustChangePassword));
-  };
-
-  const handleSaveEditUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editTarget) return;
-    try {
-      await apiRequest(`/api/users/${editTarget.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          username: editUsername,
-          fullName: editFullName,
-          role: editRole,
-          active: editActive,
-          mustChangePassword: editMustChangePw,
-        }),
-      });
-      notify('success', isFa ? 'مشخصات کاربر ذخیره شد.' : 'User details updated.');
-      setEditTarget(null);
-      loadUsers();
-      loadAudit();
-    } catch (err) {
-      if (err instanceof ApiError) notify('error', err.message);
-    }
-  };
-
-  const openResetPasswordModal = (target: UserAccount) => {
-    setResetTarget(target);
-    setResetPassword('');
-    setResetConfirm('');
-    setShowResetPassword(false);
-    setResetMustChangePw(true);
-  };
-
-  const handleSaveResetPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!resetTarget) return;
-    if (resetPassword.length < 4) {
-      notify('error', t.auth.passwordMinLength);
-      return;
-    }
-    if (resetPassword !== resetConfirm) {
-      notify('error', t.auth.passwordMismatch);
-      return;
-    }
-
-    try {
-      await apiRequest(`/api/users/${resetTarget.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          password: resetPassword,
-          mustChangePassword: resetMustChangePw,
-        }),
-      });
-      notify(
-        'success',
+        'warning',
         isFa
-          ? `رمز عبور کاربر ${resetTarget.username} تغییر یافت.`
-          : `Password updated for ${resetTarget.username}.`,
+          ? 'برای تایید یا فعال نگه‌داشتن کاربر، حداقل یک پروژه را برای دسترسی انتخاب کنید.'
+          : 'Select at least one project before approving this user.',
       );
-      setResetTarget(null);
-      loadUsers();
-      loadAudit();
+      return;
+    }
+
+    setBusyUserId(target.id);
+    try {
+      await apiRequest(`/api/admin/users/${target.id}/access`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ...(nextStatus ? { status: nextStatus } : {}),
+          projectIds: selectedIds,
+        }),
+      });
+      notify(
+        'success',
+        nextStatus === 'APPROVED'
+          ? isFa
+            ? `حساب «${target.fullName}» تایید و به ${selectedIds.length} پروژه متصل شد.`
+            : `"${target.fullName}" approved with ${selectedIds.length} project(s).`
+          : nextStatus === 'REJECTED'
+            ? isFa
+              ? `درخواست یا حساب «${target.fullName}» رد / تعلیق شد و نشست‌های فعال آن باطل گردید.`
+              : `"${target.fullName}" rejected / suspended.`
+            : isFa
+              ? `دسترسی پروژه‌های «${target.fullName}» با موفقیت ذخیره شد (${selectedIds.length} پروژه).`
+              : `Updated project access for "${target.fullName}".`,
+      );
+      await loadAdminUsers();
+      await loadAudit();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setBusyUserId(null);
     }
   };
 
   const handleConfirmDeleteUser = async () => {
     if (!deleteTarget) return;
+    setBusyUserId(deleteTarget.id);
     try {
-      await apiRequest(`/api/users/${deleteTarget.id}`, { method: 'DELETE' });
+      await apiRequest(`/api/admin/users/${deleteTarget.id}`, { method: 'DELETE' });
       notify(
         'success',
         isFa
-          ? `حساب کاربری ${deleteTarget.username} حذف شد.`
-          : `User ${deleteTarget.username} deleted.`,
+          ? `حساب کاربری «${deleteTarget.fullName}» حذف شد.`
+          : `User "${deleteTarget.fullName}" deleted.`,
       );
       setDeleteTarget(null);
-      loadUsers();
-      loadAudit();
+      await loadAdminUsers();
+      await loadAudit();
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setBusyUserId(null);
     }
   };
 
-  const jumpToUserActivity = (username: string) => {
-    setAuditQuery(username);
+  const jumpToUserActivity = (queryText: string) => {
+    setAuditQuery(queryText);
     setPage(1);
     auditSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const hasUnsavedProjectDiff = (u: AdminManagedUser): boolean => {
+    const draft = [...(draftProjectIds[u.id] ?? u.assignedProjectIds)].sort();
+    const saved = [...u.assignedProjectIds].sort();
+    if (draft.length !== saved.length) return true;
+    return draft.some((id, idx) => id !== saved[idx]);
+  };
+
   return (
     <div className="space-y-6">
-      {/* My Account & Self-Service Password Card (All Roles) */}
+      {/* My Account & Self-Service Security Card (All Roles) */}
       {user && (
         <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-sm font-bold">
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
               <KeyRound className="w-4 h-4 text-[var(--accent-primary)]" />
               <span>{isFa ? 'حساب کاربری و امنیت من' : 'My Account & Security'}</span>
+              <span
+                className={`px-2 py-0.5 rounded-md text-[10.5px] font-bold ${
+                  isSuperuser
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                    : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
+                }`}
+              >
+                {isSuperuser
+                  ? isFa
+                    ? 'مدیر ارشد سامانه (SUPERUSER)'
+                    : 'SUPERUSER'
+                  : isFa
+                    ? 'کاربر سامانه (USER)'
+                    : 'USER'}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-semibold ${
+                  user.totpEnabled
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'
+                }`}
+              >
+                {user.totpEnabled ? <ShieldCheck className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+                <span>
+                  {user.totpEnabled
+                    ? isFa
+                      ? '2FA فعال'
+                      : '2FA Enabled'
+                    : isFa
+                      ? '2FA غیرفعال'
+                      : '2FA Disabled'}
+                </span>
+              </span>
             </div>
+
             <div className="text-xs text-[var(--text-secondary)] flex flex-wrap items-center gap-x-3 gap-y-1">
               <span className="font-semibold text-[var(--text-primary)]">{user.fullName}</span>
-              <span dir="ltr" className="text-[var(--text-muted)]">@{user.username}</span>
-              <span>·</span>
-              <span>
-                {user.role === 'admin'
-                  ? t.auth.roleAdmin
-                  : user.role === 'operator'
-                    ? t.auth.roleOperator
-                    : t.auth.roleViewer}
-              </span>
+              {user.phone && (
+                <span dir="ltr" className="inline-flex items-center gap-1 text-[var(--text-muted)] font-mono">
+                  <Phone className="w-3 h-3" />
+                  {user.phone}
+                </span>
+              )}
+              {user.email && (
+                <span dir="ltr" className="inline-flex items-center gap-1 text-[var(--text-muted)] font-mono">
+                  <Mail className="w-3 h-3" />
+                  {user.email}
+                </span>
+              )}
               {user.lastLoginAt && (
                 <>
                   <span>·</span>
@@ -333,253 +393,428 @@ export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setChangeOwnPwOpen(true)}
-            className="h-9 px-4 rounded-lg border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-semibold flex items-center gap-2"
-          >
-            <KeyRound className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-            <span>{t.auth.changePassword}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid="account-totp-btn"
+              onClick={() => setTotpModalOpen(true)}
+              className={`h-9 px-4 rounded-lg border text-xs font-semibold flex items-center gap-2 transition-colors ${
+                user.totpEnabled
+                  ? 'border-emerald-500/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/15'
+                  : 'border-[var(--accent-primary)]/45 bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:bg-[var(--accent-primary)] hover:text-[var(--accent-contrast)]'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>
+                {isFa ? 'تنظیمات تایید دو مرحله‌ای (2FA)' : '2FA Authenticator Settings'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setChangeOwnPwOpen(true)}
+              className="h-9 px-4 rounded-lg border border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] text-xs font-semibold flex items-center gap-2"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+              <span>{t.auth.changePassword}</span>
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Admin User Management */}
-      {isAdmin && (
-        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4">
+      {/* SUPERUSER ONLY: Subscription Approval & Multi-Project Access Panel */}
+      {isSuperuser && (
+        <div
+          data-testid="superuser-approval-panel"
+          className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4"
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-bold">
-              <Shield className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{isFa ? 'مدیریت کاربران و نقش‌های دسترسی' : 'User & Role Management'}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-muted)] tabular-nums">
-              <span>
-                {isFa ? 'کل کاربران:' : 'Total:'} <strong className="text-[var(--text-primary)]">{users.length}</strong>
-              </span>
-              <span>
-                {isFa ? 'فعال:' : 'Active:'} <strong className="text-[var(--status-success)]">{activeCount}</strong>
-              </span>
-              <span>
-                {t.auth.roleAdmin}: <strong className="text-[var(--accent-primary)]">{adminCount}</strong>
-              </span>
-            </div>
-          </div>
-
-          {/* Add New User Form */}
-          <form onSubmit={handleCreateUser} className="p-4 rounded-xl bg-[var(--bg-canvas)] border border-[var(--border-subtle)] space-y-3">
-            <div className="text-xs font-semibold text-[var(--text-secondary)]">
-              {isFa ? 'افزودن کاربر جدید' : 'Add New User'}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
-              <input
-                type="text"
-                required
-                dir={isFa && !newUsername ? 'rtl' : 'ltr'}
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                placeholder={t.auth.username}
-                className={`h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !newUsername ? 'text-right' : 'text-left'
-                }`}
-              />
-              <input
-                type="text"
-                dir={!newFullName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={newFullName}
-                onChange={(e) => setNewFullName(e.target.value)}
-                placeholder={t.auth.fullName}
-                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-              <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 gap-1.5 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                <input
-                  type={showNewPassword ? 'text' : 'password'}
-                  required
-                  minLength={4}
-                  dir={isFa && !newPassword ? 'rtl' : 'ltr'}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder={t.auth.password}
-                  className={`flex-1 min-w-0 h-full bg-transparent text-xs focus:outline-none ${
-                    isFa && !newPassword ? 'text-right' : 'text-left'
-                  }`}
-                />
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setShowNewPassword((v) => !v)}
-                    className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                    title={isFa ? 'نمایش/مخفی کردن' : 'Show/Hide'}
-                  >
-                    {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewPassword(generateRandomPassword());
-                      setShowNewPassword(true);
-                    }}
-                    className="p-1 text-[var(--accent-primary)] hover:opacity-80"
-                    title={t.auth.generatePassword}
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
+                <Shield className="w-4 h-4 text-[var(--accent-primary)]" />
+                <span>
+                  {isFa
+                    ? 'پنل تایید درخواست‌های اشتراک و تخصیص چندپروژه‌ای کاربران'
+                    : 'Subscription Approval & Multi-Project User Access'}
+                </span>
               </div>
-              <select
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value as UserRole)}
-                className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-xs"
-              >
-                <option value="operator">{t.auth.roleOperator}</option>
-                <option value="viewer">{t.auth.roleViewer}</option>
-                <option value="admin">{t.auth.roleAdmin}</option>
-              </select>
-              <button
-                type="submit"
-                className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center justify-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>{t.controls.add}</span>
-              </button>
+              <p className="text-[11px] text-[var(--text-muted)]">
+                {isFa
+                  ? 'درخواست‌های ثبت‌نام جدید را بررسی کرده، یک یا چند پروژه مجاز را از طریق چک‌باکس تخصیص دهید و حساب کاربر را تایید یا رد کنید.'
+                  : 'Review registration requests, assign one or multiple projects via checkboxes, and approve or reject accounts.'}
+              </p>
             </div>
-            <label className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={newMustChangePw}
-                onChange={(e) => setNewMustChangePw(e.target.checked)}
-              />
-              <span>{t.auth.forcePasswordChange}</span>
-            </label>
-          </form>
 
-          {/* Search & Filter Users */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            <SearchInputWithClear
-              value={userSearch}
-              onChange={setUserSearch}
-              placeholder={isFa ? 'جستجو نام یا نام کاربری...' : 'Search name or username...'}
-              inputClassName="text-xs"
-            />
-            <select
-              value={userRoleFilter}
-              onChange={(e) => setUserRoleFilter(e.target.value as '' | UserRole)}
-              className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
+            <button
+              type="button"
+              disabled={loadingAdmin}
+              onClick={() => void loadAdminUsers()}
+              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
             >
-              <option value="">{isFa ? 'همه نقش‌ها' : 'All Roles'}</option>
-              <option value="admin">{t.auth.roleAdmin}</option>
-              <option value="operator">{t.auth.roleOperator}</option>
-              <option value="viewer">{t.auth.roleViewer}</option>
-            </select>
-            <select
-              value={userStatusFilter}
-              onChange={(e) => setUserStatusFilter(e.target.value as '' | 'active' | 'disabled')}
-              className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
-            >
-              <option value="">{isFa ? 'همه وضعیت‌ها' : 'All Statuses'}</option>
-              <option value="active">{isFa ? 'فعال' : 'Active'}</option>
-              <option value="disabled">{isFa ? 'غیرفعال' : 'Disabled'}</option>
-            </select>
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingAdmin ? 'animate-spin' : ''}`} />
+              <span>{isFa ? 'بروزرسانی لیست' : 'Refresh'}</span>
+            </button>
           </div>
 
-          {/* Users List */}
-          <div className="divide-y divide-[var(--border-subtle)] border border-[var(--border-subtle)] rounded-xl overflow-hidden text-xs">
+          {/* Status Filter Tabs & Search */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex flex-wrap rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-1 gap-1">
+              {(
+                [
+                  {
+                    key: 'PENDING' as const,
+                    label: isFa ? 'در انتظار تایید' : 'Pending',
+                    count: statusCounts.pending,
+                    highlight: statusCounts.pending > 0,
+                  },
+                  {
+                    key: 'APPROVED' as const,
+                    label: isFa ? 'تایید شده' : 'Approved',
+                    count: statusCounts.approved,
+                    highlight: false,
+                  },
+                  {
+                    key: 'REJECTED' as const,
+                    label: isFa ? 'رد شده' : 'Rejected',
+                    count: statusCounts.rejected,
+                    highlight: false,
+                  },
+                  {
+                    key: 'ALL' as const,
+                    label: isFa ? 'همه کاربران' : 'All Users',
+                    count: statusCounts.total,
+                    highlight: false,
+                  },
+                ]
+              ).map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  data-testid={`admin-users-tab-${tab.key}`}
+                  onClick={() => setStatusTab(tab.key)}
+                  className={`h-8 px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                    statusTab === tab.key
+                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono tabular-nums ${
+                      statusTab === tab.key
+                        ? 'bg-white/20 text-white'
+                        : tab.highlight
+                          ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                          : 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="w-full sm:w-72">
+              <SearchInputWithClear
+                value={userSearch}
+                onChange={setUserSearch}
+                placeholder={isFa ? 'جستجو نام، موبایل یا ایمیل...' : 'Search name, phone or email...'}
+                inputClassName="text-xs"
+              />
+            </div>
+          </div>
+
+          {/* Managed Users Cards */}
+          <div className="space-y-3">
             {filteredUsers.length === 0 ? (
-              <div className="py-8 text-center text-[var(--text-muted)]">{t.controls.noData}</div>
+              <div className="py-10 rounded-xl border border-dashed border-[var(--border-subtle)] text-center text-xs text-[var(--text-muted)]">
+                {statusTab === 'PENDING'
+                  ? isFa
+                    ? 'درخواست ثبت‌نام در انتظار تاییدی وجود ندارد.'
+                    : 'No pending registration requests.'
+                  : t.controls.noData}
+              </div>
             ) : (
               filteredUsers.map((u) => {
-                const isSelf = u.id === user?.id;
+                const isTargetSuperuser = u.role === 'SUPERUSER';
+                const isBusy = busyUserId === u.id;
+                const selectedIds = draftProjectIds[u.id] ?? u.assignedProjectIds;
+                const dirty = !isTargetSuperuser && hasUnsavedProjectDiff(u);
+                const reqEmployer = u.requestedEmployerId
+                  ? employerLookup.get(u.requestedEmployerId)
+                  : undefined;
+
                 return (
-                  <div key={u.id} className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 hover:bg-[var(--bg-subtle)]/30">
-                    <div className="space-y-1 min-w-[200px]">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-sm bidi-plaintext">{u.fullName}</span>
-                        <span dir="ltr" className="text-[var(--text-muted)] tabular-nums">@{u.username}</span>
-                        {isSelf && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[10px] font-bold">
-                            {isFa ? 'شما' : 'You'}
+                  <div
+                    key={u.id}
+                    data-testid={`admin-user-card-${u.id}`}
+                    className={`rounded-xl border p-4 space-y-3.5 transition-colors ${
+                      u.status === 'PENDING'
+                        ? 'border-amber-500/40 bg-amber-500/[0.03]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)]/55'
+                    }`}
+                  >
+                    {/* Header Row: Identity & Status Badges */}
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-bold text-[var(--text-primary)] bidi-plaintext">
+                            {u.fullName}
                           </span>
-                        )}
-                        {u.mustChangePassword && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[10px] font-semibold">
-                            {isFa ? 'نیازمند تغییر رمز' : 'Password Reset Pending'}
+
+                          {isTargetSuperuser ? (
+                            <span className="px-2 py-0.5 rounded-md bg-[var(--accent-soft)] text-[var(--accent-primary)] text-[10.5px] font-bold">
+                              {isFa ? 'مدیر ارشد سامانه' : 'SUPERUSER'}
+                            </span>
+                          ) : u.status === 'PENDING' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10.5px] font-bold">
+                              <Clock className="w-3 h-3" />
+                              {isFa ? 'در انتظار تایید' : 'PENDING'}
+                            </span>
+                          ) : u.status === 'APPROVED' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10.5px] font-bold">
+                              <CheckCircle2 className="w-3 h-3" />
+                              {isFa ? 'تایید شده' : 'APPROVED'}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[10.5px] font-bold">
+                              <UserX className="w-3 h-3" />
+                              {isFa ? 'رد / تعلیق شده' : 'REJECTED'}
+                            </span>
+                          )}
+
+                          {u.phoneVerified && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-700 dark:text-sky-300 text-[10.5px] font-semibold">
+                              <Check className="w-3 h-3" />
+                              {isFa ? 'موبایل تایید شده' : 'Phone Verified'}
+                            </span>
+                          )}
+
+                          {u.totpEnabled && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10.5px] font-semibold">
+                              <ShieldCheck className="w-3 h-3" />
+                              2FA
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="text-[11.5px] text-[var(--text-secondary)] flex flex-wrap items-center gap-x-4 gap-y-1">
+                          <span dir="ltr" className="inline-flex items-center gap-1 font-mono">
+                            <Phone className="w-3 h-3 text-[var(--text-muted)]" />
+                            {u.phone}
                           </span>
-                        )}
+                          <span dir="ltr" className="inline-flex items-center gap-1 font-mono">
+                            <Mail className="w-3 h-3 text-[var(--text-muted)]" />
+                            {u.email}
+                          </span>
+                          <span className="text-[var(--text-muted)] tabular-nums">
+                            {t.auth.createdAt}: {formatTimestamp(u.createdAt)}
+                          </span>
+                          {u.approvedBy && u.approvedAt && (
+                            <span className="text-[var(--text-muted)] tabular-nums">
+                              {isFa ? 'تایید توسط:' : 'Approved by:'} {u.approvedBy} ({formatTimestamp(u.approvedAt)})
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-[11px] text-[var(--text-muted)] flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums">
-                        <span>
-                          {t.auth.createdAt}: {formatTimestamp(u.createdAt)}
-                        </span>
-                        <span>
-                          {t.auth.lastLogin}: {u.lastLoginAt ? formatTimestamp(u.lastLoginAt) : t.auth.neverLoggedIn}
-                        </span>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => jumpToUserActivity(u.email || u.phone)}
+                          title={t.auth.viewUserActivity}
+                          className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] text-xs flex items-center gap-1"
+                        >
+                          <History className="w-3.5 h-3.5" />
+                        </button>
+                        {!isTargetSuperuser && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => setDeleteTarget(u)}
+                            title={t.auth.deleteUser}
+                            className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)] text-xs flex items-center gap-1 disabled:opacity-40"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      <select
-                        value={u.role}
-                        disabled={isSelf}
-                        onChange={(e) => changeUserRole(u, e.target.value as UserRole)}
-                        className="h-8 px-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs disabled:opacity-50"
-                      >
-                        <option value="admin">{t.auth.roleAdmin}</option>
-                        <option value="operator">{t.auth.roleOperator}</option>
-                        <option value="viewer">{t.auth.roleViewer}</option>
-                      </select>
+                    {/* Requested Employer & Projects Summary (for regular users) */}
+                    {!isTargetSuperuser && (reqEmployer || u.requestedProjectIds.length > 0) && (
+                      <div className="p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[11px] flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2 text-[var(--text-secondary)]">
+                          <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                          <span className="font-semibold text-[var(--text-primary)]">
+                            {isFa ? 'درخواست ثبت‌نام کاربر:' : 'Requested during signup:'}
+                          </span>
+                          {reqEmployer && (
+                            <span className="px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-primary)] font-medium">
+                              {isFa ? reqEmployer.nameFa : reqEmployer.nameEn}
+                            </span>
+                          )}
+                          {u.requestedProjectIds.map((pid) => {
+                            const proj = projectLookup.get(pid);
+                            return (
+                              <span
+                                key={pid}
+                                className="px-2 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold"
+                              >
+                                {proj ? proj.name : pid}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {u.requestedProjectIds.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => applyRequestedProjects(u)}
+                            className="text-[11px] font-semibold text-[var(--accent-primary)] hover:underline"
+                          >
+                            {isFa ? 'اعمال پروژه‌های درخواستی' : 'Apply requested projects'}
+                          </button>
+                        )}
+                      </div>
+                    )}
 
-                      <button
-                        type="button"
-                        disabled={isSelf}
-                        onClick={() => toggleUserActive(u)}
-                        className={`h-8 px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1 disabled:opacity-40 ${
-                          u.active
-                            ? 'border-[var(--status-success)] text-[var(--status-success)]'
-                            : 'border-[var(--status-danger)] text-[var(--status-danger)]'
-                        }`}
-                      >
-                        {u.active ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
-                        <span>{u.active ? (isFa ? 'فعال' : 'Active') : (isFa ? 'غیرفعال' : 'Disabled')}</span>
-                      </button>
+                    {/* Multi-Project Access Checkboxes (for regular users) */}
+                    {isTargetSuperuser ? (
+                      <div className="text-[11.5px] text-[var(--text-muted)] flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                        <span>
+                          {isFa
+                            ? 'مدیر ارشد سامانه به تمامی پروژه‌ها، کارفرمایان و تنظیمات دسترسی کامل دارد.'
+                            : 'Superuser has unrestricted access to all projects, employers, and settings.'}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-secondary)]">
+                            <FolderKanban className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                            <span>
+                              {isFa
+                                ? `پروژه‌های مجاز این کاربر (${selectedIds.length} انتخاب‌شده):`
+                                : `Assigned Projects (${selectedIds.length} selected):`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => selectAllProjectsForUser(u.id)}
+                              className="font-semibold text-[var(--accent-primary)] hover:underline"
+                            >
+                              {isFa ? 'انتخاب همه' : 'Select all'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => clearProjectsForUser(u.id)}
+                              className="font-medium text-[var(--text-muted)] hover:underline"
+                            >
+                              {isFa ? 'پاک کردن انتخاب' : 'Clear'}
+                            </button>
+                          </div>
+                        </div>
 
-                      <button
-                        type="button"
-                        onClick={() => openEditUserModal(u)}
-                        title={t.auth.editUser}
-                        className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] flex items-center gap-1"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span className="hidden xl:inline">{t.controls.edit}</span>
-                      </button>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+                          {projectsByEmployer.map((group) => (
+                            <div
+                              key={group.employerId}
+                              className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2.5 space-y-1.5"
+                            >
+                              <div className="text-[10.5px] font-bold text-[var(--text-muted)] pb-1 border-b border-[var(--border-subtle)]/70 truncate">
+                                {group.employerLabel}
+                              </div>
+                              <div className="space-y-1">
+                                {group.projects.map((proj) => {
+                                  const checked = selectedIds.includes(proj.id);
+                                  const wasRequested = u.requestedProjectIds.includes(proj.id);
+                                  return (
+                                    <label
+                                      key={proj.id}
+                                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                                        checked
+                                          ? 'bg-[var(--accent-soft)] text-[var(--text-primary)] font-semibold'
+                                          : 'hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        data-testid={`user-${u.id}-project-${proj.id}`}
+                                        checked={checked}
+                                        onChange={() => toggleDraftProject(u.id, proj.id)}
+                                        className="w-3.5 h-3.5 accent-[var(--accent-primary)] shrink-0"
+                                      />
+                                      <span className="truncate flex-1">{proj.name}</span>
+                                      {wasRequested && (
+                                        <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 shrink-0">
+                                          {isFa ? 'درخواستی' : 'Req'}
+                                        </span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
 
-                      <button
-                        type="button"
-                        onClick={() => openResetPasswordModal(u)}
-                        title={t.auth.resetPassword}
-                        className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center gap-1"
-                      >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span className="hidden xl:inline">{t.auth.resetPassword}</span>
-                      </button>
+                        {/* Approval / Access Action Buttons */}
+                        <div className="pt-2 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-end gap-2">
+                          {u.status !== 'APPROVED' && (
+                            <button
+                              type="button"
+                              data-testid={`admin-approve-user-${u.id}`}
+                              disabled={isBusy || selectedIds.length === 0}
+                              onClick={() => void handleUpdateAccess(u, 'APPROVED')}
+                              className="h-9 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-45 transition-colors"
+                            >
+                              <UserCheck className="w-3.5 h-3.5" />
+                              <span>
+                                {isFa
+                                  ? `تایید و فعال‌سازی حساب (${selectedIds.length} پروژه)`
+                                  : `Approve Account (${selectedIds.length} projects)`}
+                              </span>
+                            </button>
+                          )}
 
-                      <button
-                        type="button"
-                        onClick={() => jumpToUserActivity(u.username)}
-                        title={t.auth.viewUserActivity}
-                        className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] flex items-center gap-1"
-                      >
-                        <History className="w-3.5 h-3.5" />
-                      </button>
+                          {u.status === 'APPROVED' && (
+                            <button
+                              type="button"
+                              data-testid={`admin-save-projects-${u.id}`}
+                              disabled={isBusy || !dirty || selectedIds.length === 0}
+                              onClick={() => void handleUpdateAccess(u)}
+                              className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-bold flex items-center gap-1.5 disabled:opacity-45 transition-colors"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              <span>{isFa ? 'ذخیره دسترسی پروژه‌ها' : 'Save Project Access'}</span>
+                            </button>
+                          )}
 
-                      <button
-                        type="button"
-                        disabled={isSelf}
-                        onClick={() => setDeleteTarget(u)}
-                        title={t.auth.deleteUser}
-                        className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)] disabled:opacity-35 flex items-center gap-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                          {u.status !== 'REJECTED' && (
+                            <button
+                              type="button"
+                              data-testid={`admin-reject-user-${u.id}`}
+                              disabled={isBusy}
+                              onClick={() => void handleUpdateAccess(u, 'REJECTED')}
+                              className="h-9 px-3.5 rounded-lg border border-[var(--status-danger)]/50 text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-45 transition-colors"
+                            >
+                              <UserX className="w-3.5 h-3.5" />
+                              <span>
+                                {u.status === 'PENDING'
+                                  ? isFa
+                                    ? 'رد درخواست'
+                                    : 'Reject'
+                                  : isFa
+                                    ? 'تعلیق حساب'
+                                    : 'Suspend'}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -600,22 +835,32 @@ export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 
             </h3>
             <span className="text-xs text-[var(--text-muted)]">
               {prefs.calendar === 'jalali'
-                ? isFa ? 'تاریخ و ساعت شمسی' : 'Jalali Timestamps'
-                : isFa ? 'تاریخ و ساعت میلادی' : 'Gregorian Timestamps'}
+                ? isFa
+                  ? 'تاریخ و ساعت شمسی'
+                  : 'Jalali Timestamps'
+                : isFa
+                  ? 'تاریخ و ساعت میلادی'
+                  : 'Gregorian Timestamps'}
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
             <SearchInputWithClear
               value={auditQuery}
-              onChange={(next) => { setAuditQuery(next); setPage(1); }}
+              onChange={(next) => {
+                setAuditQuery(next);
+                setPage(1);
+              }}
               placeholder={isFa ? 'جستجو کاربر، عملیات، شناسه...' : 'Search user, action, target...'}
               inputClassName="text-xs"
             />
 
             <select
               value={auditScope}
-              onChange={(e) => { setAuditScope(e.target.value); setPage(1); }}
+              onChange={(e) => {
+                setAuditScope(e.target.value);
+                setPage(1);
+              }}
               className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs"
             >
               <option value="">{isFa ? 'همه بخش‌ها' : 'All Scopes'}</option>
@@ -644,12 +889,18 @@ export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 
 
             <JalaliDateInput
               value={fromDate}
-              onChange={(v) => { setFromDate(v); setPage(1); }}
+              onChange={(v) => {
+                setFromDate(v);
+                setPage(1);
+              }}
               placeholder={t.controls.fromDate}
             />
             <JalaliDateInput
               value={toDate}
-              onChange={(v) => { setToDate(v); setPage(1); }}
+              onChange={(v) => {
+                setToDate(v);
+                setPage(1);
+              }}
               placeholder={t.controls.toDate}
             />
           </div>
@@ -716,220 +967,11 @@ export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 
         onClose={() => setChangeOwnPwOpen(false)}
       />
 
-      {/* Admin Edit User Modal */}
-      {editTarget && (
-        <div
-          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-          onClick={() => setEditTarget(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
-              <h3 className="text-sm font-bold">{t.auth.editUser}</h3>
-              <button type="button" onClick={() => setEditTarget(null)}>
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveEditUser} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  {t.auth.username} *
-                </label>
-                <input
-                  type="text"
-                  required
-                  dir={isFa && !editUsername ? 'rtl' : 'ltr'}
-                  value={editUsername}
-                  onChange={(e) => setEditUsername(e.target.value)}
-                  className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm focus:outline-none focus:border-[var(--accent-primary)] ${
-                    isFa && !editUsername ? 'text-right' : 'text-left'
-                  }`}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  {t.auth.fullName} *
-                </label>
-                <input
-                  type="text"
-                  required
-                  dir={!editFullName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                  value={editFullName}
-                  onChange={(e) => setEditFullName(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  {isFa ? 'نقش دسترسی' : 'Role'}
-                </label>
-                <select
-                  value={editRole}
-                  disabled={editTarget.id === user?.id}
-                  onChange={(e) => setEditRole(e.target.value as UserRole)}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs disabled:opacity-50"
-                >
-                  <option value="admin">{t.auth.roleAdmin}</option>
-                  <option value="operator">{t.auth.roleOperator}</option>
-                  <option value="viewer">{t.auth.roleViewer}</option>
-                </select>
-              </div>
-
-              <div className="space-y-2 pt-1">
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    disabled={editTarget.id === user?.id}
-                    checked={editActive}
-                    onChange={(e) => setEditActive(e.target.checked)}
-                  />
-                  <span>{isFa ? 'حساب کاربری فعال است' : 'Account is active'}</span>
-                </label>
-
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editMustChangePw}
-                    onChange={(e) => setEditMustChangePw(e.target.checked)}
-                  />
-                  <span>{t.auth.forcePasswordChange}</span>
-                </label>
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditTarget(null)}
-                  className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium"
-                >
-                  {t.controls.cancel}
-                </button>
-                <button
-                  type="submit"
-                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold"
-                >
-                  {t.controls.save}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Admin Reset User Password Modal */}
-      {resetTarget && (
-        <div
-          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
-          onClick={() => setResetTarget(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 space-y-4 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
-              <div>
-                <h3 className="text-sm font-bold">{t.auth.resetPassword}</h3>
-                <div className="text-[11px] text-[var(--text-muted)]">
-                  {resetTarget.fullName} ({resetTarget.username})
-                </div>
-              </div>
-              <button type="button" onClick={() => setResetTarget(null)}>
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveResetPassword} className="space-y-3">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-[var(--text-secondary)]">
-                    {t.auth.newPassword} *
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const generated = generateRandomPassword();
-                      setResetPassword(generated);
-                      setResetConfirm(generated);
-                      setShowResetPassword(true);
-                    }}
-                    className="text-[11px] font-semibold text-[var(--accent-primary)] hover:underline flex items-center gap-1"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>{t.auth.generatePassword}</span>
-                  </button>
-                </div>
-                <div className="flex items-center h-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 gap-2 focus-within:border-[var(--accent-primary)] overflow-hidden">
-                  <input
-                    type={showResetPassword ? 'text' : 'password'}
-                    required
-                    minLength={4}
-                    dir={isFa && !resetPassword ? 'rtl' : 'ltr'}
-                    value={resetPassword}
-                    onChange={(e) => setResetPassword(e.target.value)}
-                    className={`flex-1 min-w-0 h-full bg-transparent text-sm focus:outline-none ${
-                      isFa && !resetPassword ? 'text-right' : 'text-left'
-                    }`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowResetPassword((v) => !v)}
-                    className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
-                  >
-                    {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  {t.auth.confirmPassword} *
-                </label>
-                <input
-                  type={showResetPassword ? 'text' : 'password'}
-                  required
-                  minLength={4}
-                  dir={isFa && !resetConfirm ? 'rtl' : 'ltr'}
-                  value={resetConfirm}
-                  onChange={(e) => setResetConfirm(e.target.value)}
-                  className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm focus:outline-none focus:border-[var(--accent-primary)] ${
-                    isFa && !resetConfirm ? 'text-right' : 'text-left'
-                  }`}
-                />
-              </div>
-
-              <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer pt-1">
-                <input
-                  type="checkbox"
-                  checked={resetMustChangePw}
-                  onChange={(e) => setResetMustChangePw(e.target.checked)}
-                />
-                <span>{t.auth.forcePasswordChange}</span>
-              </label>
-
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setResetTarget(null)}
-                  className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium"
-                >
-                  {t.controls.cancel}
-                </button>
-                <button
-                  type="submit"
-                  className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-contrast)] text-xs font-semibold"
-                >
-                  {t.controls.save}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Self-service Offline TOTP 2FA Modal */}
+      <TotpSecurityModal
+        open={totpModalOpen}
+        onClose={() => setTotpModalOpen(false)}
+      />
 
       {/* Delete User Confirmation Modal */}
       {deleteTarget && (
@@ -949,8 +991,8 @@ export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 
             </div>
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               {isFa
-                ? `آیا از حذف حساب کاربری «${deleteTarget.fullName}» (@${deleteTarget.username}) اطمینان دارید؟ سوابق فعالیت ثبت‌شده این کاربر در دفترچه وقایع همچنان حفظ خواهد شد.`
-                : `Are you sure you want to delete user "${deleteTarget.fullName}" (@${deleteTarget.username})? Historical audit log entries for this user will remain intact.`}
+                ? `آیا از حذف حساب کاربری «${deleteTarget.fullName}» (${deleteTarget.phone}) اطمینان دارید؟ دسترسی کاربر به تمام پروژه‌ها قطع شده و سوابق ثبت‌شده در دفترچه وقایع همچنان حفظ خواهد شد.`
+                : `Are you sure you want to delete user "${deleteTarget.fullName}" (${deleteTarget.phone})? All project access and sessions will be revoked while historical audit logs remain intact.`}
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button
@@ -962,8 +1004,9 @@ export const UsersAuditView: React.FC<UsersAuditViewProps> = ({ refreshSignal = 
               </button>
               <button
                 type="button"
-                onClick={handleConfirmDeleteUser}
-                className="h-9 px-4 rounded-lg bg-[var(--status-danger)] text-white text-xs font-semibold flex items-center gap-1.5"
+                disabled={busyUserId === deleteTarget.id}
+                onClick={() => void handleConfirmDeleteUser()}
+                className="h-9 px-4 rounded-lg bg-[var(--status-danger)] text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{t.controls.delete}</span>

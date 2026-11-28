@@ -12,6 +12,7 @@ import {
   processEquipmentImageFile,
   validateEquipmentImageFile,
 } from '../lib/imageUtils.ts';
+import { AuthMediaImage } from './AuthMediaImage.tsx';
 
 /* =========================================================================
  * Live Camera Capture Modal (supports desktop webcam & mobile cameras,
@@ -399,7 +400,7 @@ export const ItemImageDropzone: React.FC<ItemImageDropzoneProps> = ({
         ) : previewSrc ? (
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-4">
             <div className="w-24 h-24 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden shrink-0 flex items-center justify-center">
-              <img
+              <AuthMediaImage
                 src={previewSrc}
                 alt={isFa ? 'پیش‌نمایش تصویر تجهیز' : 'Equipment preview'}
                 referrerPolicy="no-referrer"
@@ -710,7 +711,7 @@ export const MultiImageDropzone: React.FC<MultiImageDropzoneProps> = ({
                 key={idx}
                 className="relative group w-20 h-20 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] overflow-hidden shrink-0"
               >
-                <img
+                <AuthMediaImage
                   src={src}
                   alt={isFa ? `تصویر ${idx + 1}` : `Photo ${idx + 1}`}
                   referrerPolicy="no-referrer"

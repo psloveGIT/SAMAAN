@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { AuthMediaImage } from './AuthMediaImage.tsx';
 import { computeSelectionFormulaSummary } from '../shared/formulas.ts';
 import { formatDisplayNumber, formatMultiValueCell } from '../shared/jalali.ts';
 import { EMPTY_CELL_TOKEN } from '../shared/tableQuery.ts';
@@ -168,7 +169,7 @@ const GeneralTableRow = React.memo<GeneralTableRowProps>(({
           className="inline-flex items-center gap-1"
         >
           {thumbs.slice(0, 2).map((src, idx) => (
-            <img
+            <AuthMediaImage
               key={idx}
               src={src}
               alt=""
@@ -2094,7 +2095,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       key={idx}
                       className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] overflow-hidden"
                     >
-                      <img
+                      <AuthMediaImage
                         src={src}
                         alt={isFa ? `تصویر ${idx + 1}` : `Photo ${idx + 1}`}
                         referrerPolicy="no-referrer"

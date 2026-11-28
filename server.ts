@@ -3,25 +3,41 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import type { Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import type { Content, FunctionDeclaration, Part } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import {
+  appUserToAuthenticatedUser,
+  appUserToStoredUser,
+  authRepository,
   clearSessionCookie,
+  decryptTotpSecret,
   DEFAULT_PREFERENCES,
+  generateTotpSetup,
   getSessionCookie,
   hashPassword,
+  normalizeEmail,
+  normalizeIranMobile,
+  OTP_TTL_SECONDS,
+  requireAuth,
   requireRole,
+  requireSuperuser,
   sanitizeUser,
   setSessionCookie,
-  signSessionToken,
+  signTotpChallengeToken,
   verifyPassword,
-  verifySessionToken,
+  verifyTotpChallengeToken,
+  verifyTotpCode,
 } from './src/server/auth.ts';
 import type { AuthedRequest, StoredUser } from './src/server/auth.ts';
+import { captchaService } from './src/server/captcha.ts';
+import { sendPatternOtpSms } from './src/server/smsService.ts';
 import {
   detectCsvScope,
   inspectMatrixColumns,
@@ -33,6 +49,20 @@ import {
 } from './src/server/csvImporter.ts';
 import type { ImportScope } from './src/server/csvImporter.ts';
 import { createEmptyCategories, normKey, projectManager, SamaanStore } from './src/server/store.ts';
+import {
+  checkDatabaseHealth,
+  deleteGlobalLogFromDb,
+  listGlobalLogsFromDb,
+  upsertGlobalLogInDb,
+} from './src/server/db.ts';
+import { isValidImageValue, resolveSafeUploadFilePath } from './src/server/fileStorage.ts';
+import {
+  executeProjectSync,
+  executeProjectSyncResolve,
+  SyncValidationError,
+  type SyncMutationInput,
+  type SyncResolutionInput,
+} from './src/server/syncEngine.ts';
 import {
   computeDetailedEntry,
   computeSelectionFormulaSummary,
@@ -385,7 +415,10 @@ interface DeveloperOutboxEntry {
   providerMessageId?: string;
 }
 
-function loadDeveloperOutboxFromDisk(): DeveloperOutboxEntry[] {
+async function loadDeveloperOutbox(): Promise<DeveloperOutboxEntry[]> {
+  if (projectManager.getStorageMode() === 'postgres') {
+    return listGlobalLogsFromDb<DeveloperOutboxEntry>('developer_outbox', 200);
+  }
   try {
     if (!fs.existsSync(DEVELOPER_OUTBOX_FILE)) return [];
     const parsed = JSON.parse(fs.readFileSync(DEVELOPER_OUTBOX_FILE, 'utf8'));
@@ -395,12 +428,18 @@ function loadDeveloperOutboxFromDisk(): DeveloperOutboxEntry[] {
   }
 }
 
-function saveDeveloperOutboxToDisk(entries: DeveloperOutboxEntry[]): void {
+async function saveDeveloperOutboxEntry(entry: DeveloperOutboxEntry): Promise<void> {
+  if (projectManager.getStorageMode() === 'postgres') {
+    await upsertGlobalLogInDb(entry.id, 'developer_outbox', entry, entry.createdAt);
+    return;
+  }
   try {
+    const existing = (await loadDeveloperOutbox()).filter((e) => e.id !== entry.id);
+    existing.unshift(entry);
     const dir = path.dirname(DEVELOPER_OUTBOX_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const tmp = `${DEVELOPER_OUTBOX_FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(entries.slice(0, 200)), 'utf8');
+    fs.writeFileSync(tmp, JSON.stringify(existing.slice(0, 200)), 'utf8');
     fs.renameSync(tmp, DEVELOPER_OUTBOX_FILE);
   } catch (err) {
     console.error('Failed to persist developer outbox:', err);
@@ -411,13 +450,13 @@ function saveDeveloperOutboxToDisk(entries: DeveloperOutboxEntry[]): void {
  * Internal server-side developer dispatch.
  * Recipient email and mail provider API keys live ONLY on the server and are NEVER returned to clients.
  */
-function dispatchInternalDeveloperEmail(payload: {
+async function dispatchInternalDeveloperEmail(payload: {
   kind: 'employer_request' | 'error_report';
   refId: string;
   subject: string;
   text: string;
   attachments?: Array<{ fileName: string; dataBase64: string }>;
-}): void {
+}): Promise<void> {
   const now = new Date().toISOString();
   const entry: DeveloperOutboxEntry = {
     id: makeId(),
@@ -430,9 +469,7 @@ function dispatchInternalDeveloperEmail(payload: {
     deliveryStatus: 'queued',
   };
 
-  const existing = loadDeveloperOutboxFromDisk();
-  existing.unshift(entry);
-  saveDeveloperOutboxToDisk(existing);
+  await saveDeveloperOutboxEntry(entry);
 
   const notifyTo = String(process.env.DEVELOPER_NOTIFY_EMAIL || 'Mohammad.Reza.Zoghi@gmail.com').trim();
   const resendKey = String(process.env.RESEND_API_KEY || '').trim();
@@ -462,20 +499,22 @@ function dispatchInternalDeveloperEmail(payload: {
     .then(async (resp) => {
       if (!resp.ok) return;
       const body = (await resp.json().catch(() => ({}))) as { id?: string };
-      const list = loadDeveloperOutboxFromDisk();
-      const target = list.find((e) => e.id === entry.id);
-      if (target) {
-        target.deliveryStatus = 'sent';
-        if (body.id) target.providerMessageId = String(body.id);
-        saveDeveloperOutboxToDisk(list);
-      }
+      const updatedEntry: DeveloperOutboxEntry = {
+        ...entry,
+        deliveryStatus: 'sent',
+        ...(body.id ? { providerMessageId: String(body.id) } : {}),
+      };
+      await saveDeveloperOutboxEntry(updatedEntry);
     })
     .catch(() => {
       // Kept safely queued in server outbox
     });
 }
 
-function loadErrorReportsFromDisk(): ErrorReportRecord[] {
+async function loadErrorReports(): Promise<ErrorReportRecord[]> {
+  if (projectManager.getStorageMode() === 'postgres') {
+    return listGlobalLogsFromDb<ErrorReportRecord>('error_report', 200);
+  }
   try {
     if (!fs.existsSync(ERROR_REPORTS_FILE)) return [];
     const parsed = JSON.parse(fs.readFileSync(ERROR_REPORTS_FILE, 'utf8'));
@@ -485,19 +524,28 @@ function loadErrorReportsFromDisk(): ErrorReportRecord[] {
   }
 }
 
-function saveErrorReportsToDisk(reports: ErrorReportRecord[]): void {
+async function saveErrorReport(record: ErrorReportRecord): Promise<void> {
+  if (projectManager.getStorageMode() === 'postgres') {
+    await upsertGlobalLogInDb(record.id, 'error_report', record, record.createdAt);
+    return;
+  }
   try {
+    const existing = (await loadErrorReports()).filter((r) => r.id !== record.id);
+    existing.unshift(record);
     const dir = path.dirname(ERROR_REPORTS_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const tmp = `${ERROR_REPORTS_FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(reports.slice(0, 200)), 'utf8');
+    fs.writeFileSync(tmp, JSON.stringify(existing.slice(0, 200)), 'utf8');
     fs.renameSync(tmp, ERROR_REPORTS_FILE);
   } catch (err) {
     console.error('Failed to persist error reports:', err);
   }
 }
 
-function loadEmployerRequestsFromDisk(): DeveloperEmployerRequest[] {
+async function loadEmployerRequests(): Promise<DeveloperEmployerRequest[]> {
+  if (projectManager.getStorageMode() === 'postgres') {
+    return listGlobalLogsFromDb<DeveloperEmployerRequest>('employer_request', 150);
+  }
   try {
     if (!fs.existsSync(EMPLOYER_REQUESTS_FILE)) return [];
     const parsed = JSON.parse(fs.readFileSync(EMPLOYER_REQUESTS_FILE, 'utf8'));
@@ -507,16 +555,41 @@ function loadEmployerRequestsFromDisk(): DeveloperEmployerRequest[] {
   }
 }
 
-function saveEmployerRequestsToDisk(requests: DeveloperEmployerRequest[]): void {
+async function saveEmployerRequest(record: DeveloperEmployerRequest): Promise<void> {
+  if (projectManager.getStorageMode() === 'postgres') {
+    await upsertGlobalLogInDb(record.id, 'employer_request', record, record.createdAt);
+    return;
+  }
   try {
+    const existing = (await loadEmployerRequests()).filter((r) => r.id !== record.id);
+    existing.unshift(record);
     const dir = path.dirname(EMPLOYER_REQUESTS_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const tmp = `${EMPLOYER_REQUESTS_FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(requests.slice(0, 150)), 'utf8');
+    fs.writeFileSync(tmp, JSON.stringify(existing.slice(0, 150)), 'utf8');
     fs.renameSync(tmp, EMPLOYER_REQUESTS_FILE);
   } catch (err) {
     console.error('Failed to persist employer requests:', err);
   }
+}
+
+async function deleteEmployerRequestById(id: string): Promise<boolean> {
+  if (projectManager.getStorageMode() === 'postgres') {
+    return deleteGlobalLogFromDb(id, 'employer_request');
+  }
+  const existing = await loadEmployerRequests();
+  const next = existing.filter((r) => r.id !== id);
+  if (next.length === existing.length) return false;
+  try {
+    const dir = path.dirname(EMPLOYER_REQUESTS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${EMPLOYER_REQUESTS_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(next.slice(0, 150)), 'utf8');
+    fs.renameSync(tmp, EMPLOYER_REQUESTS_FILE);
+  } catch (err) {
+    console.error('Failed to persist employer requests:', err);
+  }
+  return true;
 }
 
 function sanitizeRequestAttachments(raw: unknown): DeveloperRequestAttachment[] {
@@ -560,45 +633,231 @@ const store = new Proxy({} as SamaanStore, {
 });
 
 async function startServer() {
+  // Initialize PostgreSQL (auto-migration, default employers/projects seed, one-time JSON migration) or JSON mode
+  await projectManager.init();
+  await authRepository.init({ mode: projectManager.getStorageMode() });
+
   const app = express();
+  app.set('trust proxy', 1);
   app.disable('x-powered-by');
+
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Hardened security headers via Helmet (preserve Vite SPA & preview compatibility)
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      frameguard: false,
+      crossOriginEmbedderPolicy: false,
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    }),
+  );
   app.use((_req, res, next) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
     next();
   });
+
+  // Strict CORS locked to https://samaanapp.ir (plus configured CORS_ORIGIN; dev allows localhost/preview)
+  const configuredOrigins = String(process.env.CORS_ORIGIN || 'https://samaanapp.ir')
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+  const allowedOrigins = new Set<string>(configuredOrigins);
+
+  const isAllowedOrigin = (origin: string | undefined): boolean => {
+    if (!origin) return true; // Same-origin / server-to-server / curl without Origin header
+    const clean = origin.trim().replace(/\/+$/, '');
+    if (allowedOrigins.has(clean)) return true;
+    if (!isProduction) {
+      if (
+        clean === `http://localhost:${PORT}` ||
+        clean === `http://127.0.0.1:${PORT}` ||
+        /^https:\/\/[a-z0-9-]+\.run\.app$/i.test(clean)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (isAllowedOrigin(origin)) {
+          callback(null, true);
+        } else {
+          callback(null, false);
+        }
+      },
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'X-Samaan-Project', 'X-Samaan-Lang', 'Authorization'],
+    }),
+  );
+
   app.use(express.json({ limit: '50mb' }));
 
-  // Resolve active project store from X-Samaan-Project header and attach authenticated user
+  // Per-IP rate limiters on auth, CAPTCHA, and OTP endpoints
+  const authIpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: {
+      error: 'تعداد درخواست‌های احراز هویت بیش از حد مجاز است. لطفاً دقایقی دیگر تلاش کنید.',
+    },
+  });
+
+  const otpIpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: {
+      error: 'تعداد درخواست‌های کد پیامکی بیش از حد مجاز است. لطفاً دقایقی دیگر تلاش کنید.',
+    },
+  });
+
+  const captchaIpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 120,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: {
+      error: 'تعداد درخواست‌های کد امنیتی بیش از حد مجاز است.',
+    },
+  });
+
+  // Per-phone sliding-window OTP rate limiter (max 5 sends / 15 min + 45s cooldown per phone)
+  const phoneOtpHistory = new Map<string, number[]>();
+  const checkPerPhoneOtpLimit = (
+    normalizedPhone: string,
+  ): { ok: true } | { ok: false; retryAfterSec: number; reason: 'cooldown' | 'quota' } => {
+    const now = Date.now();
+    const windowMs = 15 * 60 * 1000;
+    const cooldownMs = 45 * 1000;
+    const recent = (phoneOtpHistory.get(normalizedPhone) || []).filter((ts) => now - ts < windowMs);
+    if (recent.length > 0 && now - recent[recent.length - 1] < cooldownMs) {
+      return {
+        ok: false,
+        reason: 'cooldown',
+        retryAfterSec: Math.ceil((cooldownMs - (now - recent[recent.length - 1])) / 1000),
+      };
+    }
+    if (recent.length >= 5) {
+      return {
+        ok: false,
+        reason: 'quota',
+        retryAfterSec: Math.ceil((windowMs - (now - recent[0])) / 1000),
+      };
+    }
+    recent.push(now);
+    phoneOtpHistory.set(normalizedPhone, recent);
+    return { ok: true };
+  };
+
+  // Verify authenticated user has access to a specific `:projectId` (used by /api/files & /api/sync)
+  const verifyUserProjectAccess = async (
+    req: AuthedRequest,
+    rawProjectId: string,
+  ): Promise<
+    | { ok: true; projectId: string; user: StoredUser; targetStore: SamaanStore }
+    | { ok: false; status: number; error: string }
+  > => {
+    const project = projectManager.getProject(rawProjectId);
+    if (!project) {
+      return {
+        ok: false,
+        status: 404,
+        error: errMsg(req, 'پروژه مورد نظر یافت نشد', 'Target project not found'),
+      };
+    }
+    if (!req.user || !req.currentUser || req.user.status !== 'APPROVED') {
+      return {
+        ok: false,
+        status: 401,
+        error: errMsg(req, 'احراز هویت الزامی است', 'Authentication required'),
+      };
+    }
+    const allowed =
+      req.user.role === 'SUPERUSER' ||
+      (await authRepository.hasUserProjectAccess(req.user.id, project.id));
+    if (!allowed) {
+      return {
+        ok: false,
+        status: 403,
+        error: errMsg(
+          req,
+          'دسترسی به این پروژه برای حساب کاربری شما مجاز نیست',
+          'Forbidden: Access to this project is not granted',
+        ),
+      };
+    }
+    return {
+      ok: true,
+      projectId: project.id,
+      user: req.currentUser,
+      targetStore: projectManager.getStore(project.id),
+    };
+  };
+
+  // Resolve active project store from X-Samaan-Project header, authenticate hashed HttpOnly session,
+  // enforce multi-project RBAC (`user_project_access`), and guarantee awaited DB commit before HTTP 2xx.
   app.use((req: AuthedRequest, res, next) => {
-    const rawProject = String(req.headers['x-samaan-project'] || '').trim();
-    const reqStore = projectManager.getStore(rawProject || 'default');
-    projectAsyncStorage.run(reqStore, () => {
-      const token = getSessionCookie(req);
-      if (token) {
-        const parsed =
-          verifySessionToken(token, projectManager.getAuthSecret()) ||
-          verifySessionToken(token, reqStore.db.sessionSecret);
-        if (parsed) {
-          const found =
-            reqStore.db.users.find((u) => u.id === parsed.uid && u.active) ||
-            (parsed.uname
-              ? reqStore.db.users.find(
-                  (u) => u.username.toLowerCase() === parsed.uname!.toLowerCase() && u.active,
-                )
-              : undefined);
-          if (found) req.currentUser = found;
+    void (async () => {
+      const rawProjectHeader = String(req.headers['x-samaan-project'] || '').trim();
+      const rawToken = getSessionCookie(req);
+
+      let resolvedProjectId = projectManager.resolveProjectId(rawProjectHeader || 'default');
+      let projectAccessDenied = false;
+
+      if (rawToken) {
+        const sessionCtx = await authRepository.resolveSession(rawToken);
+        if (sessionCtx) {
+          const allProjectIds = new Set(projectManager.listProjects().map((p) => p.id));
+          const effectiveAssignedIds =
+            sessionCtx.appUser.role === 'SUPERUSER'
+              ? Array.from(allProjectIds)
+              : sessionCtx.assignedProjectIds.filter((pid) => allProjectIds.has(pid));
+
+          req.user = appUserToAuthenticatedUser(sessionCtx.appUser, effectiveAssignedIds);
+          req.currentUser = appUserToStoredUser(sessionCtx.appUser, effectiveAssignedIds);
+
+          if (sessionCtx.appUser.role !== 'SUPERUSER') {
+            if (rawProjectHeader) {
+              if (!effectiveAssignedIds.includes(resolvedProjectId)) {
+                projectAccessDenied = true;
+              }
+            } else if (effectiveAssignedIds.length > 0) {
+              resolvedProjectId = effectiveAssignedIds[0];
+            } else {
+              projectAccessDenied = true;
+            }
+          }
         }
       }
-      const autoUndoSpec = resolveAutoUndoSpec(req.method, req.path);
-      if (autoUndoSpec && req.currentUser && ['admin', 'operator'].includes(req.currentUser.role)) {
-        const snapshot = captureAutoUndoState(reqStore.db, reqStore.history, autoUndoSpec);
-        const origJson = res.json.bind(res);
-        let committed = false;
+
+      req.activeProjectId = resolvedProjectId;
+      req.projectAccessDenied = projectAccessDenied;
+
+      const reqStore = projectManager.getStore(resolvedProjectId);
+      projectAsyncStorage.run(reqStore, () => {
+        reqStore.setActor(req.currentUser?.username || 'system');
+
+        const autoUndoSpec = resolveAutoUndoSpec(req.method, req.path);
+        const hasAutoUndo = Boolean(
+          autoUndoSpec &&
+            req.currentUser &&
+            !req.projectAccessDenied &&
+            ['admin', 'operator'].includes(req.currentUser.role),
+        );
+        const snapshot = hasAutoUndo
+          ? captureAutoUndoState(reqStore.db, reqStore.history, autoUndoSpec!)
+          : null;
+        let committedUndo = false;
         const finalizeUndo = () => {
-          if (committed) return;
-          committed = true;
+          if (!hasAutoUndo || committedUndo || !snapshot) return;
+          committedUndo = true;
           if (res.statusCode >= 200 && res.statusCode < 300) {
             commitAutoUndoDiff(
               reqStore.db,
@@ -608,14 +867,178 @@ async function startServer() {
             );
           }
         };
+
+        const origJson = res.json.bind(res);
         res.json = ((body: unknown) => {
           finalizeUndo();
-          return origJson(body);
+          const needsAwait =
+            res.statusCode >= 200 &&
+            res.statusCode < 300 &&
+            (reqStore.hasPendingWrites() || projectManager.hasPendingWrites());
+          if (!needsAwait) {
+            return origJson(body);
+          }
+          void Promise.all([reqStore.awaitFlush(), projectManager.awaitRegistryFlush()])
+            .then(() => {
+              if (!res.headersSent) {
+                origJson(body);
+              }
+            })
+            .catch((err) => {
+              console.error('[server] Database commit failed before sending HTTP response:', err);
+              if (!res.headersSent) {
+                res.status(500);
+                origJson({
+                  error: errMsg(
+                    req,
+                    'خطا در ثبت پایدار اطلاعات در پایگاه داده',
+                    'Failed to commit changes to database',
+                  ),
+                });
+              }
+            });
+          return res;
         }) as typeof res.json;
-        res.on('finish', finalizeUndo);
+
+        if (hasAutoUndo) {
+          res.on('finish', finalizeUndo);
+        }
+        next();
+      });
+    })().catch((err) => {
+      console.error('[server] Auth/project middleware error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal authentication middleware error' });
       }
-      next();
     });
+  });
+
+  // ---------------- AUTHENTICATED BINARY ATTACHMENTS ----------------
+  app.get('/api/files/:projectId/:filename', async (req: AuthedRequest, res: Response) => {
+    const access = await verifyUserProjectAccess(req, req.params.projectId);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
+    const resolved = resolveSafeUploadFilePath(access.projectId, req.params.filename);
+    if (!resolved.ok) {
+      const status = resolved.reason === 'not_found' ? 404 : 400;
+      res.status(status).json({
+        error:
+          status === 404
+            ? errMsg(req, 'فایل درخواستی یافت نشد', 'Requested file not found')
+            : errMsg(req, 'مسیر یا نام فایل نامعتبر است', 'Invalid file path or filename'),
+      });
+      return;
+    }
+    res.setHeader('Content-Type', resolved.mimeType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `inline; filename="${resolved.filename}"`);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.sendFile(resolved.diskPath);
+  });
+
+  // ---------------- CONFLICT-AWARE OFFLINE SYNC ----------------
+  app.post('/api/sync/:projectId', async (req: AuthedRequest, res: Response) => {
+    const access = await verifyUserProjectAccess(req, req.params.projectId);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
+    if (!['admin', 'operator'].includes(access.user.role)) {
+      res.status(403).json({
+        error: errMsg(req, 'سطح دسترسی برای همگام‌سازی داده‌ها کافی نیست', 'Insufficient permissions to sync project data'),
+      });
+      return;
+    }
+
+    const body = req.body as
+      | SyncMutationInput[]
+      | { mutations?: SyncMutationInput[]; items?: SyncMutationInput[] };
+    const mutations = Array.isArray(body)
+      ? body
+      : Array.isArray(body?.mutations)
+        ? body.mutations
+        : Array.isArray(body?.items)
+          ? body.items
+          : null;
+
+    if (!mutations) {
+      res.status(400).json({
+        error: errMsg(req, 'لیست تغییرات همگام‌سازی ارسال نشده است', 'Sync mutations array is required'),
+      });
+      return;
+    }
+
+    try {
+      const result = await executeProjectSync({
+        projectId: access.projectId,
+        targetStore: access.targetStore,
+        mutations,
+        actorUser: sanitizeUser(access.user),
+      });
+      res.json(result);
+    } catch (err) {
+      if (err instanceof SyncValidationError) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      console.error('[sync] Failed to execute project sync:', err);
+      res.status(500).json({
+        error: errMsg(req, 'خطا در اجرای تراکنش همگام‌سازی', 'Failed to commit sync transaction'),
+      });
+    }
+  });
+
+  app.post('/api/sync/:projectId/resolve', async (req: AuthedRequest, res: Response) => {
+    const access = await verifyUserProjectAccess(req, req.params.projectId);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
+    if (!['admin', 'operator'].includes(access.user.role)) {
+      res.status(403).json({
+        error: errMsg(req, 'سطح دسترسی برای رفع تعارض همگام‌سازی کافی نیست', 'Insufficient permissions to resolve sync conflicts'),
+      });
+      return;
+    }
+
+    const body = req.body as
+      | SyncResolutionInput[]
+      | { resolutions?: SyncResolutionInput[]; items?: SyncResolutionInput[] };
+    const resolutions = Array.isArray(body)
+      ? body
+      : Array.isArray(body?.resolutions)
+        ? body.resolutions
+        : Array.isArray(body?.items)
+          ? body.items
+          : null;
+
+    if (!resolutions || resolutions.length === 0) {
+      res.status(400).json({
+        error: errMsg(req, 'لیست تصمیم‌های رفع تعارض الزامی است', 'Conflict resolutions array is required'),
+      });
+      return;
+    }
+
+    try {
+      const result = await executeProjectSyncResolve({
+        projectId: access.projectId,
+        targetStore: access.targetStore,
+        resolutions,
+        actorUser: sanitizeUser(access.user),
+      });
+      res.json(result);
+    } catch (err) {
+      if (err instanceof SyncValidationError) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      console.error('[sync] Failed to resolve sync conflicts:', err);
+      res.status(500).json({
+        error: errMsg(req, 'خطا در ثبت تصمیم‌های رفع تعارض', 'Failed to commit conflict resolutions'),
+      });
+    }
   });
 
   // ---------------- APP VERSION & RELEASE NOTES ----------------
@@ -626,17 +1049,35 @@ async function startServer() {
     res.json(getLocalVersionPayload());
   });
 
-  // ---------------- PROJECTS (MULTI-DATABASE SWITCHER) ----------------
-  app.get('/api/projects', (req: Request, res: Response) => {
+  // ---------------- PROJECTS (STRICT RBAC MULTI-PROJECT ACCESS) ----------------
+  app.get('/api/projects', (req: AuthedRequest, res: Response) => {
     const rawProject = String(req.headers['x-samaan-project'] || '').trim();
-    const activeProjectId = projectManager.resolveProjectId(rawProject);
+    if (!req.user) {
+      res.json({ projects: [], activeProjectId: 'default' });
+      return;
+    }
+    const allProjects = projectManager.listProjects();
+    if (req.user.role === 'SUPERUSER') {
+      const activeProjectId = projectManager.resolveProjectId(rawProject);
+      res.json({
+        projects: allProjects,
+        activeProjectId,
+      });
+      return;
+    }
+
+    const assignedSet = new Set(req.user.assignedProjectIds);
+    const visibleProjects = allProjects.filter((p) => assignedSet.has(p.id));
+    const activeProjectId = visibleProjects.some((p) => p.id === rawProject)
+      ? rawProject
+      : visibleProjects[0]?.id || '';
     res.json({
-      projects: projectManager.listProjects(),
+      projects: visibleProjects,
       activeProjectId,
     });
   });
 
-  app.post('/api/projects', (req: AuthedRequest, res: Response) => {
+  app.post('/api/projects', requireSuperuser, (req: AuthedRequest, res: Response) => {
     const {
       name,
       code,
@@ -678,6 +1119,10 @@ async function startServer() {
       res.status(409).json({ error: errMsg(req, 'پروژه‌ای با این نام قبلاً ثبت شده است', 'A project with this name already exists') });
       return;
     }
+    if (employerId && !projectManager.getEmployer(employerId)) {
+      res.status(400).json({ error: errMsg(req, 'کارفرمای انتخاب‌شده معتبر نیست', 'Selected employer does not exist') });
+      return;
+    }
     const shouldCopyUsers = Boolean(copyUsers && req.currentUser);
     const created = projectManager.createProject({
       name: cleanName,
@@ -693,15 +1138,7 @@ async function startServer() {
     res.json({ project: created, projects: projectManager.listProjects() });
   });
 
-  app.patch('/api/projects/:id', (req: AuthedRequest, res: Response) => {
-    const targetStore = projectManager.getStore(req.params.id);
-    const hasUsers = targetStore.db.users.length > 0;
-    if (hasUsers && (!req.currentUser || !['admin', 'operator'].includes(req.currentUser.role))) {
-      res.status(req.currentUser ? 403 : 401).json({
-        error: errMsg(req, 'دسترسی برای ویرایش پروژه مجاز نیست', 'Permission denied to update project'),
-      });
-      return;
-    }
+  app.patch('/api/projects/:id', requireSuperuser, (req: AuthedRequest, res: Response) => {
     const {
       name,
       code,
@@ -744,6 +1181,10 @@ async function startServer() {
         return;
       }
     }
+    if (employerId && !projectManager.getEmployer(employerId)) {
+      res.status(400).json({ error: errMsg(req, 'کارفرمای انتخاب‌شده معتبر نیست', 'Selected employer does not exist') });
+      return;
+    }
     const updated = projectManager.renameProject(req.params.id, {
       name: cleanName,
       code,
@@ -761,15 +1202,7 @@ async function startServer() {
     res.json({ project: updated, projects: projectManager.listProjects() });
   });
 
-  app.delete('/api/projects/:id', (req: AuthedRequest, res: Response) => {
-    const targetStore = projectManager.getStore(req.params.id);
-    const hasUsers = targetStore.db.users.length > 0;
-    if (hasUsers && (!req.currentUser || req.currentUser.role !== 'admin')) {
-      res.status(req.currentUser ? 403 : 401).json({
-        error: errMsg(req, 'حذف پروژه دارای کاربر فقط توسط مدیر کل مجاز است', 'Only administrators can delete an initialized project'),
-      });
-      return;
-    }
+  app.delete('/api/projects/:id', requireSuperuser, async (req: AuthedRequest, res: Response) => {
     const result = projectManager.deleteProject(req.params.id);
     if (!result.ok) {
       if (result.reason === 'cannot_delete_default') {
@@ -781,6 +1214,7 @@ async function startServer() {
       res.status(404).json({ error: errMsg(req, 'پروژه یافت نشد', 'Project not found') });
       return;
     }
+    await authRepository.removeProjectAccessForDeletedProject(req.params.id);
     res.json({ ok: true, projects: projectManager.listProjects() });
   });
 
@@ -789,14 +1223,7 @@ async function startServer() {
     res.json({ employers: projectManager.listEmployers() });
   });
 
-  app.post('/api/employers', (req: AuthedRequest, res: Response) => {
-    const store = activeProjectStore();
-    if (store.db.users.length > 0 && (!req.currentUser || !['admin', 'operator'].includes(req.currentUser.role))) {
-      res.status(req.currentUser ? 403 : 401).json({
-        error: errMsg(req, 'دسترسی برای ایجاد کارفرما مجاز نیست', 'Permission denied to create employer'),
-      });
-      return;
-    }
+  app.post('/api/employers', requireSuperuser, (req: AuthedRequest, res: Response) => {
     const created = projectManager.createEmployer(req.body);
     if (!created) {
       res.status(400).json({ error: errMsg(req, 'نام کارفرما الزامی است', 'Employer name is required') });
@@ -805,14 +1232,7 @@ async function startServer() {
     res.json({ employer: created, employers: projectManager.listEmployers() });
   });
 
-  app.patch('/api/employers/:id', (req: AuthedRequest, res: Response) => {
-    const store = activeProjectStore();
-    if (store.db.users.length > 0 && (!req.currentUser || !['admin', 'operator'].includes(req.currentUser.role))) {
-      res.status(req.currentUser ? 403 : 401).json({
-        error: errMsg(req, 'دسترسی برای ویرایش کارفرما مجاز نیست', 'Permission denied to update employer'),
-      });
-      return;
-    }
+  app.patch('/api/employers/:id', requireSuperuser, (req: AuthedRequest, res: Response) => {
     const updated = projectManager.updateEmployer(req.params.id, req.body);
     if (!updated) {
       res.status(404).json({ error: errMsg(req, 'کارفرما یافت نشد یا نام آن نامعتبر است', 'Employer not found or invalid data') });
@@ -822,11 +1242,17 @@ async function startServer() {
   });
 
   // ---------------- ERROR REPORTS & CRASH DIAGNOSTICS ----------------
-  app.get('/api/error-reports', (_req: AuthedRequest, res: Response) => {
-    res.json({ reports: loadErrorReportsFromDisk() });
+  app.get('/api/error-reports', async (_req: AuthedRequest, res: Response) => {
+    try {
+      const reports = await loadErrorReports();
+      res.json({ reports });
+    } catch (err) {
+      console.error('Failed to load error reports:', err);
+      res.status(500).json({ error: 'Failed to load error reports' });
+    }
   });
 
-  app.post('/api/error-reports', (req: AuthedRequest, res: Response) => {
+  app.post('/api/error-reports', async (req: AuthedRequest, res: Response) => {
     const raw = (req.body || {}) as Partial<ErrorReportRecord>;
     const desc = preserveMultilineText(raw.description);
     if (!desc) {
@@ -855,37 +1281,45 @@ async function startServer() {
       syncedToServer: true,
       syncedAt: now,
     };
-    const existing = loadErrorReportsFromDisk().filter((r) => r.id !== record.id);
-    existing.unshift(record);
-    saveErrorReportsToDisk(existing);
-    dispatchInternalDeveloperEmail({
-      kind: 'error_report',
-      refId: record.id,
-      subject: `[SAMAAN Error Report] ${record.title} (${record.severity})`,
-      text: [
-        `Title: ${record.title}`,
-        `Category: ${record.category} | Severity: ${record.severity} | Section: ${record.section}`,
-        `Project: ${record.projectName || '-'} | User: ${record.username || '-'} | Version: ${record.appVersion || '-'}`,
-        '',
-        record.description,
-        record.stepsToReproduce ? `\nSteps:\n${record.stepsToReproduce}` : '',
-      ].join('\n'),
-    });
-    res.json({ ok: true, report: record, syncedAt: now });
+    try {
+      await saveErrorReport(record);
+      await dispatchInternalDeveloperEmail({
+        kind: 'error_report',
+        refId: record.id,
+        subject: `[SAMAAN Error Report] ${record.title} (${record.severity})`,
+        text: [
+          `Title: ${record.title}`,
+          `Category: ${record.category} | Severity: ${record.severity} | Section: ${record.section}`,
+          `Project: ${record.projectName || '-'} | User: ${record.username || '-'} | Version: ${record.appVersion || '-'}`,
+          '',
+          record.description,
+          record.stepsToReproduce ? `\nSteps:\n${record.stepsToReproduce}` : '',
+        ].join('\n'),
+      });
+      res.json({ ok: true, report: record, syncedAt: now });
+    } catch (err) {
+      console.error('Failed to save error report:', err);
+      res.status(500).json({ error: errMsg(req, 'خطا در ثبت گزارش خطا', 'Failed to save error report') });
+    }
   });
 
   // ---------------- DEVELOPER EMPLOYER & FORM REQUESTS ----------------
-  app.get('/api/employer-requests', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
-    const all = loadEmployerRequestsFromDisk();
-    if (req.currentUser?.role === 'admin') {
-      res.json({ requests: all });
-      return;
+  app.get('/api/employer-requests', requireRole(['admin', 'operator', 'viewer']), async (req: AuthedRequest, res: Response) => {
+    try {
+      const all = await loadEmployerRequests();
+      if (req.currentUser?.role === 'admin') {
+        res.json({ requests: all });
+        return;
+      }
+      const uid = req.currentUser?.id;
+      res.json({ requests: all.filter((r) => uid && r.submittedByUserId === uid) });
+    } catch (err) {
+      console.error('Failed to load employer requests:', err);
+      res.status(500).json({ error: 'Failed to load employer requests' });
     }
-    const uid = req.currentUser?.id;
-    res.json({ requests: all.filter((r) => uid && r.submittedByUserId === uid) });
   });
 
-  app.post('/api/employer-requests', (req: AuthedRequest, res: Response) => {
+  app.post('/api/employer-requests', async (req: AuthedRequest, res: Response) => {
     const raw = (req.body || {}) as Partial<DeveloperEmployerRequest>;
     const requesterName = normKey(raw.requesterName).slice(0, 120);
     const requesterPhone = normKey(raw.requesterPhone).slice(0, 40);
@@ -945,56 +1379,55 @@ async function startServer() {
       syncedToServer: true,
     };
 
-    const existing = loadEmployerRequestsFromDisk().filter((r) => r.id !== record.id);
-    existing.unshift(record);
-    saveEmployerRequestsToDisk(existing);
-    dispatchInternalDeveloperEmail({
-      kind: 'employer_request',
-      refId: record.id,
-      subject:
-        record.requestType === 'new_employer'
-          ? `[SAMAAN] درخواست تعریف کارفرمای جدید: ${record.newEmployerNameFa || '-'}`
-          : `[SAMAAN] درخواست فرم کارفرما: ${record.targetEmployerName || '-'}`,
-      text: [
-        `نوع درخواست: ${record.requestType}`,
-        `درخواست‌کننده: ${record.requesterName} (${record.requesterPhone})`,
-        record.requesterRole ? `سمت: ${record.requesterRole}` : '',
-        record.requesterEmail ? `ایمیل درخواست‌کننده: ${record.requesterEmail}` : '',
-        record.projectName ? `پروژه: ${record.projectName}` : '',
-        record.targetEmployerName ? `کارفرمای مقصد: ${record.targetEmployerName}` : '',
-        record.newEmployerNameFa ? `نام کارفرمای جدید: ${record.newEmployerNameFa}` : '',
-        record.sectionKeys.length ? `بخش‌ها: ${record.sectionKeys.join(', ')}` : '',
-        record.description ? `\nتوضیحات:\n${record.description}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-      attachments: record.attachments.map((att) => ({
-        fileName: att.fileName,
-        dataBase64: att.dataBase64,
-      })),
-    });
-    res.json({ ok: true, request: record });
-  });
-
-  app.delete('/api/employer-requests/:id', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
-    const existing = loadEmployerRequestsFromDisk();
-    const next = existing.filter((r) => r.id !== req.params.id);
-    if (next.length === existing.length) {
-      res.status(404).json({ error: errMsg(req, 'درخواست یافت نشد', 'Request not found') });
-      return;
-    }
-    saveEmployerRequestsToDisk(next);
-    res.json({ ok: true });
-  });
-
-  app.delete('/api/employers/:id', (req: AuthedRequest, res: Response) => {
-    const store = activeProjectStore();
-    if (store.db.users.length > 0 && (!req.currentUser || req.currentUser.role !== 'admin')) {
-      res.status(req.currentUser ? 403 : 401).json({
-        error: errMsg(req, 'حذف کارفرما فقط توسط مدیر کل مجاز است', 'Only administrators can delete an employer'),
+    try {
+      await saveEmployerRequest(record);
+      await dispatchInternalDeveloperEmail({
+        kind: 'employer_request',
+        refId: record.id,
+        subject:
+          record.requestType === 'new_employer'
+            ? `[SAMAAN] درخواست تعریف کارفرمای جدید: ${record.newEmployerNameFa || '-'}`
+            : `[SAMAAN] درخواست فرم کارفرما: ${record.targetEmployerName || '-'}`,
+        text: [
+          `نوع درخواست: ${record.requestType}`,
+          `درخواست‌کننده: ${record.requesterName} (${record.requesterPhone})`,
+          record.requesterRole ? `سمت: ${record.requesterRole}` : '',
+          record.requesterEmail ? `ایمیل درخواست‌کننده: ${record.requesterEmail}` : '',
+          record.projectName ? `پروژه: ${record.projectName}` : '',
+          record.targetEmployerName ? `کارفرمای مقصد: ${record.targetEmployerName}` : '',
+          record.newEmployerNameFa ? `نام کارفرمای جدید: ${record.newEmployerNameFa}` : '',
+          record.sectionKeys.length ? `بخش‌ها: ${record.sectionKeys.join(', ')}` : '',
+          record.description ? `\nتوضیحات:\n${record.description}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        attachments: record.attachments.map((att) => ({
+          fileName: att.fileName,
+          dataBase64: att.dataBase64,
+        })),
       });
-      return;
+      res.json({ ok: true, request: record });
+    } catch (err) {
+      console.error('Failed to save employer request:', err);
+      res.status(500).json({ error: errMsg(req, 'خطا در ثبت درخواست کارفرما', 'Failed to save employer request') });
     }
+  });
+
+  app.delete('/api/employer-requests/:id', requireSuperuser, async (req: AuthedRequest, res: Response) => {
+    try {
+      const deleted = await deleteEmployerRequestById(req.params.id);
+      if (!deleted) {
+        res.status(404).json({ error: errMsg(req, 'درخواست یافت نشد', 'Request not found') });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('Failed to delete employer request:', err);
+      res.status(500).json({ error: errMsg(req, 'خطا در حذف درخواست', 'Failed to delete employer request') });
+    }
+  });
+
+  app.delete('/api/employers/:id', requireSuperuser, (req: AuthedRequest, res: Response) => {
     const result = projectManager.deleteEmployer(req.params.id);
     if (!result.ok) {
       if (result.reason === 'cannot_delete_builtin') {
@@ -1003,6 +1436,16 @@ async function startServer() {
             req,
             'کارفرماهای پیش‌فرض سامانه قابل حذف نیستند',
             'Built-in default employers cannot be deleted',
+          ),
+        });
+        return;
+      }
+      if (result.reason === 'employer_has_projects') {
+        res.status(409).json({
+          error: errMsg(
+            req,
+            `این کارفرما به ${result.projectCount || 1} پروژه متصل است و پیش از تغییر کارفرمای آن پروژه‌ها قابل حذف نیست`,
+            `Cannot delete employer while ${result.projectCount || 1} project(s) are still linked to it`,
           ),
         });
         return;
@@ -1143,91 +1586,698 @@ async function startServer() {
   });
 
   // ---------------- HEALTH CHECK ----------------
-  app.get('/api/health', (_req: Request, res: Response) => {
+  app.get('/api/health', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.json({ ok: true });
+    const storageMode = projectManager.getStorageMode();
+    if (String(req.query.deep || '') === '1' && storageMode === 'postgres') {
+      const dbHealth = await checkDatabaseHealth();
+      res.status(dbHealth.ok ? 200 : 503).json({ ok: dbHealth.ok, storageMode, db: dbHealth });
+      return;
+    }
+    res.json({ ok: true, storageMode });
   });
 
-  // ---------------- AUTH & PREFERENCES ----------------
-  app.get('/api/auth/status', (req: AuthedRequest, res: Response) => {
+  // ---------------- AUTH, CAPTCHA, IRANIAN SMS OTP, TOTP 2FA & SUPERUSER MANAGEMENT ----------------
+  const issueAuthSession = async (req: Request, res: Response, userId: string) => {
+    const userRecord = await authRepository.findUserById(userId);
+    if (!userRecord || userRecord.status !== 'APPROVED') {
+      throw new Error('USER_NOT_APPROVED');
+    }
+    const allProjectIds = projectManager.listProjects().map((p) => p.id);
+    const assignedProjectIds =
+      userRecord.role === 'SUPERUSER'
+        ? allProjectIds
+        : (await authRepository.getUserAssignedProjectIds(userRecord.id)).filter((pid) =>
+            allProjectIds.includes(pid),
+          );
+
+    const { rawToken } = await authRepository.createSession(userRecord.id, {
+      ipAddress: req.ip || req.socket.remoteAddress || '',
+      userAgent: String(req.headers['user-agent'] || ''),
+    });
+    await authRepository.recordUserLastLogin(userRecord.id);
+    setSessionCookie(res, rawToken, req);
+
+    const storedView = appUserToStoredUser(
+      { ...userRecord, lastLoginAt: new Date().toISOString() },
+      assignedProjectIds,
+    );
+    const auditProjectId = assignedProjectIds[0] || 'default';
+    const auditStore = projectManager.getStore(auditProjectId);
+    auditStore.addAudit({
+      user: sanitizeUser(storedView),
+      action: 'LOGIN',
+      scope: 'auth',
+      targetId: storedView.id,
+      summary: `ورود کاربر ${storedView.fullName} (${storedView.phone || storedView.email})`,
+    });
+    auditStore.saveImmediate();
+    return sanitizeUser(storedView);
+  };
+
+  app.get('/api/auth/captcha', captchaIpLimiter, (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const challenge = captchaService.generate();
+    res.json(challenge);
+  });
+
+  // Public minimal catalog for Tab 2 ("ثبت‌نام و درخواست اشتراک") employer -> multi-project checkboxes
+  app.get('/api/auth/registration-catalog', (_req: Request, res: Response) => {
+    const employers = projectManager.listEmployers().map((e) => ({
+      id: e.id,
+      nameFa: e.nameFa,
+      nameEn: e.nameEn,
+      shortName: e.shortName,
+    }));
+    const projects = projectManager.listProjects().map((p) => ({
+      id: p.id,
+      name: p.name,
+      code: p.code || '',
+      employerId: p.employerId || 'mapna-md1',
+    }));
+    res.json({ employers, projects });
+  });
+
+  app.get('/api/auth/status', async (req: AuthedRequest, res: Response) => {
+    const hasSuperuser = await authRepository.hasAnySuperuser();
     res.json({
-      needsSetup: store.db.users.length === 0,
+      needsSetup: !hasSuperuser,
       user: req.currentUser ? sanitizeUser(req.currentUser) : null,
+      assignedProjectIds: req.user?.assignedProjectIds || [],
     });
   });
 
-  app.post('/api/auth/setup', (req: Request, res: Response) => {
-    if (store.db.users.length > 0) {
-      res.status(400).json({ error: errMsg(req, 'سامانه قبلاً راه‌اندازی شده است', 'System is already initialized') });
-      return;
-    }
-    const { username, password, fullName, preferences } = req.body as {
-      username?: string;
-      password?: string;
-      fullName?: string;
-      preferences?: Partial<UserPreferences>;
-    };
-    const cleanUser = (username || '').trim().toLowerCase();
-    if (!cleanUser || !password || password.length < 4) {
+  const handleBootstrapSuperuser = async (req: Request, res: Response) => {
+    if (await authRepository.hasAnySuperuser()) {
       res.status(400).json({
-        error: errMsg(req, 'نام کاربری و رمز عبور (حداقل ۴ کاراکتر) الزامی است', 'Username and password (min 4 chars) are required'),
+        error: errMsg(req, 'حساب مدیر ارشد سامانه قبلاً پیکربندی شده است', 'Superuser is already configured'),
       });
       return;
     }
-    const newUser: StoredUser = {
-      id: crypto.randomUUID(),
-      username: cleanUser,
-      fullName: (fullName || cleanUser).trim(),
-      role: 'admin',
-      active: true,
-      passwordHash: hashPassword(password),
-      preferences: { ...DEFAULT_PREFERENCES, ...(preferences || {}) },
-      createdAt: new Date().toISOString(),
+    const { firstName, lastName, phone, email, password, preferences } = req.body as {
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+      email?: string;
+      password?: string;
+      preferences?: Partial<UserPreferences>;
     };
-    store.db.users.push(newUser);
-    store.addAudit({
-      user: sanitizeUser(newUser),
-      action: 'INITIAL_ADMIN_SETUP',
-      scope: 'auth',
-      targetId: newUser.id,
-      summary: `راه‌اندازی اولیه سیستم و ایجاد مدیر کل (${newUser.username})`,
-    });
-    store.saveImmediate();
-    const token = signSessionToken(newUser.id, projectManager.getAuthSecret(), newUser.username);
-    setSessionCookie(res, token, req);
-    res.json({ user: sanitizeUser(newUser) });
-  });
+    const cleanFirst = normKey(firstName);
+    const cleanLast = normKey(lastName);
+    const phoneCheck = normalizeIranMobile(phone);
+    const emailCheck = normalizeEmail(email);
 
-  app.post('/api/auth/login', (req: Request, res: Response) => {
-    const { username, password } = req.body as { username?: string; password?: string };
-    const cleanUser = (username || '').trim().toLowerCase();
-    const found = store.db.users.find((u) => u.username.toLowerCase() === cleanUser);
-    if (!found || !found.active || !password || !verifyPassword(password, found.passwordHash)) {
-      res.status(401).json({ error: errMsg(req, 'نام کاربری یا رمز عبور اشتباه است', 'Invalid username or password') });
+    if (!cleanFirst || !cleanLast) {
+      res.status(400).json({
+        error: errMsg(req, 'نام و نام خانوادگی الزامی است', 'First name and last name are required'),
+      });
       return;
     }
-    found.lastLoginAt = new Date().toISOString();
-    store.addAudit({
-      user: sanitizeUser(found),
-      action: 'LOGIN',
-      scope: 'auth',
-      targetId: found.id,
-      summary: `ورود کاربر ${found.fullName} (${found.username})`,
+    if (!phoneCheck.valid) {
+      res.status(400).json({ error: errMsg(req, phoneCheck.errorFa!, phoneCheck.errorEn!) });
+      return;
+    }
+    if (!emailCheck.valid) {
+      res.status(400).json({
+        error: errMsg(req, 'نشانی ایمیل معتبر وارد کنید', 'Please enter a valid email address'),
+      });
+      return;
+    }
+    if (!password || password.length < 6) {
+      res.status(400).json({
+        error: errMsg(req, 'رمز عبور باید حداقل ۶ کاراکتر باشد', 'Password must be at least 6 characters'),
+      });
+      return;
+    }
+
+    const created = await authRepository.bootstrapInitialSuperuser({
+      firstName: cleanFirst,
+      lastName: cleanLast,
+      phone: phoneCheck.normalized,
+      email: emailCheck.normalized,
+      password,
+      preferences,
     });
-    store.saveImmediate();
-    const token = signSessionToken(found.id, projectManager.getAuthSecret(), found.username);
-    setSessionCookie(res, token, req);
-    res.json({ user: sanitizeUser(found) });
+    const userView = await issueAuthSession(req, res, created.id);
+    res.json({ user: userView });
+  };
+
+  app.post('/api/auth/setup', authIpLimiter, handleBootstrapSuperuser);
+  app.post('/api/auth/bootstrap-superuser', authIpLimiter, handleBootstrapSuperuser);
+
+  // Tab 1 Mode A: Login via Phone/Email + Password + mandatory SVG CAPTCHA
+  app.post('/api/auth/login', authIpLimiter, async (req: Request, res: Response) => {
+    const { identifier, username, password, captchaId, captchaText, totpCode } = req.body as {
+      identifier?: string;
+      username?: string;
+      password?: string;
+      captchaId?: string;
+      captchaText?: string;
+      totpCode?: string;
+    };
+
+    if (!captchaService.verify(captchaId, captchaText)) {
+      res.status(400).json({
+        code: 'INVALID_CAPTCHA',
+        error: errMsg(
+          req,
+          'کد امنیتی (کپچا) نامعتبر یا منقضی شده است. لطفاً مجدداً تلاش کنید.',
+          'Invalid or expired CAPTCHA code. Please try again.',
+        ),
+      });
+      return;
+    }
+
+    const rawId = String(identifier ?? username ?? '').trim();
+    if (!rawId || !password) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره موبایل/ایمیل و رمز عبور الزامی است',
+          'Phone/email and password are required',
+        ),
+      });
+      return;
+    }
+
+    const found = await authRepository.findUserByIdentifier(rawId);
+    if (!found || !verifyPassword(password, found.passwordHash)) {
+      res.status(401).json({
+        error: errMsg(
+          req,
+          'شماره موبایل/ایمیل یا رمز عبور نادرست است',
+          'Invalid phone/email or password',
+        ),
+      });
+      return;
+    }
+
+    if (found.status === 'PENDING') {
+      res.status(403).json({
+        code: 'ACCOUNT_PENDING',
+        error: errMsg(
+          req,
+          'درخواست اشتراک شما ثبت شده و در انتظار تایید مدیر سامانه است.',
+          'Your subscription request is pending administrator approval.',
+        ),
+      });
+      return;
+    }
+
+    if (found.status === 'REJECTED') {
+      res.status(403).json({
+        code: 'ACCOUNT_REJECTED',
+        error: errMsg(
+          req,
+          'حساب کاربری شما غیرفعال یا رد شده است. با مدیر سامانه تماس بگیرید.',
+          'Your account has been rejected or disabled.',
+        ),
+      });
+      return;
+    }
+
+    if (found.totpEnabled && found.totpSecretEnc) {
+      if (totpCode && String(totpCode).trim()) {
+        let secretPlain = '';
+        try {
+          secretPlain = decryptTotpSecret(found.totpSecretEnc);
+        } catch {
+          res.status(500).json({ error: errMsg(req, 'خطا در بازیابی کلید احراز هویت دو مرحله‌ای', 'Failed to decrypt 2FA secret') });
+          return;
+        }
+        if (!verifyTotpCode(secretPlain, totpCode)) {
+          res.status(401).json({
+            code: 'INVALID_TOTP',
+            error: errMsg(
+              req,
+              'کد ۶ رقمی Google Authenticator نامعتبر است.',
+              'Invalid 6-digit authenticator code.',
+            ),
+          });
+          return;
+        }
+      } else {
+        const challengeToken = signTotpChallengeToken(found.id, 'password');
+        res.json({ requiresTotp: true, challengeToken });
+        return;
+      }
+    }
+
+    const userView = await issueAuthSession(req, res, found.id);
+    res.json({ user: userView });
   });
 
-  app.post('/api/auth/logout', (req: AuthedRequest, res: Response) => {
-    if (req.currentUser) {
+  // Step 2 of TOTP 2FA Login (after Password or SMS OTP succeeded)
+  app.post('/api/auth/login/totp', authIpLimiter, async (req: Request, res: Response) => {
+    const { challengeToken, totpCode } = req.body as {
+      challengeToken?: string;
+      totpCode?: string;
+    };
+    const parsed = verifyTotpChallengeToken(String(challengeToken || ''));
+    if (!parsed) {
+      res.status(401).json({
+        error: errMsg(
+          req,
+          'نشست تایید دو مرحله‌ای منقضی شده است. لطفاً دوباره وارد شوید.',
+          'Two-factor login challenge expired. Please sign in again.',
+        ),
+      });
+      return;
+    }
+
+    const found = await authRepository.findUserById(parsed.uid);
+    if (!found || found.status !== 'APPROVED' || !found.totpEnabled || !found.totpSecretEnc) {
+      res.status(401).json({
+        error: errMsg(req, 'حساب کاربری معتبر نیست', 'Invalid user account'),
+      });
+      return;
+    }
+
+    let secretPlain = '';
+    try {
+      secretPlain = decryptTotpSecret(found.totpSecretEnc);
+    } catch {
+      res.status(500).json({
+        error: errMsg(req, 'خطا در بررسی کلید دو مرحله‌ای', 'Failed to verify 2FA secret'),
+      });
+      return;
+    }
+
+    if (!verifyTotpCode(secretPlain, totpCode)) {
+      res.status(401).json({
+        code: 'INVALID_TOTP',
+        error: errMsg(
+          req,
+          'کد ۶ رقمی تایید دو مرحله‌ای نامعتبر است.',
+          'Invalid 6-digit 2FA verification code.',
+        ),
+      });
+      return;
+    }
+
+    const userView = await issueAuthSession(req, res, found.id);
+    res.json({ user: userView });
+  });
+
+  // Tab 1 Mode B (Step 1): Request Login SMS OTP (requires CAPTCHA + per-IP & per-phone rate limits)
+  app.post('/api/auth/login/otp/request', otpIpLimiter, async (req: Request, res: Response) => {
+    const { phone, captchaId, captchaText } = req.body as {
+      phone?: string;
+      captchaId?: string;
+      captchaText?: string;
+    };
+
+    if (!captchaService.verify(captchaId, captchaText)) {
+      res.status(400).json({
+        code: 'INVALID_CAPTCHA',
+        error: errMsg(
+          req,
+          'کد امنیتی (کپچا) نامعتبر یا منقضی شده است.',
+          'Invalid or expired CAPTCHA code.',
+        ),
+      });
+      return;
+    }
+
+    const phoneCheck = normalizeIranMobile(phone);
+    if (!phoneCheck.valid) {
+      res.status(400).json({ error: errMsg(req, phoneCheck.errorFa!, phoneCheck.errorEn!) });
+      return;
+    }
+
+    const phoneLimit = checkPerPhoneOtpLimit(phoneCheck.normalized);
+    if (!phoneLimit.ok) {
+      res.status(429).json({
+        error: errMsg(
+          req,
+          `لطفاً ${phoneLimit.retryAfterSec} ثانیه دیگر برای ارسال مجدد کد پیامکی صبر کنید.`,
+          `Please wait ${phoneLimit.retryAfterSec} seconds before requesting another SMS code.`,
+        ),
+      });
+      return;
+    }
+
+    const found = await authRepository.findUserByPhone(phoneCheck.normalized);
+    if (!found) {
+      res.status(404).json({
+        error: errMsg(
+          req,
+          'حساب کاربری با این شماره موبایل در سامانه ثبت نشده است.',
+          'No account is registered with this mobile number.',
+        ),
+      });
+      return;
+    }
+    if (found.status === 'PENDING') {
+      res.status(403).json({
+        code: 'ACCOUNT_PENDING',
+        error: errMsg(
+          req,
+          'درخواست اشتراک شما هنوز توسط مدیر سامانه تایید نشده است.',
+          'Your subscription request is still pending administrator approval.',
+        ),
+      });
+      return;
+    }
+    if (found.status === 'REJECTED') {
+      res.status(403).json({
+        code: 'ACCOUNT_REJECTED',
+        error: errMsg(
+          req,
+          'حساب کاربری شما رد یا غیرفعال شده است.',
+          'Your account has been rejected or disabled.',
+        ),
+      });
+      return;
+    }
+
+    const otp = await authRepository.createSmsOtp(phoneCheck.normalized, 'LOGIN', OTP_TTL_SECONDS);
+    try {
+      const smsRes = await sendPatternOtpSms({
+        phone: phoneCheck.normalized,
+        code: otp.code,
+        purpose: 'LOGIN',
+      });
+      res.json({
+        ok: true,
+        phone: phoneCheck.normalized,
+        expiresInSeconds: OTP_TTL_SECONDS,
+        provider: smsRes.provider,
+      });
+    } catch (err) {
+      console.error('[sms] Login OTP delivery error:', err);
+      res.status(502).json({
+        error: errMsg(
+          req,
+          'ارسال پیامک با خطا مواجه شد. لطفاً دقایقی دیگر تلاش کنید.',
+          'Failed to deliver SMS verification code.',
+        ),
+      });
+    }
+  });
+
+  // Tab 1 Mode B (Step 2): Verify Login SMS OTP -> TOTP challenge or Cookie Session
+  app.post('/api/auth/login/otp/verify', authIpLimiter, async (req: Request, res: Response) => {
+    const { phone, code, totpCode } = req.body as {
+      phone?: string;
+      code?: string;
+      totpCode?: string;
+    };
+    const phoneCheck = normalizeIranMobile(phone);
+    if (!phoneCheck.valid) {
+      res.status(400).json({ error: errMsg(req, phoneCheck.errorFa!, phoneCheck.errorEn!) });
+      return;
+    }
+
+    const found = await authRepository.findUserByPhone(phoneCheck.normalized);
+    if (!found || found.status !== 'APPROVED') {
+      res.status(401).json({
+        error: errMsg(req, 'حساب کاربری معتبر یا تاییدشده یافت نشد.', 'No approved account found.'),
+      });
+      return;
+    }
+
+    const verified = await authRepository.verifySmsOtp(
+      phoneCheck.normalized,
+      'LOGIN',
+      String(code || ''),
+    );
+    if (!verified.ok) {
+      const msgFa =
+        verified.reason === 'expired'
+          ? 'کد تایید پیامکی منقضی شده است. کد جدید دریافت کنید.'
+          : verified.reason === 'max_attempts'
+            ? 'تعداد تلاش‌های اشتباه بیش از حد مجاز بود. کد جدید دریافت کنید.'
+            : 'کد تایید پیامکی نادرست است.';
+      const msgEn =
+        verified.reason === 'expired'
+          ? 'SMS code expired. Please request a new code.'
+          : verified.reason === 'max_attempts'
+            ? 'Too many incorrect attempts. Please request a new code.'
+            : 'Incorrect SMS verification code.';
+      res.status(401).json({ error: errMsg(req, msgFa, msgEn) });
+      return;
+    }
+
+    if (found.totpEnabled && found.totpSecretEnc) {
+      if (totpCode && String(totpCode).trim()) {
+        const secretPlain = decryptTotpSecret(found.totpSecretEnc);
+        if (!verifyTotpCode(secretPlain, totpCode)) {
+          res.status(401).json({
+            code: 'INVALID_TOTP',
+            error: errMsg(
+              req,
+              'کد ۶ رقمی Google Authenticator نامعتبر است.',
+              'Invalid 6-digit authenticator code.',
+            ),
+          });
+          return;
+        }
+      } else {
+        const challengeToken = signTotpChallengeToken(found.id, 'sms');
+        res.json({ requiresTotp: true, challengeToken });
+        return;
+      }
+    }
+
+    const userView = await issueAuthSession(req, res, found.id);
+    res.json({ user: userView });
+  });
+
+  // Tab 2 (Step 1): Validate Registration & Request Phone Ownership SMS OTP (requires CAPTCHA)
+  const validateRegistrationInput = async (req: Request) => {
+    const body = (req.body || {}) as {
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+      email?: string;
+      password?: string;
+      requestedEmployerId?: string;
+      requestedProjectIds?: string[];
+    };
+    const firstName = normKey(body.firstName);
+    const lastName = normKey(body.lastName);
+    if (!firstName || !lastName) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: errMsg(req, 'نام و نام خانوادگی الزامی است.', 'First and last name are required.'),
+      };
+    }
+    const phoneCheck = normalizeIranMobile(body.phone);
+    if (!phoneCheck.valid) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: errMsg(req, phoneCheck.errorFa!, phoneCheck.errorEn!),
+      };
+    }
+    const emailCheck = normalizeEmail(body.email);
+    if (!emailCheck.valid) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: errMsg(req, 'نشانی ایمیل معتبر وارد کنید.', 'Please enter a valid email address.'),
+      };
+    }
+    const password = String(body.password || '');
+    if (password.length < 6) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: errMsg(
+          req,
+          'رمز عبور باید حداقل ۶ کاراکتر باشد.',
+          'Password must be at least 6 characters.',
+        ),
+      };
+    }
+    const employerId = normKey(body.requestedEmployerId);
+    if (!employerId || !projectManager.getEmployer(employerId)) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: errMsg(req, 'انتخاب کارفرمای معتبر الزامی است.', 'Please select a valid employer.'),
+      };
+    }
+    const allProjects = projectManager.listProjects();
+    const validEmployerProjectIds = new Set(
+      allProjects.filter((p) => (p.employerId || 'mapna-md1') === employerId).map((p) => p.id),
+    );
+    const rawRequestedProjects = Array.isArray(body.requestedProjectIds)
+      ? body.requestedProjectIds.map((p) => String(p).trim()).filter(Boolean)
+      : [];
+    const requestedProjectIds = Array.from(
+      new Set(rawRequestedProjects.filter((pid) => validEmployerProjectIds.has(pid))),
+    );
+    if (requestedProjectIds.length === 0) {
+      return {
+        ok: false as const,
+        status: 400,
+        error: errMsg(
+          req,
+          'انتخاب حداقل یک پروژه مرتبط با کارفرمای انتخاب‌شده الزامی است.',
+          'Select at least one project belonging to the chosen employer.',
+        ),
+      };
+    }
+
+    if (await authRepository.findUserByPhone(phoneCheck.normalized)) {
+      return {
+        ok: false as const,
+        status: 409,
+        error: errMsg(
+          req,
+          'این شماره موبایل قبلاً در سامانه ثبت شده است.',
+          'This mobile number is already registered.',
+        ),
+      };
+    }
+    if (await authRepository.findUserByEmail(emailCheck.normalized)) {
+      return {
+        ok: false as const,
+        status: 409,
+        error: errMsg(
+          req,
+          'این نشانی ایمیل قبلاً در سامانه ثبت شده است.',
+          'This email address is already registered.',
+        ),
+      };
+    }
+
+    return {
+      ok: true as const,
+      data: {
+        firstName,
+        lastName,
+        phone: phoneCheck.normalized,
+        email: emailCheck.normalized,
+        password,
+        requestedEmployerId: employerId,
+        requestedProjectIds,
+      },
+    };
+  };
+
+  app.post('/api/auth/register/request-otp', otpIpLimiter, async (req: Request, res: Response) => {
+    const { captchaId, captchaText } = req.body as {
+      captchaId?: string;
+      captchaText?: string;
+    };
+    if (!captchaService.verify(captchaId, captchaText)) {
+      res.status(400).json({
+        code: 'INVALID_CAPTCHA',
+        error: errMsg(
+          req,
+          'کد امنیتی (کپچا) نامعتبر یا منقضی شده است.',
+          'Invalid or expired CAPTCHA code.',
+        ),
+      });
+      return;
+    }
+
+    const validated = await validateRegistrationInput(req);
+    if (!validated.ok) {
+      res.status(validated.status).json({ error: validated.error });
+      return;
+    }
+
+    const phoneLimit = checkPerPhoneOtpLimit(validated.data.phone);
+    if (!phoneLimit.ok) {
+      res.status(429).json({
+        error: errMsg(
+          req,
+          `لطفاً ${phoneLimit.retryAfterSec} ثانیه دیگر برای ارسال مجدد کد پیامکی صبر کنید.`,
+          `Please wait ${phoneLimit.retryAfterSec} seconds before requesting another SMS code.`,
+        ),
+      });
+      return;
+    }
+
+    const otp = await authRepository.createSmsOtp(
+      validated.data.phone,
+      'REGISTER',
+      OTP_TTL_SECONDS,
+    );
+    try {
+      const smsRes = await sendPatternOtpSms({
+        phone: validated.data.phone,
+        code: otp.code,
+        purpose: 'REGISTER',
+      });
+      res.json({
+        ok: true,
+        phone: validated.data.phone,
+        expiresInSeconds: OTP_TTL_SECONDS,
+        provider: smsRes.provider,
+      });
+    } catch (err) {
+      console.error('[sms] Registration OTP delivery error:', err);
+      res.status(502).json({
+        error: errMsg(
+          req,
+          'ارسال پیامک تایید با خطا مواجه شد. لطفاً مجدداً تلاش کنید.',
+          'Failed to deliver verification SMS.',
+        ),
+      });
+    }
+  });
+
+  // Tab 2 (Step 2): Verify SMS OTP & Save Pending Subscription Request
+  app.post('/api/auth/register/verify-otp', authIpLimiter, async (req: Request, res: Response) => {
+    const { code } = req.body as { code?: string };
+    const validated = await validateRegistrationInput(req);
+    if (!validated.ok) {
+      res.status(validated.status).json({ error: validated.error });
+      return;
+    }
+
+    const verified = await authRepository.verifySmsOtp(
+      validated.data.phone,
+      'REGISTER',
+      String(code || ''),
+    );
+    if (!verified.ok) {
+      const msgFa =
+        verified.reason === 'expired'
+          ? 'کد تایید پیامکی منقضی شده است. مجدداً درخواست دهید.'
+          : verified.reason === 'max_attempts'
+            ? 'تعداد تلاش‌های اشتباه بیش از حد مجاز بود. کد جدید دریافت کنید.'
+            : 'کد تایید پیامکی نادرست است.';
+      const msgEn =
+        verified.reason === 'expired'
+          ? 'SMS verification code has expired.'
+          : verified.reason === 'max_attempts'
+            ? 'Too many failed attempts. Please request a new code.'
+            : 'Incorrect SMS verification code.';
+      res.status(400).json({ error: errMsg(req, msgFa, msgEn) });
+      return;
+    }
+
+    const created = await authRepository.createPendingUser(validated.data);
+    res.status(201).json({
+      ok: true,
+      userId: created.id,
+      status: 'PENDING',
+      messageFa:
+        'شماره موبایل شما تایید شد. درخواست اشتراک شما ثبت گردید و پس از تایید مدیر سامانه فعال می‌شود.',
+      messageEn:
+        'Your mobile number has been verified. Your subscription request has been submitted and will be activated after administrator approval.',
+    });
+  });
+
+  app.post('/api/auth/logout', async (req: AuthedRequest, res: Response) => {
+    const rawToken = getSessionCookie(req);
+    if (rawToken) {
+      await authRepository.revokeSessionByToken(rawToken);
+    }
+    if (req.currentUser && !req.projectAccessDenied) {
       store.addAudit({
         user: sanitizeUser(req.currentUser),
         action: 'LOGOUT',
         scope: 'auth',
         targetId: req.currentUser.id,
-        summary: `خروج کاربر ${req.currentUser.fullName} (${req.currentUser.username})`,
+        summary: `خروج کاربر ${req.currentUser.fullName} (${req.currentUser.phone || req.currentUser.username})`,
       });
       store.saveImmediate();
     }
@@ -1235,8 +2285,8 @@ async function startServer() {
     res.json({ ok: true });
   });
 
-  app.patch('/api/auth/preferences', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
-    const user = req.currentUser!;
+  app.patch('/api/auth/preferences', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const current = req.currentUser!;
     const prefs = req.body as Partial<UserPreferences>;
     const nextShortcuts =
       prefs.shortcuts && typeof prefs.shortcuts === 'object'
@@ -1246,8 +2296,8 @@ async function startServer() {
               .slice(0, 60),
           )
         : undefined;
-    user.preferences = {
-      ...user.preferences,
+    const nextPrefs: UserPreferences = {
+      ...current.preferences,
       ...(prefs.language ? { language: prefs.language } : {}),
       ...(prefs.calendar ? { calendar: prefs.calendar } : {}),
       ...(prefs.theme ? { theme: prefs.theme } : {}),
@@ -1255,8 +2305,9 @@ async function startServer() {
       ...(typeof prefs.spellCheck === 'boolean' ? { spellCheck: prefs.spellCheck } : {}),
       ...(nextShortcuts !== undefined ? { shortcuts: nextShortcuts } : {}),
     };
-    store.saveImmediate();
-    res.json({ user: sanitizeUser(user) });
+    await authRepository.updateUserPreferences(current.id, nextPrefs);
+    current.preferences = nextPrefs;
+    res.json({ user: sanitizeUser(current) });
   });
 
   // ---------------- UNDO / REDO HISTORY (بازگردانی و انجام مجدد) ----------------
@@ -1288,204 +2339,353 @@ async function startServer() {
     res.json({ ok: true, redone: { labelFa: result.labelFa, labelEn: result.labelEn }, status: result.status });
   });
 
-  app.post('/api/auth/change-password', requireRole(['admin', 'operator', 'viewer']), (req: AuthedRequest, res: Response) => {
-    const user = req.currentUser!;
+  app.post('/api/auth/change-password', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const appUser = await authRepository.findUserById(req.user!.id);
+    if (!appUser) {
+      res.status(401).json({ error: errMsg(req, 'احراز هویت الزامی است', 'Authentication required') });
+      return;
+    }
     const { currentPassword, newPassword } = req.body as {
       currentPassword?: string;
       newPassword?: string;
     };
-    if (!currentPassword || !verifyPassword(currentPassword, user.passwordHash)) {
+    if (!currentPassword || !verifyPassword(currentPassword, appUser.passwordHash)) {
       res.status(401).json({ error: errMsg(req, 'رمز عبور فعلی صحیح نیست', 'Current password is incorrect') });
       return;
     }
-    if (!newPassword || newPassword.length < 4) {
-      res.status(400).json({ error: errMsg(req, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد', 'New password must be at least 4 characters') });
+    if (!newPassword || newPassword.length < 6) {
+      res.status(400).json({ error: errMsg(req, 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد', 'New password must be at least 6 characters') });
       return;
     }
-    user.passwordHash = hashPassword(newPassword);
-    user.mustChangePassword = false;
-    store.addAudit({
-      user: sanitizeUser(user),
-      action: 'CHANGE_OWN_PASSWORD',
-      scope: 'auth',
-      targetId: user.id,
-      summary: `تغییر رمز عبور توسط کاربر ${user.fullName} (${user.username})`,
-    });
-    store.saveImmediate();
-    res.json({ ok: true, user: sanitizeUser(user) });
-  });
-
-  // ---------------- USERS (ADMIN ONLY) ----------------
-  app.get('/api/users', requireRole(['admin']), (_req: AuthedRequest, res: Response) => {
-    res.json({ users: store.db.users.map(sanitizeUser) });
-  });
-
-  app.post('/api/users', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
-    const { username, password, fullName, role, active, mustChangePassword } = req.body as {
-      username?: string;
-      password?: string;
-      fullName?: string;
-      role?: UserRole;
-      active?: boolean;
-      mustChangePassword?: boolean;
-    };
-    const cleanUser = (username || '').trim().toLowerCase();
-    if (!cleanUser || !password || password.length < 4) {
-      res.status(400).json({
-        error: errMsg(req, 'نام کاربری و رمز عبور (حداقل ۴ کاراکتر) الزامی است', 'Username and password (min 4 chars) are required'),
+    const updated = await authRepository.updateUserPassword(appUser.id, newPassword, false);
+    const updatedView = updated
+      ? appUserToStoredUser(updated, req.user!.assignedProjectIds)
+      : req.currentUser!;
+    if (!req.projectAccessDenied) {
+      store.addAudit({
+        user: sanitizeUser(updatedView),
+        action: 'CHANGE_OWN_PASSWORD',
+        scope: 'auth',
+        targetId: updatedView.id,
+        summary: `تغییر رمز عبور توسط کاربر ${updatedView.fullName}`,
       });
-      return;
+      store.saveImmediate();
     }
-    if (store.db.users.some((u) => u.username.toLowerCase() === cleanUser)) {
-      res.status(409).json({ error: errMsg(req, 'نام کاربری تکراری است', 'Username already exists') });
-      return;
-    }
-    const created: StoredUser = {
-      id: crypto.randomUUID(),
-      username: cleanUser,
-      fullName: (fullName || cleanUser).trim(),
-      role: role || 'operator',
-      active: typeof active === 'boolean' ? active : true,
-      mustChangePassword: Boolean(mustChangePassword),
-      passwordHash: hashPassword(password),
-      preferences: { ...DEFAULT_PREFERENCES },
-      createdAt: new Date().toISOString(),
-    };
-    store.db.users.push(created);
-    store.addAudit({
-      user: sanitizeUser(req.currentUser!),
-      action: 'CREATE_USER',
-      scope: 'user',
-      targetId: created.id,
-      summary: `ایجاد کاربر جدید: ${created.username} با نقش ${created.role}`,
-    });
-    store.saveImmediate();
-    res.json({ user: sanitizeUser(created) });
+    res.json({ ok: true, user: sanitizeUser(updatedView) });
   });
 
-  app.patch('/api/users/:id', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
-    const target = store.db.users.find((u) => u.id === req.params.id);
-    if (!target) {
-      res.status(404).json({ error: errMsg(req, 'کاربر یافت نشد', 'User not found') });
+  // ---------------- OFFLINE TOTP 2FA SETTINGS (GOOGLE AUTHENTICATOR / AEGIS) ----------------
+  app.post('/api/auth/totp/setup', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const appUser = await authRepository.findUserById(req.user!.id);
+    if (!appUser) {
+      res.status(401).json({ error: errMsg(req, 'احراز هویت الزامی است', 'Authentication required') });
       return;
     }
-    const { username, fullName, role, active, password, mustChangePassword } = req.body as {
-      username?: string;
-      fullName?: string;
-      role?: UserRole;
-      active?: boolean;
-      password?: string;
-      mustChangePassword?: boolean;
-    };
+    const setup = await generateTotpSetup({
+      issuer: 'SAMAAN',
+      accountLabel: appUser.email || appUser.phone,
+    });
+    // Store AES-256-GCM encrypted secret while keeping totp_enabled=FALSE until user verifies 6-digit code
+    await authRepository.setUserTotp(appUser.id, setup.secret, false);
+    res.json({
+      qrDataUrl: setup.qrDataUrl,
+      secret: setup.secret,
+      otpauthUri: setup.otpauthUri,
+    });
+  });
 
-    const nextRole = role ?? target.role;
-    const nextActive = typeof active === 'boolean' ? active : target.active;
-    if (target.id === req.currentUser!.id && (nextRole !== 'admin' || !nextActive)) {
+  app.post('/api/auth/totp/enable', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const { code } = req.body as { code?: string };
+    const appUser = await authRepository.findUserById(req.user!.id);
+    if (!appUser || !appUser.totpSecretEnc) {
       res.status(400).json({
         error: errMsg(
           req,
-          'امکان غیرفعال‌سازی یا تغییر نقش حساب کاربری خودتان وجود ندارد',
-          'Cannot deactivate or demote your own account',
+          'ابتدا بارکد احراز هویت دو مرحله‌ای را ایجاد و اسکن کنید.',
+          'Please initialize 2FA setup and scan the QR code first.',
         ),
       });
       return;
     }
-    if (target.role === 'admin' && target.active && (nextRole !== 'admin' || !nextActive)) {
-      const otherActiveAdmins = store.db.users.filter(
-        (u) => u.id !== target.id && u.role === 'admin' && u.active,
-      );
-      if (otherActiveAdmins.length === 0) {
-        res.status(400).json({
-          error: errMsg(
-            req,
-            'حداقل یک مدیر کل فعال باید در سامانه باقی بماند',
-            'At least one active admin must remain',
-          ),
-        });
-        return;
-      }
-    }
-
-    if (username !== undefined) {
-      const cleanUsername = username.trim().toLowerCase();
-      if (!cleanUsername) {
-        res.status(400).json({ error: errMsg(req, 'نام کاربری نمی‌تواند خالی باشد', 'Username cannot be empty') });
-        return;
-      }
-      if (store.db.users.some((u) => u.id !== target.id && u.username.toLowerCase() === cleanUsername)) {
-        res.status(409).json({ error: errMsg(req, 'نام کاربری تکراری است', 'Username already exists') });
-        return;
-      }
-      target.username = cleanUsername;
-    }
-    if (fullName !== undefined) target.fullName = fullName.trim() || target.username;
-    if (role !== undefined) target.role = role;
-    if (typeof active === 'boolean') target.active = active;
-    if (typeof mustChangePassword === 'boolean') target.mustChangePassword = mustChangePassword;
-
-    let passwordReset = false;
-    if (password !== undefined && password !== '') {
-      if (password.length < 4) {
-        res.status(400).json({
-          error: errMsg(req, 'رمز عبور باید حداقل ۴ کاراکتر باشد', 'Password must be at least 4 characters'),
-        });
-        return;
-      }
-      target.passwordHash = hashPassword(password);
-      passwordReset = true;
-    }
-
-    store.addAudit({
-      user: sanitizeUser(req.currentUser!),
-      action: passwordReset ? 'ADMIN_RESET_PASSWORD' : 'UPDATE_USER',
-      scope: 'user',
-      targetId: target.id,
-      summary: passwordReset
-        ? `تغییر رمز عبور کاربر ${target.username} توسط مدیر`
-        : `ویرایش حساب کاربری ${target.username} (نقش: ${target.role}، فعال: ${target.active ? 'بله' : 'خیر'})`,
-    });
-    store.saveImmediate();
-    res.json({ user: sanitizeUser(target) });
-  });
-
-  app.delete('/api/users/:id', requireRole(['admin']), (req: AuthedRequest, res: Response) => {
-    const idx = store.db.users.findIndex((u) => u.id === req.params.id);
-    if (idx === -1) {
-      res.status(404).json({ error: errMsg(req, 'کاربر یافت نشد', 'User not found') });
-      return;
-    }
-    const target = store.db.users[idx];
-    if (target.id === req.currentUser!.id) {
-      res.status(400).json({
-        error: errMsg(req, 'امکان حذف حساب کاربری خودتان وجود ندارد', 'Cannot delete your own account'),
+    let secretPlain = '';
+    try {
+      secretPlain = decryptTotpSecret(appUser.totpSecretEnc);
+    } catch {
+      res.status(500).json({
+        error: errMsg(req, 'خطا در رمزگشایی کلید دو مرحله‌ای', 'Failed to decrypt 2FA secret'),
       });
       return;
     }
-    if (target.role === 'admin' && target.active) {
-      const otherActiveAdmins = store.db.users.filter(
-        (u) => u.id !== target.id && u.role === 'admin' && u.active,
-      );
-      if (otherActiveAdmins.length === 0) {
+    if (!verifyTotpCode(secretPlain, code)) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'کد ۶ رقمی واردشده نادرست است. ساعت گوشی خود را بررسی کنید.',
+          'Invalid 6-digit verification code. Check your authenticator clock.',
+        ),
+      });
+      return;
+    }
+    const updated = await authRepository.setUserTotp(appUser.id, secretPlain, true);
+    const updatedView = updated
+      ? appUserToStoredUser(updated, req.user!.assignedProjectIds)
+      : req.currentUser!;
+    res.json({ ok: true, user: sanitizeUser(updatedView) });
+  });
+
+  app.post('/api/auth/totp/disable', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const { currentPassword, code } = req.body as {
+      currentPassword?: string;
+      code?: string;
+    };
+    const appUser = await authRepository.findUserById(req.user!.id);
+    if (!appUser) {
+      res.status(401).json({ error: errMsg(req, 'احراز هویت الزامی است', 'Authentication required') });
+      return;
+    }
+    if (!currentPassword || !verifyPassword(currentPassword, appUser.passwordHash)) {
+      res.status(401).json({
+        error: errMsg(req, 'رمز عبور فعلی نادرست است', 'Current password is incorrect'),
+      });
+      return;
+    }
+    if (appUser.totpEnabled && appUser.totpSecretEnc) {
+      const secretPlain = decryptTotpSecret(appUser.totpSecretEnc);
+      if (!verifyTotpCode(secretPlain, code)) {
         res.status(400).json({
           error: errMsg(
             req,
-            'حداقل یک مدیر کل فعال باید در سامانه باقی بماند',
-            'Cannot delete the last active admin',
+            'کد ۶ رقمی Google Authenticator نادرست است.',
+            'Invalid 6-digit authenticator code.',
           ),
         });
         return;
       }
     }
+    const updated = await authRepository.setUserTotp(appUser.id, null, false);
+    const updatedView = updated
+      ? appUserToStoredUser(updated, req.user!.assignedProjectIds)
+      : req.currentUser!;
+    res.json({ ok: true, user: sanitizeUser(updatedView) });
+  });
 
-    store.db.users.splice(idx, 1);
+  // ---------------- SUPERUSER SUBSCRIPTION APPROVAL & MULTI-PROJECT ACCESS ----------------
+  app.get('/api/admin/users', requireSuperuser, async (_req: AuthedRequest, res: Response) => {
+    const users = await authRepository.listAllUsersWithAccess();
+    res.json({
+      users,
+      projects: projectManager.listProjects(),
+      employers: projectManager.listEmployers().map((e) => ({
+        id: e.id,
+        nameFa: e.nameFa,
+        nameEn: e.nameEn,
+        shortName: e.shortName,
+      })),
+    });
+  });
+
+  app.patch('/api/admin/users/:id/access', requireSuperuser, async (req: AuthedRequest, res: Response) => {
+    const target = await authRepository.findUserById(req.params.id);
+    if (!target) {
+      res.status(404).json({ error: errMsg(req, 'کاربر یافت نشد', 'User not found') });
+      return;
+    }
+    if (target.role === 'SUPERUSER') {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'تغییر وضعیت یا محدودسازی دسترسی حساب مدیر ارشد مجاز نیست',
+          'Cannot modify access restrictions on a Superuser account',
+        ),
+      });
+      return;
+    }
+
+    const { status, projectIds } = req.body as {
+      status?: 'PENDING' | 'APPROVED' | 'REJECTED';
+      projectIds?: string[];
+    };
+
+    if (status && !['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
+      res.status(400).json({ error: errMsg(req, 'وضعیت حساب نامعتبر است', 'Invalid status value') });
+      return;
+    }
+
+    let validProjectIds: string[] | undefined;
+    if (projectIds !== undefined) {
+      if (!Array.isArray(projectIds)) {
+        res.status(400).json({ error: errMsg(req, 'لیست پروژه‌ها نامعتبر است', 'Invalid projectIds array') });
+        return;
+      }
+      const existingIds = new Set(projectManager.listProjects().map((p) => p.id));
+      validProjectIds = Array.from(
+        new Set(projectIds.map((id) => String(id).trim()).filter((id) => existingIds.has(id))),
+      );
+    }
+
+    const updated = await authRepository.updateUserAccessAndStatus(target.id, {
+      status,
+      projectIds: validProjectIds,
+      approvedBy: req.user!.fullName || req.user!.email,
+    });
+
+    store.addAudit({
+      user: sanitizeUser(req.currentUser!),
+      action: 'UPDATE_USER_ACCESS',
+      scope: 'user',
+      targetId: target.id,
+      summary: `به‌روزرسانی دسترسی کاربر ${target.firstName} ${target.lastName} (${target.phone}) — وضعیت: ${updated?.status || target.status}، تعداد پروژه‌ها: ${updated?.assignedProjectIds.length ?? 0}`,
+    });
+    store.saveImmediate();
+    res.json({ user: updated });
+  });
+
+  app.delete('/api/admin/users/:id', requireSuperuser, async (req: AuthedRequest, res: Response) => {
+    const target = await authRepository.findUserById(req.params.id);
+    if (!target) {
+      res.status(404).json({ error: errMsg(req, 'کاربر یافت نشد', 'User not found') });
+      return;
+    }
+    if (target.id === req.user!.id || target.role === 'SUPERUSER') {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'امکان حذف حساب مدیر ارشد سامانه وجود ندارد',
+          'Cannot delete a Superuser account',
+        ),
+      });
+      return;
+    }
+    await authRepository.deleteUser(target.id);
     store.addAudit({
       user: sanitizeUser(req.currentUser!),
       action: 'DELETE_USER',
       scope: 'user',
       targetId: target.id,
-      summary: `حذف حساب کاربری ${target.fullName} (${target.username})`,
+      summary: `حذف حساب کاربری ${target.firstName} ${target.lastName} (${target.phone})`,
     });
     store.saveImmediate();
+    res.json({ ok: true });
+  });
+
+  // Legacy /api/users compatibility routes (strictly SUPERUSER only)
+  app.get('/api/users', requireSuperuser, async (_req: AuthedRequest, res: Response) => {
+    const managed = await authRepository.listAllUsersWithAccess();
+    res.json({
+      users: managed.map((u) => ({
+        id: u.id,
+        username: u.email || u.phone,
+        fullName: u.fullName,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        phone: u.phone,
+        email: u.email,
+        role: u.role === 'SUPERUSER' ? 'admin' : 'operator',
+        appRole: u.role,
+        status: u.status,
+        phoneVerified: u.phoneVerified,
+        totpEnabled: u.totpEnabled,
+        assignedProjectIds: u.assignedProjectIds,
+        active: u.status === 'APPROVED',
+        preferences: DEFAULT_PREFERENCES,
+        createdAt: u.createdAt,
+        lastLoginAt: u.lastLoginAt || undefined,
+      })),
+    });
+  });
+
+  app.post('/api/users', requireSuperuser, async (req: AuthedRequest, res: Response) => {
+    const { firstName, lastName, fullName, phone, email, username, password, projectIds } =
+      req.body as {
+        firstName?: string;
+        lastName?: string;
+        fullName?: string;
+        phone?: string;
+        email?: string;
+        username?: string;
+        password?: string;
+        projectIds?: string[];
+      };
+    const phoneCheck = normalizeIranMobile(phone);
+    const emailCheck = normalizeEmail(email || username);
+    if (!phoneCheck.valid || !emailCheck.valid || !password || password.length < 6) {
+      res.status(400).json({
+        error: errMsg(
+          req,
+          'شماره موبایل معتبر ایران، ایمیل معتبر و رمز عبور (حداقل ۶ کاراکتر) الزامی است',
+          'Valid Iranian mobile, email, and password (min 6 chars) are required',
+        ),
+      });
+      return;
+    }
+    if (
+      (await authRepository.findUserByPhone(phoneCheck.normalized)) ||
+      (await authRepository.findUserByEmail(emailCheck.normalized))
+    ) {
+      res.status(409).json({
+        error: errMsg(req, 'شماره موبایل یا ایمیل تکراری است', 'Phone or email already exists'),
+      });
+      return;
+    }
+    const nameParts = normKey(fullName).split(/\s+/).filter(Boolean);
+    const fName = normKey(firstName) || nameParts[0] || emailCheck.normalized.split('@')[0];
+    const lName = normKey(lastName) || nameParts.slice(1).join(' ') || 'کاربر';
+    const created = await authRepository.createPendingUser({
+      firstName: fName,
+      lastName: lName,
+      phone: phoneCheck.normalized,
+      email: emailCheck.normalized,
+      password,
+      requestedEmployerId: null,
+      requestedProjectIds: Array.isArray(projectIds) ? projectIds : [],
+    });
+    const approved = await authRepository.updateUserAccessAndStatus(created.id, {
+      status: 'APPROVED',
+      projectIds: Array.isArray(projectIds) ? projectIds : [],
+      approvedBy: req.user!.fullName || req.user!.email,
+    });
+    res.json({ user: approved });
+  });
+
+  app.patch('/api/users/:id', requireSuperuser, async (req: AuthedRequest, res: Response) => {
+    const target = await authRepository.findUserById(req.params.id);
+    if (!target) {
+      res.status(404).json({ error: errMsg(req, 'کاربر یافت نشد', 'User not found') });
+      return;
+    }
+    const { active, password, mustChangePassword, projectIds } = req.body as {
+      active?: boolean;
+      password?: string;
+      mustChangePassword?: boolean;
+      projectIds?: string[];
+    };
+    if (password && password.length >= 6) {
+      await authRepository.updateUserPassword(target.id, password, Boolean(mustChangePassword));
+    }
+    if (target.role !== 'SUPERUSER' && (typeof active === 'boolean' || Array.isArray(projectIds))) {
+      await authRepository.updateUserAccessAndStatus(target.id, {
+        status: typeof active === 'boolean' ? (active ? 'APPROVED' : 'REJECTED') : undefined,
+        projectIds: Array.isArray(projectIds) ? projectIds : undefined,
+        approvedBy: req.user!.fullName || req.user!.email,
+      });
+    }
+    const updatedList = await authRepository.listAllUsersWithAccess();
+    res.json({ user: updatedList.find((u) => u.id === target.id) || null });
+  });
+
+  app.delete('/api/users/:id', requireSuperuser, async (req: AuthedRequest, res: Response) => {
+    const target = await authRepository.findUserById(req.params.id);
+    if (!target) {
+      res.status(404).json({ error: errMsg(req, 'کاربر یافت نشد', 'User not found') });
+      return;
+    }
+    if (target.id === req.user!.id || target.role === 'SUPERUSER') {
+      res.status(400).json({
+        error: errMsg(req, 'امکان حذف حساب مدیر ارشد وجود ندارد', 'Cannot delete a Superuser account'),
+      });
+      return;
+    }
+    await authRepository.deleteUser(target.id);
     res.json({ ok: true });
   });
 
@@ -1828,12 +3028,12 @@ async function startServer() {
     const body = req.body as { itemImages?: unknown[]; itemImageThumbs?: unknown[] };
     const cleanImgs = Array.isArray(body.itemImages)
       ? body.itemImages
-          .filter((x): x is string => typeof x === 'string' && x.startsWith('data:image/'))
+          .filter((x): x is string => isValidImageValue(x))
           .slice(0, 2)
       : [];
     const cleanThumbs = cleanImgs.map((img, i) => {
       const candidate = Array.isArray(body.itemImageThumbs) ? body.itemImageThumbs[i] : '';
-      return typeof candidate === 'string' && candidate.startsWith('data:image/') ? candidate : img;
+      return isValidImageValue(candidate) ? candidate : img;
     });
 
     const pkNorm = normDupPart(item.packingListNo);
@@ -1883,9 +3083,9 @@ async function startServer() {
     store.saveImmediate();
     res.json({
       ok: true,
-      hasImages: cleanImgs.length > 0,
-      itemImages: cleanImgs,
-      itemImageThumbs: cleanThumbs,
+      hasImages: Boolean((item.itemImages && item.itemImages.length > 0) || (item.itemImageThumbs && item.itemImageThumbs.length > 0)),
+      itemImages: item.itemImages || [],
+      itemImageThumbs: item.itemImageThumbs || [],
     });
   });
 
@@ -2004,12 +3204,12 @@ async function startServer() {
           : null;
       const cleanImgs = Array.isArray(raw.itemImages)
         ? raw.itemImages
-            .filter((x): x is string => typeof x === 'string' && x.startsWith('data:image/'))
+            .filter((x): x is string => isValidImageValue(x))
             .slice(0, 2)
         : [];
       const cleanThumbs = cleanImgs.map((img, idxImg) => {
         const cand = Array.isArray(raw.itemImageThumbs) ? raw.itemImageThumbs[idxImg] : '';
-        return typeof cand === 'string' && cand.startsWith('data:image/') ? cand : img;
+        return isValidImageValue(cand) ? cand : img;
       });
 
       preparedGeneral.push({
@@ -2223,12 +3423,12 @@ async function startServer() {
     }
     if (patch.itemImages !== undefined) {
       const cleanImgs = Array.isArray(patch.itemImages)
-        ? patch.itemImages.filter((x): x is string => typeof x === 'string' && x.startsWith('data:image/')).slice(0, 2)
+        ? patch.itemImages.filter((x): x is string => isValidImageValue(x)).slice(0, 2)
         : [];
       patch.itemImages = cleanImgs;
       patch.itemImageThumbs = cleanImgs.map((img, i) => {
         const cand = Array.isArray(patch.itemImageThumbs) ? patch.itemImageThumbs[i] : '';
-        return typeof cand === 'string' && cand.startsWith('data:image/') ? cand : img;
+        return isValidImageValue(cand) ? cand : img;
       });
     }
 
@@ -2641,9 +3841,9 @@ async function startServer() {
       return;
     }
     const { itemImage, itemImageThumb } = req.body as { itemImage?: string; itemImageThumb?: string };
-    const cleanImg = typeof itemImage === 'string' && itemImage.startsWith('data:image/') ? itemImage : '';
+    const cleanImg = isValidImageValue(itemImage) ? itemImage : '';
     const cleanThumb =
-      cleanImg && typeof itemImageThumb === 'string' && itemImageThumb.startsWith('data:image/')
+      cleanImg && isValidImageValue(itemImageThumb)
         ? itemImageThumb
         : cleanImg;
 
@@ -2680,10 +3880,10 @@ async function startServer() {
     const { itemImage: _omitted, ...computedLite } = computeDetailedEntry(item);
     res.json({
       ok: true,
-      hasImage: Boolean(cleanImg),
+      hasImage: Boolean(item.itemImage || item.itemImageThumb),
       item: computedLite,
-      itemImage: cleanImg,
-      itemImageThumb: cleanThumb,
+      itemImage: item.itemImage || '',
+      itemImageThumb: item.itemImageThumb || '',
     });
   });
 
@@ -2805,13 +4005,12 @@ async function startServer() {
       chemicalType: resolvedChemType,
       productionDate: resolvedProdDate,
       expirationDate: resolvedExpDate,
-      ...(typeof raw.itemImage === 'string' && raw.itemImage.startsWith('data:image/')
+      ...(isValidImageValue(raw.itemImage)
         ? {
             itemImage: raw.itemImage,
-            itemImageThumb:
-              typeof raw.itemImageThumb === 'string' && raw.itemImageThumb.startsWith('data:image/')
-                ? raw.itemImageThumb
-                : raw.itemImage,
+            itemImageThumb: isValidImageValue(raw.itemImageThumb)
+              ? raw.itemImageThumb
+              : raw.itemImage,
           }
         : {}),
       shortageBackfills: [],
@@ -3157,12 +4356,9 @@ async function startServer() {
       updatedAt: new Date().toISOString(),
     });
     if (patchImage !== undefined) {
-      if (typeof patchImage === 'string' && patchImage.startsWith('data:image/')) {
+      if (isValidImageValue(patchImage)) {
         item.itemImage = patchImage;
-        item.itemImageThumb =
-          typeof patchThumb === 'string' && patchThumb.startsWith('data:image/')
-            ? patchThumb
-            : patchImage;
+        item.itemImageThumb = isValidImageValue(patchThumb) ? patchThumb : patchImage;
       } else {
         delete item.itemImage;
         delete item.itemImageThumb;
@@ -6854,7 +8050,7 @@ async function startServer() {
       summary: `بارگذاری اسکن امضاشده فرم (${validation.attachment.fileName}) در بخش ${req.params.collection}`,
     });
     store.saveImmediate();
-    res.json({ ok: true, signedScan: validation.attachment });
+    res.json({ ok: true, signedScan: target.signedScan });
   });
 
   app.delete('/api/form-scans/:collection/:id', requireRole(['admin', 'operator']), (req: AuthedRequest, res: Response) => {

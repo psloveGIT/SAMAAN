@@ -10,6 +10,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { useAuthenticatedMediaUrl } from '../lib/authMedia.ts';
 import {
   processEquipmentImageFile,
   validateEquipmentImageFile,
@@ -42,6 +43,7 @@ export const ItemImageLightbox: React.FC<ItemImageLightboxProps> = ({
   const [zoom, setZoom] = useState<number>(1);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const { url: resolvedImageUrl, loading: loadingBlob } = useAuthenticatedMediaUrl(fullImage);
 
   useEffect(() => {
     if (!item) {
@@ -158,11 +160,18 @@ export const ItemImageLightbox: React.FC<ItemImageLightboxProps> = ({
   };
 
   const handleDownload = () => {
-    if (!fullImage) return;
+    const downloadHref = resolvedImageUrl || fullImage;
+    if (!downloadHref) return;
     const a = document.createElement('a');
-    a.href = fullImage;
+    a.href = downloadHref;
     const safeCode = (item.itemCode || item.itemNo || item.rowNo || 'item').replace(/[^a-zA-Z0-9_-]+/g, '_');
-    const ext = fullImage.startsWith('data:image/webp') ? 'webp' : 'jpg';
+    const lowerRaw = fullImage.toLowerCase();
+    const ext =
+      lowerRaw.startsWith('data:image/webp') || lowerRaw.endsWith('.webp')
+        ? 'webp'
+        : lowerRaw.startsWith('data:image/png') || lowerRaw.endsWith('.png')
+          ? 'png'
+          : 'jpg';
     a.download = `SAMAAN_${safeCode}.${ext}`;
     document.body.appendChild(a);
     a.click();
@@ -267,18 +276,25 @@ export const ItemImageLightbox: React.FC<ItemImageLightboxProps> = ({
             </div>
           ) : fullImage ? (
             <div className="relative flex items-center justify-center">
-              <img
-                src={fullImage}
-                alt={item.description || 'Equipment photo'}
-                referrerPolicy="no-referrer"
-                data-testid="lightbox-full-image"
-                style={{
-                  transform: `scale(${zoom})`,
-                  transformOrigin: 'center center',
-                }}
-                className="max-h-[58vh] max-w-full rounded-xl object-contain shadow-md transition-transform duration-150"
-              />
-              {loading && (
+              {resolvedImageUrl ? (
+                <img
+                  src={resolvedImageUrl}
+                  alt={item.description || 'Equipment photo'}
+                  referrerPolicy="no-referrer"
+                  data-testid="lightbox-full-image"
+                  style={{
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'center center',
+                  }}
+                  className="max-h-[58vh] max-w-full rounded-xl object-contain shadow-md transition-transform duration-150"
+                />
+              ) : (
+                <div className="flex flex-col items-center gap-2 text-xs text-[var(--text-muted)] py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-[var(--accent-primary)]" />
+                  <span>{isFa ? 'در حال بارگذاری تصویر...' : 'Loading image...'}</span>
+                </div>
+              )}
+              {(loading || loadingBlob) && resolvedImageUrl && (
                 <div className="absolute bottom-2 end-2 px-2.5 py-1 rounded-lg bg-black/65 text-white text-[10px] flex items-center gap-1.5">
                   <Loader2 className="w-3 h-3 animate-spin" />
                   <span>{isFa ? 'در حال بارگذاری کیفیت اصلی...' : 'Loading full resolution...'}</span>

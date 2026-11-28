@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  AlertTriangle,
   ArrowLeftRight,
   BarChart3,
   Boxes,
@@ -39,6 +40,7 @@ import {
   Scale,
   Search,
   Shield,
+  ShieldCheck,
   Sparkles,
   SpellCheck2,
   Sun,
@@ -67,6 +69,7 @@ import { ErrorReportModal } from './ErrorReportModal.tsx';
 import { ProjectManagerModal } from './ProjectManagerModal.tsx';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 import { SamaanLogo } from './SamaanLogo.tsx';
+import { TotpSecurityModal } from './TotpSecurityModal.tsx';
 import { setDiagnosticActiveSection } from '../lib/diagnostics.ts';
 
 export type NavTabKey =
@@ -119,8 +122,10 @@ export const Layout: React.FC<LayoutProps> = ({
 }) => {
   const {
     user,
+    isSuperuser,
     prefs,
     t,
+    projects,
     activeProject,
     activeEmployer,
     setLanguage,
@@ -141,9 +146,11 @@ export const Layout: React.FC<LayoutProps> = ({
 
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [changePwOpen, setChangePwOpen] = React.useState(false);
+  const [totpModalOpen, setTotpModalOpen] = React.useState(false);
   const [projectModalOpen, setProjectModalOpen] = React.useState(false);
   const [errorReportOpen, setErrorReportOpen] = React.useState(false);
   const [historyMenuOpen, setHistoryMenuOpen] = React.useState(false);
+  const canSwitchProject = isSuperuser || projects.length >= 2;
 
   React.useEffect(() => {
     setDiagnosticActiveSection(activeTab);
@@ -280,13 +287,15 @@ export const Layout: React.FC<LayoutProps> = ({
         id: 'admin',
         groupLabel: t.navGroups.admin,
         items: [
-          { key: 'employers', label: t.nav.employers, icon: <Building2 className="w-4 h-4 shrink-0" /> },
+          ...(isSuperuser
+            ? [{ key: 'employers' as NavTabKey, label: t.nav.employers, icon: <Building2 className="w-4 h-4 shrink-0" /> }]
+            : []),
           { key: 'search', label: t.nav.search, icon: <Search className="w-4 h-4 shrink-0" /> },
           { key: 'categories', label: t.nav.categories, icon: <FolderTree className="w-4 h-4 shrink-0" /> },
           { key: 'trash', label: t.nav.trash, icon: <Trash2 className="w-4 h-4 shrink-0" /> },
           { key: 'usersAudit', label: t.nav.usersAudit, icon: <Shield className="w-4 h-4 shrink-0" /> },
           { key: 'backup', label: t.nav.backup, icon: <HardDriveDownload className="w-4 h-4 shrink-0" /> },
-          ...(user?.role === 'admin'
+          ...(isSuperuser
             ? [
                 {
                   key: 'databasePurge' as NavTabKey,
@@ -298,7 +307,7 @@ export const Layout: React.FC<LayoutProps> = ({
         ],
       },
     ],
-    [t, user?.role],
+    [t, isSuperuser],
   );
 
   // Automatically expand the group that holds the currently active tab
@@ -423,49 +432,100 @@ export const Layout: React.FC<LayoutProps> = ({
             </div>
           </div>
 
-          {/* Active Project Selector */}
-          <button
-            type="button"
-            onClick={() => setProjectModalOpen(true)}
-            title={projectSummaryLabel}
-            className={`w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/75 hover:bg-[var(--bg-subtle)]/80 hover:border-[var(--border-strong)] flex items-center transition-all shrink-0 ${
-              sidebarCollapsed ? 'lg:justify-center lg:h-10 lg:px-0 px-3 py-2.5 justify-between gap-2 text-start' : 'px-3 py-2.5 justify-between gap-2 text-start'
-            }`}
-          >
-            <div className={`flex items-center gap-2.5 min-w-0 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
-              {activeEmployer.logos.length > 0 && activeEmployer.logos[0]?.dataUrl ? (
-                <div className="w-9 h-8 rounded-lg bg-white border border-[var(--border-subtle)] p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
-                  <img
-                    src={activeEmployer.logos[0].dataUrl}
-                    alt={activeEmployer.shortName || activeEmployer.nameFa}
-                    className="max-w-full max-h-full object-contain"
-                  />
+          {/* Active Project Selector (RBAC: Superuser = CRUD, User with 2+ = read-only switcher, User with 1 = locked badge) */}
+          {canSwitchProject ? (
+            <button
+              type="button"
+              data-testid="sidebar-project-selector-btn"
+              onClick={() => setProjectModalOpen(true)}
+              title={projectSummaryLabel}
+              className={`w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/75 hover:bg-[var(--bg-subtle)]/80 hover:border-[var(--border-strong)] flex items-center transition-all shrink-0 ${
+                sidebarCollapsed ? 'lg:justify-center lg:h-10 lg:px-0 px-3 py-2.5 justify-between gap-2 text-start' : 'px-3 py-2.5 justify-between gap-2 text-start'
+              }`}
+            >
+              <div className={`flex items-center gap-2.5 min-w-0 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
+                {activeEmployer.logos.length > 0 && activeEmployer.logos[0]?.dataUrl ? (
+                  <div className="w-9 h-8 rounded-lg bg-white border border-[var(--border-subtle)] p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
+                    <img
+                      src={activeEmployer.logos[0].dataUrl}
+                      alt={activeEmployer.shortName || activeEmployer.nameFa}
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+                    <Building2 className="w-4 h-4" />
+                  </div>
+                )}
+                <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                  <div className="text-[10px] font-medium text-[var(--text-muted)]">
+                    {isSuperuser
+                      ? isFa
+                        ? 'پروژه فعال (مدیریت)'
+                        : 'Active Project (Manage)'
+                      : isFa
+                        ? `پروژه فعال (${projects.length} پروژه مجاز)`
+                        : `Active Project (${projects.length} assigned)`}
+                  </div>
+                  <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                    {activeProject?.name || (isFa ? 'پروژه پیش‌فرض' : 'Default Project')}
+                  </div>
+                  <div className="text-[10.5px] text-[var(--accent-primary)] font-medium truncate">
+                    {activeEmployer.isConfigured
+                      ? isFa
+                        ? `کارفرما: ${activeEmployer.shortName || activeEmployer.nameFa}`
+                        : `Client: ${activeEmployer.shortName || activeEmployer.nameEn}`
+                      : isFa
+                        ? 'کارفرما: تعیین‌نشده (خام)'
+                        : 'Employer: Unassigned (Raw)'}
+                  </div>
                 </div>
-              ) : (
-                <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
-                  <Building2 className="w-4 h-4" />
-                </div>
-              )}
-              <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                <div className="text-[10px] font-medium text-[var(--text-muted)]">
-                  {isFa ? 'پروژه فعال' : 'Active Project'}
-                </div>
-                <div className="text-xs font-bold text-[var(--text-primary)] truncate">
-                  {activeProject?.name || (isFa ? 'پروژه پیش‌فرض' : 'Default Project')}
-                </div>
-                <div className="text-[10.5px] text-[var(--accent-primary)] font-medium truncate">
-                  {activeEmployer.isConfigured
-                    ? isFa
-                      ? `کارفرما: ${activeEmployer.shortName || activeEmployer.nameFa}`
-                      : `Client: ${activeEmployer.shortName || activeEmployer.nameEn}`
-                    : isFa
-                      ? 'کارفرما: تعیین‌نشده (خام)'
-                      : 'Employer: Unassigned (Raw)'}
+              </div>
+              <ChevronDown className={`w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`} />
+            </button>
+          ) : (
+            <div
+              data-testid="sidebar-project-locked-badge"
+              title={projectSummaryLabel}
+              className={`w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/75 flex items-center shrink-0 cursor-default select-none ${
+                sidebarCollapsed ? 'lg:justify-center lg:h-10 lg:px-0 px-3 py-2.5 justify-between gap-2 text-start' : 'px-3 py-2.5 justify-between gap-2 text-start'
+              }`}
+            >
+              <div className={`flex items-center gap-2.5 min-w-0 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
+                {activeEmployer.logos.length > 0 && activeEmployer.logos[0]?.dataUrl ? (
+                  <div className="w-9 h-8 rounded-lg bg-white border border-[var(--border-subtle)] p-0.5 flex items-center justify-center shrink-0 overflow-hidden">
+                    <img
+                      src={activeEmployer.logos[0].dataUrl}
+                      alt={activeEmployer.shortName || activeEmployer.nameFa}
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+                    <Building2 className="w-4 h-4" />
+                  </div>
+                )}
+                <div className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                  <div className="text-[10px] font-medium text-[var(--text-muted)] flex items-center gap-1">
+                    <Lock className="w-2.5 h-2.5 shrink-0" />
+                    <span>{isFa ? 'پروژه تخصیص‌یافته' : 'Assigned Project'}</span>
+                  </div>
+                  <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                    {activeProject?.name || (isFa ? 'بدون پروژه تخصیص‌یافته' : 'No Assigned Project')}
+                  </div>
+                  <div className="text-[10.5px] text-[var(--accent-primary)] font-medium truncate">
+                    {activeEmployer.isConfigured
+                      ? isFa
+                        ? `کارفرما: ${activeEmployer.shortName || activeEmployer.nameFa}`
+                        : `Client: ${activeEmployer.shortName || activeEmployer.nameEn}`
+                      : isFa
+                        ? 'کارفرما: تعیین‌نشده'
+                        : 'Employer: Unassigned'}
+                  </div>
                 </div>
               </div>
             </div>
-            <ChevronDown className={`w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`} />
-          </button>
+          )}
 
           {/* Instant Menu Search Filter (visible in expanded / mobile drawer) */}
           <div className={`relative shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
@@ -816,15 +876,38 @@ export const Layout: React.FC<LayoutProps> = ({
                 <div className="min-w-0">
                   <div className="text-xs font-bold text-[var(--text-primary)] truncate">{user.fullName}</div>
                   <div className="text-[10.5px] text-[var(--text-muted)] truncate">
-                    {user.role === 'admin'
-                      ? t.auth.roleAdmin
-                      : user.role === 'operator'
-                        ? t.auth.roleOperator
-                        : t.auth.roleViewer}
+                    {isSuperuser
+                      ? isFa
+                        ? 'مدیر ارشد سامانه'
+                        : 'Superuser'
+                      : isFa
+                        ? 'کاربر سامانه'
+                        : 'Standard User'}
                   </div>
                 </div>
               </div>
               <div className={`flex items-center gap-0.5 shrink-0 ${sidebarCollapsed ? 'lg:flex-col' : ''}`}>
+                <button
+                  type="button"
+                  data-testid="sidebar-totp-btn"
+                  onClick={() => setTotpModalOpen(true)}
+                  title={
+                    user.totpEnabled
+                      ? isFa
+                        ? 'تایید دو مرحله‌ای (2FA فعال)'
+                        : '2FA Security (Enabled)'
+                      : isFa
+                        ? 'فعال‌سازی تایید دو مرحله‌ای (2FA)'
+                        : 'Enable 2FA Security'
+                  }
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    user.totpEnabled
+                      ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10'
+                      : 'text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--accent-primary)]'
+                  }`}
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                </button>
                 <button
                   type="button"
                   onClick={() => setChangePwOpen(true)}
@@ -1033,22 +1116,42 @@ export const Layout: React.FC<LayoutProps> = ({
           </div>
 
           <div className="hidden md:flex items-center gap-2 text-xs text-[var(--text-muted)] tabular-nums whitespace-nowrap shrink-0">
-            <button
-              type="button"
-              onClick={() => setProjectModalOpen(true)}
-              className="h-8 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-              <span>{activeProject?.name || t.brandFull}</span>
-              {activeProject?.plantAbbreviation && (
-                <span
-                  dir="ltr"
-                  className="px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] font-mono text-[10px] font-bold"
-                >
-                  {activeProject.plantAbbreviation}
-                </span>
-              )}
-            </button>
+            {canSwitchProject ? (
+              <button
+                type="button"
+                data-testid="topbar-project-selector-btn"
+                onClick={() => setProjectModalOpen(true)}
+                className="h-8 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] font-semibold flex items-center gap-1.5 transition-colors"
+              >
+                <Building2 className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <span>{activeProject?.name || t.brandFull}</span>
+                {activeProject?.plantAbbreviation && (
+                  <span
+                    dir="ltr"
+                    className="px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] font-mono text-[10px] font-bold"
+                  >
+                    {activeProject.plantAbbreviation}
+                  </span>
+                )}
+                <ChevronDown className="w-3 h-3 text-[var(--text-muted)]" />
+              </button>
+            ) : (
+              <div
+                data-testid="topbar-project-locked-badge"
+                className="h-8 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)]/70 text-[var(--text-primary)] font-semibold flex items-center gap-1.5 cursor-default select-none"
+              >
+                <Lock className="w-3 h-3 text-[var(--accent-primary)]" />
+                <span>{activeProject?.name || (isFa ? 'بدون پروژه' : 'No Project')}</span>
+                {activeProject?.plantAbbreviation && (
+                  <span
+                    dir="ltr"
+                    className="px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-primary)] font-mono text-[10px] font-bold"
+                  >
+                    {activeProject.plantAbbreviation}
+                  </span>
+                )}
+              </div>
+            )}
             <span aria-hidden="true" className="opacity-40">·</span>
             <span className="font-medium">{todayFormatted}</span>
           </div>
@@ -1103,7 +1206,28 @@ export const Layout: React.FC<LayoutProps> = ({
           </div>
         </header>
 
-        <main className="flex-1 min-w-0 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">{children}</main>
+        <main className="flex-1 min-w-0 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">
+          {!isSuperuser && projects.length === 0 ? (
+            <div
+              data-testid="no-assigned-projects-banner"
+              className="max-w-xl mx-auto my-10 rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--bg-surface)] p-6 text-center space-y-3 shadow-sm"
+            >
+              <div className="w-11 h-11 mx-auto rounded-full bg-[var(--status-warning-bg)] text-[var(--status-warning)] flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <h3 className="text-sm font-bold text-[var(--text-primary)]">
+                {isFa ? 'هیچ پروژه‌ای به حساب شما تخصیص داده نشده است' : 'No Projects Assigned Yet'}
+              </h3>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                {isFa
+                  ? 'حساب کاربری شما فعال است اما هنوز دسترسی به هیچ پروژه‌ای توسط مدیر ارشد سامانه برای شما تعریف نشده است. لطفاً با مدیر سامانه تماس بگیرید.'
+                  : 'Your account is active, but the Superuser has not assigned any projects to your account yet.'}
+              </p>
+            </div>
+          ) : (
+            children
+          )}
+        </main>
       </div>
 
       <ChangePasswordModal
@@ -1112,13 +1236,22 @@ export const Layout: React.FC<LayoutProps> = ({
         onClose={() => setChangePwOpen(false)}
       />
 
+      <TotpSecurityModal
+        open={totpModalOpen}
+        onClose={() => setTotpModalOpen(false)}
+      />
+
       <ProjectManagerModal
-        open={projectModalOpen}
+        open={projectModalOpen && canSwitchProject}
         onClose={() => setProjectModalOpen(false)}
-        onOpenEmployersPage={() => {
-          onTabChange('employers');
-          setMobileMenuOpen(false);
-        }}
+        onOpenEmployersPage={
+          isSuperuser
+            ? () => {
+                onTabChange('employers');
+                setMobileMenuOpen(false);
+              }
+            : undefined
+        }
       />
 
       <ErrorReportModal

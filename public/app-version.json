@@ -1,27 +1,65 @@
 {
-  "version": "2.20.1",
-  "buildId": "2026.06.09-1",
-  "releasedAt": "2026-06-09",
+  "version": "2.22.0",
+  "buildId": "2026.06.11-1",
+  "releasedAt": "2026-06-11",
   "latestRelease": {
-    "version": "2.20.1",
-    "buildId": "2026.06.09-1",
-    "releasedAt": "2026-06-09",
-    "titleFa": "رفع جامع باگ‌های دعوتنامه و صورتجلسه OPI، گزارش مغایرت MER، صورتجلسه ورود کالا، رسید مصرف مستقیم، حواله انبار و فیلتر محافظت چشم",
-    "titleEn": "Comprehensive Bug Fixes Across OPI Invitation, Site Entry Minutes, OPI Minutes & MER, GCV, MIV & Light-Mode Eye Protection",
+    "version": "2.22.0",
+    "buildId": "2026.06.11-1",
+    "releasedAt": "2026-06-11",
+    "titleFa": "بازطراحی کامل احراز هویت، سطح دسترسی چندپروژه‌ای (RBAC)، کپچای آفلاین، پیامک OTP ایرانی و تایید دو مرحله‌ای TOTP",
+    "titleEn": "Complete Auth, Multi-Project RBAC, Offline SVG CAPTCHA, Iranian Pattern SMS OTP & Offline TOTP 2FA Overhaul",
     "changesFa": [
-      "دعوتنامه گشایش بسته‌ها: مرتب‌سازی جدول انتخاب از جدیدترین به قدیمی‌ترین تاریخ ورود، پنهان‌سازی ستون‌های «شماره بسته خرید»، «جزیره» و «نوع بسته‌بندی»، و افزودن امکان تایپ دلخواه در کنار انتخاب‌های پیش‌فرض برای فیلد «مکان OPI»",
-      "صورتجلسه ورود کالا (MD1EX-FQP02/15-01): مرتب‌سازی جدول از جدیدترین به قدیمی‌ترین تاریخ ورود، نمایش صرفاً ردیف‌های فاقد صورتجلسه ورود و حذف دکمه‌های فیلتر اضافی بالای صفحه، وسط‌چینی کامل سربرگ فرم و افزودن خطوط جداکننده دقیق میان Release Note/Arrival Notice، ردیف‌های اطلاعات سربرگ (با راست‌چینی کاربرد کالا، واحد، سیستم و جزیره) و کادر امضای انباردار، مدیر پروژه و توضیحات",
-      "صورتجلسه گشایش و گزارش مغایرت (MD1EX-FQP02/06-03 و MER): حذف نقطه‌چین‌های بخش مغایرت و قرارگیری مرتب شماره MER کنار متن، رفع کامل باگ نمایش ردیف‌های سابقه صورتجلسه و MER در حالت پیش‌فرض، حذف فوری ردیف‌های صادرشده از مرحله اول بدون نیاز به جابه‌جایی صفحه، افزودن دکمه ویرایش به سابقه گزارش مغایرت و اصلاح محاسبه «مقدار دریافتی» در حالت «مغایرت / آسیب‌دیدگی» برابر با «تعداد مغایرت/کسری»",
-      "رسید مصرف مستقیم (GCV)، حواله انبار (MIV) و محافظت چشم: حذف ستون MER از جدول انتخاب رسید مصرف و حذف قید یکسان‌بودن «ساب سیستم»، تثبیت شماره‌گذاری پیمانکاری حواله انبار صرفاً بر اساس «تحویل گیرنده» و افزودن کادر سفید استاندارد در پیش‌نمایش چاپ حواله (مشابه رسید مصرف)، و رفع کارکرد فیلتر نور آبی محافظت چشم در حالت روز"
+      "ایجاد جداول امنیتی app_users، user_project_access (رابطه چندبه‌چند با کلید اصلی ترکیبی و ایندکس‌های کاربری/پروژه‌ای)، sms_otps و auth_sessions در PostgreSQL همراه با پشتیبانی کامل از حالت JSON fallback و بذرگذاری مدیر ارشد سامانه (SUPERUSER) از متغیرهای محیطی بدون هیچ رمز ثابت در کد",
+      "اعمال کنترل دسترسی اکید در سرور و رابط کاربری: فقط مدیر ارشد سامانه مجاز به ایجاد/ویرایش/حذف پروژه و کارفرما و تایید یا تخصیص پروژه به کاربران است؛ دسترسی کاربران عادی در تمام مسیرهای پروژه، فایل‌های پیوست و همگام‌سازی آفلاین به پروژه‌های مجاز محدود شده (خطای 403 برای پروژه‌های غیرمجاز) و در رابط کاربری برای کاربران تک‌پروژه‌ای بدون سوییچر (قفل‌شده) و برای کاربران چندپروژه‌ای به‌صورت سوییچر فقط‌خواندنی نمایش داده می‌شود",
+      "راه‌اندازی کپچای تصویری آفلاین و خودمیزبان (svg-captcha) بدون نیاز به اینترنت بین‌الملل، سرویس پیامک الگو (Pattern SMS) سازگار با SMS.ir، کاوه‌نگار و حالت شبیه‌ساز توسعه (mock)، محدودسازی نرخ درخواست (بر اساس IP و شماره موبایل)، سرصفحه‌های امنیتی Helmet، CORS محدود به دامنه رسمی و کوکی نشست HttpOnly و SameSite=Strict",
+      "افزودن احراز هویت دو مرحله‌ای آفلاین (Google Authenticator / Aegis) با تولید بارکد محلی و رمزنگاری کلید مخفی با AES-256-GCM، بازطراحی کامل صفحه ورود و ثبت‌نام دو زبانه‌/راست‌به‌چپ (ورود با رمز یا پیامک OTP + فرم ثبت‌نام با انتخاب کارفرما و چک‌باکس چندپروژه‌ای) و افزودن پنل تایید اشتراک و تخصیص چندپروژه‌ای در صفحه کاربران ویژه مدیر ارشد"
     ],
     "changesEn": [
-      "OPI Invitation: Sorted picker table newest-to-oldest by arrival date, hid Purchase Package No., Island, and Package Type columns, and allowed free-text custom entry alongside default presets in OPI Location",
-      "Site Entry Minutes (MD1EX-FQP02/15-01): Sorted picker newest-to-oldest, restricted picker strictly to rows without Site Entry Minutes while removing redundant top filter buttons, horizontally centered the sheet header block, and added crisp vertical/horizontal dividers across Release Note / Arrival Notice, right-aligned Goods Usage / Unit / System / Island cells, and the bottom Storekeeper / Contractor PM / Notes strip",
-      "OPI Minutes & MER (MD1EX-FQP02/06-03 & MER): Removed dotted lines in the discrepancy clause and placed MER No. cleanly inline, fixed invisible default History rows for both OPI Minutes and MER tables, ensured issued invitations disappear immediately from Step 1 without navigating away, added an Edit button and edit workflow to MER History, and fixed Damaged MER Received Qty to equal Discrepant Qty instead of 0",
-      "GCV, MIV & Eye Protection: Hid the MER column and removed the identical Sub-System constraint in GCV, hardened MIV contractor-coded numbering strictly from Receiver and wrapped MIV Print Preview in the standard white card frame matching GCV, and fixed the blue-light Eye Protection filter in Light Mode"
+      "Added PostgreSQL security tables (app_users, M:N user_project_access with composite PK and indexes, sms_otps, auth_sessions) with full JSON fallback compatibility and env-driven SUPERUSER seeding with zero hardcoded passwords",
+      "Enforced strict Superuser vs User multi-project RBAC across backend and UI: only Superusers can manage projects, employers, and user approvals; every project-scoped API, attachment download, and offline sync checks user_project_access (403 on unauthorized projects); regular users see a locked project badge when assigned 1 project and a read-only switcher when assigned 2+ projects",
+      "Added self-hosted offline-proof SVG CAPTCHA (svg-captcha), Iranian Pattern SMS OTP adapter (mock, SMS.ir, Kavenegar), per-IP and per-phone rate limiting, Helmet security headers, strict CORS, and HttpOnly SameSite=Strict hashed session cookies",
+      "Added offline TOTP 2FA (Google Authenticator / Aegis) with local QR generation and AES-256-GCM secret encryption, overhauled the RTL Persian Login & Registration AuthGate (Password/SMS OTP + dependent Employer/multi-project selection), and built the Superuser Subscription Approval & Multi-Project Access panel in UsersAuditView"
     ]
   },
   "changelog": [
+    {
+      "version": "2.22.0",
+      "buildId": "2026.06.11-1",
+      "releasedAt": "2026-06-11",
+      "titleFa": "بازطراحی کامل احراز هویت، سطح دسترسی چندپروژه‌ای (RBAC)، کپچای آفلاین، پیامک OTP ایرانی و تایید دو مرحله‌ای TOTP",
+      "titleEn": "Complete Auth, Multi-Project RBAC, Offline SVG CAPTCHA, Iranian Pattern SMS OTP & Offline TOTP 2FA Overhaul",
+      "changesFa": [
+        "ایجاد جداول امنیتی app_users، user_project_access (رابطه چندبه‌چند با کلید اصلی ترکیبی و ایندکس‌های کاربری/پروژه‌ای)، sms_otps و auth_sessions در PostgreSQL همراه با پشتیبانی کامل از حالت JSON fallback و بذرگذاری مدیر ارشد سامانه (SUPERUSER) از متغیرهای محیطی بدون هیچ رمز ثابت در کد",
+        "اعمال کنترل دسترسی اکید در سرور و رابط کاربری: فقط مدیر ارشد سامانه مجاز به ایجاد/ویرایش/حذف پروژه و کارفرما و تایید یا تخصیص پروژه به کاربران است؛ دسترسی کاربران عادی در تمام مسیرهای پروژه، فایل‌های پیوست و همگام‌سازی آفلاین به پروژه‌های مجاز محدود شده (خطای 403 برای پروژه‌های غیرمجاز) و در رابط کاربری برای کاربران تک‌پروژه‌ای بدون سوییچر (قفل‌شده) و برای کاربران چندپروژه‌ای به‌صورت سوییچر فقط‌خواندنی نمایش داده می‌شود",
+        "راه‌اندازی کپچای تصویری آفلاین و خودمیزبان (svg-captcha) بدون نیاز به اینترنت بین‌الملل، سرویس پیامک الگو (Pattern SMS) سازگار با SMS.ir، کاوه‌نگار و حالت شبیه‌ساز توسعه (mock)، محدودسازی نرخ درخواست (بر اساس IP و شماره موبایل)، سرصفحه‌های امنیتی Helmet، CORS محدود به دامنه رسمی و کوکی نشست HttpOnly و SameSite=Strict",
+        "افزودن احراز هویت دو مرحله‌ای آفلاین (Google Authenticator / Aegis) با تولید بارکد محلی و رمزنگاری کلید مخفی با AES-256-GCM، بازطراحی کامل صفحه ورود و ثبت‌نام دو زبانه‌/راست‌به‌چپ (ورود با رمز یا پیامک OTP + فرم ثبت‌نام با انتخاب کارفرما و چک‌باکس چندپروژه‌ای) و افزودن پنل تایید اشتراک و تخصیص چندپروژه‌ای در صفحه کاربران ویژه مدیر ارشد"
+      ],
+      "changesEn": [
+        "Added PostgreSQL security tables (app_users, M:N user_project_access with composite PK and indexes, sms_otps, auth_sessions) with full JSON fallback compatibility and env-driven SUPERUSER seeding with zero hardcoded passwords",
+        "Enforced strict Superuser vs User multi-project RBAC across backend and UI: only Superusers can manage projects, employers, and user approvals; every project-scoped API, attachment download, and offline sync checks user_project_access (403 on unauthorized projects); regular users see a locked project badge when assigned 1 project and a read-only switcher when assigned 2+ projects",
+        "Added self-hosted offline-proof SVG CAPTCHA (svg-captcha), Iranian Pattern SMS OTP adapter (mock, SMS.ir, Kavenegar), per-IP and per-phone rate limiting, Helmet security headers, strict CORS, and HttpOnly SameSite=Strict hashed session cookies",
+        "Added offline TOTP 2FA (Google Authenticator / Aegis) with local QR generation and AES-256-GCM secret encryption, overhauled the RTL Persian Login & Registration AuthGate (Password/SMS OTP + dependent Employer/multi-project selection), and built the Superuser Subscription Approval & Multi-Project Access panel in UsersAuditView"
+      ]
+    },
+    {
+      "version": "2.21.0",
+      "buildId": "2026.06.10-1",
+      "releasedAt": "2026-06-10",
+      "titleFa": "مهاجرت سرور به پایگاه داده PostgreSQL، استخراج خودکار فایل‌های پیوست و همگام‌سازی ضدتعارض آفلاین",
+      "titleEn": "PostgreSQL Persistence Migration (node-postgres), Disk Binary Attachment Extraction & Conflict-Aware Offline Sync",
+      "changesFa": [
+        "مهاجرت کامل لایه ذخیره‌سازی سرور از فایل‌های محلی JSON به PostgreSQL با استفاده مستقیم از کتابخانه pg (بدون وابستگی به Prisma برای ساخت مطمئن Docker در داخل ایران) همراه با حفظ سازگاری کامل با تمام ۱۹ کلکسیون پروژه و جداسازی دقیق X-Samaan-Project و حالت جایگزین SAMAAN_STORAGE_MODE=postgres|json",
+        "ایجاد جداول employers، projects (با رابطه اکید یک‌به‌چند و قید ON DELETE RESTRICT)، project_records (با قفل خوش‌بینانه version و ایندکس‌های بهینه) و global_logs، به‌همراه بذرگذاری خودکار ۳ کارفرمای پیش‌فرض و ۳ پروژه پیش‌فرض (یک پروژه به ازای هر کارفرمای پیش‌فرض مپنا) و ابزار مهاجرت یک‌باره و تکرارپذیر داده‌های JSON قدیمی با ثبت نشانگر دائمی json_migration_completed",
+        "استخراج خودکار تصاویر اقلام، تصاویر نگله‌ها و فایل‌های اسکن امضاشده PDF/تصویر (تا سقف ۱۰ مگابایت) از Base64 درون دیتابیس به مسیر ایمن /app/uploads/<projectId>/<uuid>.<ext> و سرو آن‌ها از طریق مسیر احراز هویت‌شده GET /api/files/:projectId/:filename همراه با نمایشگرهای فرانت‌اند مبتنی بر fetch احراز هویت‌شده و مدیریت حافظه Blob URL",
+        "افزودن مسیرهای تراکنشی همگام‌سازی آفلاین با تشخیص و حل تعارض نسخه (POST /api/sync/:projectId و POST /api/sync/:projectId/resolve) همراه با ثبت خودکار لاگ حسابرسی و تضمین انتظار کامل برای Commit پایگاه داده پیش از ارسال پاسخ موفق HTTP"
+      ],
+      "changesEn": [
+        "Migrated server persistence from local JSON files to PostgreSQL using node-postgres (pg) with zero Prisma binary downloads for Iran-ready Docker builds, preserving 100% compatibility across all 19 collections, X-Samaan-Project scoping, and SAMAAN_STORAGE_MODE=postgres|json fallback",
+        "Added auto-migrated PostgreSQL schema (employers, strict 1:N projects with ON DELETE RESTRICT, versioned project_records JSONB with indexes, and global_logs), seeded default projects per built-in MAPNA employer, and added a one-time idempotent JSON-to-PostgreSQL importer guarded by a permanent json_migration_completed flag",
+        "Added automatic Base64 binary attachment extraction (JPEG, PNG, WebP, PDF up to 10 MB) to /app/uploads/<projectId>/<uuid>.<ext>, authenticated project-scoped GET /api/files/:projectId/:filename with path-traversal confinement, and authenticated Blob URL media/scan viewers with URL.revokeObjectURL cleanup",
+        "Implemented atomic transactional offline sync endpoints (POST /api/sync/:projectId and POST /api/sync/:projectId/resolve) with optimistic version conflict detection, audit logging, and awaited database commit guarantees before HTTP 2xx responses"
+      ]
+    },
     {
       "version": "2.20.1",
       "buildId": "2026.06.09-1",

@@ -149,6 +149,7 @@ const EMPTY_CATEGORIES: CategoryStore = {
 const SamaanWorkspace: React.FC = () => {
   const {
     user,
+    isSuperuser,
     loadingAuth,
     toasts,
     dismissToast,
@@ -231,10 +232,10 @@ const SamaanWorkspace: React.FC = () => {
   }, [loadCategories, refreshSignal, activeProjectId]);
 
   useEffect(() => {
-    if (user && user.role !== 'admin' && activeTab === 'databasePurge') {
+    if (user && !isSuperuser && (activeTab === 'databasePurge' || activeTab === 'employers')) {
       setActiveTab('dashboard');
     }
-  }, [user, activeTab]);
+  }, [user, isSuperuser, activeTab]);
 
   const openNewPacking = (packingNo = '') => {
     setTransitPrefill(null);

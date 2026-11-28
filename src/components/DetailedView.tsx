@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
+import { AuthMediaImage } from './AuthMediaImage.tsx';
 import { computeSelectionFormulaSummary, isMerOpen, isRepOpen } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { inferSizeFromDescription } from '../shared/sizeExtractor.ts';
@@ -2327,7 +2328,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                         }`}
                       >
                         {row.hasImage && row.itemImageThumb ? (
-                          <img
+                          <AuthMediaImage
                             src={row.itemImageThumb}
                             alt={row.description || 'Item photo'}
                             referrerPolicy="no-referrer"
@@ -2567,7 +2568,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                   className="w-14 h-14 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden flex items-center justify-center shrink-0 hover:ring-2 hover:ring-[var(--accent-primary)] transition-all"
                 >
                   {inspected.hasImage && inspected.itemImageThumb ? (
-                    <img
+                    <AuthMediaImage
                       src={inspected.itemImageThumb}
                       alt={inspected.description || 'Equipment photo'}
                       referrerPolicy="no-referrer"
