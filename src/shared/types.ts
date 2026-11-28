@@ -136,6 +136,7 @@ export type SignedScanCollectionKey =
   | 'opiMinutes'
   | 'osdr'
   | 'gcv'
+  | 'balance'
   | 'periodic'
   | 'customForms';
 
@@ -337,12 +338,14 @@ export interface GeneralEntry {
   releaseNo: string; // Release Note
   releaseDate: string; // تاریخ Release Note (defaults to arrivalDate if Release Note is empty)
   supplier: string; // تامین کننده
+  requester?: string; // پیمانکار / درخواست کننده
   dispatchLocation: string; // محل ارسال
   employerEntryMinutesNo: string; // شماره صورتجلسه ورود کارفرما
-  mapnaEntryMinutesNo: string; // شماره صورتجلسه ورود مپنا (Unique)
+  mapnaEntryMinutesNo: string; // شماره صورتجلسه ورود انبار (خودکار از صورتجلسه ورود)
   packingListNo: string; // شماره پکینگ لیست
   packageNo: string; // شماره نگله
   packageType?: string; // نوع بسته‌بندی
+  packageCount?: number | null; // تعداد بسته
   purchasePackageNo?: string; // شماره بسته خرید
   itemCount?: number | null; // تعداد اقلام نگله
   itemDescription: string; // شرح کالا
@@ -356,12 +359,16 @@ export interface GeneralEntry {
   widthCm: number | null; // عرض
   heightCm: number | null; // ارتفاع
   billOfLadingNo: string; // شماره بارنامه
+  vehicleModel?: string; // مدل وسیله نقلیه
   vehicleNo: string; // شماره خودرو
   weighbridgeWeight: number | null; // وزن باسکول سایت/بارنامه
   freightCost: number | null; // مبلغ کرایه حمل
   opiInvitationNo: string; // شماره دعوتنامه OPI
   opiInvitationDate: string; // تاریخ دعوتنامه OPI
   driverName: string; // نام راننده
+  itemImages?: string[]; // حداکثر ۲ تصویر باکیفیت برای هر پکینگ/نگله
+  itemImageThumbs?: string[]; // تصاویر بندانگشتی جهت نمایش سریع در جدول
+  hasImages?: boolean;
   createdAt: string;
   updatedAt: string;
   createdBy: string;
@@ -539,6 +546,7 @@ export interface OpiInvitationRecord {
 }
 
 export interface SiteEntryLineItem {
+  generalId?: string;
   description: string;
   packingListNo: string;
   packageNo: string;
@@ -561,6 +569,7 @@ export interface SiteEntryMinutesRecord {
   date: string; // ISO YYYY-MM-DD
   arrivalDate?: string; // تاریخ ورود ISO YYYY-MM-DD
   packingListNos: string[];
+  generalIds?: string[];
   supplier?: string; // نام پیمانکار / درخواست کننده
   unit?: string; // واحد
   system?: string; // سیستم
@@ -838,6 +847,47 @@ export interface MaterialEstimateRecord {
   createdBy: string;
 }
 
+export interface BmrLineItem {
+  detailedId: string;
+  plNo: string;
+  packageNo: string;
+  packageItemNo: string;
+  tagNo: string;
+  description: string;
+  uom: string;
+  receivedQty: number;
+  deliveredQty: number;
+  returnedQty: number;
+  smrMapnaNo?: string;
+  mtoQty: number | null;
+  erectedQty: number | null;
+  balance: number;
+  balanceStatus: 'اتمام' | 'بدهکار';
+}
+
+export interface BmrDocumentRecord {
+  id: string;
+  bmrNo: string;
+  date: string;
+  projectName: string;
+  system: string;
+  island: string;
+  unit: string;
+  installerContractor: string;
+  supplier: string;
+  storekeeper?: string;
+  equipmentSupply?: string;
+  techOffice?: string;
+  installationUnit?: string;
+  contractorPm?: string;
+  notes?: string;
+  items: BmrLineItem[];
+  signedScan?: SignedScanAttachment | null;
+  createdAt: string;
+  updatedAt?: string;
+  createdBy: string;
+}
+
 export interface PeriodicInspectionAnswer {
   questionKey: string;
   status: '+' | '-' | '';
@@ -1030,6 +1080,7 @@ export interface DatabaseSnapshot {
   substitutions?: SubstitutionRecord[];
   gcvDocuments?: GcvDocumentRecord[];
   mivDocuments?: MivDocumentRecord[];
+  bmrDocuments?: BmrDocumentRecord[];
   materialEstimates?: MaterialEstimateRecord[];
   periodicInspections?: PeriodicInspectionRecord[];
   customFormSubmissions?: CustomFormSubmission[];
@@ -1045,6 +1096,7 @@ export type PurgeableSectionKey =
   | 'osdrReports'
   | 'gcvDocuments'
   | 'mivDocuments'
+  | 'bmrDocuments'
   | 'substitutions'
   | 'materialEstimates'
   | 'periodicInspections'

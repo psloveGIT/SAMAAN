@@ -16,11 +16,49 @@ export interface RemoteVersionPayload {
   changelog: AppReleaseNote[];
 }
 
-export const APP_VERSION = '2.18.0';
-export const APP_BUILD_ID = '2026.06.06-1';
-export const APP_RELEASED_AT = '2026-06-06';
+export const APP_VERSION = '2.20.0';
+export const APP_BUILD_ID = '2026.06.08-1';
+export const APP_RELEASED_AT = '2026-06-08';
 
 export const APP_CHANGELOG: AppReleaseNote[] = [
+  {
+    version: '2.20.0',
+    buildId: '2026.06.08-1',
+    releasedAt: '2026-06-08',
+    titleFa: 'فعال‌سازی و بازطراحی کامل نهمین و آخرین فرم رسمی مپنا توسعه یک: گزارش موازنه و کنترل مصرف مواد (MD1EX-FQP02/09-03)',
+    titleEn: 'Activated & Redesigned Final 9th Built-in MD1 Form: Balance of Material Report (MD1EX-FQP02/09-03)',
+    changesFa: [
+      'فعال‌سازی کامل فرم رسمی «گزارش موازنه و کنترل مصرف مواد (MD1EX-FQP02/09-03)» به‌عنوان نهمین فرم پیش‌فرض مپنا توسعه یک (تکمیل ۹ از ۹ فرم عملیاتی)',
+      'فیلتر و انتخاب پیشرفته اقلام از جزئیات تجهیزات، شماره‌گذاری خودکار اختصاصی پیمانکار (<نیروگاه>-<پیمانکار>-BMR-####)، فراخوانی خودکار Total MTO Qty از برآورد تجهیزات و قابلیت ورود دستی MTO و Total Erected Qty برای هر ردیف',
+      'محاسبه خودکار بالانس مهندسی (Delivered − Returned − Erected/MTO) و همگام‌سازی خودکار ستون‌های «شماره بالانس متریال» و «وضعیت بالانس متریال» («اتمام» برای بالانس صفر و «بدهکار» برای مقادیر مثبت یا منفی) در جدول جزئیات تجهیزات',
+      'چاپ رسمی A4 افقی منطبق با قالب MD1EX-FQP02/09-03 همراه با دکمه‌های Undo/Redo زنده پس از چاپ، آرشیو قابل ویرایش و حذف با آیکون‌های استاندارد، و ثبت اسکن امضاشده',
+    ],
+    changesEn: [
+      'Activated and redesigned the 9th and final built-in MD1 form: Balance of Material Report (MD1EX-FQP02/09-03), completing 9 of 9 operational forms',
+      'Added full Detailed Equipment filtering/selection, contractor-aware <PLANT>-<CONTRACTOR>-BMR-#### auto-numbering, automatic Total MTO Qty lookup from Material Estimation, and optional per-row MTO / Total Erected Qty inputs',
+      'Implemented EPC material balance reconciliation (Delivered − Returned − Erected/MTO) with automatic Detailed Equipment sync for Material Balance No. and Balance Status ("اتمام" for zero, "بدهکار" for positive or negative)',
+      'Added Landscape A4 official MD1EX-FQP02/09-03 print preview with post-print Undo/Redo, editable/deletable History archive with icon-only actions, and Signed Scan attachment manager',
+    ],
+  },
+  {
+    version: '2.19.0',
+    buildId: '2026.06.07-1',
+    releasedAt: '2026-06-07',
+    titleFa: 'فرم‌های رسمی صورتجلسه ورود به کارگاه (MD1EX-FQP02/15-01) و ارجاع مازاد (MD1EX-FQP02/08-03)، ثبت تصویر و دوربین در کلی و جزئیات، پلاک راست‌به‌چپ و حذف دوطرفه با تأییدیه',
+    titleEn: 'Official MD1 Site Entry Minutes (MD1EX-FQP02/15-01) & SMR (MD1EX-FQP02/08-03), Dual Photos + Live Camera, RTL Plate Entry & Bidirectional Cascade Delete',
+    changesFa: [
+      'فعال‌سازی و بازطراحی کامل هفتمین فرم پیش‌فرض مپنا توسعه یک: «صورتجلسه ورود کالا و تجهیزات به کارگاه (MD1EX-FQP02/15-01)» با فیلتر و انتخاب ردیف‌های ثبت کلی، انتخاب کاربرد کالا (کالای پروژه / تجهیز کارگاه / مصرف عمومی)، توضیحات اختیاری هر ردیف، همگام‌سازی خودکار «شماره صورتجلسه ورود انبار» و نشانگر وضعیت در جدول کلی تجهیزات، چاپ، Undo/Redo پس از چاپ و اسکن امضاشده',
+      'فعال‌سازی و بازطراحی کامل هشتمین فرم پیش‌فرض مپنا توسعه یک: «فرم ارجاع قطعات، کالا و تجهیزات مازاد (MD1EX-FQP02/08-03)» با انتخاب انبار مقصد (کارفرما یا پیمانکار)، فیلتر پیشرفته جزئیات، اعتبارسنجی سقف مقدار واقعی، انتخاب دلیل عودت مشترک یا جداگانه برای هر ردیف، شماره‌گذاری خودکار پیمانکار (<نیروگاه>-<پیمانکار>-SMR-####)، چاپ رسمی، Undo/Redo پس از چاپ و اسکن امضاشده',
+      'ارتقای ثبت کلی تجهیزات و ثبت پکینگ جدید: حذف ورودی دستی «شماره صورتجلسه ورود انبار»، افزودن ستون‌ها و فیلدهای «درخواست کننده»، «مدل وسیله نقلیه» (با لیست پیش‌فرض مرتب‌شده به ترتیب حروف الفبا) و «تعداد بسته»، اصلاح جهت تایپ و پرش خودکار پلاک خودرو از راست به چپ، و افزودن بارگذاری حداکثر ۲ تصویر همراه با دوربین برای هر پکینگ/نگله',
+      'افزودن قابلیت گرفتن عکس مستقیم با دوربین دستگاه در هر دو بخش کلی و جزئیات تجهیزات، تأییدیه حذف دوطرفه بین کلی و جزئیات تجهیزات، و تکمیل خودکار مطمئن «Realised Note No.» از ستون Release Note در فرم رسید مصرف مستقیم کالا (GCV)',
+    ],
+    changesEn: [
+      'Activated and redesigned the seventh built-in MD1 form: Site Entry Minutes (MD1EX-FQP02/15-01) with General Equipment filtering, goods usage selection, per-row remarks, automatic Warehouse Entry Minutes No. sync & row status badges in General Equipment, printing, post-print Undo/Redo, and signed scan archive',
+      'Activated and redesigned the eighth built-in MD1 form: Surplus Material Return (MD1EX-FQP02/08-03) with Employer/Contractor warehouse selector, Detailed Equipment filtering, actualQty ceiling validation, shared or per-row return reason mode, automatic <PLANT>-<CONTRACTOR>-SMR-#### numbering, printing, post-print Undo/Redo, and signed scan archive',
+      'Upgraded General Equipment & New Packing modal: removed manual Warehouse Entry Minutes No. input, added Requester, Vehicle Model (alphabetically sorted Persian presets), and Package Count fields/columns, refactored Iranian License Plate input to right-to-left typing/focus order, and added up to 2 photos + live camera capture per package',
+      'Added live device camera capture to Detailed & General Equipment photo uploaders, bidirectional General ↔ Detailed cascade delete confirmations, and hardened GCV Realised Note No. auto-fill from General Equipment Release Note',
+    ],
+  },
   {
     version: '2.18.0',
     buildId: '2026.06.06-1',

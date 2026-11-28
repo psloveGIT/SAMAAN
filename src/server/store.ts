@@ -10,6 +10,7 @@ import {
 } from '../shared/employers.ts';
 import type {
   AuditLogEntry,
+  BmrDocumentRecord,
   CategoryGroupKey,
   CategoryStore,
   CustomFormSubmission,
@@ -68,6 +69,7 @@ export interface PersistedDatabase {
   substitutions: SubstitutionRecord[];
   gcvDocuments: GcvDocumentRecord[];
   mivDocuments: MivDocumentRecord[];
+  bmrDocuments: BmrDocumentRecord[];
   materialEstimates: MaterialEstimateRecord[];
   periodicInspections: PeriodicInspectionRecord[];
   customFormSubmissions: CustomFormSubmission[];
@@ -121,6 +123,7 @@ function createEmptyDb(): PersistedDatabase {
     substitutions: [],
     gcvDocuments: [],
     mivDocuments: [],
+    bmrDocuments: [],
     materialEstimates: [],
     periodicInspections: [],
     customFormSubmissions: [],
@@ -198,6 +201,7 @@ export class SamaanStore {
         substitutions: Array.isArray(parsed.substitutions) ? parsed.substitutions : [],
         gcvDocuments: Array.isArray(parsed.gcvDocuments) ? parsed.gcvDocuments : [],
         mivDocuments: Array.isArray(parsed.mivDocuments) ? parsed.mivDocuments : [],
+        bmrDocuments: Array.isArray(parsed.bmrDocuments) ? parsed.bmrDocuments : [],
         materialEstimates: Array.isArray(parsed.materialEstimates) ? parsed.materialEstimates : [],
         periodicInspections: Array.isArray(parsed.periodicInspections) ? parsed.periodicInspections : [],
         customFormSubmissions: Array.isArray(parsed.customFormSubmissions) ? parsed.customFormSubmissions : [],
@@ -560,6 +564,7 @@ export class SamaanStore {
       substitutions: this.db.substitutions,
       gcvDocuments: this.db.gcvDocuments,
       mivDocuments: this.db.mivDocuments,
+      bmrDocuments: this.db.bmrDocuments,
       materialEstimates: this.db.materialEstimates,
       periodicInspections: this.db.periodicInspections,
       customFormSubmissions: this.db.customFormSubmissions,
@@ -594,6 +599,7 @@ export class SamaanStore {
     this.db.substitutions = Array.isArray(snapshot.substitutions) ? snapshot.substitutions : [];
     this.db.gcvDocuments = Array.isArray(snapshot.gcvDocuments) ? snapshot.gcvDocuments : [];
     this.db.mivDocuments = Array.isArray(snapshot.mivDocuments) ? snapshot.mivDocuments : [];
+    this.db.bmrDocuments = Array.isArray(snapshot.bmrDocuments) ? snapshot.bmrDocuments : [];
     this.db.materialEstimates = (Array.isArray(snapshot.materialEstimates) ? snapshot.materialEstimates : []).map((m) => ({
       ...m,
       countingUnit: normalizeCountingUnitToFa(m.countingUnit),

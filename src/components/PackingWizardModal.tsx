@@ -26,8 +26,11 @@ import {
   parseNumericInput,
   sanitizeDecimalOnly,
   sanitizeDigitsOnly,
+  VEHICLE_MODEL_OPTIONS_EN,
+  VEHICLE_MODEL_OPTIONS_FA,
 } from '../shared/validation.ts';
 import { IranianPlateInput } from './IranianPlateInput.tsx';
+import { MultiImageDropzone } from './ItemImageDropzone.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { type GeneralAiExtractionResult, SmartIntakeModal } from './SmartIntakeModal.tsx';
 
@@ -35,6 +38,7 @@ interface PackageLineDraft {
   id: string;
   packageNo: string;
   packageType: string;
+  packageCount: string;
   purchasePackageNo: string;
   itemCount: string;
   itemDescription: string;
@@ -47,6 +51,8 @@ interface PackageLineDraft {
   lengthCm: string;
   widthCm: string;
   heightCm: string;
+  itemImages: string[];
+  itemImageThumbs: string[];
 }
 
 interface PackingCheckResult {
@@ -93,6 +99,7 @@ function createEmptyLine(prefill?: TransitEntry | null): PackageLineDraft {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     packageNo: prefill?.packageNo || '',
     packageType: '',
+    packageCount: '',
     purchasePackageNo: '',
     itemCount: '',
     itemDescription: prefill?.itemDescription || '',
@@ -105,6 +112,8 @@ function createEmptyLine(prefill?: TransitEntry | null): PackageLineDraft {
     lengthCm: '',
     widthCm: '',
     heightCm: '',
+    itemImages: [],
+    itemImageThumbs: [],
   };
 }
 
@@ -126,10 +135,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
   const [releaseNo, setReleaseNo] = useState('');
   const [releaseDate, setReleaseDate] = useState('');
   const [supplier, setSupplier] = useState('');
+  const [requester, setRequester] = useState('');
   const [dispatchLocation, setDispatchLocation] = useState('');
   const [employerEntryMinutesNo, setEmployerEntryMinutesNo] = useState('');
-  const [mapnaEntryMinutesNo, setMapnaEntryMinutesNo] = useState('');
   const [billOfLadingNo, setBillOfLadingNo] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
   const [vehicleNo, setVehicleNo] = useState('');
   const [weighbridgeWeight, setWeighbridgeWeight] = useState('');
   const [freightCost, setFreightCost] = useState('');
@@ -170,10 +180,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     setReleaseNo(relNoInit);
     setReleaseDate(relNoInit ? (prefillFromTransit?.releaseNetDate || arrInit) : arrInit);
     setSupplier(prefillFromTransit?.supplier || '');
+    setRequester('');
     setDispatchLocation(prefillFromTransit?.dispatchLocation || '');
     setEmployerEntryMinutesNo('');
-    setMapnaEntryMinutesNo('');
     setBillOfLadingNo(prefillFromTransit?.billOfLadingNo || '');
+    setVehicleModel('');
     setVehicleNo('');
     setWeighbridgeWeight('');
     setFreightCost(
@@ -200,14 +211,13 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     }
   }, [releaseNo, arrivalDate, releaseDate]);
 
-  // Live check whenever Packing List No. or MAPNA Entry Minutes No. changes
+  // Live check whenever Packing List No. changes
   useEffect(() => {
     if (!open) return;
     const trimmed = packingListNo.trim();
-    const minTrimmed = mapnaEntryMinutesNo.trim();
     const timer = setTimeout(() => {
       apiRequest<PackingCheckResult>(
-        `/api/packing/check?scope=general&packingNo=${encodeURIComponent(trimmed)}&mapnaMinutesNo=${encodeURIComponent(minTrimmed)}`,
+        `/api/packing/check?scope=general&packingNo=${encodeURIComponent(trimmed)}`,
       )
         .then((res) => {
           setCheckInfo(res);
@@ -239,7 +249,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
         .catch(() => {});
     }, 220);
     return () => clearTimeout(timer);
-  }, [packingListNo, mapnaEntryMinutesNo, open]);
+  }, [packingListNo, open]);
 
   if (!open) return null;
 
@@ -269,7 +279,6 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
     if (h.supplier) setSupplier(h.supplier);
     if (h.dispatchLocation) setDispatchLocation(h.dispatchLocation);
     if (h.employerEntryMinutesNo) setEmployerEntryMinutesNo(sanitizeDigitsOnly(h.employerEntryMinutesNo));
-    if (h.mapnaEntryMinutesNo) setMapnaEntryMinutesNo(h.mapnaEntryMinutesNo);
     if (h.billOfLadingNo) setBillOfLadingNo(h.billOfLadingNo);
     if (h.vehicleNo) setVehicleNo(h.vehicleNo);
     if (h.weighbridgeWeight !== undefined && h.weighbridgeWeight !== null) {
@@ -290,6 +299,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             packageNo: (p.packageNo || '').trim(),
             packageType: pkgType,
+            packageCount: '',
             purchasePackageNo: '',
             itemCount: p.itemCount ? sanitizeDigitsOnly(String(p.itemCount)) : '',
             itemDescription: (p.itemDescription || '').trim(),
@@ -302,6 +312,8 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
             lengthCm: p.lengthCm !== undefined && p.lengthCm !== null ? sanitizeDecimalOnly(String(p.lengthCm)) : '',
             widthCm: p.widthCm !== undefined && p.widthCm !== null ? sanitizeDecimalOnly(String(p.widthCm)) : '',
             heightCm: p.heightCm !== undefined && p.heightCm !== null ? sanitizeDecimalOnly(String(p.heightCm)) : '',
+            itemImages: [],
+            itemImageThumbs: [],
           };
         }),
       );
@@ -438,12 +450,14 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
         releaseNo: releaseNo.trim(),
         releaseDate: effectiveReleaseDate,
         supplier: supplier.trim(),
+        requester: requester.trim(),
         dispatchLocation: dispatchLocation.trim(),
         employerEntryMinutesNo: sanitizeDigitsOnly(employerEntryMinutesNo),
-        mapnaEntryMinutesNo: mapnaEntryMinutesNo.trim(),
+        mapnaEntryMinutesNo: '',
         packingListNo: pk,
         packageNo: l.packageNo.trim(),
         packageType: l.packageType.trim(),
+        packageCount: parseNumericInput(l.packageCount),
         purchasePackageNo: l.purchasePackageNo.trim(),
         itemCount: parseNumericInput(l.itemCount),
         itemDescription: l.itemDescription.trim(),
@@ -457,10 +471,13 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
         widthCm: parseNumericInput(l.widthCm),
         heightCm: parseNumericInput(l.heightCm),
         billOfLadingNo: billOfLadingNo.trim(),
+        vehicleModel: vehicleModel.trim(),
         vehicleNo: vehicleNo.trim(),
         weighbridgeWeight: parseNumericInput(weighbridgeWeight),
         freightCost: parseNumericInput(freightCost),
         driverName: driverName.trim(),
+        itemImages: l.itemImages.slice(0, 2),
+        itemImageThumbs: l.itemImageThumbs.slice(0, 2),
       }));
 
       const res = await apiRequest<{ transitUpdated: number }>('/api/general/batch', {
@@ -503,6 +520,7 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
   };
 
   const packageTypeOptions = isFa ? PACKAGE_TYPE_OPTIONS_FA : PACKAGE_TYPE_OPTIONS_EN;
+  const vehicleModelOptions = isFa ? VEHICLE_MODEL_OPTIONS_FA : VEHICLE_MODEL_OPTIONS_EN;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 overflow-y-auto">
@@ -759,16 +777,15 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
 
                 <div>
                   <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                    {t.headers.mapnaEntryMinutesNo}
+                    {t.headers.requester}
                   </label>
                   <input
                     type="text"
-                    dir={isFa && !mapnaEntryMinutesNo ? 'rtl' : 'ltr'}
-                    value={mapnaEntryMinutesNo}
-                    onChange={(e) => setMapnaEntryMinutesNo(e.target.value)}
-                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] focus:border-[var(--accent-primary)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none ${
-                      isFa && !mapnaEntryMinutesNo ? 'text-right' : 'text-left'
-                    }`}
+                    dir={!requester ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={requester}
+                    onChange={(e) => setRequester(e.target.value)}
+                    placeholder={isFa ? 'نام پیمانکار یا واحد درخواست‌کننده' : 'Contractor or requester'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>
 
@@ -818,6 +835,21 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                     className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                       isFa && !billOfLadingNo ? 'text-right' : 'text-left'
                     }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                    {t.headers.vehicleModel}
+                  </label>
+                  <input
+                    type="text"
+                    list="samaan-vehicle-models"
+                    dir={!vehicleModel ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={vehicleModel}
+                    onChange={(e) => setVehicleModel(e.target.value)}
+                    placeholder={isFa ? 'خاور / کامیون / کفی تریلی...' : 'Flatbed / Truck / Pickup...'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
                   />
                 </div>
 
@@ -962,6 +994,23 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                             placeholder={isFa ? 'اختیاری (مثال: PO-102)' : 'Optional (e.g. PO-102)'}
                             className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
                               isFa && !line.purchasePackageNo ? 'text-right' : 'text-left'
+                            }`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1">
+                            {t.headers.packageCount}
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            dir={isFa && !line.packageCount ? 'rtl' : 'ltr'}
+                            value={line.packageCount}
+                            onChange={(e) => updateLine(line.id, { packageCount: sanitizeDigitsOnly(e.target.value) })}
+                            placeholder={isFa ? 'تعداد بسته (پیش‌فرض ۱)' : 'Package count (default 1)'}
+                            className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-sm tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)] ${
+                              isFa && !line.packageCount ? 'text-right' : 'text-left'
                             }`}
                           />
                         </div>
@@ -1137,6 +1186,21 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
                           </div>
                         </div>
                       </div>
+
+                      {/* Up to 2 photos + live camera capture per package */}
+                      <div className="pt-2 border-t border-[var(--border-subtle)]/70">
+                        <MultiImageDropzone
+                          images={line.itemImages}
+                          thumbs={line.itemImageThumbs}
+                          maxImages={2}
+                          compact
+                          isFa={isFa}
+                          onChange={({ itemImages, itemImageThumbs }) =>
+                            updateLine(line.id, { itemImages, itemImageThumbs })
+                          }
+                          onError={(msg) => setFormError(msg)}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1163,6 +1227,11 @@ export const PackingWizardModal: React.FC<PackingWizardModalProps> = ({
               </datalist>
               <datalist id="samaan-package-types">
                 {packageTypeOptions.map((opt) => (
+                  <option key={opt} value={opt} />
+                ))}
+              </datalist>
+              <datalist id="samaan-vehicle-models">
+                {vehicleModelOptions.map((opt) => (
                   <option key={opt} value={opt} />
                 ))}
               </datalist>

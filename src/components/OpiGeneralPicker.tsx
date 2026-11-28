@@ -31,6 +31,10 @@ interface OpiGeneralPickerProps {
   refreshSignal?: number;
   /** Test id prefix. */
   testIdPrefix?: string;
+  /** When true, displays a column indicating whether each row has a Site Entry Minutes No. */
+  showSiteEntryStatus?: boolean;
+  /** Custom empty-state message when rows array is empty. */
+  emptyMessage?: string;
 }
 
 const FA_COLLATOR = new Intl.Collator('fa', { numeric: true, sensitivity: 'base' });
@@ -43,6 +47,8 @@ export const OpiGeneralPicker: React.FC<OpiGeneralPickerProps> = ({
   onToggleBatch,
   refreshSignal = 0,
   testIdPrefix = 'opi-picker',
+  showSiteEntryStatus = false,
+  emptyMessage,
 }) => {
   const { prefs, t, formatDate } = useApp();
   const isFa = prefs.language === 'fa';
@@ -293,22 +299,28 @@ export const OpiGeneralPicker: React.FC<OpiGeneralPickerProps> = ({
                 <th className="py-2 px-2.5 text-start whitespace-nowrap">
                   {renderColHeader('arrivalDate', t.headers.arrivalDate)}
                 </th>
+                {showSiteEntryStatus && (
+                  <th className="py-2 px-2.5 text-start whitespace-nowrap">
+                    {renderColHeader('mapnaEntryMinutesNo', t.headers.mapnaEntryMinutesNo)}
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={showSiteEntryStatus ? 12 : 11} className="py-8 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-10 text-center text-[var(--text-muted)]">
+                  <td colSpan={showSiteEntryStatus ? 12 : 11} className="py-10 text-center text-[var(--text-muted)]">
                     {rows.length === 0
-                      ? isFa
-                        ? 'هیچ ردیف فاقد «شماره دعوتنامه OPI» در جدول ثبت کلی تجهیزات وجود ندارد.'
-                        : 'No General Equipment rows without an OPI Invitation No. are available.'
+                      ? emptyMessage ||
+                        (isFa
+                          ? 'هیچ ردیف فاقد «شماره دعوتنامه OPI» در جدول ثبت کلی تجهیزات وجود ندارد.'
+                          : 'No General Equipment rows without an OPI Invitation No. are available.')
                       : t.controls.noData}
                   </td>
                 </tr>
@@ -369,6 +381,19 @@ export const OpiGeneralPicker: React.FC<OpiGeneralPickerProps> = ({
                       <td className="py-2 px-2.5 font-mono tabular-nums whitespace-nowrap" dir="ltr">
                         {row.arrivalDate ? formatDate(row.arrivalDate) : '—'}
                       </td>
+                      {showSiteEntryStatus && (
+                        <td className="py-2 px-2.5 whitespace-nowrap">
+                          {(row.mapnaEntryMinutesNo || '').trim() ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[10px] font-semibold tabular-nums">
+                              {row.mapnaEntryMinutesNo}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-500/12 text-amber-700 dark:text-amber-300 border border-amber-500/25 text-[10px] font-medium">
+                              {isFa ? 'فاقد صورتجلسه' : 'Missing'}
+                            </span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })

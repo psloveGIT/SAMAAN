@@ -121,6 +121,14 @@ const SECTION_DESCRIPTORS: SectionDescriptor[] = [
     descEn: 'Equipment & spare part substitution records',
   },
   {
+    key: 'bmrDocuments',
+    group: 'operations',
+    labelFa: 'گزارش موازنه و کنترل مصرف مواد (BMR)',
+    labelEn: 'Balance of Material Reports (BMR)',
+    descFa: 'گزارش‌های موازنه و کنترل مصرف مواد صادرشده برای پیمانکاران نصب',
+    descEn: 'Issued balance of material and consumption control reports',
+  },
+  {
     key: 'materialEstimates',
     group: 'operations',
     labelFa: 'برآورد تجهیزات',

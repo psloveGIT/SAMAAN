@@ -68,20 +68,23 @@ html[data-theme="dark"] {
 }
 
 /* Optional Eye-Comfort / Blue-Light Filtered Mode (Light) */
-.eye-comfort {
+.eye-comfort,
+html.eye-comfort,
+html.light.eye-comfort,
+html[data-theme="light"].eye-comfort {
   --bg-canvas: #f5efe3;
-  --bg-surface: #fcf8ef;
-  --bg-subtle: #eee6d6;
-  --bg-elevated: #fdfaf3;
-  --border-subtle: #e0d6c3;
-  --border-strong: #c8bba3;
+  --bg-surface: #fcf7eb;
+  --bg-subtle: #ede4d2;
+  --bg-elevated: #fdf9ef;
+  --border-subtle: #dfd4be;
+  --border-strong: #c6b79d;
   --text-primary: #29231c;
   --text-secondary: #544b40;
   --text-muted: #756a5c;
   --accent-primary: #3f6b56;
   --accent-hover: #315644;
-  --accent-soft: #e7efe9;
-  --accent-contrast: #fcf8ef;
+  --accent-soft: #e6efe8;
+  --accent-contrast: #fcf7eb;
   --status-success: #3e6b48;
   --status-success-bg: #e7efe8;
   --status-warning: #9c6318;
@@ -94,8 +97,22 @@ html[data-theme="dark"] {
   forced-color-adjust: none;
 }
 
+/* Subtle screen-only warm amber optical veil in Light Eye-Comfort mode so charts/white badges also filter blue light */
+html.light.eye-comfort::after,
+html[data-theme="light"].eye-comfort::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483647;
+  background-color: rgba(255, 184, 77, 0.08);
+  mix-blend-mode: multiply;
+}
+
 /* Optional Eye-Comfort / Blue-Light Filtered Mode (Dark) */
-.dark.eye-comfort {
+.dark.eye-comfort,
+html.dark.eye-comfort,
+html[data-theme="dark"].eye-comfort {
   --bg-canvas: #171410;
   --bg-surface: #211d18;
   --bg-subtle: #2b261f;
@@ -438,6 +455,12 @@ table td input:not([type="checkbox"]):not([type="radio"]) {
       color: #334155;
       direction: ltr;
     }
+  }
+  html.light.eye-comfort::after,
+  html[data-theme="light"].eye-comfort::after,
+  html.eye-comfort::after {
+    display: none !important;
+    content: none !important;
   }
   /* Force pure white paper & light color-scheme in print even when app is in Dark or Eye-Comfort mode */
   :root,

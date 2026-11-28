@@ -3,11 +3,13 @@ import type { DatabaseSnapshot, SignedScanAttachment } from './types.ts';
 export type UniqueDocScope =
   | 'opi'
   | 'miv'
+  | 'smr'
   | 'substitutions'
   | 'siteEntry'
   | 'opiMinutes'
   | 'osdr'
   | 'gcv'
+  | 'balance'
   | 'customForms';
 
 export interface UsedDocNoEntry {
@@ -40,24 +42,28 @@ export function normalizeDocNoKey(raw: string | undefined | null): string {
 
 const SCOPE_LABEL_FA: Record<UniqueDocScope | 'trash', string> = {
   opi: 'دعوتنامه OPI',
-  miv: 'حواله انبار / برگشت کالا (MIV/SMR)',
+  miv: 'حواله انبار (MIV)',
+  smr: 'فرم ارجاع کالا و تجهیزات مازاد (SMR)',
   substitutions: 'فرم جایگزینی تجهیزات',
-  siteEntry: 'صورتجلسه ورود کالا به سایت',
+  siteEntry: 'صورتجلسه ورود کالا به کارگاه',
   opiMinutes: 'صورتجلسه گشایش و بازرسی (OPI)',
   osdr: 'گزارش کسری و آسیب‌دیدگی (OSDR)',
   gcv: 'رسید مصرف مستقیم (GCV)',
+  balance: 'گزارش موازنه و کنترل مصرف مواد (BMR)',
   customForms: 'فرم سفارشی',
   trash: 'سطل زباله',
 };
 
 const SCOPE_LABEL_EN: Record<UniqueDocScope | 'trash', string> = {
   opi: 'OPI Invitation',
-  miv: 'MIV / SMR Document',
+  miv: 'Material Issue Voucher (MIV)',
+  smr: 'Surplus Material Return (SMR)',
   substitutions: 'Substitution Form',
   siteEntry: 'Site Entry Minutes',
   opiMinutes: 'OPI Minutes',
   osdr: 'OSDR Report',
   gcv: 'Direct Consumption Voucher (GCV)',
+  balance: 'Balance of Material Report (BMR)',
   customForms: 'Custom Form',
   trash: 'Trash',
 };
@@ -65,11 +71,13 @@ const SCOPE_LABEL_EN: Record<UniqueDocScope | 'trash', string> = {
 const TRASH_SCOPE_MAP: Record<UniqueDocScope, ReadonlyArray<string>> = {
   opi: ['opi', 'opiInvitations'],
   miv: ['miv', 'mivDocuments'],
+  smr: ['smr', 'miv', 'mivDocuments'],
   substitutions: ['substitutions'],
   siteEntry: ['siteEntry', 'siteEntryMinutes'],
   opiMinutes: ['opiMinutes'],
   osdr: ['osdr', 'osdrReports'],
   gcv: ['gcv', 'gcvDocuments'],
+  balance: ['balance', 'bmrDocuments'],
   customForms: ['customForms', 'customFormSubmissions'],
 };
 
@@ -112,7 +120,16 @@ export function collectAllUsedDocNos(
     for (const r of db.opiInvitations || []) register('opi', r.id, r.invitationNo);
   }
   if (!targetScope || targetScope === 'miv') {
-    for (const r of db.mivDocuments || []) register('miv', r.id, r.docNo);
+    for (const r of db.mivDocuments || []) {
+      if (targetScope === 'miv' && String(r.docType || '').startsWith('smr_')) continue;
+      register('miv', r.id, r.docNo);
+    }
+  }
+  if (!targetScope || targetScope === 'smr') {
+    for (const r of db.mivDocuments || []) {
+      if (targetScope === 'smr' && !String(r.docType || '').startsWith('smr_')) continue;
+      register('smr', r.id, r.docNo);
+    }
   }
   if (!targetScope || targetScope === 'substitutions') {
     for (const r of db.substitutions || []) register('substitutions', r.id, r.docNo);
@@ -129,6 +146,9 @@ export function collectAllUsedDocNos(
   if (!targetScope || targetScope === 'gcv') {
     for (const r of db.gcvDocuments || []) register('gcv', r.id, r.receiptNo);
   }
+  if (!targetScope || targetScope === 'balance') {
+    for (const r of db.bmrDocuments || []) register('balance', r.id, r.bmrNo);
+  }
   if (!targetScope || targetScope === 'customForms') {
     for (const r of db.customFormSubmissions || []) register('customForms', r.id, r.docNo);
   }
@@ -141,10 +161,13 @@ export function collectAllUsedDocNos(
     if (allowedTrashScopes && !allowedTrashScopes.has(itemScope)) continue;
     const payload = (rawItem?.data ?? rawItem?.payload) as Record<string, unknown> | undefined;
     if (!payload || typeof payload !== 'object') continue;
+    const itemPayloadDocType = String(payload.docType || '');
+    if (targetScope === 'miv' && itemPayloadDocType.startsWith('smr_')) continue;
+    if (targetScope === 'smr' && itemPayloadDocType && !itemPayloadDocType.startsWith('smr_')) continue;
     const candidates = targetScope
       ? targetScope === 'opi'
         ? [payload.invitationNo]
-        : targetScope === 'miv'
+        : targetScope === 'miv' || targetScope === 'smr'
           ? [payload.docNo]
           : targetScope === 'substitutions'
             ? [payload.docNo]
@@ -156,9 +179,12 @@ export function collectAllUsedDocNos(
                   ? [payload.reportNo]
                   : targetScope === 'gcv'
                     ? [payload.receiptNo]
-                    : [payload.docNo]
+                    : targetScope === 'balance'
+                      ? [payload.bmrNo]
+                      : [payload.docNo]
       : [
           payload.docNo,
+          payload.bmrNo,
           payload.invitationNo,
           payload.minutesNo,
           payload.reportNo,

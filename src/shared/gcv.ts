@@ -42,6 +42,9 @@ export interface GcvHeaderAutoFill {
 
 function normToken(raw: string | undefined | null): string {
   return String(raw || '')
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u00a0]/g, ' ')
     .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
     .replace(/\s+/g, ' ')
@@ -151,10 +154,25 @@ export function buildGcvHeaderAutoFill(
       ? genBucket.filter((g) => !g.packageNo?.trim() || normToken(g.packageNo) === pkgKey)
       : genBucket;
     const effectiveGens = matchedGens.length > 0 ? matchedGens : genBucket;
+    let foundRelease = false;
+    let foundWaybill = false;
     for (const g of effectiveGens) {
-      if (g.releaseNo?.trim()) releaseNotes.push(g.releaseNo.trim());
-      if (g.billOfLadingNo?.trim()) waybills.push(g.billOfLadingNo.trim());
+      if (g.releaseNo?.trim()) {
+        releaseNotes.push(g.releaseNo.trim());
+        foundRelease = true;
+      }
+      if (g.billOfLadingNo?.trim()) {
+        waybills.push(g.billOfLadingNo.trim());
+        foundWaybill = true;
+      }
       if (!row.supplier?.trim() && g.supplier?.trim()) suppliers.push(g.supplier.trim());
+    }
+    // Fallback to sibling General rows of the same Packing List if the matched package row lacked releaseNo/billOfLadingNo
+    if ((!foundRelease || !foundWaybill) && genBucket.length > effectiveGens.length) {
+      for (const g of genBucket) {
+        if (!foundRelease && g.releaseNo?.trim()) releaseNotes.push(g.releaseNo.trim());
+        if (!foundWaybill && g.billOfLadingNo?.trim()) waybills.push(g.billOfLadingNo.trim());
+      }
     }
   }
 

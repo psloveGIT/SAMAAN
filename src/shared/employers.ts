@@ -453,7 +453,7 @@ export const BUILT_IN_FORM_DEFINITIONS: BuiltInFormDefinition[] = [
     codeSuffix: '09-03',
     defaultOrientation: 'landscape',
     defaultHeaderLayout: 'classic_right_logo',
-    defaultFooterCopyText: 'رونوشت: دفتر فنی کارگاه، کنترل پروژه، انبار مرکزی',
+    defaultFooterCopyText: 'رونوشت: معاونت تأمین، پیمانکار نصب، دفتر فنی',
     defaultColumns: [
       { key: 'row', label: 'ردیف' },
       { key: 'itemCode', label: 'کد کالا' },

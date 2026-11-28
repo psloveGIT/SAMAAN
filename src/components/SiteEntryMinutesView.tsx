@@ -1,50 +1,66 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { triggerAppPrint } from '../lib/print.ts';
 import { createPortal } from 'react-dom';
 import {
+  ArrowLeft,
+  ArrowRight,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ClipboardSignature,
   Pencil,
-  Plus,
   Printer,
+  Redo2,
+  RotateCcw,
   Trash2,
+  Undo2,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { apiRequest, ApiError } from '../lib/api.ts';
-import { extractPlantDocConfig, generateNextPlantAwareDocNo } from '../shared/docNumbering.ts';
+import { triggerAppPrint } from '../lib/print.ts';
 import { getEmployerFormCode, resolveBuiltInFormDesign } from '../shared/employers.ts';
 import { getTodayIso } from '../shared/jalali.ts';
+import { formatHeaderProjectTitle } from '../shared/opiInvitation.ts';
 import { buildIsolatedPrintPortalCss } from '../shared/printPageCss.ts';
 import {
-  OperationalViewModeTabs,
-  type OperationalViewMode,
-} from './OperationalViewModeTabs.tsx';
+  buildSiteEntryHeaderAutoFill,
+  buildSiteEntryLineItems,
+  generateSiteEntryMinutesNo,
+  hasSiteEntryMinutes,
+  MD1_SITE_ENTRY_COMPANY_NAME,
+  MD1_SITE_ENTRY_COPY_TEXT,
+  MD1_SITE_ENTRY_FORM_CODE,
+  MD1_SITE_ENTRY_QA_NOTICE,
+  MD1_SITE_ENTRY_TITLE_FA,
+  SITE_ENTRY_GOODS_USAGE_OPTIONS,
+  type SiteEntryGoodsUsage,
+} from '../shared/siteEntryMinutes.ts';
+import type {
+  GeneralEntry,
+  SiteEntryLineItem,
+  SiteEntryMinutesRecord,
+} from '../shared/types.ts';
+import { ConfirmActionModal } from './ConfirmActionModal.tsx';
+import { JalaliDateInput } from './JalaliDateInput.tsx';
 import {
   BuiltInSheetHeaderRow,
   OfficialExtraMetaStrip,
   OfficialFormSignatures,
 } from './OfficialSheetHeader.tsx';
-import type {
-  DetailedComputed,
-  GeneralEntry,
-  SiteEntryLineItem,
-  SiteEntryMinutesRecord,
-  TransitEntry,
-} from '../shared/types.ts';
-import { ConfirmActionModal } from './ConfirmActionModal.tsx';
-import { JalaliDateInput } from './JalaliDateInput.tsx';
+import {
+  OperationalViewModeTabs,
+  type OperationalViewMode,
+} from './OperationalViewModeTabs.tsx';
+import { OpiGeneralPicker } from './OpiGeneralPicker.tsx';
 import { PrintReportModal, type PrintColumnDef } from './PrintReportModal.tsx';
-import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { SearchInputWithClear } from './SearchInputWithClear.tsx';
 import { SignedScanModal, SignedScanRowButton } from './SignedFormScanManager.tsx';
+import { StickyTableWrapper } from './StickyTableWrapper.tsx';
 import { TablePaginationBar, useClientPagination } from './TablePaginationBar.tsx';
 
 interface SiteEntryApiResponse {
   minutes: SiteEntryMinutesRecord[];
   generalEntries: GeneralEntry[];
-  transitEntries?: TransitEntry[];
-  detailedItems?: DetailedComputed[];
   packings: string[];
 }
 
@@ -52,53 +68,6 @@ interface SiteEntryMinutesViewProps {
   refreshSignal: number;
   onDataChanged: () => void;
 }
-
-const joinUnique = (values: Array<string | undefined | null>): string => {
-  const uniq = Array.from(new Set(values.map((v) => (v || '').trim()).filter(Boolean)));
-  return uniq.join(' / ');
-};
-
-const buildItemsFromGeneral = (
-  packings: string[],
-  generalEntries: GeneralEntry[],
-): SiteEntryLineItem[] => {
-  const rows: SiteEntryLineItem[] = [];
-  for (const pk of packings) {
-    const matches = generalEntries.filter((g) => (g.packingListNo || '').trim() === pk);
-    if (matches.length > 0) {
-      for (const g of matches) {
-        const hasDims = g.lengthCm != null || g.widthCm != null || g.heightCm != null;
-        const dims = hasDims
-          ? `${g.lengthCm ?? '-'}×${g.widthCm ?? '-'}×${g.heightCm ?? '-'}`
-          : '';
-        rows.push({
-          description: g.itemDescription || '',
-          packingListNo: g.packingListNo || pk,
-          packageNo: g.packageNo || '',
-          dimensions: dims,
-          qty: g.itemCount != null ? String(g.itemCount) : '1',
-          unit: (g.packageType || '').trim() || 'بسته',
-          netWeight: g.netWeight != null ? String(g.netWeight) : '',
-          grossWeight: g.grossWeight != null ? String(g.grossWeight) : '',
-          remarks: '',
-        });
-      }
-    } else {
-      rows.push({
-        description: '',
-        packingListNo: pk,
-        packageNo: '',
-        dimensions: '',
-        qty: '',
-        unit: '',
-        netWeight: '',
-        grossWeight: '',
-        remarks: '',
-      });
-    }
-  }
-  return rows;
-};
 
 const FormCheckSquare: React.FC<{ checked?: boolean; label: string }> = ({ checked, label }) => (
   <span
@@ -139,7 +108,7 @@ const FormCheckSquare: React.FC<{ checked?: boolean; label: string }> = ({ check
 
 const DotValue: React.FC<{ value?: string; dots?: string }> = ({
   value,
-  dots = '. . . . . . . . . . . . . . . .',
+  dots = '. . . . . . . . . . . . . . .',
 }) => {
   const clean = (value || '').trim();
   if (!clean) {
@@ -154,7 +123,7 @@ const DotValue: React.FC<{ value?: string; dots?: string }> = ({
         borderBottom: '1px dotted #000000',
         padding: '0 6px',
         display: 'inline-block',
-        minWidth: '72px',
+        minWidth: '64px',
         textAlign: 'center',
       }}
     >
@@ -169,18 +138,39 @@ interface OfficialSheetProps {
   formatDate: (iso: string) => string;
 }
 
-const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
+export const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
   record,
   generalEntries,
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
+  const design = resolveBuiltInFormDesign(activeEmployer, 'siteEntry');
+  const isMd1Default = activeEmployer.id === 'mapna-md1' && !design.template;
+  const formCode = isMd1Default ? MD1_SITE_ENTRY_FORM_CODE : design.docCode || MD1_SITE_ENTRY_FORM_CODE;
+
+  const effectiveDesign = useMemo(
+    () =>
+      isMd1Default
+        ? {
+            ...design,
+            companyTitle: MD1_SITE_ENTRY_COMPANY_NAME,
+            titleFa: MD1_SITE_ENTRY_TITLE_FA,
+            docCode: MD1_SITE_ENTRY_FORM_CODE,
+            footerCopyText: MD1_SITE_ENTRY_COPY_TEXT,
+          }
+        : design,
+    [design, isMd1Default],
+  );
+
   const resolvedItems = useMemo(() => {
     if (record.items && record.items.length > 0) return record.items;
-    return buildItemsFromGeneral(record.packingListNos || [], generalEntries);
+    const matched = generalEntries.filter((g) =>
+      (record.packingListNos || []).includes((g.packingListNo || '').trim()),
+    );
+    return buildSiteEntryLineItems(matched);
   }, [record, generalEntries]);
 
-  const minRows = 11;
+  const minRows = 10;
   const totalDisplayRows = Math.max(minRows, resolvedItems.length);
   const paddedRows: (SiteEntryLineItem | null)[] = [
     ...resolvedItems,
@@ -190,16 +180,17 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
   const entryType = record.entryType || 'permanent';
   const goodsUsage = record.goodsUsage || 'project';
   const equipmentSupplyName = record.equipmentSupply || record.mapnaRep || '';
-  const design = resolveBuiltInFormDesign(activeEmployer, 'siteEntry');
-  const formCode = design.docCode;
-  const displayProjectName = record.projectName?.trim() || activeProject?.name || '..........';
-  const displayContractNo = record.contractNo?.trim() || activeProject?.code || '';
+  const projectHeaderTitle = formatHeaderProjectTitle(record.projectName || activeProject?.name);
+  const displayContractNo =
+    (record.contractNo || '').trim() || activeProject?.contractRef || activeProject?.code || '';
+  const displayDate = record.arrivalDate || record.date;
 
   return (
     <div
       dir="rtl"
+      data-testid="official-site-entry-sheet"
       className={`site-entry-official-sheet ${
-        design.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'
+        effectiveDesign.orientation === 'landscape' ? 'samaan-a4-landscape' : 'samaan-a4-portrait'
       }`}
       style={{
         backgroundColor: '#ffffff',
@@ -209,11 +200,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
         boxSizing: 'border-box',
       }}
     >
-      <div style={{ border: `1.8px solid ${design.accentColor}` }}>
+      <div style={{ border: `1.8px solid ${effectiveDesign.accentColor || '#000000'}` }}>
         <BuiltInSheetHeaderRow
           employer={activeEmployer}
-          design={design}
-          projectTitle={`پروژه ${displayProjectName}`}
+          design={effectiveDesign}
+          projectTitle={projectHeaderTitle}
           extraCenterSlot={
             <div
               style={{
@@ -231,7 +222,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             </div>
           }
         />
-        <OfficialExtraMetaStrip design={design} inset borderColor={design.accentColor} />
+        <OfficialExtraMetaStrip
+          design={effectiveDesign}
+          inset
+          borderColor={effectiveDesign.accentColor}
+        />
 
         {/* Release Note No & Arrival Notice No Strip */}
         <div
@@ -241,7 +236,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             gridTemplateColumns: '1fr 1fr',
             borderBottom: '1.5px solid #000000',
             padding: '4px 10px',
-            fontSize: '10.5px',
+            fontSize: '10.2px',
             fontWeight: 700,
             alignItems: 'center',
           }}
@@ -270,7 +265,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             textAlign: 'right',
           }}
         >
-          {/* Row 1 */}
+          {/* Row 1: Requester/Contractor | Contract No | Arrival Date */}
           <div
             style={{
               display: 'grid',
@@ -280,7 +275,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
           >
             <div>
               <span style={{ fontWeight: 700 }}>نام پیمانکار/درخواست کننده: </span>
-              <span>{record.supplier || ''}</span>
+              <span className="bidi-plaintext">{record.supplier || ''}</span>
             </div>
             <div>
               <span style={{ fontWeight: 700 }}>شماره قرارداد: </span>
@@ -289,14 +284,14 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
               </span>
             </div>
             <div>
-              <span style={{ fontWeight: 700 }}>تاریخ : </span>
+              <span style={{ fontWeight: 700 }}>تاریخ: </span>
               <span dir="ltr" className="tabular-nums">
-                {formatDate(record.date)}
+                {displayDate ? formatDate(displayDate) : ''}
               </span>
             </div>
           </div>
 
-          {/* Row 2 */}
+          {/* Row 2: Goods Usage | Unit / System / Island */}
           <div
             style={{
               display: 'flex',
@@ -307,12 +302,18 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             }}
           >
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 700 }}>کاربرد کالا :</span>
-              <FormCheckSquare checked={goodsUsage === 'project'} label="کالای پروژه" />
-              <FormCheckSquare checked={goodsUsage === 'site_equip'} label="کالای تجهیزکارگاه" />
-              <FormCheckSquare checked={goodsUsage === 'general'} label="مصرف عمومی" />
+              <span style={{ fontWeight: 700 }}>کاربرد کالا:</span>
+              <span data-testid="site-entry-usage-project" data-checked={goodsUsage === 'project' ? 'true' : 'false'}>
+                <FormCheckSquare checked={goodsUsage === 'project'} label="کالای پروژه" />
+              </span>
+              <span data-testid="site-entry-usage-site_equip" data-checked={goodsUsage === 'site_equip' ? 'true' : 'false'}>
+                <FormCheckSquare checked={goodsUsage === 'site_equip'} label="کالای تجهیز کارگاه" />
+              </span>
+              <span data-testid="site-entry-usage-general" data-checked={goodsUsage === 'general' ? 'true' : 'false'}>
+                <FormCheckSquare checked={goodsUsage === 'general'} label="مصرف عمومی" />
+              </span>
             </div>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '20px' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '18px' }}>
               <span>
                 <strong style={{ fontWeight: 700 }}>واحد: </strong>
                 <span className="bidi-plaintext">{record.unit || ''}</span>
@@ -328,7 +329,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             </div>
           </div>
 
-          {/* Row 3 */}
+          {/* Row 3: Origin | Arrival Date | Carrier | Unloading Location */}
           <div
             style={{
               display: 'grid',
@@ -343,7 +344,7 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             <div>
               <span style={{ fontWeight: 700 }}>تاریخ ورود: </span>
               <span dir="ltr" className="tabular-nums">
-                {record.arrivalDate ? formatDate(record.arrivalDate) : ''}
+                {displayDate ? formatDate(displayDate) : ''}
               </span>
             </div>
             <div>
@@ -356,19 +357,22 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             </div>
           </div>
 
-          {/* Row 4 & 5: Vehicle info */}
-          <div style={{ fontWeight: 700, marginTop: '2px' }}>
-            مشخصات وسیله نقلیه حامل کالا / تجهیز:
+          {/* Row 4 & 5: Vehicle model appears in BOTH vehicle specification slots (Rule 1-9) */}
+          <div style={{ marginTop: '2px' }}>
+            <span style={{ fontWeight: 700 }}>مشخصات وسیله نقلیه حامل کالا / تجهیز: </span>
+            <span className="bidi-plaintext" style={{ fontWeight: 700 }}>
+              {record.vehicleType || ''}
+            </span>
           </div>
           <div>
             <span>وسیله نقلیه </span>
-            <DotValue value={record.vehicleType} dots=". . . . . . . . . . . . . . . . . ." />
+            <DotValue value={record.vehicleType} dots=". . . . . . . . . . . . . . ." />
             <span> به شماره پلاک </span>
-            <DotValue value={record.vehicleNo} dots=". . . . . . . . . . . . . ." />
+            <DotValue value={record.vehicleNo} dots=". . . . . . . . . . . . ." />
             <span> با شماره بارنامه </span>
-            <DotValue value={record.waybillNo} dots=". . . . . . . . . . . . . ." />
+            <DotValue value={record.waybillNo} dots=". . . . . . . . . . . . ." />
             <span> همراه با راننده آن آقای </span>
-            <DotValue value={record.driverName} dots=". . . . . . . . . . . . . . . . . ." />
+            <DotValue value={record.driverName} dots=". . . . . . . . . . . . . . ." />
           </div>
         </div>
 
@@ -520,116 +524,119 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             </tr>
           </thead>
           <tbody>
-            {paddedRows.map((row, idx) => (
-              <tr key={idx}>
-                <td
-                  className="tabular-nums samaan-col-compact"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 4px',
-                    fontSize: '9px',
-                  }}
-                >
-                  {row ? idx + 1 : idx === 0 ? '1.' : '\u00A0'}
-                </td>
-                <td
-                  className="bidi-plaintext samaan-col-fluid"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 5px',
-                  }}
-                >
-                  {row?.description || ''}
-                </td>
-                <td
-                  dir="ltr"
-                  className="tabular-nums samaan-col-code"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 4px',
-                  }}
-                >
-                  {row?.packingListNo || ''}
-                </td>
-                <td
-                  dir="ltr"
-                  className="tabular-nums samaan-col-code"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 4px',
-                  }}
-                >
-                  {row?.packageNo || ''}
-                </td>
-                <td
-                  dir="ltr"
-                  className="tabular-nums samaan-col-code"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 4px',
-                  }}
-                >
-                  {row?.dimensions || ''}
-                </td>
-                <td
-                  dir="ltr"
-                  className="tabular-nums samaan-col-compact"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 4px',
-                  }}
-                >
-                  {row?.qty || ''}
-                </td>
-                <td
-                  className="samaan-col-compact"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 4px',
-                  }}
-                >
-                  {row?.unit || ''}
-                </td>
-                <td
-                  dir="ltr"
-                  className="tabular-nums samaan-col-compact"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 4px',
-                  }}
-                >
-                  {row?.netWeight || ''}
-                </td>
-                <td
-                  dir="ltr"
-                  className="tabular-nums samaan-col-compact"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    borderLeft: '1px solid #000000',
-                    padding: '4px 4px',
-                  }}
-                >
-                  {row?.grossWeight || ''}
-                </td>
-                <td
-                  className="bidi-plaintext samaan-col-fluid"
-                  style={{
-                    borderBottom: idx === paddedRows.length - 1 ? 'none' : '1px solid #000000',
-                    padding: '4px 5px',
-                  }}
-                >
-                  {row?.remarks || ''}
-                </td>
-              </tr>
-            ))}
+            {paddedRows.map((row, idx) => {
+              const rowBottom = idx === paddedRows.length - 1 ? 'none' : '1px solid #000000';
+              return (
+                <tr key={idx}>
+                  <td
+                    className="tabular-nums samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 4px',
+                      fontSize: '9px',
+                    }}
+                  >
+                    {row ? idx + 1 : '\u00A0'}
+                  </td>
+                  <td
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 5px',
+                    }}
+                  >
+                    {row?.description || ''}
+                  </td>
+                  <td
+                    dir="ltr"
+                    className="tabular-nums samaan-col-code"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 4px',
+                    }}
+                  >
+                    {row?.packingListNo || ''}
+                  </td>
+                  <td
+                    dir="ltr"
+                    className="tabular-nums samaan-col-code"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 4px',
+                    }}
+                  >
+                    {row?.packageNo || ''}
+                  </td>
+                  <td
+                    dir="ltr"
+                    className="tabular-nums samaan-col-code"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 4px',
+                    }}
+                  >
+                    {row?.dimensions || ''}
+                  </td>
+                  <td
+                    dir="ltr"
+                    className="tabular-nums samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 4px',
+                    }}
+                  >
+                    {row?.qty || ''}
+                  </td>
+                  <td
+                    className="samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 4px',
+                    }}
+                  >
+                    {row?.unit || ''}
+                  </td>
+                  <td
+                    dir="ltr"
+                    className="tabular-nums samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 4px',
+                    }}
+                  >
+                    {row?.netWeight || ''}
+                  </td>
+                  <td
+                    dir="ltr"
+                    className="tabular-nums samaan-col-compact"
+                    style={{
+                      borderBottom: rowBottom,
+                      borderLeft: '1px solid #000000',
+                      padding: '4px 4px',
+                    }}
+                  >
+                    {row?.grossWeight || ''}
+                  </td>
+                  <td
+                    className="bidi-plaintext samaan-col-fluid"
+                    style={{
+                      borderBottom: rowBottom,
+                      padding: '4px 5px',
+                    }}
+                  >
+                    {row?.remarks || ''}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
@@ -648,11 +655,11 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
           }}
         >
           <div>
-            <div style={{ fontWeight: 700 }}>انباردار/پیمانکار:</div>
+            <div style={{ fontWeight: 700 }}>انباردار / پیمانکار:</div>
             <div style={{ marginTop: '3px' }}>{record.warehouseKeeper || ''}</div>
           </div>
           <div>
-            <div style={{ fontWeight: 700 }}>مدیرپروژه /سرپرست کارگاه پیمانکار:</div>
+            <div style={{ fontWeight: 700 }}>مدیر پروژه / سرپرست کارگاه پیمانکار:</div>
             <div style={{ marginTop: '3px' }}>{record.contractorManager || ''}</div>
           </div>
           <div>
@@ -664,110 +671,110 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
         </div>
 
         {/* 5-Column Signatures Strip */}
-        {(design.template?.signatures?.length || !design.showSignatures) ? (
+        {effectiveDesign.template?.signatures?.length || !effectiveDesign.showSignatures ? (
           <OfficialFormSignatures
-            signatures={design.signatures}
-            showSignatures={design.showSignatures}
-            borderColor={design.accentColor}
+            signatures={effectiveDesign.signatures}
+            showSignatures={effectiveDesign.showSignatures}
+            borderColor={effectiveDesign.accentColor}
           />
         ) : (
-        <div
-          className="samaan-keep-together"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            borderBottom: '1.5px solid #000000',
-            fontSize: '9px',
-            textAlign: 'center',
-          }}
-        >
           <div
+            className="samaan-keep-together"
             style={{
-              borderLeft: '1px solid #000000',
-              padding: '5px 5px',
-              minHeight: '72px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(5, 1fr)',
+              borderBottom: '1.5px solid #000000',
+              fontSize: '9px',
+              textAlign: 'center',
             }}
           >
-            <div>
-              <div style={{ fontWeight: 700 }}>{activeEmployer.securityLabel}</div>
-              <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء:</div>
-            </div>
-            <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.mapnaSecurity || ''}</div>
-          </div>
-
-          <div
-            style={{
-              borderLeft: '1px solid #000000',
-              padding: '5px 5px',
-              minHeight: '72px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700 }}>
-                <FormCheckSquare checked={Boolean(record.qcChecked)} label="QC / دفتر فنی" />
+            <div
+              style={{
+                borderLeft: '1px solid #000000',
+                padding: '5px 5px',
+                minHeight: '72px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700 }}>{activeEmployer.securityLabel}</div>
+                <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء:</div>
               </div>
-              <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء :</div>
+              <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.mapnaSecurity || ''}</div>
             </div>
-            <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.qcTechOffice || ''}</div>
-          </div>
 
-          <div
-            style={{
-              borderLeft: '1px solid #000000',
-              padding: '5px 5px',
-              minHeight: '72px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700 }}>
-                <FormCheckSquare checked={Boolean(record.hseChecked)} label="HSE" />
+            <div
+              style={{
+                borderLeft: '1px solid #000000',
+                padding: '5px 5px',
+                minHeight: '72px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700 }}>
+                  <FormCheckSquare checked={Boolean(record.qcChecked)} label="QC / دفتر فنی" />
+                </div>
+                <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء:</div>
               </div>
-              <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء :</div>
+              <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.qcTechOffice || ''}</div>
             </div>
-            <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.hseOfficer || ''}</div>
-          </div>
 
-          <div
-            style={{
-              borderLeft: '1px solid #000000',
-              padding: '5px 5px',
-              minHeight: '72px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700 }}>تامین تجهیزات</div>
-              <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء :</div>
+            <div
+              style={{
+                borderLeft: '1px solid #000000',
+                padding: '5px 5px',
+                minHeight: '72px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700 }}>
+                  <FormCheckSquare checked={Boolean(record.hseChecked)} label="HSE" />
+                </div>
+                <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء:</div>
+              </div>
+              <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.hseOfficer || ''}</div>
             </div>
-            <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{equipmentSupplyName}</div>
-          </div>
 
-          <div
-            style={{
-              padding: '5px 5px',
-              minHeight: '72px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div style={{ fontWeight: 700, lineHeight: 1.5 }}>
-              نماینده کارفرما/نماینده دستگاه نظارت:
+            <div
+              style={{
+                borderLeft: '1px solid #000000',
+                padding: '5px 5px',
+                minHeight: '72px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700 }}>تأمین تجهیزات</div>
+                <div style={{ fontWeight: 600, marginTop: '2px' }}>نام، تاریخ و امضاء:</div>
+              </div>
+              <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{equipmentSupplyName}</div>
             </div>
-            <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.employerRep || ''}</div>
+
+            <div
+              style={{
+                padding: '5px 5px',
+                minHeight: '72px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ fontWeight: 700, lineHeight: 1.5 }}>
+                نماینده کارفرما / نماینده دستگاه نظارت:
+              </div>
+              <div style={{ fontSize: '8.5px', marginTop: '6px' }}>{record.employerRep || ''}</div>
+            </div>
           </div>
-        </div>
         )}
 
         {/* QA Explanatory Notes Box */}
@@ -780,26 +787,26 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
             textAlign: 'right',
           }}
         >
-          {design.template?.introText ? (
-            <div style={{ fontWeight: 600 }}>{design.template.introText}</div>
+          {effectiveDesign.template?.introText ? (
+            <div style={{ fontWeight: 600 }}>{effectiveDesign.template.introText}</div>
           ) : (
             <>
               <div>
-                توضیح 1 : واحد تامین تجهیزات و انبار در صورت لزوم می بایست تائیدیه واحدهای دفتر فنی، کنترل کیفیت و HSE را اخذ نماید.
+                توضیح ۱: واحد تأمین تجهیزات و انبار در صورت لزوم می‌بایست تأییدیه واحدهای دفتر فنی، کنترل کیفیت و HSE را اخذ نماید.
               </div>
               <div>
-                توضیح 2 : درخصوص کالا و تجهیزاتی که مربوط به تجهیز کارگاه بوده و یا از نظر ایمنی مطابق نظر سرپرست HSE پروژه حائز اهمیت است کنترل و تایید واحد HSE الزامی می باشد.
+                توضیح ۲: در خصوص کالا و تجهیزاتی که مربوط به تجهیز کارگاه بوده و یا از نظر ایمنی مطابق نظر سرپرست HSE پروژه حائز اهمیت است کنترل و تأیید واحد HSE الزامی می‌باشد.
               </div>
               <div>
-                توضیح 3 : تائیدکنترل کیفی به منزله تائید ورود کالا به کارگاه می باشد و به معنای تائید نهایی نیست ، مسئولیت اصلی کیفیت کالا از نظر ظاهری و انطباق با مشخصات در طول دوران ساخت ،نصب، راه اندازی و بهره برداری بر عهده مسئول اجرایی کار می باشد.
+                توضیح ۳: تأیید کنترل کیفی به منزله تأیید ورود کالا به کارگاه می‌باشد و به معنای تأیید نهایی نیست؛ مسئولیت اصلی کیفیت کالا از نظر ظاهری و انطباق با مشخصات در طول دوران ساخت، نصب، راه‌اندازی و بهره‌برداری بر عهده مسئول اجرایی کار می‌باشد.
               </div>
               <div>
-                توضیح 4 : فرم مذکور میبایست توسط {activeEmployer.securityLabel} امضا و سپس ممهور گردد.
+                توضیح ۴: فرم مذکور می‌بایست توسط {activeEmployer.securityLabel} امضاء و سپس ممهور گردد.
               </div>
             </>
           )}
-          <div dir="rtl" style={{ fontWeight: 700, textAlign: 'right' }}>
-            توجه : این فرم تحت کنترل واحد QA میباشد و هرگونه تغییر در آن غیر مجاز بوده و منوط به اخذ مجوز از واحد QA میباشد.
+          <div dir="rtl" style={{ fontWeight: 700, textAlign: 'right', marginTop: '2px' }}>
+            {MD1_SITE_ENTRY_QA_NOTICE}
           </div>
         </div>
       </div>
@@ -812,18 +819,18 @@ const OfficialSiteEntrySheet: React.FC<OfficialSheetProps> = ({
           justifyContent: 'space-between',
           gap: '12px',
           marginTop: '4px',
-          padding: '0 2px',
+          padding: '4px 8px',
+          border: '1px solid #000000',
           fontSize: '8.5px',
           fontWeight: 700,
         }}
       >
         <div>
-          {design.template?.footerCopyText ||
-            `رونوشت : 1- درخواست کننده / پیمانکار   2- ${activeEmployer.equipmentSupplyLabel}   3- ${activeEmployer.securityLabel}`}
+          {effectiveDesign.template?.footerCopyText || MD1_SITE_ENTRY_COPY_TEXT}
         </div>
-        {(formCode || design.revisionText) && (
+        {(formCode || effectiveDesign.revisionText) && (
           <div dir="ltr" className="tabular-nums">
-            {[formCode, design.revisionText].filter(Boolean).join(' · ')}
+            {[formCode, effectiveDesign.revisionText].filter(Boolean).join(' · ')}
           </div>
         )}
       </div>
@@ -835,66 +842,74 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   refreshSignal,
   onDataChanged,
 }) => {
-  const { prefs, t, user, notify, formatDate, triggerAutoSnapshot, activeEmployer, activeProject } = useApp();
+  const {
+    prefs,
+    t,
+    user,
+    notify,
+    formatDate,
+    triggerAutoSnapshot,
+    activeEmployer,
+    activeProject,
+    historyStatus,
+    historyBusy,
+    performUndo,
+    performRedo,
+    refreshHistoryStatus,
+  } = useApp();
+  const canUndo = historyStatus.canUndo && !historyBusy;
+  const canRedo = historyStatus.canRedo && !historyBusy;
   const isFa = prefs.language === 'fa';
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
   const formCode = getEmployerFormCode(activeEmployer, '15-01');
 
   const [viewMode, setViewMode] = useState<OperationalViewMode>(canEdit ? 'create' : 'history');
+  const [step, setStep] = useState<1 | 2>(1);
   const [data, setData] = useState<SiteEntryApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [scanTarget, setScanTarget] = useState<SiteEntryMinutesRecord | null>(null);
-  const minutesList = useMemo(() => data?.minutes || [], [data]);
-  const minutesPagination = useClientPagination(minutesList, 50);
 
-  const [minutesNo, setMinutesNo] = useState('');
-  const suggestedMinutesNo = useMemo(
-    () =>
-      generateNextPlantAwareDocNo(
-        'AN',
-        minutesList.map((m) => m.minutesNo),
-        extractPlantDocConfig(activeProject),
-      ),
-    [minutesList, activeProject],
-  );
-  const [releaseNoteNo, setReleaseNoteNo] = useState('');
+  // Step 1: General row selection + status filter
+  const [entryFilterMode, setEntryFilterMode] = useState<'all' | 'without_minutes' | 'with_minutes'>('all');
+  const [selectedMap, setSelectedMap] = useState<Record<string, GeneralEntry>>({});
+
+  // Step 2: Goods usage, remarks, optional header overrides
+  const [goodsUsage, setGoodsUsage] = useState<SiteEntryGoodsUsage>('project');
   const [entryType, setEntryType] = useState<'permanent' | 'temporary'>('permanent');
-  const [goodsUsage, setGoodsUsage] = useState<'project' | 'site_equip' | 'general'>('project');
-  const [date, setDate] = useState(getTodayIso());
-  const [arrivalDate, setArrivalDate] = useState(getTodayIso());
+  const [remarksMap, setRemarksMap] = useState<Record<string, string>>({});
+  const [minutesNo, setMinutesNo] = useState('');
+  const [minutesNoTouched, setMinutesNoTouched] = useState(false);
+  const [showHeaderOverrides, setShowHeaderOverrides] = useState(false);
 
-  const [selectedPackings, setSelectedPackings] = useState<string[]>([]);
-  const [packingSearch, setPackingSearch] = useState('');
-  const [showOlderPackings, setShowOlderPackings] = useState(false);
-
-  const [supplier, setSupplier] = useState('');
-  const [unit, setUnit] = useState('');
-  const [system, setSystem] = useState('');
-  const [island, setIsland] = useState('');
-  const [origin, setOrigin] = useState('');
+  // Optional header override states (blank = use auto-filled value)
+  const [arrivalDateOverride, setArrivalDateOverride] = useState('');
+  const [requesterOverride, setRequesterOverride] = useState('');
+  const [contractNoOverride, setContractNoOverride] = useState('');
+  const [systemOverride, setSystemOverride] = useState('');
+  const [islandOverride, setIslandOverride] = useState('');
+  const [unitOverride, setUnitOverride] = useState('');
+  const [vehicleModelOverride, setVehicleModelOverride] = useState('');
+  const [vehicleNoOverride, setVehicleNoOverride] = useState('');
+  const [waybillNoOverride, setWaybillNoOverride] = useState('');
+  const [driverNameOverride, setDriverNameOverride] = useState('');
+  const [releaseNoteOverride, setReleaseNoteOverride] = useState('');
+  const [originOverride, setOriginOverride] = useState('');
   const [carrierCompany, setCarrierCompany] = useState('');
   const [trafficLocation, setTrafficLocation] = useState('');
-  const [vehicleType, setVehicleType] = useState('');
-  const [driverName, setDriverName] = useState('');
-  const [vehicleNo, setVehicleNo] = useState('');
-  const [waybillNo, setWaybillNo] = useState('');
-
-  const [items, setItems] = useState<SiteEntryLineItem[]>([]);
-
-  const [conditionStatus, setConditionStatus] = useState<SiteEntryMinutesRecord['conditionStatus']>('healthy');
   const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
+  // Edit / History / Print / Scan states
   const [editingRecord, setEditingRecord] = useState<SiteEntryMinutesRecord | null>(null);
+  const [historySearch, setHistorySearch] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<SiteEntryMinutesRecord | null>(null);
   const [printSheet, setPrintSheet] = useState<SiteEntryMinutesRecord | null>(null);
+  const [scanTarget, setScanTarget] = useState<SiteEntryMinutesRecord | null>(null);
   const [printReportOpen, setPrintReportOpen] = useState(false);
-
-  const [packingRenderCap, setPackingRenderCap] = useState(60);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiRequest<SiteEntryApiResponse>('/api/site-entry?compact=1&limit=120');
+      const res = await apiRequest<SiteEntryApiResponse>('/api/site-entry');
       setData(res);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
@@ -904,468 +919,391 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
   }, [notify]);
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, [loadData, refreshSignal]);
 
-  // O(N) packing metadata map (arrivalDate & priority status within last 7 days)
-  const packingMetaInfo = useMemo(() => {
-    const todayIso = getTodayIso();
-    const todayMs = Date.parse(`${todayIso}T00:00:00Z`);
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    const generalByPacking = new Map<string, GeneralEntry[]>();
-    for (const g of data?.generalEntries || []) {
-      const pk = (g.packingListNo || '').trim();
-      if (!pk) continue;
-      let bucket = generalByPacking.get(pk);
-      if (!bucket) {
-        bucket = [];
-        generalByPacking.set(pk, bucket);
-      }
-      bucket.push(g);
+  const minutesList = useMemo(() => data?.minutes || [], [data]);
+  const generalEntries = useMemo(() => data?.generalEntries || [], [data]);
+
+  const filteredHistory = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return minutesList;
+    return minutesList.filter((m) =>
+      [
+        m.minutesNo,
+        m.supplier,
+        m.vehicleType,
+        m.vehicleNo,
+        m.driverName,
+        m.waybillNo,
+        ...(m.packingListNos || []),
+        m.notes,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [minutesList, historySearch]);
+
+  const minutesPagination = useClientPagination(filteredHistory, 25);
+
+  const pickerRows = useMemo(() => {
+    if (entryFilterMode === 'without_minutes') {
+      return generalEntries.filter((g) => !hasSiteEntryMinutes(g) || Boolean(selectedMap[g.id]));
     }
-    const map = new Map<string, { arrivalDate: string; isRecent: boolean; sortKey: string }>();
-
-    for (const pk of data?.packings || []) {
-      const matches = generalByPacking.get(pk) || [];
-      let primaryArrival = '';
-      let isRecent = false;
-
-      for (const g of matches) {
-        const arrStr = (g.arrivalDate || '').trim();
-        if (!primaryArrival && arrStr) primaryArrival = arrStr;
-        if (!isRecent && /^\d{4}-\d{2}-\d{2}$/.test(arrStr)) {
-          const ms = Date.parse(`${arrStr}T00:00:00Z`);
-          if (Number.isFinite(ms) && todayMs - ms <= sevenDaysMs && ms <= todayMs + 2 * 24 * 60 * 60 * 1000) {
-            isRecent = true;
-          }
-        }
-        if (!isRecent) {
-          const createdStr = (g.createdAt || '').slice(0, 10);
-          if (/^\d{4}-\d{2}-\d{2}$/.test(createdStr)) {
-            const ms = Date.parse(`${createdStr}T00:00:00Z`);
-            if (Number.isFinite(ms) && todayMs - ms <= sevenDaysMs) {
-              isRecent = true;
-            }
-          }
-        }
-      }
-
-      const sortKey = primaryArrival || matches[0]?.createdAt?.slice(0, 10) || '0000-00-00';
-      map.set(pk, { arrivalDate: primaryArrival, isRecent, sortKey });
+    if (entryFilterMode === 'with_minutes') {
+      return generalEntries.filter((g) => hasSiteEntryMinutes(g) || Boolean(selectedMap[g.id]));
     }
-    return map;
-  }, [data]);
+    return generalEntries;
+  }, [generalEntries, entryFilterMode, selectedMap]);
 
-  const { priorityPackings, olderPackings } = useMemo(() => {
-    const all = [...(data?.packings || [])];
-    const needle = packingSearch.trim().toLowerCase();
-    const filtered = needle ? all.filter((p) => p.toLowerCase().includes(needle)) : all;
-
-    filtered.sort((a, b) => {
-      const ma = packingMetaInfo.get(a);
-      const mb = packingMetaInfo.get(b);
-      return (mb?.sortKey || '').localeCompare(ma?.sortKey || '') || b.localeCompare(a);
-    });
-
-    const recent: string[] = [];
-    const older: string[] = [];
-    for (const pk of filtered) {
-      const info = packingMetaInfo.get(pk);
-      if (info?.isRecent || selectedPackings.includes(pk)) {
-        recent.push(pk);
-      } else {
-        older.push(pk);
-      }
-    }
-    return { priorityPackings: recent, olderPackings: older };
-  }, [data, packingSearch, packingMetaInfo, selectedPackings]);
-
-  // Single arrival date enforced across selected packings
-  const lockedArrivalDate = useMemo(() => {
-    for (const pk of selectedPackings) {
-      const arr = packingMetaInfo.get(pk)?.arrivalDate;
-      if (arr) return arr;
-    }
-    return '';
-  }, [selectedPackings, packingMetaInfo]);
-
-  const syncMetadataFromPackings = useCallback(
-    (packings: string[]) => {
-      const generalEntries = data?.generalEntries || [];
-      const transitEntries = data?.transitEntries || [];
-      const detailedItems = data?.detailedItems || [];
-
-      const genMatches = generalEntries.filter((g) => packings.includes((g.packingListNo || '').trim()));
-      const transitMatches = transitEntries.filter(
-        (tr) =>
-          packings.includes((tr.packingListNo || '').trim()) ||
-          packings.includes((tr.linkedGeneralPackingNo || '').trim()),
-      );
-      const detMatches = detailedItems.filter((d) => packings.includes((d.shipmentNo || '').trim()));
-
-      const autoMinutesNo = joinUnique(genMatches.map((g) => g.mapnaEntryMinutesNo));
-      const autoReleaseNo = joinUnique([
-        ...genMatches.map((g) => g.releaseNo),
-        ...transitMatches.map((tr) => tr.releaseNetNo),
-      ]);
-      const autoArrivalDate = genMatches.map((g) => (g.arrivalDate || '').trim()).find(Boolean) || '';
-      const resolvedDate = autoArrivalDate || getTodayIso();
-
-      setMinutesNo(autoMinutesNo);
-      setReleaseNoteNo(autoReleaseNo || (packings.length > 0 ? 'تأیید صورتجلسه‌ی ورود' : ''));
-      setArrivalDate(resolvedDate);
-      if (autoArrivalDate) {
-        setDate(autoArrivalDate);
-      }
-      setSupplier(joinUnique([...genMatches.map((g) => g.supplier), ...detMatches.map((d) => d.supplier)]));
-      setUnit(joinUnique([...genMatches.map((g) => g.unit), ...detMatches.map((d) => d.unit)]));
-      setSystem(joinUnique([...genMatches.map((g) => g.system), ...detMatches.map((d) => d.system)]));
-      setIsland(joinUnique([...genMatches.map((g) => g.island), ...detMatches.map((d) => d.island)]));
-      setOrigin(
-        joinUnique([
-          ...genMatches.map((g) => g.dispatchLocation),
-          ...detMatches.map((d) => d.origin),
-          ...transitMatches.map((tr) => tr.dispatchLocation),
-        ]),
-      );
-      setCarrierCompany(joinUnique(transitMatches.map((tr) => tr.carrierContractor)));
-      setDriverName(joinUnique(genMatches.map((g) => g.driverName)));
-      setVehicleNo(joinUnique(genMatches.map((g) => g.vehicleNo)));
-      setWaybillNo(
-        joinUnique([...genMatches.map((g) => g.billOfLadingNo), ...transitMatches.map((tr) => tr.billOfLadingNo)]),
-      );
-    },
-    [data],
+  const missingCount = useMemo(
+    () => generalEntries.filter((g) => !hasSiteEntryMinutes(g)).length,
+    [generalEntries],
   );
 
-  const togglePacking = async (pk: string) => {
-    const isRemoving = selectedPackings.includes(pk);
-    if (!isRemoving) {
-      const candidateArr = packingMetaInfo.get(pk)?.arrivalDate || '';
-      if (lockedArrivalDate && candidateArr && candidateArr !== lockedArrivalDate) {
-        notify(
-          'warning',
-          isFa
-            ? `امکان انتخاب هم‌زمان پکینگ‌های با تاریخ ورود متفاوت وجود ندارد (${formatDate(lockedArrivalDate)} در برابر ${formatDate(candidateArr)}).`
-            : `Cannot select packings with different arrival dates.`,
-        );
-        return;
+  const selectedList = useMemo(() => Object.values(selectedMap), [selectedMap]);
+
+  const autoHeader = useMemo(
+    () => buildSiteEntryHeaderAutoFill(selectedList, activeProject),
+    [selectedList, activeProject],
+  );
+
+  const suggestedMinutesNo = useMemo(
+    () =>
+      generateSiteEntryMinutesNo(
+        minutesList.map((m) => m.minutesNo),
+        activeProject,
+      ),
+    [minutesList, activeProject],
+  );
+
+  // Auto-populate suggested minutesNo on new creation unless user typed custom one
+  useEffect(() => {
+    if (!editingRecord && !minutesNoTouched && suggestedMinutesNo) {
+      setMinutesNo(suggestedMinutesNo);
+    }
+  }, [editingRecord, minutesNoTouched, suggestedMinutesNo]);
+
+  // Keep print preview synced with live DB (so post-print Undo/Redo immediately reflects!)
+  const printRecordWasUndone = useMemo(() => {
+    if (!printSheet || !data) return false;
+    return !data.minutes.some((m) => m.id === printSheet.id);
+  }, [printSheet, data]);
+
+  useEffect(() => {
+    if (!printSheet || !data) return;
+    const fresh = data.minutes.find((m) => m.id === printSheet.id);
+    if (fresh && fresh !== printSheet) {
+      setPrintSheet(fresh);
+    }
+  }, [data, printSheet]);
+
+  const handleToggleRow = useCallback((row: GeneralEntry) => {
+    setSelectedMap((prev) => {
+      const next = { ...prev };
+      if (next[row.id]) delete next[row.id];
+      else next[row.id] = row;
+      return next;
+    });
+  }, []);
+
+  const handleToggleBatch = useCallback((rows: GeneralEntry[], allSelected: boolean) => {
+    setSelectedMap((prev) => {
+      const next = { ...prev };
+      if (allSelected) {
+        for (const r of rows) delete next[r.id];
+      } else {
+        for (const r of rows) next[r.id] = r;
       }
-    }
-    const nextPackings = isRemoving
-      ? selectedPackings.filter((x) => x !== pk)
-      : [...selectedPackings, pk];
+      return next;
+    });
+  }, []);
 
-    setSelectedPackings(nextPackings);
-
-    let generalEntries = data?.generalEntries || [];
-    if (!isRemoving && !generalEntries.some((g) => (g.packingListNo || '').trim() === pk)) {
-      try {
-        const fetched = await apiRequest<SiteEntryApiResponse>(
-          `/api/site-entry?compact=1&packing=${encodeURIComponent(pk)}`,
-        );
-        const existingGenIds = new Set(generalEntries.map((g) => g.id));
-        const mergedGeneral = [
-          ...generalEntries,
-          ...(fetched.generalEntries || []).filter((g) => !existingGenIds.has(g.id)),
-        ];
-        const existingTrIds = new Set((data?.transitEntries || []).map((t) => t.id));
-        const mergedTransit = [
-          ...(data?.transitEntries || []),
-          ...(fetched.transitEntries || []).filter((t) => !existingTrIds.has(t.id)),
-        ];
-        const existingDetIds = new Set((data?.detailedItems || []).map((d) => d.id));
-        const mergedDetailed = [
-          ...(data?.detailedItems || []),
-          ...(fetched.detailedItems || []).filter((d) => !existingDetIds.has(d.id)),
-        ];
-        generalEntries = mergedGeneral;
-        setData((prev) =>
-          prev
-            ? {
-                ...prev,
-                generalEntries: mergedGeneral,
-                transitEntries: mergedTransit,
-                detailedItems: mergedDetailed,
-              }
-            : fetched,
-        );
-      } catch {
-        // fallback to existing loaded slice
-      }
-    }
-    syncMetadataFromPackings(nextPackings);
-    if (!isRemoving) {
-      const addedRows = buildItemsFromGeneral([pk], generalEntries);
-      setItems((prev) => [...prev, ...addedRows]);
-    } else {
-      setItems((prev) => prev.filter((it) => it.packingListNo !== pk));
-    }
-  };
-
-  const resetForm = () => {
+  const resetWizard = () => {
     setEditingRecord(null);
-    setMinutesNo('');
-    setReleaseNoteNo('');
-    setEntryType('permanent');
+    setStep(1);
+    setSelectedMap({});
+    setRemarksMap({});
     setGoodsUsage('project');
-    setDate(getTodayIso());
-    setArrivalDate(getTodayIso());
-    setSelectedPackings([]);
-    setItems([]);
-    setSupplier('');
-    setUnit('');
-    setSystem('');
-    setIsland('');
-    setOrigin('');
+    setEntryType('permanent');
+    setMinutesNo(suggestedMinutesNo);
+    setMinutesNoTouched(false);
+    setShowHeaderOverrides(false);
+    setArrivalDateOverride('');
+    setRequesterOverride('');
+    setContractNoOverride('');
+    setSystemOverride('');
+    setIslandOverride('');
+    setUnitOverride('');
+    setVehicleModelOverride('');
+    setVehicleNoOverride('');
+    setWaybillNoOverride('');
+    setDriverNameOverride('');
+    setReleaseNoteOverride('');
+    setOriginOverride('');
     setCarrierCompany('');
     setTrafficLocation('');
-    setVehicleType('');
-    setDriverName('');
-    setVehicleNo('');
-    setWaybillNo('');
-    setConditionStatus('healthy');
     setNotes('');
   };
 
   const startEdit = (rec: SiteEntryMinutesRecord) => {
     setViewMode('create');
     setEditingRecord(rec);
-    setMinutesNo(rec.minutesNo || '');
-    setReleaseNoteNo(rec.releaseNoteNo || 'تأیید صورتجلسه‌ی ورود');
-    setEntryType(rec.entryType || 'permanent');
+    setStep(2);
     setGoodsUsage(rec.goodsUsage || 'project');
-    setDate(rec.date || getTodayIso());
-    setArrivalDate(rec.arrivalDate || rec.date || getTodayIso());
-    setSelectedPackings(rec.packingListNos || []);
-    setSupplier(rec.supplier || '');
-    setUnit(rec.unit || '');
-    setSystem(rec.system || '');
-    setIsland(rec.island || '');
-    setOrigin(rec.origin || '');
+    setEntryType(rec.entryType || 'permanent');
+    setMinutesNo(rec.minutesNo || '');
+    setMinutesNoTouched(true);
+    setArrivalDateOverride(rec.arrivalDate || rec.date || '');
+    setRequesterOverride(rec.supplier || '');
+    setContractNoOverride(rec.contractNo || '');
+    setSystemOverride(rec.system || '');
+    setIslandOverride(rec.island || '');
+    setUnitOverride(rec.unit || '');
+    setVehicleModelOverride(rec.vehicleType || '');
+    setVehicleNoOverride(rec.vehicleNo || '');
+    setWaybillNoOverride(rec.waybillNo || '');
+    setDriverNameOverride(rec.driverName || '');
+    setReleaseNoteOverride(rec.releaseNoteNo || '');
+    setOriginOverride(rec.origin || '');
     setCarrierCompany(rec.carrierCompany || '');
     setTrafficLocation(rec.trafficLocation || '');
-    setVehicleType(rec.vehicleType || '');
-    setDriverName(rec.driverName || '');
-    setVehicleNo(rec.vehicleNo || '');
-    setWaybillNo(rec.waybillNo || '');
-    setItems(
-      rec.items && rec.items.length > 0
-        ? rec.items
-        : buildItemsFromGeneral(rec.packingListNos || [], data?.generalEntries || []),
-    );
-    setConditionStatus(rec.conditionStatus || 'healthy');
     setNotes(rec.notes || '');
+
+    // Reconstruct selectedMap & remarksMap from generalIds / items
+    const nextSel: Record<string, GeneralEntry> = {};
+    const nextRemarks: Record<string, string> = {};
+    const genById = new Map(generalEntries.map((g) => [g.id, g]));
+    for (const it of rec.items || []) {
+      let matched = it.generalId ? genById.get(it.generalId) : undefined;
+      if (!matched) {
+        matched = generalEntries.find(
+          (g) =>
+            (g.packingListNo || '').trim() === (it.packingListNo || '').trim() &&
+            (!it.packageNo || (g.packageNo || '').trim() === (it.packageNo || '').trim()),
+        );
+      }
+      if (matched) {
+        nextSel[matched.id] = matched;
+        if (it.remarks) nextRemarks[matched.id] = it.remarks;
+      }
+    }
+    if (Object.keys(nextSel).length === 0 && rec.generalIds) {
+      for (const gid of rec.generalIds) {
+        const g = genById.get(gid);
+        if (g) nextSel[g.id] = g;
+      }
+    }
+    setSelectedMap(nextSel);
+    setRemarksMap(nextRemarks);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const updateItemField = (index: number, key: keyof SiteEntryLineItem, value: string) => {
-    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [key]: value } : it)));
-  };
+  const effectiveArrivalDate = arrivalDateOverride.trim() || autoHeader.arrivalDate || getTodayIso();
+  const effectiveRequester = requesterOverride.trim() || autoHeader.requester;
+  const effectiveContractNo = contractNoOverride.trim() || autoHeader.contractNo;
+  const effectiveSystem = systemOverride.trim() || autoHeader.system;
+  const effectiveIsland = islandOverride.trim() || autoHeader.island;
+  const effectiveUnit = unitOverride.trim() || autoHeader.unit;
+  const effectiveVehicleModel = vehicleModelOverride.trim() || autoHeader.vehicleModel;
+  const effectiveVehicleNo = vehicleNoOverride.trim() || autoHeader.vehicleNo;
+  const effectiveWaybillNo = waybillNoOverride.trim() || autoHeader.waybillNo;
+  const effectiveDriverName = driverNameOverride.trim() || autoHeader.driverName;
+  const effectiveReleaseNote = releaseNoteOverride.trim() || autoHeader.releaseNoteNo;
+  const effectiveOrigin = originOverride.trim() || autoHeader.origin;
 
-  const addBlankRow = () => {
-    setItems((prev) => [
-      ...prev,
-      {
-        description: '',
-        packingListNo: selectedPackings[0] || '',
-        packageNo: '',
-        dimensions: '',
-        qty: '',
-        unit: '',
-        netWeight: '',
-        grossWeight: '',
-        remarks: '',
-      },
-    ]);
-  };
-
-  const removeItemRow = (index: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const conditionLabel = useCallback(
-    (status: SiteEntryMinutesRecord['conditionStatus']) => {
-      if (status === 'healthy') {
-        return isFa ? 'سالم و بدون آسیب ظاهری' : 'Intact / Good Condition';
-      }
-      if (status === 'shortage_suspected') {
-        return isFa ? 'مشکوک به کسری بسته' : 'Suspected Package Shortage';
-      }
-      return isFa ? 'دارای آسیب ظاهری بسته‌بندی' : 'Apparent Packaging Damage';
-    },
-    [isFa],
+  const builtLineItems = useMemo(
+    () => buildSiteEntryLineItems(selectedList, remarksMap),
+    [selectedList, remarksMap],
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedPackings.length === 0) {
-      notify('warning', isFa ? 'حداقل یک پکینگ لیست انتخاب کنید.' : 'Select at least one Packing List.');
+    const cleanMinutesNo = minutesNo.trim() || suggestedMinutesNo;
+    if (!cleanMinutesNo) {
+      notify('error', isFa ? 'شماره صورتجلسه ورود الزامی است.' : 'Site Entry Minutes No. is required.');
+      return;
+    }
+    if (selectedList.length === 0) {
+      notify('error', isFa ? 'حداقل یک ردیف از جدول کلی تجهیزات انتخاب کنید.' : 'Select at least one General Equipment row.');
       return;
     }
 
-    const effectiveDate = lockedArrivalDate || date;
-    const effectiveArrivalDate = lockedArrivalDate || arrivalDate;
-    const payload = {
-      minutesNo,
-      releaseNoteNo: releaseNoteNo.trim() || 'تأیید صورتجلسه‌ی ورود',
-      projectName: activeProject?.name || '',
-      entryType,
-      goodsUsage,
-      contractNo: activeProject?.code || '',
-      date: effectiveDate,
-      arrivalDate: effectiveArrivalDate,
-      packingListNos: selectedPackings,
-      supplier,
-      unit,
-      system,
-      island,
-      origin,
-      carrierCompany,
-      trafficLocation,
-      vehicleType,
-      driverName,
-      vehicleNo,
-      waybillNo,
-      items,
-      conditionStatus,
-      notes,
-    };
-
+    setSubmitting(true);
     try {
-      if (editingRecord) {
-        const res = await apiRequest<{ record: SiteEntryMinutesRecord }>(`/api/site-entry/${editingRecord.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
-        });
-        notify(
-          'success',
-          isFa
-            ? `صورتجلسه ورود شماره ${res.record.minutesNo} با موفقیت ویرایش شد.`
-            : `Site Entry Minutes ${res.record.minutesNo} updated.`,
-        );
-        resetForm();
-        setPrintSheet(res.record);
-        triggerAutoSnapshot(`Edit Site Entry ${res.record.minutesNo}`);
-        onDataChanged();
-        loadData();
-      } else {
-        const res = await apiRequest<{ record: SiteEntryMinutesRecord }>('/api/site-entry', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        notify(
-          'success',
-          isFa
-            ? `صورتجلسه ورود شماره ${res.record.minutesNo} با موفقیت ثبت شد.`
-            : `Site Entry Minutes ${res.record.minutesNo} saved.`,
-        );
-        resetForm();
-        setPrintSheet(res.record);
-        triggerAutoSnapshot(`Site Entry ${res.record.minutesNo}`);
-        onDataChanged();
-        loadData();
-      }
+      const payload = {
+        minutesNo: cleanMinutesNo,
+        releaseNoteNo: effectiveReleaseNote,
+        entryType,
+        goodsUsage,
+        date: effectiveArrivalDate,
+        arrivalDate: effectiveArrivalDate,
+        projectName: activeProject?.name || '',
+        contractNo: effectiveContractNo,
+        packingListNos: autoHeader.packingListNos,
+        generalIds: autoHeader.generalIds,
+        supplier: effectiveRequester,
+        unit: effectiveUnit,
+        system: effectiveSystem,
+        island: effectiveIsland,
+        origin: effectiveOrigin,
+        carrierCompany: carrierCompany.trim(),
+        trafficLocation: trafficLocation.trim(),
+        vehicleType: effectiveVehicleModel,
+        driverName: effectiveDriverName,
+        vehicleNo: effectiveVehicleNo,
+        waybillNo: effectiveWaybillNo,
+        weighbridgeWeight: autoHeader.weighbridgeWeight,
+        conditionStatus: 'healthy' as const,
+        items: builtLineItems,
+        notes: notes.trim(),
+      };
+
+      const res = editingRecord
+        ? await apiRequest<{ record: SiteEntryMinutesRecord }>(`/api/site-entry/${editingRecord.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+          })
+        : await apiRequest<{ record: SiteEntryMinutesRecord }>('/api/site-entry', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+
+      notify(
+        'success',
+        editingRecord
+          ? isFa
+            ? `صورتجلسه ورود شماره ${res.record.minutesNo} ویرایش و در جدول کلی تجهیزات به‌روزرسانی شد.`
+            : `Site Entry Minutes ${res.record.minutesNo} updated.`
+          : isFa
+            ? `صورتجلسه ورود شماره ${res.record.minutesNo} صادر و در ستون «شماره صورتجلسه ورود انبار» ثبت شد.`
+            : `Site Entry Minutes ${res.record.minutesNo} issued and synced to General Equipment.`,
+      );
+      resetWizard();
+      setPrintSheet(res.record);
+      triggerAutoSnapshot(`${editingRecord ? 'Edit ' : ''}Site Entry ${res.record.minutesNo}`);
+      onDataChanged();
+      await Promise.all([loadData(), refreshHistoryStatus()]);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await apiRequest<{ ok: boolean }>(`/api/site-entry/${deleteTarget.id}`, {
-        method: 'DELETE',
-      });
+      await apiRequest(`/api/site-entry/${deleteTarget.id}`, { method: 'DELETE' });
       notify(
         'success',
         isFa
-          ? `صورتجلسه ورود شماره ${deleteTarget.minutesNo} حذف شد.`
+          ? `صورتجلسه ورود شماره ${deleteTarget.minutesNo} حذف و شماره آن از جدول کلی تجهیزات پاک شد.`
           : `Site Entry Minutes ${deleteTarget.minutesNo} deleted.`,
       );
-      if (editingRecord?.id === deleteTarget.id) resetForm();
+      if (editingRecord?.id === deleteTarget.id) resetWizard();
       if (printSheet?.id === deleteTarget.id) setPrintSheet(null);
       setDeleteTarget(null);
       triggerAutoSnapshot(`Delete Site Entry ${deleteTarget.minutesNo}`);
       onDataChanged();
-      loadData();
+      await Promise.all([loadData(), refreshHistoryStatus()]);
     } catch (err) {
       if (err instanceof ApiError) notify('error', err.message);
     }
   };
 
-  const reportColumns = useMemo<PrintColumnDef<SiteEntryMinutesRecord>[]>(
+  const handlePreviewUndo = async () => {
+    const ok = await performUndo();
+    if (ok) {
+      onDataChanged();
+      await loadData();
+    }
+  };
+
+  const handlePreviewRedo = async () => {
+    const ok = await performRedo();
+    if (ok) {
+      onDataChanged();
+      await loadData();
+    }
+  };
+
+  const historyColumns = useMemo<PrintColumnDef<SiteEntryMinutesRecord>[]>(
     () => [
-      { key: 'minutesNo', header: isFa ? 'Arrival Notice / شماره صورتجلسه' : 'Arrival Notice No.', getValue: (r) => r.minutesNo },
-      { key: 'releaseNoteNo', header: 'Release Note No.', getValue: (r) => r.releaseNoteNo || '' },
-      { key: 'date', header: isFa ? 'تاریخ صورتجلسه' : 'Date', isDate: true, getValue: (r) => r.date },
-      { key: 'arrivalDate', header: isFa ? 'تاریخ ورود' : 'Entry Date', isDate: true, getValue: (r) => r.arrivalDate || r.date },
-      { key: 'packingListNos', header: t.headers.packingListNo, getValue: (r) => r.packingListNos.join(', ') },
-      { key: 'supplier', header: isFa ? 'پیمانکار / درخواست‌کننده' : 'Contractor / Requester', getValue: (r) => r.supplier || '' },
-      { key: 'contractNo', header: isFa ? 'شماره قرارداد' : 'Contract No.', getValue: (r) => r.contractNo || '' },
-      { key: 'waybillNo', header: t.headers.billOfLadingNo, getValue: (r) => r.waybillNo || '' },
-      { key: 'vehicleNo', header: t.headers.vehicleNo, getValue: (r) => r.vehicleNo || '' },
-      { key: 'driverName', header: t.headers.driverName, getValue: (r) => r.driverName || '' },
-      { key: 'conditionStatus', header: isFa ? 'وضعیت ظاهری' : 'Condition', getValue: (r) => conditionLabel(r.conditionStatus) },
-      { key: 'warehouseKeeper', header: isFa ? 'انباردار/پیمانکار' : 'Storekeeper', getValue: (r) => r.warehouseKeeper || '' },
-      { key: 'employerRep', header: isFa ? 'نماینده کارفرما' : 'Employer Rep.', getValue: (r) => r.employerRep || '' },
-      { key: 'equipmentSupply', header: isFa ? 'تامین تجهیزات' : 'Equipment Supply', getValue: (r) => r.equipmentSupply || r.mapnaRep || '' },
-      { key: 'notes', header: t.headers.notes, getValue: (r) => r.notes || '' },
+      { key: 'minutesNo', header: isFa ? 'شماره صورتجلسه' : 'Minutes No.', getValue: (r) => r.minutesNo },
+      { key: 'arrivalDate', header: isFa ? 'تاریخ ورود' : 'Arrival Date', isDate: true, getValue: (r) => r.arrivalDate || r.date },
+      { key: 'supplier', header: isFa ? 'پیمانکار / درخواست‌کننده' : 'Requester', getValue: (r) => r.supplier || '' },
+      {
+        key: 'goodsUsage',
+        header: isFa ? 'کاربرد کالا' : 'Goods Usage',
+        getValue: (r) =>
+          SITE_ENTRY_GOODS_USAGE_OPTIONS.find((o) => o.value === r.goodsUsage)?.[isFa ? 'labelFa' : 'labelEn'] || '',
+      },
+      { key: 'vehicleType', header: isFa ? 'مدل وسیله نقلیه' : 'Vehicle Model', getValue: (r) => r.vehicleType || '' },
+      { key: 'vehicleNo', header: isFa ? 'شماره پلاک' : 'Plate No.', getValue: (r) => r.vehicleNo || '' },
+      { key: 'waybillNo', header: isFa ? 'شماره بارنامه' : 'Waybill No.', getValue: (r) => r.waybillNo || '' },
+      { key: 'driverName', header: isFa ? 'نام راننده' : 'Driver', getValue: (r) => r.driverName || '' },
+      { key: 'packings', header: isFa ? 'پکینگ لیست‌ها' : 'Packing Lists', getValue: (r) => (r.packingListNos || []).join('، ') },
+      { key: 'itemCount', header: isFa ? 'تعداد ردیف' : 'Rows', getValue: (r) => (r.items || []).length },
     ],
-    [t, isFa, conditionLabel],
+    [isFa],
   );
 
-  // Dedicated print portal for the official MD1EX-FQP02/15-01 A4 sheet
-  const formPrintPortal =
-    printSheet && !printReportOpen
-      ? createPortal(
-          <div id="samaan-form-print-root" data-samaan-print-portal="true">
-            <style>{buildIsolatedPrintPortalCss('samaan-form-print-root', {
-              orientation: 'portrait',
-              isFa,
-              extraPrintCss: `
-                #samaan-form-print-root table {
-                  width: 100% !important;
-                  table-layout: auto !important;
-                }
-                #samaan-form-print-root tr {
-                  height: auto !important;
-                  break-inside: avoid;
-                  page-break-inside: avoid;
-                }
-                #samaan-form-print-root table th,
-                #samaan-form-print-root table td {
-                  text-align: center;
-                  vertical-align: middle;
-                  height: auto !important;
-                }
-              `,
-            })}</style>
-            <OfficialSiteEntrySheet
-              record={printSheet}
-              generalEntries={data?.generalEntries || []}
-              formatDate={formatDate}
-            />
-          </div>,
-          document.body,
-        )
-      : null;
-
   return (
-    <div className="space-y-6">
-      {formPrintPortal}
+    <div className="space-y-5 samaan-animate-in">
+      {/* Isolated A4 Portrait Print Portal */}
+      {printSheet && !printReportOpen
+        ? createPortal(
+            <div id="samaan-site-entry-print-root" data-samaan-print-portal="true">
+              <style>
+                {buildIsolatedPrintPortalCss('samaan-site-entry-print-root', {
+                  orientation: 'portrait',
+                  isFa,
+                  marginMm: 8,
+                  extraPrintCss: `
+                    #samaan-site-entry-print-root table th,
+                    #samaan-site-entry-print-root table td {
+                      text-align: center;
+                      vertical-align: middle;
+                    }
+                  `,
+                })}
+              </style>
+              <OfficialSiteEntrySheet
+                record={printSheet}
+                generalEntries={generalEntries}
+                formatDate={formatDate}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
 
-      {/* Top Mode Bar: Form vs History */}
+      {/* Top Mode Bar */}
       <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-primary)]">
-          <ClipboardSignature className="w-4 h-4 text-[var(--accent-primary)]" />
-          <span>{t.nav.siteEntry}</span>
-          {formCode && (
-            <span dir="ltr" className="text-[11px] font-mono text-[var(--text-muted)]">
-              {formCode}
-            </span>
-          )}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+            <ClipboardSignature className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-extrabold text-[var(--text-primary)] truncate">
+                {isFa ? MD1_SITE_ENTRY_TITLE_FA : 'Site Material Entry Minutes'}
+              </h2>
+              <span className="text-[11px] font-mono text-[var(--text-muted)]" dir="ltr">
+                {formCode}
+              </span>
+            </div>
+            <p className="text-[11px] text-[var(--text-muted)] truncate">
+              {isFa
+                ? 'فیلتر و انتخاب ردیف‌های بخش کلی تجهیزات، تعیین کاربرد کالا و صدور صورتجلسه رسمی ورود به کارگاه با همگام‌سازی خودکار'
+                : 'Filter and select General Equipment rows, set goods usage & remarks, and issue official Site Entry Minutes'}
+            </p>
+          </div>
         </div>
+
         <OperationalViewModeTabs
           viewMode={viewMode}
           onChange={setViewMode}
@@ -1377,825 +1315,770 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
         />
       </div>
 
+      {/* CREATE / EDIT 2-STEP WIZARD */}
       {canEdit && viewMode === 'create' && (
-        <form
-          onSubmit={handleSubmit}
-          className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-5"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-sm font-bold">
-              <ClipboardSignature className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>{t.nav.siteEntry}</span>
-              {editingRecord && (
-                <span className="px-2 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning)] text-[11px] font-semibold">
-                  {isFa ? `حالت ویرایش: ${editingRecord.minutesNo}` : `Editing: ${editingRecord.minutesNo}`}
-                </span>
-              )}
+        <div className="space-y-4">
+          {/* Stepper Indicator */}
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setStep(1)}
+                data-testid="site-entry-step-1-tab"
+                className={`h-8 px-3 rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${
+                  step === 1
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                    : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+                }`}
+              >
+                <span className="tabular-nums">{isFa ? '۱' : '1'}</span>
+                <span>{isFa ? 'فیلتر و انتخاب ردیف‌های کلی تجهیزات' : 'Filter & Select General Rows'}</span>
+              </button>
+              <span className="text-[var(--text-muted)]">{isFa ? '←' : '→'}</span>
+              <button
+                type="button"
+                disabled={selectedList.length === 0}
+                onClick={() => selectedList.length > 0 && setStep(2)}
+                data-testid="site-entry-step-2-tab"
+                className={`h-8 px-3 rounded-lg font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-40 ${
+                  step === 2
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                    : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]'
+                }`}
+              >
+                <span className="tabular-nums">{isFa ? '۲' : '2'}</span>
+                <span>{isFa ? 'کاربرد کالا، توضیحات ردیف‌ها و صدور صورتجلسه' : 'Goods Usage, Remarks & Issue'}</span>
+              </button>
             </div>
+
             <div className="flex items-center gap-2">
               {editingRecord && (
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  <span>{t.controls.cancel}</span>
-                </button>
-              )}
-              {formCode && (
-                <span dir="ltr" className="text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">
-                  {formCode}
+                <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 text-xs font-semibold tabular-nums">
+                  {isFa ? `در حال ویرایش: ${editingRecord.minutesNo}` : `Editing: ${editingRecord.minutesNo}`}
                 </span>
               )}
-            </div>
-          </div>
-
-          {/* Packing List Selection (Pick first to auto-fill General & Transit metadata) */}
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="text-xs font-semibold text-[var(--text-secondary)]">
-                {isFa
-                  ? `۱. انتخاب پکینگ لیست‌های وارده (${selectedPackings.length.toLocaleString('fa-IR')} مورد — تکمیل خودکار از بخش ثبت کلی)`
-                  : `1. Select Arriving Packing Lists (${selectedPackings.length} selected — auto-fills from General)`} *
-              </label>
-              <SearchInputWithClear
-                value={packingSearch}
-                onChange={setPackingSearch}
-                placeholder={isFa ? 'فیلتر شماره پکینگ...' : 'Filter packing no...'}
-                className="w-64"
-                inputClassName="h-8 text-xs"
-              />
-            </div>
-
-            <div className="max-h-48 overflow-y-auto p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] space-y-2.5">
-              {priorityPackings.length === 0 && olderPackings.length === 0 ? (
-                <div className="text-center py-4 text-xs text-[var(--text-muted)]">
-                  {t.controls.noData}
-                </div>
-              ) : (
-                <>
-                  {priorityPackings.length > 0 && (
-                    <div className="space-y-1.5">
-                      <div className="text-[11px] font-semibold text-[var(--accent-primary)]">
-                        {isFa
-                          ? `پکینگ‌های اولویت‌دار (ثبت‌شده از امروز تا ۷ روز گذشته — ${priorityPackings.length.toLocaleString('fa-IR')} مورد)`
-                          : `Priority Packings (Last 7 Days — ${priorityPackings.length})`}
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-                        {priorityPackings.slice(0, packingRenderCap).map((pk) => {
-                          const checked = selectedPackings.includes(pk);
-                          const info = packingMetaInfo.get(pk);
-                          const diffDate = Boolean(lockedArrivalDate && info?.arrivalDate && info.arrivalDate !== lockedArrivalDate && !checked);
-                          return (
-                            <label
-                              key={pk}
-                              title={info?.arrivalDate ? `${isFa ? 'تاریخ ورود:' : 'Arrival:'} ${formatDate(info.arrivalDate)}` : ''}
-                              className={`px-2.5 py-2 rounded-lg border text-xs flex flex-col gap-0.5 transition-colors ${
-                                diffDate
-                                  ? 'opacity-45 cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-subtle)]'
-                                  : checked
-                                    ? 'cursor-pointer border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                                    : 'cursor-pointer border-[var(--border-subtle)] bg-[var(--bg-surface)]'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  disabled={diffDate}
-                                  checked={checked}
-                                  onChange={() => togglePacking(pk)}
-                                />
-                                <span dir="ltr" className="truncate tabular-nums">
-                                  {pk}
-                                </span>
-                              </div>
-                              {info?.arrivalDate && (
-                                <span className="text-[10px] text-[var(--text-muted)] ps-5 tabular-nums">
-                                  {formatDate(info.arrivalDate)}
-                                </span>
-                              )}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {olderPackings.length > 0 && (
-                    <div className="space-y-1.5 pt-1 border-t border-[var(--border-subtle)]">
-                      <button
-                        type="button"
-                        onClick={() => setShowOlderPackings((v) => !v)}
-                        className="text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--accent-primary)] flex items-center gap-1"
-                      >
-                        <span>
-                          {showOlderPackings
-                            ? isFa
-                              ? `پنهان‌کردن پکینگ‌های قدیمی‌تر (${olderPackings.length.toLocaleString('fa-IR')})`
-                              : `Hide Older Packings (${olderPackings.length})`
-                            : isFa
-                              ? `نمایش پکینگ‌های قدیمی‌تر (${olderPackings.length.toLocaleString('fa-IR')} مورد)`
-                              : `Show Older Packings (${olderPackings.length})`}
-                        </span>
-                      </button>
-
-                      {(showOlderPackings || Boolean(packingSearch.trim()) || priorityPackings.length === 0) && (
-                        <>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-                            {olderPackings.slice(0, packingRenderCap).map((pk) => {
-                              const checked = selectedPackings.includes(pk);
-                              const info = packingMetaInfo.get(pk);
-                              const diffDate = Boolean(lockedArrivalDate && info?.arrivalDate && info.arrivalDate !== lockedArrivalDate && !checked);
-                              return (
-                                <label
-                                  key={pk}
-                                  title={info?.arrivalDate ? `${isFa ? 'تاریخ ورود:' : 'Arrival:'} ${formatDate(info.arrivalDate)}` : ''}
-                                  className={`px-2.5 py-2 rounded-lg border text-xs flex flex-col gap-0.5 transition-colors ${
-                                    diffDate
-                                      ? 'opacity-45 cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-subtle)]'
-                                      : checked
-                                        ? 'cursor-pointer border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                                        : 'cursor-pointer border-[var(--border-subtle)] bg-[var(--bg-surface)]'
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="checkbox"
-                                      disabled={diffDate}
-                                      checked={checked}
-                                      onChange={() => togglePacking(pk)}
-                                    />
-                                    <span dir="ltr" className="truncate tabular-nums">
-                                      {pk}
-                                    </span>
-                                  </div>
-                                  {info?.arrivalDate && (
-                                    <span className="text-[10px] text-[var(--text-muted)] ps-5 tabular-nums">
-                                      {formatDate(info.arrivalDate)}
-                                    </span>
-                                  )}
-                                </label>
-                              );
-                            })}
-                          </div>
-                          {olderPackings.length > packingRenderCap && (
-                            <div className="pt-2 flex items-center justify-between text-[11px] text-[var(--text-muted)]">
-                              <span>
-                                {isFa
-                                  ? `نمایش ${packingRenderCap.toLocaleString('fa-IR')} از ${olderPackings.length.toLocaleString('fa-IR')} پکینگ — برای یافتن سریع‌تر از کادر فیلتر بالا استفاده کنید.`
-                                  : `Showing ${packingRenderCap} of ${olderPackings.length} packings — search above to narrow down.`}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setPackingRenderCap((c) => c + 60)}
-                                className="px-2.5 py-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--accent-primary)] font-semibold hover:bg-[var(--bg-subtle)]"
-                              >
-                                {isFa ? 'نمایش ۶۰ مورد بیشتر' : 'Show 60 more'}
-                              </button>
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </>
+              {(selectedList.length > 0 || editingRecord) && (
+                <button
+                  type="button"
+                  onClick={resetWizard}
+                  className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1 text-[var(--text-secondary)]"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'شروع مجدد' : 'Reset'}</span>
+                </button>
               )}
             </div>
-            {lockedArrivalDate && (
-              <p className="text-[11px] text-[var(--text-muted)]">
-                {isFa
-                  ? `فقط پکینگ‌های دارای تاریخ ورود یکسان (${formatDate(lockedArrivalDate)}) قابل انتخاب هم‌زمان هستند.`
-                  : `Only packings sharing arrival date ${formatDate(lockedArrivalDate)} can be selected together.`}
-              </p>
-            )}
           </div>
 
-          {/* Row 1: Core Notice Header & Dates */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div>
-              <div className="flex items-center justify-between gap-1 mb-1">
-                <label className="block text-[11px] text-[var(--text-secondary)]">
-                  {isFa ? 'شماره صورتجلسه (Arrival Notice No.)' : 'Arrival Notice No.'} *
-                </label>
-                {!editingRecord && (
+          {/* STEP 1: Filter & Select General Equipment Rows */}
+          {step === 1 && (
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
                   <button
                     type="button"
-                    onClick={() => setMinutesNo(suggestedMinutesNo)}
-                    className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
-                    dir="ltr"
+                    onClick={() => setEntryFilterMode('all')}
+                    className={`h-8 px-3 rounded-lg border font-medium transition-colors ${
+                      entryFilterMode === 'all'
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                    }`}
                   >
-                    {suggestedMinutesNo}
+                    {isFa
+                      ? `همه ردیف‌ها (${generalEntries.length.toLocaleString('fa-IR')})`
+                      : `All Rows (${generalEntries.length})`}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setEntryFilterMode('without_minutes')}
+                    data-testid="site-entry-filter-missing"
+                    className={`h-8 px-3 rounded-lg border font-medium transition-colors ${
+                      entryFilterMode === 'without_minutes'
+                        ? 'border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-300'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                    }`}
+                  >
+                    {isFa
+                      ? `فاقد صورتجلسه ورود (${missingCount.toLocaleString('fa-IR')})`
+                      : `Missing Entry Minutes (${missingCount})`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEntryFilterMode('with_minutes')}
+                    className={`h-8 px-3 rounded-lg border font-medium transition-colors ${
+                      entryFilterMode === 'with_minutes'
+                        ? 'border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:text-emerald-300'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
+                    }`}
+                  >
+                    {isFa
+                      ? `دارای صورتجلسه (${(generalEntries.length - missingCount).toLocaleString('fa-IR')})`
+                      : `Issued (${generalEntries.length - missingCount})`}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={selectedList.length === 0}
+                  onClick={() => setStep(2)}
+                  data-testid="site-entry-next-step-btn"
+                  className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
+                >
+                  <span>
+                    {isFa
+                      ? `ادامه با ${selectedList.length.toLocaleString('fa-IR')} ردیف انتخابی`
+                      : `Continue (${selectedList.length} selected)`}
+                  </span>
+                  {isFa ? <ArrowLeft className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
+                </button>
+              </div>
+
+              <OpiGeneralPicker
+                rows={pickerRows}
+                loading={loading}
+                selectedMap={selectedMap}
+                onToggleRow={handleToggleRow}
+                onToggleBatch={handleToggleBatch}
+                refreshSignal={refreshSignal}
+                testIdPrefix="site-entry-picker"
+                showSiteEntryStatus
+                emptyMessage={
+                  isFa
+                    ? 'هیچ ردیفی در جدول ثبت کلی تجهیزات با این وضعیت یافت نشد.'
+                    : 'No General Equipment rows match this filter.'
+                }
+              />
+            </div>
+          )}
+
+          {/* STEP 2: Goods Usage, Per-Row Remarks, Auto-Filled Metadata & Issue */}
+          {step === 2 && (
+            <form
+              onSubmit={handleSubmit}
+              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-5"
+            >
+              {/* Goods Usage Selector (Required) + Entry Type + Minutes No */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="lg:col-span-2 space-y-2">
+                  <label className="block text-xs font-bold text-[var(--text-primary)]">
+                    {isFa ? 'کاربرد کالا *' : 'Goods Usage *'}
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {SITE_ENTRY_GOODS_USAGE_OPTIONS.map((opt) => {
+                      const active = goodsUsage === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          data-testid={`site-entry-usage-btn-${opt.value}`}
+                          onClick={() => setGoodsUsage(opt.value)}
+                          className={`p-3 rounded-xl border text-start transition-all flex items-center justify-between gap-2 ${
+                            active
+                              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]'
+                              : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-primary)] hover:border-[var(--border-strong)]'
+                          }`}
+                        >
+                          <span className="text-xs font-bold">
+                            {isFa ? opt.labelFa : opt.labelEn}
+                          </span>
+                          <span
+                            className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                              active
+                                ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]'
+                                : 'border-[var(--border-strong)]'
+                            }`}
+                          >
+                            {active && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-xs font-bold text-[var(--text-primary)]">
+                      {isFa ? 'شماره صورتجلسه ورود *' : 'Site Entry Minutes No. *'}
+                    </label>
+                    {!editingRecord && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMinutesNo(suggestedMinutesNo);
+                          setMinutesNoTouched(false);
+                        }}
+                        className="text-[10px] font-mono text-[var(--accent-primary)] hover:underline tabular-nums"
+                        dir="ltr"
+                      >
+                        {suggestedMinutesNo}
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    dir="ltr"
+                    data-testid="site-entry-minutes-no-input"
+                    value={minutesNo}
+                    onChange={(e) => {
+                      setMinutesNo(e.target.value);
+                      setMinutesNoTouched(true);
+                    }}
+                    placeholder={suggestedMinutesNo}
+                    className="w-full h-10 px-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-sm font-mono tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                  <div className="flex items-center gap-3 text-xs pt-0.5">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="entryType"
+                        checked={entryType === 'permanent'}
+                        onChange={() => setEntryType('permanent')}
+                      />
+                      <span>{isFa ? 'ورود دائم' : 'Permanent'}</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="entryType"
+                        checked={entryType === 'temporary'}
+                        onChange={() => setEntryType('temporary')}
+                      />
+                      <span>{isFa ? 'ورود موقت' : 'Temporary'}</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Auto-Filled Summary Card + Collapsible Overrides */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-3.5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-[var(--text-primary)]">
+                    {isFa
+                      ? 'مشخصات سربرگ و حمل‌ونقل (فراخوانی خودکار از بخش کلی تجهیزات و پروژه)'
+                      : 'Header & Transport Details (Auto-filled from General Equipment & Project)'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowHeaderOverrides((v) => !v)}
+                    className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
+                  >
+                    {showHeaderOverrides ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    <span>{isFa ? 'ویرایش فیلدهای سربرگ (اختیاری)' : 'Edit Header Fields (Optional)'}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                  <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <div className="text-[var(--text-muted)]">{isFa ? 'پروژه' : 'Project'}</div>
+                    <div className="font-semibold mt-0.5 truncate">{autoHeader.headerProjectTitle || '—'}</div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <div className="text-[var(--text-muted)]">{isFa ? 'تاریخ ورود' : 'Arrival Date'}</div>
+                    <div className="font-semibold mt-0.5 tabular-nums" dir="ltr">
+                      {effectiveArrivalDate ? formatDate(effectiveArrivalDate) : '—'}
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <div className="text-[var(--text-muted)]">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Requester'}</div>
+                    <div className="font-semibold mt-0.5 truncate">{effectiveRequester || '—'}</div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <div className="text-[var(--text-muted)]">{isFa ? 'شماره قرارداد' : 'Contract No.'}</div>
+                    <div className="font-semibold mt-0.5 tabular-nums" dir="ltr">{effectiveContractNo || '—'}</div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <div className="text-[var(--text-muted)]">{isFa ? 'جزیره / سیستم / واحد' : 'Island / System / Unit'}</div>
+                    <div className="font-semibold mt-0.5 truncate">
+                      {[effectiveIsland, effectiveSystem, effectiveUnit].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <div className="text-[var(--text-muted)]">{isFa ? 'مدل وسیله نقلیه' : 'Vehicle Model'}</div>
+                    <div className="font-semibold mt-0.5 truncate">{effectiveVehicleModel || '—'}</div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <div className="text-[var(--text-muted)]">{isFa ? 'پلاک / بارنامه' : 'Plate / Waybill'}</div>
+                    <div className="font-semibold mt-0.5 truncate tabular-nums">
+                      {[effectiveVehicleNo, effectiveWaybillNo].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <div className="text-[var(--text-muted)]">{isFa ? 'نام راننده' : 'Driver'}</div>
+                    <div className="font-semibold mt-0.5 truncate">{effectiveDriverName || '—'}</div>
+                  </div>
+                </div>
+
+                {showHeaderOverrides && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-[var(--border-subtle)] text-xs">
+                    <JalaliDateInput
+                      label={isFa ? 'تاریخ ورود' : 'Arrival Date'}
+                      value={effectiveArrivalDate}
+                      onChange={setArrivalDateOverride}
+                    />
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'نام پیمانکار / درخواست‌کننده' : 'Requester / Contractor'}
+                      </label>
+                      <input
+                        type="text"
+                        value={requesterOverride}
+                        onChange={(e) => setRequesterOverride(e.target.value)}
+                        placeholder={autoHeader.requester || ''}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'شماره قرارداد' : 'Contract No.'}
+                      </label>
+                      <input
+                        type="text"
+                        dir="ltr"
+                        value={contractNoOverride}
+                        onChange={(e) => setContractNoOverride(e.target.value)}
+                        placeholder={autoHeader.contractNo || ''}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'مدل وسیله نقلیه' : 'Vehicle Model'}
+                      </label>
+                      <input
+                        type="text"
+                        value={vehicleModelOverride}
+                        onChange={(e) => setVehicleModelOverride(e.target.value)}
+                        placeholder={autoHeader.vehicleModel || ''}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'شماره پلاک' : 'Vehicle Plate'}
+                      </label>
+                      <input
+                        type="text"
+                        value={vehicleNoOverride}
+                        onChange={(e) => setVehicleNoOverride(e.target.value)}
+                        placeholder={autoHeader.vehicleNo || ''}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'شماره بارنامه' : 'Waybill No.'}
+                      </label>
+                      <input
+                        type="text"
+                        dir="ltr"
+                        value={waybillNoOverride}
+                        onChange={(e) => setWaybillNoOverride(e.target.value)}
+                        placeholder={autoHeader.waybillNo || ''}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'نام راننده' : 'Driver Name'}
+                      </label>
+                      <input
+                        type="text"
+                        value={driverNameOverride}
+                        onChange={(e) => setDriverNameOverride(e.target.value)}
+                        placeholder={autoHeader.driverName || ''}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        Release Note No.
+                      </label>
+                      <input
+                        type="text"
+                        dir="ltr"
+                        value={releaseNoteOverride}
+                        onChange={(e) => setReleaseNoteOverride(e.target.value)}
+                        placeholder={autoHeader.releaseNoteNo || ''}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'مبدا' : 'Origin'}
+                      </label>
+                      <input
+                        type="text"
+                        value={originOverride}
+                        onChange={(e) => setOriginOverride(e.target.value)}
+                        placeholder={autoHeader.origin || ''}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'شرکت حمل کننده' : 'Carrier Company'}
+                      </label>
+                      <input
+                        type="text"
+                        value={carrierCompany}
+                        onChange={(e) => setCarrierCompany(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'محل تردد / تخلیه و بارگیری' : 'Unloading Location'}
+                      </label>
+                      <input
+                        type="text"
+                        value={trafficLocation}
+                        onChange={(e) => setTrafficLocation(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                        {isFa ? 'توضیحات کلی فرم' : 'General Form Notes'}
+                      </label>
+                      <input
+                        type="text"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
-              <input
-                type="text"
-                required
-                dir={isFa && !minutesNo ? 'rtl' : 'ltr'}
-                value={minutesNo}
-                onChange={(e) => setMinutesNo(e.target.value)}
-                placeholder={suggestedMinutesNo}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !minutesNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
 
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                Release Note No.
-              </label>
-              <input
-                type="text"
-                dir={!releaseNoteNo ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={releaseNoteNo}
-                onChange={(e) => setReleaseNoteNo(e.target.value)}
-                placeholder="تأیید صورتجلسه‌ی ورود"
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
+              {/* Selected Rows Table with Per-Row Remarks Input */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-xs font-bold text-[var(--text-primary)]">
+                    {isFa
+                      ? `اقلام انتخاب‌شده (${builtLineItems.length.toLocaleString('fa-IR')} ردیف) — توضیحات اختیاری هر ردیف`
+                      : `Selected Rows (${builtLineItems.length}) — Optional Per-Row Remarks`}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setStep(1)}
+                    className="text-xs font-semibold text-[var(--accent-primary)] hover:underline"
+                  >
+                    {isFa ? 'تغییر انتخاب ردیف‌ها' : 'Modify Selection'}
+                  </button>
+                </div>
 
-            <div>
-              <JalaliDateInput
-                label={`${isFa ? 'تاریخ صورتجلسه' : 'Minutes Date'} *`}
-                disabled={Boolean(lockedArrivalDate)}
-                value={lockedArrivalDate || date}
-                onChange={setDate}
-              />
-              {lockedArrivalDate && (
-                <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
-                  {isFa
-                    ? 'تاریخ صورتجلسه بر اساس تاریخ ورود پکینگ قفل شده است.'
-                    : 'Locked to the selected packing arrival date.'}
-                </p>
-              )}
-            </div>
-
-            <JalaliDateInput
-              label={isFa ? 'تاریخ ورود به کارگاه' : 'Arrival Date'}
-              disabled={Boolean(lockedArrivalDate)}
-              value={lockedArrivalDate || arrivalDate}
-              onChange={setArrivalDate}
-            />
-          </div>
-
-          {/* Row 2: Entry Type, Goods Usage, Condition (Project & Contract inherited automatically) */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'نوع ورود' : 'Entry Type'}
-              </label>
-              <select
-                value={entryType}
-                onChange={(e) => setEntryType(e.target.value as 'permanent' | 'temporary')}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
-              >
-                <option value="permanent">{isFa ? 'ورود دائم' : 'Permanent Entry'}</option>
-                <option value="temporary">{isFa ? 'ورود موقت' : 'Temporary Entry'}</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'کاربرد کالا' : 'Goods Usage'}
-              </label>
-              <select
-                value={goodsUsage}
-                onChange={(e) =>
-                  setGoodsUsage(e.target.value as 'project' | 'site_equip' | 'general')
-                }
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
-              >
-                <option value="project">{isFa ? 'کالای پروژه' : 'Project Goods'}</option>
-                <option value="site_equip">{isFa ? 'کالای تجهیز کارگاه' : 'Site Equipment'}</option>
-                <option value="general">{isFa ? 'مصرف عمومی' : 'General Consumption'}</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'وضعیت ظاهری بسته‌بندی' : 'Packaging Condition'} *
-              </label>
-              <select
-                value={conditionStatus}
-                onChange={(e) => setConditionStatus(e.target.value as SiteEntryMinutesRecord['conditionStatus'])}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium"
-              >
-                <option value="healthy">{conditionLabel('healthy')}</option>
-                <option value="shortage_suspected">{conditionLabel('shortage_suspected')}</option>
-                <option value="damaged_apparent">{conditionLabel('damaged_apparent')}</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Row 3: Contractor, Unit, System, Island, Origin */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'نام پیمانکار / درخواست‌کننده' : 'Contractor / Requester'}
-              </label>
-              <input
-                type="text"
-                dir={!supplier ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.unit}
-              </label>
-              <input
-                type="text"
-                dir={!unit ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={unit}
-                onChange={(e) => setUnit(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.system}
-              </label>
-              <input
-                type="text"
-                dir={!system ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={system}
-                onChange={(e) => setSystem(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.island}
-              </label>
-              <input
-                type="text"
-                dir={!island ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={island}
-                onChange={(e) => setIsland(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'مبدا' : 'Origin'}
-              </label>
-              <input
-                type="text"
-                dir={!origin ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={origin}
-                onChange={(e) => setOrigin(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-          </div>
-
-          {/* Row 4: Carrier, Traffic Location, Vehicle Details */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شرکت حمل‌کننده' : 'Carrier Company'}
-              </label>
-              <input
-                type="text"
-                dir={!carrierCompany ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={carrierCompany}
-                onChange={(e) => setCarrierCompany(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'محل تردد / تخلیه و بارگیری' : 'Unloading Location'}
-              </label>
-              <input
-                type="text"
-                dir={!trafficLocation ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={trafficLocation}
-                onChange={(e) => setTrafficLocation(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'نوع وسیله نقلیه' : 'Vehicle Type'}
-              </label>
-              <input
-                type="text"
-                dir={!vehicleType ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={vehicleType}
-                onChange={(e) => setVehicleType(e.target.value)}
-                placeholder={isFa ? 'تریلی / کامیون / ...' : 'Truck / Trailer'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {isFa ? 'شماره پلاک خودرو' : t.headers.vehicleNo}
-              </label>
-              <input
-                type="text"
-                dir={!vehicleNo ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={vehicleNo}
-                onChange={(e) => setVehicleNo(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.billOfLadingNo}
-              </label>
-              <input
-                type="text"
-                dir={isFa && !waybillNo ? 'rtl' : 'ltr'}
-                value={waybillNo}
-                onChange={(e) => setWaybillNo(e.target.value)}
-                className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums focus:outline-none focus:border-[var(--accent-primary)] ${
-                  isFa && !waybillNo ? 'text-right' : 'text-left'
-                }`}
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.driverName}
-              </label>
-              <input
-                type="text"
-                dir={!driverName ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={driverName}
-                onChange={(e) => setDriverName(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-          </div>
-
-          {/* Editable Line Items Preview for the Form Table */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-[var(--text-secondary)]">
-                {isFa ? 'اقلام جدول صورتجلسه (قابل ویرایش پیش از چاپ)' : 'Form Table Line Items'}
-              </span>
-              <button
-                type="button"
-                onClick={addBlankRow}
-                className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>{isFa ? 'افزودن ردیف' : 'Add Row'}</span>
-              </button>
-            </div>
-
-            {items.length > 0 && (
-              <div className="rounded-lg border border-[var(--border-subtle)] overflow-x-clip">
-                <StickyTableWrapper maxHeightClass="max-h-80">
-                  <table className="w-full text-[11px]">
-                  <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-                    <tr>
-                      <th className="py-2 px-2 w-10">#</th>
-                      <th className="py-2 px-2 min-w-[160px]">{isFa ? 'شرح' : 'Description'}</th>
-                      <th className="py-2 px-2 min-w-[100px]">{isFa ? 'شماره لیست بسته' : 'Packing List'}</th>
-                      <th className="py-2 px-2 min-w-[85px]">{isFa ? 'شماره بسته' : 'Package No.'}</th>
-                      <th className="py-2 px-2 min-w-[90px]">{isFa ? 'ابعاد' : 'Dimensions'}</th>
-                      <th className="py-2 px-2 w-16">{isFa ? 'تعداد' : 'Qty'}</th>
-                      <th className="py-2 px-2 w-20">{isFa ? 'واحد' : 'Unit'}</th>
-                      <th className="py-2 px-2 w-20">{isFa ? 'وزن خالص' : 'Net Wt'}</th>
-                      <th className="py-2 px-2 w-20">{isFa ? 'وزن ناخالص' : 'Gross Wt'}</th>
-                      <th className="py-2 px-2 min-w-[110px]">{isFa ? 'توضیحات' : 'Remarks'}</th>
-                      <th className="py-2 px-2 w-10" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {items.map((it, idx) => (
-                      <tr key={idx}>
-                        <td className="p-1.5 tabular-nums">{idx + 1}</td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            value={it.description}
-                            onChange={(e) => updateItemField(idx, 'description', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            dir="ltr"
-                            value={it.packingListNo}
-                            onChange={(e) => updateItemField(idx, 'packingListNo', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            dir="ltr"
-                            value={it.packageNo}
-                            onChange={(e) => updateItemField(idx, 'packageNo', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            dir="ltr"
-                            value={it.dimensions}
-                            onChange={(e) => updateItemField(idx, 'dimensions', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            dir="ltr"
-                            value={it.qty}
-                            onChange={(e) => updateItemField(idx, 'qty', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            value={it.unit}
-                            onChange={(e) => updateItemField(idx, 'unit', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            dir="ltr"
-                            value={it.netWeight}
-                            onChange={(e) => updateItemField(idx, 'netWeight', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            dir="ltr"
-                            value={it.grossWeight}
-                            onChange={(e) => updateItemField(idx, 'grossWeight', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px] tabular-nums"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="text"
-                            value={it.remarks}
-                            onChange={(e) => updateItemField(idx, 'remarks', e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[11px]"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <button
-                            type="button"
-                            onClick={() => removeItemRow(idx)}
-                            className="p-1 rounded text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]"
-                            aria-label="Remove row"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
+                <div className="rounded-xl border border-[var(--border-subtle)] overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
+                      <tr>
+                        <th className="py-2 px-2.5 text-center w-10">#</th>
+                        <th className="py-2 px-2.5 text-start">{isFa ? 'شرح' : 'Description'}</th>
+                        <th className="py-2 px-2.5 text-start">{isFa ? 'شماره لیست بسته' : 'Packing List'}</th>
+                        <th className="py-2 px-2.5 text-start">{isFa ? 'شماره بسته' : 'Package No.'}</th>
+                        <th className="py-2 px-2.5 text-center">{isFa ? 'ابعاد' : 'Dimensions'}</th>
+                        <th className="py-2 px-2.5 text-center">{isFa ? 'تعداد' : 'Qty'}</th>
+                        <th className="py-2 px-2.5 text-center">{isFa ? 'واحد' : 'Unit'}</th>
+                        <th className="py-2 px-2.5 text-center">{isFa ? 'خالص / ناخالص' : 'Net / Gross'}</th>
+                        <th className="py-2 px-2.5 text-start min-w-[210px]">{isFa ? 'توضیحات (اختیاری)' : 'Remarks (Optional)'}</th>
                       </tr>
-                    ))}
-                  </tbody>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-subtle)]">
+                      {builtLineItems.map((it, idx) => (
+                        <tr key={it.generalId || idx}>
+                          <td className="py-2 px-2.5 text-center tabular-nums">{idx + 1}</td>
+                          <td className="py-2 px-2.5 font-medium max-w-[220px] truncate" title={it.description}>
+                            {it.description || '—'}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono tabular-nums" dir="ltr">
+                            {it.packingListNo || '—'}
+                          </td>
+                          <td className="py-2 px-2.5 font-mono tabular-nums" dir="ltr">
+                            {it.packageNo || '—'}
+                          </td>
+                          <td className="py-2 px-2.5 text-center tabular-nums" dir="ltr">
+                            {it.dimensions || '—'}
+                          </td>
+                          <td className="py-2 px-2.5 text-center font-bold tabular-nums">{it.qty || '1'}</td>
+                          <td className="py-2 px-2.5 text-center">{it.unit || '—'}</td>
+                          <td className="py-2 px-2.5 text-center tabular-nums" dir="ltr">
+                            {[it.netWeight || '—', it.grossWeight || '—'].join(' / ')}
+                          </td>
+                          <td className="py-1.5 px-2.5">
+                            <input
+                              type="text"
+                              data-testid={`site-entry-remark-${idx}`}
+                              value={it.generalId ? remarksMap[it.generalId] || '' : it.remarks}
+                              onChange={(e) => {
+                                const gid = it.generalId;
+                                if (!gid) return;
+                                setRemarksMap((prev) => ({ ...prev, [gid]: e.target.value }));
+                              }}
+                              placeholder={isFa ? 'توضیحات این ردیف...' : 'Row remark...'}
+                              className="w-full h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs focus:outline-none focus:border-[var(--accent-primary)]"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
-                </StickyTableWrapper>
+                </div>
               </div>
-            )}
-          </div>
 
-          {/* Notes & Submit */}
-          <div className="space-y-3">
-            <div>
-              <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
-                {t.headers.notes}
-              </label>
-              <input
-                type="text"
-                dir={!notes ? (isFa ? 'rtl' : 'ltr') : 'auto'}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder={isFa ? 'توضیحات تکمیلی صورتجلسه (اختیاری)...' : 'Additional minutes notes (optional)...'}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-            <p className="text-[11px] text-[var(--text-muted)]">
-              {isFa
-                ? 'با انتخاب هر پکینگ لیست، مشخصات حمل، پیمانکار، مبدا، سیستم/جزیره و اقلام به‌صورت خودکار از «ثبت کلی تجهیزات» خوانده می‌شوند. بخش‌های امضاء روی نسخه چاپی به‌صورت دستی امضاء و ممهور می‌گردند.'
-                : 'Selecting a Packing List automatically loads shipment, contractor, origin, system/island, and package items from General Registry. Signature blocks remain blank on the printed sheet for physical signing.'}
-            </p>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            {editingRecord && (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium"
-              >
-                {t.controls.cancel}
-              </button>
-            )}
-            <button
-              type="submit"
-              className="h-9 px-5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-2"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>
-                {editingRecord
-                  ? isFa
-                    ? 'ذخیره ویرایش صورتجلسه و نمایش فرم'
-                    : 'Save Changes & Preview'
-                  : isFa
-                    ? 'ثبت صورتجلسه ورود و نمایش فرم چاپی'
-                    : 'Save Minutes & Preview Form'}
-              </span>
-            </button>
-          </div>
-        </form>
+              {/* Action Footer */}
+              <div className="pt-3 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+                >
+                  {isFa ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
+                  <span>{isFa ? 'بازگشت به انتخاب ردیف‌ها' : 'Back to Selection'}</span>
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  data-testid="site-entry-submit-btn"
+                  className="h-10 px-5 rounded-xl bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-bold flex items-center gap-2 disabled:opacity-50"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>
+                    {editingRecord
+                      ? isFa
+                        ? 'ذخیره تغییرات و مشاهده فرم چاپ'
+                        : 'Save Changes & Print Preview'
+                      : isFa
+                        ? 'صدور صورتجلسه ورود و چاپ متریال'
+                        : 'Issue Site Entry Minutes & Preview'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       )}
 
-      {/* Recorded History */}
-      {(viewMode === 'history' || !canEdit) && (
-      <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-x-clip">
-        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-bold">
-            {isFa ? 'سوابق صورتجلسه‌های ورود کالا و تجهیزات به کارگاه' : 'Recorded Site Entry Minutes'}
-          </h3>
-          <div className="flex items-center gap-2">
+      {/* HISTORY VIEW */}
+      {viewMode === 'history' && (
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+          <div className="p-4 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+            <div className="w-full sm:w-80">
+              <SearchInputWithClear
+                value={historySearch}
+                onChange={setHistorySearch}
+                placeholder={isFa ? 'جستجو در صورتجلسات صادرشده...' : 'Search issued Site Entry Minutes...'}
+              />
+            </div>
             <button
               type="button"
               onClick={() => setPrintReportOpen(true)}
-              className="h-8 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
+              className="h-9 px-3 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1.5"
             >
-              <Printer className="w-3.5 h-3.5" />
-              <span>{t.controls.printReport}</span>
+              <Printer className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+              <span>{isFa ? 'چاپ فهرست صورتجلسات' : 'Print Minutes List'}</span>
             </button>
           </div>
-        </div>
-        <StickyTableWrapper>
-          <table className="w-full text-xs">
-            <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
-              <tr>
-                <th className="py-2.5 px-4">{isFa ? 'شماره صورتجلسه / AN' : 'Arrival Notice No.'}</th>
-                <th className="py-2.5 px-4">Release Note</th>
-                <th className="py-2.5 px-4">{isFa ? 'تاریخ' : 'Date'}</th>
-                <th className="py-2.5 px-4">{t.headers.packingListNo}</th>
-                <th className="py-2.5 px-4">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Contractor'}</th>
-                <th className="py-2.5 px-4">{t.headers.billOfLadingNo}</th>
-                <th className="py-2.5 px-4">{isFa ? 'وضعیت ظاهری' : 'Condition'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'نسخه اسکن امضاشده' : 'Signed Scan'}</th>
-                <th className="py-2.5 px-4">{isFa ? 'عملیات' : 'Actions'}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border-subtle)]">
-              {loading ? (
+
+          <StickyTableWrapper>
+            <table className="w-full text-xs">
+              <thead className="bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-[var(--text-muted)]">
-                    {t.controls.loading}
-                  </td>
+                  <th className="py-2.5 px-3 text-start">{isFa ? 'شماره صورتجلسه' : 'Minutes No.'}</th>
+                  <th className="py-2.5 px-3 text-start">{isFa ? 'تاریخ ورود' : 'Arrival Date'}</th>
+                  <th className="py-2.5 px-3 text-start">{isFa ? 'پیمانکار / درخواست‌کننده' : 'Requester'}</th>
+                  <th className="py-2.5 px-3 text-start">{isFa ? 'کاربرد کالا' : 'Usage'}</th>
+                  <th className="py-2.5 px-3 text-start">{isFa ? 'وسیله نقلیه / پلاک' : 'Vehicle'}</th>
+                  <th className="py-2.5 px-3 text-start">{isFa ? 'پکینگ لیست‌ها' : 'Packings'}</th>
+                  <th className="py-2.5 px-3 text-center">{isFa ? 'ردیف‌ها' : 'Rows'}</th>
+                  <th className="py-2.5 px-3 text-end">{isFa ? 'عملیات' : 'Actions'}</th>
                 </tr>
-              ) : minutesList.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="py-8 text-center text-[var(--text-muted)]">
-                    {t.controls.noData}
-                  </td>
-                </tr>
-              ) : (
-                minutesPagination.pageItems.map((rec) => (
-                  <tr
-                    key={rec.id}
-                    onClick={() => setScanTarget(rec)}
-                    title={isFa ? 'کلیک برای مشاهده یا بارگذاری اسکن امضاشده فرم' : 'Click to view or upload signed scan'}
-                    className="hover:bg-[var(--bg-subtle)]/50 cursor-pointer"
-                  >
-                    <td className="py-2.5 px-4 font-semibold tabular-nums" dir="ltr">{rec.minutesNo}</td>
-                    <td className="py-2.5 px-4 tabular-nums" dir="ltr">{rec.releaseNoteNo || '-'}</td>
-                    <td className="py-2.5 px-4 tabular-nums" dir="ltr">{formatDate(rec.date)}</td>
-                    <td className="py-2.5 px-4 bidi-plaintext" dir="ltr">{rec.packingListNos.join(', ')}</td>
-                    <td className="py-2.5 px-4 bidi-plaintext">{rec.supplier || '-'}</td>
-                    <td className="py-2.5 px-4 tabular-nums" dir="ltr">{rec.waybillNo || '-'}</td>
-                    <td className="py-2.5 px-4">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
-                          rec.conditionStatus === 'healthy'
-                            ? 'bg-[var(--status-success-bg)] text-[var(--status-success)]'
-                            : rec.conditionStatus === 'shortage_suspected'
-                              ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
-                              : 'bg-[var(--status-danger-bg)] text-[var(--status-danger)]'
-                        }`}
-                      >
-                        {conditionLabel(rec.conditionStatus)}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-4 whitespace-nowrap">
-                      <SignedScanRowButton
-                        signedScan={rec.signedScan}
-                        recordLabel={rec.minutesNo}
-                        onClick={() => setScanTarget(rec)}
-                      />
-                    </td>
-                    <td className="py-2.5 px-4" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setPrintSheet(rec)}
-                          className="h-7 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          <span>{t.controls.print}</span>
-                        </button>
-                        {canEdit && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => startEdit(rec)}
-                              className="h-7 px-2 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[11px] font-medium inline-flex items-center gap-1"
-                              title={t.controls.edit}
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                              <span>{t.controls.edit}</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setDeleteTarget(rec)}
-                              className="h-7 px-2 rounded-lg border border-[var(--border-subtle)] text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] text-[11px] font-medium inline-flex items-center gap-1"
-                              title={t.controls.delete}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>{t.controls.delete}</span>
-                            </button>
-                          </>
-                        )}
-                      </div>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-subtle)]">
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} className="py-10 text-center text-[var(--text-muted)]">
+                      {t.controls.loading}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </StickyTableWrapper>
-        <TablePaginationBar
-          page={minutesPagination.page}
-          totalPages={minutesPagination.totalPages}
-          total={minutesPagination.total}
-          pageSize={minutesPagination.pageSize}
-          onPageChange={minutesPagination.setPage}
-          onPageSizeChange={minutesPagination.setPageSize}
-          lang={prefs.language}
-        />
-      </div>
+                ) : minutesPagination.pageItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-10 text-center text-[var(--text-muted)]">
+                      {isFa ? 'هنوز صورتجلسه ورودی صادر نشده است.' : 'No Site Entry Minutes issued yet.'}
+                    </td>
+                  </tr>
+                ) : (
+                  minutesPagination.pageItems.map((rec) => {
+                    const usageOpt = SITE_ENTRY_GOODS_USAGE_OPTIONS.find((o) => o.value === rec.goodsUsage);
+                    return (
+                      <tr key={rec.id} className="hover:bg-[var(--bg-subtle)]/50">
+                        <td className="py-2.5 px-3 font-mono font-bold tabular-nums" dir="ltr">
+                          {rec.minutesNo}
+                        </td>
+                        <td className="py-2.5 px-3 tabular-nums" dir="ltr">
+                          {formatDate(rec.arrivalDate || rec.date)}
+                        </td>
+                        <td className="py-2.5 px-3 bidi-plaintext max-w-[180px] truncate">
+                          {rec.supplier || '—'}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {usageOpt ? (isFa ? usageOpt.labelFa : usageOpt.labelEn) : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 bidi-plaintext max-w-[190px] truncate">
+                          {[rec.vehicleType, rec.vehicleNo].filter(Boolean).join(' · ') || '—'}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono tabular-nums max-w-[160px] truncate" dir="ltr">
+                          {(rec.packingListNos || []).join(', ') || '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-center tabular-nums font-semibold">
+                          {(rec.items || []).length}
+                        </td>
+                        <td className="py-2.5 px-3 text-end whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setPrintSheet(rec)}
+                              title={isFa ? 'مشاهده و چاپ صورتجلسه' : 'View & Print'}
+                              aria-label={isFa ? 'چاپ' : 'Print'}
+                              data-testid={`site-entry-print-${rec.id}`}
+                              className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--accent-primary)]"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                            <SignedScanRowButton
+                              signedScan={rec.signedScan}
+                              onClick={() => setScanTarget(rec)}
+                            />
+                            {canEdit && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => startEdit(rec)}
+                                  title={t.controls.edit}
+                                  aria-label={t.controls.edit}
+                                  data-testid={`site-entry-edit-${rec.id}`}
+                                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteTarget(rec)}
+                                  title={t.controls.delete}
+                                  aria-label={t.controls.delete}
+                                  data-testid={`site-entry-delete-${rec.id}`}
+                                  className="p-1.5 rounded-lg border border-[var(--status-danger)]/30 hover:bg-[var(--status-danger-bg)] text-[var(--status-danger)]"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </StickyTableWrapper>
+
+          <TablePaginationBar
+            page={minutesPagination.page}
+            totalPages={minutesPagination.totalPages}
+            total={minutesPagination.total}
+            pageSize={minutesPagination.pageSize}
+            onPageChange={minutesPagination.setPage}
+            onPageSizeChange={minutesPagination.setPageSize}
+            lang={prefs.language}
+          />
+        </div>
       )}
 
-      {/* Printable Official MD1EX-FQP02/15-01 Preview Modal */}
+      {/* Print Preview Modal with Post-Print Undo / Redo */}
       {printSheet && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
-          <div className="w-full max-w-4xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5 space-y-4 max-h-[94vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 shrink-0">
-              <div>
-                <h3 className="text-sm font-bold">{t.nav.siteEntry}</h3>
-                <p className="text-[11px] text-[var(--text-muted)]" dir="ltr">
-                  {formCode ? `${formCode} · ` : ''}{printSheet.minutesNo}
-                </p>
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 sm:p-5 print:hidden"
+          onClick={() => setPrintSheet(null)}
+          data-testid="site-entry-print-preview-modal"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-5xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-2xl max-h-[94vh] flex flex-col overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold">
+                <ClipboardSignature className="w-4 h-4 text-[var(--accent-primary)]" />
+                <span>{isFa ? 'پیش‌نمایش و چاپ صورتجلسه ورود کالا به کارگاه' : 'Site Entry Minutes Print Preview'}</span>
+                <span className="font-mono text-[var(--accent-primary)] tabular-nums" dir="ltr">
+                  {printSheet.minutesNo}
+                </span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {canEdit && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!canUndo}
+                      onClick={() => void handlePreviewUndo()}
+                      data-testid="site-entry-preview-undo-btn"
+                      title={isFa ? 'واگرد (Undo) حتی پس از چاپ' : 'Undo (even after print)'}
+                      className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1 disabled:opacity-40"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'واگرد' : 'Undo'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canRedo}
+                      onClick={() => void handlePreviewRedo()}
+                      data-testid="site-entry-preview-redo-btn"
+                      title={isFa ? 'انجام مجدد (Redo)' : 'Redo'}
+                      className="h-8 px-2.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)] text-xs font-medium flex items-center gap-1 disabled:opacity-40"
+                    >
+                      <Redo2 className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'انجام مجدد' : 'Redo'}</span>
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => triggerAppPrint()}
+                  data-testid="site-entry-preview-print-btn"
                   className="h-8 px-3.5 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'چاپ فرم (A4)' : 'Print Form (A4)'}</span>
+                  <span>{isFa ? 'چاپ متریال' : 'Print'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPrintSheet(null)}
-                  className="p-1.5 rounded-lg border border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]"
+                  aria-label={isFa ? 'بستن' : 'Close'}
+                  title={isFa ? 'بستن' : 'Close'}
+                  className="p-1.5 rounded-lg hover:bg-[var(--bg-subtle)] text-[var(--text-muted)]"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="overflow-y-auto flex-1 bg-neutral-200/70 dark:bg-neutral-900/60 p-4 rounded-xl">
-              <div className="mx-auto w-full max-w-[196mm] bg-white p-5 shadow-lg rounded-sm">
+            {printRecordWasUndone && (
+              <div
+                data-testid="site-entry-preview-undone-banner"
+                className="px-4 py-2.5 bg-amber-500/15 border-b border-amber-500/35 text-xs font-semibold text-amber-800 dark:text-amber-300"
+              >
+                {isFa
+                  ? 'صدور این صورتجلسه با دکمه واگرد (Undo) لغو و ستون «شماره صورتجلسه ورود انبار» به حالت قبل بازگردانده شد. برای بازگرداندن آن، روی «انجام مجدد (Redo)» کلیک کنید.'
+                  : 'This Site Entry Minutes was undone and General Equipment was restored. Click Redo to reapply it.'}
+              </div>
+            )}
+
+            <div className="flex-1 overflow-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-900">
+              <div className="max-w-[820px] mx-auto bg-white p-5 rounded-xl shadow-md">
                 <OfficialSiteEntrySheet
                   record={printSheet}
-                  generalEntries={data?.generalEntries || []}
+                  generalEntries={generalEntries}
                   formatDate={formatDate}
                 />
               </div>
@@ -2204,27 +2087,7 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
         </div>
       )}
 
-      <PrintReportModal
-        open={printReportOpen}
-        onClose={() => setPrintReportOpen(false)}
-        title={t.nav.siteEntry}
-        columns={reportColumns}
-        rows={data?.minutes || []}
-      />
-
-      <ConfirmActionModal
-        open={Boolean(deleteTarget)}
-        title={isFa ? 'حذف صورتجلسه ورود به کارگاه' : 'Delete Site Entry Minutes'}
-        itemLabel={deleteTarget ? `${deleteTarget.minutesNo} · ${deleteTarget.packingListNos.join(', ')}` : ''}
-        message={
-          isFa
-            ? 'آیا از حذف این صورتجلسه اطمینان دارید؟ این عملیات قابل بازگشت نیست.'
-            : 'Are you sure you want to delete this site entry minutes record? This action cannot be undone.'
-        }
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setDeleteTarget(null)}
-      />
-
+      {/* Signed Scan Modal */}
       {scanTarget && (
         <SignedScanModal
           open={Boolean(scanTarget)}
@@ -2233,21 +2096,36 @@ export const SiteEntryMinutesView: React.FC<SiteEntryMinutesViewProps> = ({
           recordLabel={scanTarget.minutesNo}
           signedScan={scanTarget.signedScan}
           onClose={() => setScanTarget(null)}
-          onUpdated={(nextScan) => {
-            setData((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    minutes: prev.minutes.map((m) =>
-                      m.id === scanTarget.id ? { ...m, signedScan: nextScan } : m,
-                    ),
-                  }
-                : prev,
-            );
-            setScanTarget((prev) => (prev ? { ...prev, signedScan: nextScan } : null));
+          onUpdated={() => {
+            void loadData();
           }}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title={isFa ? 'حذف صورتجلسه ورود کالا به کارگاه' : 'Delete Site Entry Minutes'}
+        message={
+          isFa
+            ? `آیا از حذف صورتجلسه ورود شماره «${deleteTarget?.minutesNo || ''}» اطمینان دارید؟ شماره این صورتجلسه از ستون «شماره صورتجلسه ورود انبار» در جدول کلی تجهیزات پاک خواهد شد.`
+            : `Delete Site Entry Minutes "${deleteTarget?.minutesNo || ''}"? Its number will be removed from General Equipment.`
+        }
+        confirmLabel={isFa ? 'بله، حذف شود' : 'Delete'}
+        danger
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+      />
+
+      {/* History List Print Report */}
+      <PrintReportModal
+        open={printReportOpen}
+        onClose={() => setPrintReportOpen(false)}
+        title={isFa ? 'فهرست صورتجلسات ورود کالا به کارگاه' : 'Site Entry Minutes List'}
+        rows={filteredHistory}
+        columns={historyColumns}
+        defaultSelectedKeys={historyColumns.map((c) => c.key)}
+      />
     </div>
   );
 };

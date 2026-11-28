@@ -21,7 +21,9 @@ import {
 } from '../shared/formulas.ts';
 import { formatGeneralDescriptionCase, inferGeneralDescription } from '../shared/generalDescription.ts';
 import { inferSizeFromDescription } from '../shared/sizeExtractor.ts';
-import { checkGcvRowsCompatibility, combineGcvRemark, GCV_PURCHASE_BY_OPTIONS } from '../shared/gcv.ts';
+import { buildGcvHeaderAutoFill, checkGcvRowsCompatibility, combineGcvRemark, GCV_PURCHASE_BY_OPTIONS } from '../shared/gcv.ts';
+import { validateSmrReturnQty } from '../shared/smr.ts';
+import { computeBmrBalance, parseOptionalQtyInput } from '../shared/bmr.ts';
 import { buildDetailedMerDescription } from '../shared/opiMinutes.ts';
 import { buildYearMonths, getMonthKeyFromIso, normalizeDigits } from '../shared/jalali.ts';
 import {
@@ -144,6 +146,8 @@ import {
 } from '../shared/docUniqueness.ts';
 import type {
   AuditLogEntry,
+  BmrDocumentRecord,
+  BmrLineItem,
   CalendarMode,
   CategoryGroupKey,
   CategoryStore,
@@ -211,6 +215,7 @@ interface StaticDatabase {
   substitutions: SubstitutionRecord[];
   gcvDocuments: GcvDocumentRecord[];
   mivDocuments: MivDocumentRecord[];
+  bmrDocuments: BmrDocumentRecord[];
   materialEstimates: MaterialEstimateRecord[];
   periodicInspections: PeriodicInspectionRecord[];
   customFormSubmissions: CustomFormSubmission[];
@@ -274,6 +279,7 @@ function createEmptyDb(): StaticDatabase {
     substitutions: [],
     gcvDocuments: [],
     mivDocuments: [],
+    bmrDocuments: [],
     materialEstimates: [],
     periodicInspections: [],
     customFormSubmissions: [],
@@ -536,6 +542,7 @@ async function getDb(projectId = DEFAULT_PROJECT_ID): Promise<StaticDatabase> {
         substitutions: Array.isArray(loaded.substitutions) ? loaded.substitutions : [],
         gcvDocuments: Array.isArray(loaded.gcvDocuments) ? loaded.gcvDocuments : [],
         mivDocuments: Array.isArray(loaded.mivDocuments) ? loaded.mivDocuments : [],
+        bmrDocuments: Array.isArray(loaded.bmrDocuments) ? loaded.bmrDocuments : [],
         materialEstimates: Array.isArray(loaded.materialEstimates) ? loaded.materialEstimates : [],
         periodicInspections: Array.isArray(loaded.periodicInspections) ? loaded.periodicInspections : [],
         customFormSubmissions: Array.isArray(loaded.customFormSubmissions) ? loaded.customFormSubmissions : [],
@@ -2012,8 +2019,15 @@ async function handleStaticApiRequestInner<T>(
       : new Set(pageRows.map((g) => normDupPart(g.packingListNo)).filter(Boolean));
     const resolveLinked = createGeneralDetailedLinker(db.detailed, substitutedIds, pagePkNorms);
 
+    const stripGeneralImages = (g: GeneralEntry) => {
+      const { itemImages, ...rest } = g;
+      const thumbs = Array.isArray(g.itemImageThumbs) ? g.itemImageThumbs.slice(0, 2) : [];
+      const hasImages = Boolean((Array.isArray(itemImages) && itemImages.length > 0) || thumbs.length > 0);
+      return { ...rest, itemImageThumbs: thumbs, hasImages };
+    };
+
     const items = pageRows.map((g) => ({
-      ...g,
+      ...stripGeneralImages(g),
       packingClosed: isPackingClosed(g.packingListNo),
       ...resolveLinked(g.packingListNo, g.packageNo),
     }));
@@ -2027,6 +2041,59 @@ async function handleStaticApiRequestInner<T>(
       filteredSummary,
       packingMeta: {},
     } as T;
+  }
+
+  if (pathname.startsWith('/api/general/') && pathname.endsWith('/image') && method === 'GET') {
+    requireAuth();
+    const id = pathname.slice('/api/general/'.length, -'/image'.length);
+    const item = db.general.find((g) => g.id === id);
+    if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
+    const imgs = Array.isArray(item.itemImages) ? item.itemImages.slice(0, 2) : [];
+    const thumbs = Array.isArray(item.itemImageThumbs) ? item.itemImageThumbs.slice(0, 2) : [];
+    return { id: item.id, hasImages: imgs.length > 0 || thumbs.length > 0, itemImages: imgs, itemImageThumbs: thumbs } as T;
+  }
+
+  if (pathname.startsWith('/api/general/') && pathname.endsWith('/image') && method === 'PUT') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = pathname.slice('/api/general/'.length, -'/image'.length);
+    const item = db.general.find((g) => g.id === id);
+    if (!item) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
+    const rawImgs = body.itemImages;
+    const rawThumbs = body.itemImageThumbs;
+    const cleanImgs = Array.isArray(rawImgs)
+      ? rawImgs.filter((x): x is string => typeof x === 'string' && x.startsWith('data:image/')).slice(0, 2)
+      : [];
+    const cleanThumbs = cleanImgs.map((img, i) => {
+      const cand = Array.isArray(rawThumbs) ? rawThumbs[i] : '';
+      return typeof cand === 'string' && cand.startsWith('data:image/') ? cand : img;
+    });
+    const pkNorm = normDupPart(item.packingListNo);
+    const pkgNorm = normDupPart(item.packageNo);
+    const now = new Date().toISOString();
+    const historyChanges: HistoryChange[] = [];
+    const targets = db.general.filter(
+      (g) => g.id === item.id || (pkNorm && normDupPart(g.packingListNo) === pkNorm && normDupPart(g.packageNo) === pkgNorm),
+    );
+    for (const target of targets) {
+      const before = { ...target };
+      if (cleanImgs.length > 0) {
+        target.itemImages = [...cleanImgs];
+        target.itemImageThumbs = [...cleanThumbs];
+      } else {
+        delete target.itemImages;
+        delete target.itemImageThumbs;
+      }
+      target.updatedAt = now;
+      historyChanges.push({ scope: 'general', op: 'update', id: target.id, before, after: { ...target } });
+    }
+    history.push({
+      labelFa: cleanImgs.length > 0 ? `ثبت تصاویر کلی پکینگ ${item.packingListNo}` : `حذف تصاویر کلی پکینگ ${item.packingListNo}`,
+      labelEn: cleanImgs.length > 0 ? `Update General Photos ${item.packingListNo}` : `Remove General Photos ${item.packingListNo}`,
+      user: u.fullName || u.username,
+      changes: historyChanges,
+    });
+    await saveActiveDb();
+    return { ok: true, hasImages: cleanImgs.length > 0, itemImages: cleanImgs, itemImageThumbs: cleanThumbs } as T;
   }
 
   if (pathname === '/api/general/batch' && method === 'POST') {
@@ -2112,6 +2179,17 @@ async function handleStaticApiRequestInner<T>(
         );
       }
 
+      const parsedPackageCount =
+        raw.packageCount !== undefined && raw.packageCount !== null && Number.isFinite(Number(raw.packageCount)) && Number(raw.packageCount) > 0
+          ? Math.floor(Number(raw.packageCount))
+          : null;
+      const cleanImgs = Array.isArray(raw.itemImages)
+        ? raw.itemImages.filter((x): x is string => typeof x === 'string' && x.startsWith('data:image/')).slice(0, 2)
+        : [];
+      const cleanThumbs = cleanImgs.map((img, i) => {
+        const cand = Array.isArray(raw.itemImageThumbs) ? raw.itemImageThumbs[i] : '';
+        return typeof cand === 'string' && cand.startsWith('data:image/') ? cand : img;
+      });
       preparedGeneral.push({
         id: makeId(),
         rowNo: '0',
@@ -2119,12 +2197,14 @@ async function handleStaticApiRequestInner<T>(
         releaseNo: cleanReleaseNo,
         releaseDate: cleanReleaseDate,
         supplier: normKey(raw.supplier),
+        requester: normKey(raw.requester),
         dispatchLocation: normKey(raw.dispatchLocation),
         employerEntryMinutesNo: cleanEmployerMinutes,
         mapnaEntryMinutesNo: cleanMapnaMinutes,
         packingListNo: pk,
         packageNo: pkgNo,
         packageType: normKey(raw.packageType),
+        packageCount: parsedPackageCount,
         itemCount: parsedItemCount,
         itemDescription: normKey(raw.itemDescription),
         island: normKey(raw.island),
@@ -2137,6 +2217,7 @@ async function handleStaticApiRequestInner<T>(
         widthCm: raw.widthCm ?? null,
         heightCm: raw.heightCm ?? null,
         billOfLadingNo: normKey(raw.billOfLadingNo),
+        vehicleModel: normKey(raw.vehicleModel),
         vehicleNo: normKey(raw.vehicleNo),
         weighbridgeWeight: raw.weighbridgeWeight ?? null,
         freightCost: raw.freightCost ?? null,
@@ -2144,6 +2225,7 @@ async function handleStaticApiRequestInner<T>(
         opiInvitationDate: normKey(raw.opiInvitationDate),
         driverName: normKey(raw.driverName),
         purchasePackageNo: normKey(raw.purchasePackageNo),
+        ...(cleanImgs.length > 0 ? { itemImages: cleanImgs, itemImageThumbs: cleanThumbs } : {}),
         createdAt: now,
         updatedAt: now,
         createdBy: u.username,
@@ -2182,9 +2264,9 @@ async function handleStaticApiRequestInner<T>(
     const idSet = new Set(ids);
     const cleanPatch: Record<string, unknown> = {};
     const stringFields: (keyof GeneralEntry)[] = [
-      'arrivalDate', 'releaseNo', 'releaseDate', 'supplier', 'dispatchLocation',
+      'arrivalDate', 'releaseNo', 'releaseDate', 'supplier', 'requester', 'dispatchLocation',
       'employerEntryMinutesNo', 'packageType', 'island', 'system', 'subSystem',
-      'unit', 'billOfLadingNo', 'vehicleNo', 'opiInvitationNo', 'opiInvitationDate', 'driverName', 'purchasePackageNo',
+      'unit', 'billOfLadingNo', 'vehicleModel', 'vehicleNo', 'opiInvitationNo', 'opiInvitationDate', 'driverName', 'purchasePackageNo',
     ];
     for (const k of stringFields) {
       if (patch[k] !== undefined && String(patch[k]).trim() !== '') {
@@ -2196,6 +2278,9 @@ async function handleStaticApiRequestInner<T>(
     }
     if (patch.freightCost !== undefined && patch.freightCost !== null && Number.isFinite(Number(patch.freightCost))) {
       cleanPatch.freightCost = Number(patch.freightCost);
+    }
+    if (patch.packageCount !== undefined && patch.packageCount !== null && Number.isFinite(Number(patch.packageCount)) && Number(patch.packageCount) > 0) {
+      cleanPatch.packageCount = Math.floor(Number(patch.packageCount));
     }
     const now = new Date().toISOString();
     let updatedCount = 0;
@@ -2260,14 +2345,36 @@ async function handleStaticApiRequestInner<T>(
     if (patch.packageType !== undefined) {
       patch.packageType = normKey(patch.packageType);
     }
+    if (patch.requester !== undefined) {
+      patch.requester = normKey(patch.requester);
+    }
+    if (patch.vehicleModel !== undefined) {
+      patch.vehicleModel = normKey(patch.vehicleModel);
+    }
     if (patch.purchasePackageNo !== undefined) {
       patch.purchasePackageNo = normKey(patch.purchasePackageNo);
+    }
+    if (patch.packageCount !== undefined) {
+      patch.packageCount =
+        patch.packageCount !== null && Number.isFinite(Number(patch.packageCount)) && Number(patch.packageCount) > 0
+          ? Math.floor(Number(patch.packageCount))
+          : null;
     }
     if (patch.itemCount !== undefined) {
       patch.itemCount =
         patch.itemCount !== null && Number.isFinite(Number(patch.itemCount)) && Number(patch.itemCount) > 0
           ? Math.floor(Number(patch.itemCount))
           : null;
+    }
+    if (patch.itemImages !== undefined) {
+      const cleanImgs = Array.isArray(patch.itemImages)
+        ? patch.itemImages.filter((x): x is string => typeof x === 'string' && x.startsWith('data:image/')).slice(0, 2)
+        : [];
+      patch.itemImages = cleanImgs;
+      patch.itemImageThumbs = cleanImgs.map((img, i) => {
+        const cand = Array.isArray(patch.itemImageThumbs) ? patch.itemImageThumbs[i] : '';
+        return typeof cand === 'string' && cand.startsWith('data:image/') ? cand : img;
+      });
     }
 
     const finalArrival = normKey(patch.arrivalDate ?? item.arrivalDate);
@@ -3115,34 +3222,98 @@ async function handleStaticApiRequestInner<T>(
     return { item: computeDetailedEntry(item), transitUpdated } as T;
   }
 
+  if (pathname === '/api/detailed/delete-impact' && method === 'POST') {
+    requireAuth(['admin', 'operator']);
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const idSet = new Set(ids);
+    const touchedKeys = new Set<string>();
+    const remainingKeys = new Set<string>();
+    for (const d of db.detailed) {
+      const key = `${normDupPart(d.shipmentNo)}|||${normDupPart(d.packageNo)}`;
+      if (idSet.has(d.id)) {
+        if (normDupPart(d.shipmentNo)) touchedKeys.add(key);
+      } else {
+        remainingKeys.add(key);
+      }
+    }
+    const emptiedKeys = new Set<string>();
+    for (const k of touchedKeys) {
+      if (!remainingKeys.has(k)) emptiedKeys.add(k);
+    }
+    const affectedGeneralRows = db.general
+      .filter((g) => emptiedKeys.has(`${normDupPart(g.packingListNo)}|||${normDupPart(g.packageNo)}`))
+      .map((g) => ({ id: g.id, packingListNo: g.packingListNo, packageNo: g.packageNo, itemDescription: g.itemDescription }));
+    return { affectedGeneralRows } as T;
+  }
+
   if (pathname.startsWith('/api/detailed/') && method === 'DELETE') {
     const u = requireAuth(['admin', 'operator']);
     const id = pathname.split('/').pop()!;
     const idx = db.detailed.findIndex((d) => d.id === id);
     if (idx === -1) throw new StaticEngineError(errMsg('رکورد یافت نشد', 'Record not found'), 404);
+    const cascadeGeneral = query.get('cascadeGeneral') === 'true';
     const [removed] = db.detailed.splice(idx, 1);
+    const now = new Date().toISOString();
+    const deletedBy = u.fullName || u.username;
+    const historyChanges: HistoryChange[] = [
+      { scope: 'detailed', op: 'delete', id: removed.id, before: removed, index: idx },
+    ];
     const dTrash: TrashRecord = {
       id: makeId(),
       scope: 'detailed',
-      deletedAt: new Date().toISOString(),
-      deletedBy: u.fullName || u.username,
+      deletedAt: now,
+      deletedBy,
       targetLabel: `${removed.shipmentNo} / ${removed.packageNo || '-'} / #${removed.itemNo || removed.rowNo}`,
       data: removed,
     };
     db.trash.unshift(dTrash);
+    historyChanges.push({ scope: 'trash', op: 'insert', id: dTrash.id, after: dTrash });
+
+    let trashedGeneralCount = 0;
+    if (cascadeGeneral && normDupPart(removed.shipmentNo)) {
+      const pkNorm = normDupPart(removed.shipmentNo);
+      const pkgNorm = normDupPart(removed.packageNo);
+      const stillHas = db.detailed.some(
+        (d) => normDupPart(d.shipmentNo) === pkNorm && normDupPart(d.packageNo) === pkgNorm,
+      );
+      if (!stillHas) {
+        const remainingGen: GeneralEntry[] = [];
+        for (let gi = 0; gi < db.general.length; gi += 1) {
+          const g = db.general[gi];
+          if (normDupPart(g.packingListNo) === pkNorm && normDupPart(g.packageNo) === pkgNorm) {
+            trashedGeneralCount += 1;
+            const gTrash: TrashRecord = {
+              id: makeId(),
+              scope: 'general',
+              deletedAt: now,
+              deletedBy,
+              targetLabel: `${g.packingListNo || '-'} (${g.packageNo || '-'})`,
+              data: g,
+            };
+            db.trash.unshift(gTrash);
+            historyChanges.push({ scope: 'general', op: 'delete', id: g.id, before: g, index: gi });
+            historyChanges.push({ scope: 'trash', op: 'insert', id: gTrash.id, after: gTrash });
+          } else {
+            remainingGen.push(g);
+          }
+        }
+        if (trashedGeneralCount > 0) {
+          db.general = remainingGen;
+          renumberScope(db, 'general');
+        }
+      }
+    }
+
     renumberScope(db, 'detailed');
     history.push({
       labelFa: `حذف ردیف جزئیات ${removed.shipmentNo} (#${removed.rowNo})`,
       labelEn: `Delete Detailed Row ${removed.shipmentNo} (#${removed.rowNo})`,
-      user: u.fullName || u.username,
-      changes: [
-        { scope: 'detailed', op: 'delete', id: removed.id, before: removed, index: idx },
-        { scope: 'trash', op: 'insert', id: dTrash.id, after: dTrash },
-      ],
+      user: deletedBy,
+      changes: historyChanges,
     });
     addAudit(db, sanitizeUser(u), 'DELETE_DETAILED', 'detailed', `${removed.shipmentNo} (#${removed.rowNo})`, `انتقال ردیف جزئیات ${removed.rowNo} به سطل بازیافت`);
     await saveActiveDb();
-    return { ok: true } as T;
+    return { ok: true, trashedGeneralCount } as T;
   }
 
   // (PATCH /api/detailed/bulk handled above /api/detailed/:id to avoid route shadowing)
@@ -3150,6 +3321,7 @@ async function handleStaticApiRequestInner<T>(
   if (pathname === '/api/detailed/bulk-delete' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
     const ids = Array.isArray(body.ids) ? (body.ids as string[]) : [];
+    const cascadeGeneral = Boolean(body.cascadeGeneral);
     if (ids.length === 0) {
       throw new StaticEngineError(errMsg('هیچ ردیفی برای حذف انتخاب نشده است', 'No rows selected for deletion'), 400);
     }
@@ -3157,28 +3329,79 @@ async function handleStaticApiRequestInner<T>(
     const now = new Date().toISOString();
     const deletedBy = u.fullName || u.username;
     const removedRows: DetailedEntry[] = [];
-    db.detailed = db.detailed.filter((d) => {
+    const historyChanges: HistoryChange[] = [];
+    db.detailed = db.detailed.filter((d, di) => {
       if (idSet.has(d.id)) {
         removedRows.push(d);
+        historyChanges.push({ scope: 'detailed', op: 'delete', id: d.id, before: d, index: di });
         return false;
       }
       return true;
     });
     for (const removed of removedRows) {
-      db.trash.unshift({
+      const tr: TrashRecord = {
         id: makeId(),
         scope: 'detailed',
         deletedAt: now,
         deletedBy,
         targetLabel: `${removed.shipmentNo} / ${removed.packageNo || '-'} / #${removed.itemNo || removed.rowNo}`,
         data: removed,
-      });
+      };
+      db.trash.unshift(tr);
+      historyChanges.push({ scope: 'trash', op: 'insert', id: tr.id, after: tr });
+    }
+    let trashedGeneralCount = 0;
+    if (cascadeGeneral && removedRows.length > 0) {
+      const remainingKeys = new Set(
+        db.detailed.map((d) => `${normDupPart(d.shipmentNo)}|||${normDupPart(d.packageNo)}`),
+      );
+      const emptiedKeys = new Set<string>();
+      for (const r of removedRows) {
+        if (!normDupPart(r.shipmentNo)) continue;
+        const k = `${normDupPart(r.shipmentNo)}|||${normDupPart(r.packageNo)}`;
+        if (!remainingKeys.has(k)) emptiedKeys.add(k);
+      }
+      if (emptiedKeys.size > 0) {
+        const remainingGen: GeneralEntry[] = [];
+        for (let gi = 0; gi < db.general.length; gi += 1) {
+          const g = db.general[gi];
+          const gk = `${normDupPart(g.packingListNo)}|||${normDupPart(g.packageNo)}`;
+          if (emptiedKeys.has(gk)) {
+            trashedGeneralCount += 1;
+            const gTrash: TrashRecord = {
+              id: makeId(),
+              scope: 'general',
+              deletedAt: now,
+              deletedBy,
+              targetLabel: `${g.packingListNo || '-'} (${g.packageNo || '-'})`,
+              data: g,
+            };
+            db.trash.unshift(gTrash);
+            historyChanges.push({ scope: 'general', op: 'delete', id: g.id, before: g, index: gi });
+            historyChanges.push({ scope: 'trash', op: 'insert', id: gTrash.id, after: gTrash });
+          } else {
+            remainingGen.push(g);
+          }
+        }
+        if (trashedGeneralCount > 0) {
+          db.general = remainingGen;
+          renumberScope(db, 'general');
+        }
+      }
     }
     renumberScope(db, 'detailed');
     rebuildCategories(db);
+    if (historyChanges.length > 0) {
+      history.push({
+        labelFa: `حذف گروهی ${removedRows.length} ردیف جزئیات`,
+        labelEn: `Bulk Delete ${removedRows.length} Detailed Rows`,
+        user: deletedBy,
+        changes: historyChanges,
+      });
+    }
     addAudit(db, sanitizeUser(u), 'BULK_DELETE_DETAILED', 'detailed', `${removedRows.length} rows`, `حذف گروهی ${removedRows.length} ردیف از ثبت جزئیات`);
     await saveActiveDb();
-    return { ok: true, deletedCount: removedRows.length } as T;
+    return { ok: true, deletedCount: removedRows.length, trashedGeneralCount } as T;
   }
 
   // ---------------- TRANSIT ----------------
@@ -3762,6 +3985,27 @@ async function handleStaticApiRequestInner<T>(
   }
 
   // ---------------- SITE ENTRY MINUTES ----------------
+  const findSiteEntryGeneralTargets = (rec: Pick<SiteEntryMinutesRecord, 'generalIds' | 'items' | 'packingListNos'>): GeneralEntry[] => {
+    const idSet = new Set<string>([
+      ...(rec.generalIds || []).map((x) => String(x || '').trim()).filter(Boolean),
+      ...(rec.items || []).map((it) => String(it.generalId || '').trim()).filter(Boolean),
+    ]);
+    if (idSet.size > 0) return db.general.filter((g) => idSet.has(g.id));
+    const itemPairs = new Set<string>(
+      (rec.items || [])
+        .filter((it) => normDupPart(it.packingListNo))
+        .map((it) => `${normDupPart(it.packingListNo)}|||${normDupPart(it.packageNo)}`),
+    );
+    if (itemPairs.size > 0) {
+      const matched = db.general.filter((g) =>
+        itemPairs.has(`${normDupPart(g.packingListNo)}|||${normDupPart(g.packageNo)}`),
+      );
+      if (matched.length > 0) return matched;
+    }
+    const pkSet = new Set((rec.packingListNos || []).map((p) => normDupPart(p)).filter(Boolean));
+    return db.general.filter((g) => pkSet.has(normDupPart(g.packingListNo)));
+  };
+
   if (pathname === '/api/site-entry' && method === 'GET') {
     requireAuth();
     const packingsSet = new Set<string>();
@@ -3771,7 +4015,7 @@ async function handleStaticApiRequestInner<T>(
     }
     return {
       minutes: db.siteEntryMinutes,
-      generalEntries: [...db.general].reverse(),
+      generalEntries: [...db.general].reverse().map(({ itemImages: _imgs, ...rest }) => rest),
       transitEntries: [...db.transit].reverse(),
       detailedItems: [...db.detailed.map(computeDetailedEntry)].reverse(),
       packings: Array.from(packingsSet).sort((a, b) => a.localeCompare(b, 'fa')),
@@ -3782,6 +4026,7 @@ async function handleStaticApiRequestInner<T>(
     const u = requireAuth(['admin', 'operator']);
     const raw = body as Partial<SiteEntryMinutesRecord>;
     const cleanNo = normKey(raw.minutesNo);
+    const cleanGeneralIds = Array.from(new Set((raw.generalIds || []).map((x) => String(x || '').trim()).filter(Boolean)));
     const cleanPackings = Array.from(new Set((raw.packingListNos || []).map(normKey).filter(Boolean)));
     const resolvedArrival = resolveSiteEntryArrivalAndRelease(
       cleanPackings,
@@ -3789,18 +4034,12 @@ async function handleStaticApiRequestInner<T>(
       db.general,
       db.transit,
     );
-    if (resolvedArrival.errorFa) {
-      throw new StaticEngineError(
-        errMsg(resolvedArrival.errorFa, resolvedArrival.errorEn || resolvedArrival.errorFa),
-        400,
-      );
-    }
-    const cleanDate = resolvedArrival.resolvedArrivalDate || normKey(raw.date);
-    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+    const cleanDate = normKey(raw.date) || resolvedArrival.resolvedArrivalDate || new Date().toISOString().slice(0, 10);
+    if (!cleanNo || !cleanDate || (cleanPackings.length === 0 && cleanGeneralIds.length === 0)) {
       throw new StaticEngineError(
         errMsg(
-          'شماره صورتجلسه، تاریخ و حداقل یک پکینگ لیست الزامی است',
-          'Minutes No., date, and at least one Packing List are required',
+          'شماره صورتجلسه، تاریخ و حداقل یک ردیف یا پکینگ لیست الزامی است',
+          'Minutes No., date, and at least one row or Packing List are required',
         ),
         400,
       );
@@ -3812,6 +4051,7 @@ async function handleStaticApiRequestInner<T>(
     const cleanItems = Array.isArray(raw.items)
       ? raw.items
           .map((it) => ({
+            generalId: it?.generalId ? String(it.generalId).trim() : undefined,
             description: normKey(it?.description),
             packingListNo: normKey(it?.packingListNo),
             packageNo: normKey(it?.packageNo),
@@ -3836,18 +4076,20 @@ async function handleStaticApiRequestInner<T>(
           )
       : undefined;
 
+    const now = new Date().toISOString();
     const record: SiteEntryMinutesRecord = {
       id: makeId(),
       minutesNo: cleanNo,
-      releaseNoteNo: resolvedArrival.resolvedReleaseNoteNo,
+      releaseNoteNo: normKey(raw.releaseNoteNo) || resolvedArrival.resolvedReleaseNoteNo,
       projectName: normKey(raw.projectName),
       entryType: raw.entryType === 'temporary' ? 'temporary' : 'permanent',
       goodsUsage:
         raw.goodsUsage === 'site_equip' || raw.goodsUsage === 'general' ? raw.goodsUsage : 'project',
       contractNo: normKey(raw.contractNo),
       date: cleanDate,
-      arrivalDate: resolvedArrival.resolvedArrivalDate || normKey(raw.arrivalDate) || cleanDate,
+      arrivalDate: normKey(raw.arrivalDate) || resolvedArrival.resolvedArrivalDate || cleanDate,
       packingListNos: cleanPackings,
+      generalIds: cleanGeneralIds.length > 0 ? cleanGeneralIds : undefined,
       supplier: normKey(raw.supplier),
       unit: normKey(raw.unit),
       system: normKey(raw.system),
@@ -3872,9 +4114,13 @@ async function handleStaticApiRequestInner<T>(
       mapnaRep: normKey(raw.mapnaRep) || normKey(raw.equipmentSupply),
       conditionStatus: raw.conditionStatus || 'healthy',
       notes: normKey(raw.notes),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
       createdBy: u.fullName || u.username,
     };
+    for (const g of findSiteEntryGeneralTargets(record)) {
+      g.mapnaEntryMinutesNo = appendUniqueRef(g.mapnaEntryMinutesNo, cleanNo);
+      g.updatedAt = now;
+    }
     db.siteEntryMinutes.unshift(record);
     addAudit(db, sanitizeUser(u), 'CREATE_SITE_ENTRY_MINUTES', 'siteEntry', cleanNo, `ثبت صورتجلسه ورود کالا به کارگاه شماره ${cleanNo}`);
     await saveActiveDb();
@@ -3888,6 +4134,10 @@ async function handleStaticApiRequestInner<T>(
     if (!rec) throw new StaticEngineError(errMsg('صورتجلسه ورود کالا یافت نشد', 'Site entry minutes record not found'), 404);
     const raw = body as Partial<SiteEntryMinutesRecord>;
     const cleanNo = normKey(raw.minutesNo ?? rec.minutesNo);
+    const cleanGeneralIds =
+      raw.generalIds !== undefined
+        ? Array.from(new Set((raw.generalIds || []).map((x) => String(x || '').trim()).filter(Boolean)))
+        : rec.generalIds || [];
     const cleanPackings = Array.from(
       new Set(((raw.packingListNos !== undefined ? raw.packingListNos : rec.packingListNos) || []).map(normKey).filter(Boolean)),
     );
@@ -3897,18 +4147,12 @@ async function handleStaticApiRequestInner<T>(
       db.general,
       db.transit,
     );
-    if (resolvedArrival.errorFa) {
-      throw new StaticEngineError(
-        errMsg(resolvedArrival.errorFa, resolvedArrival.errorEn || resolvedArrival.errorFa),
-        400,
-      );
-    }
-    const cleanDate = resolvedArrival.resolvedArrivalDate || normKey(raw.date ?? rec.date);
-    if (!cleanNo || !cleanDate || cleanPackings.length === 0) {
+    const cleanDate = normKey(raw.date ?? rec.date) || resolvedArrival.resolvedArrivalDate;
+    if (!cleanNo || !cleanDate || (cleanPackings.length === 0 && cleanGeneralIds.length === 0)) {
       throw new StaticEngineError(
         errMsg(
-          'شماره صورتجلسه، تاریخ و حداقل یک پکینگ لیست الزامی است',
-          'Minutes No., date, and at least one Packing List are required',
+          'شماره صورتجلسه، تاریخ و حداقل یک ردیف یا پکینگ لیست الزامی است',
+          'Minutes No., date, and at least one row or Packing List are required',
         ),
         400,
       );
@@ -3917,9 +4161,16 @@ async function handleStaticApiRequestInner<T>(
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
+    const now = new Date().toISOString();
+    const oldNo = rec.minutesNo;
+    for (const g of findSiteEntryGeneralTargets(rec)) {
+      g.mapnaEntryMinutesNo = removeRefToken(g.mapnaEntryMinutesNo, oldNo);
+      g.updatedAt = now;
+    }
     if (Array.isArray(raw.items)) {
       rec.items = raw.items
         .map((it) => ({
+          generalId: it?.generalId ? String(it.generalId).trim() : undefined,
           description: normKey(it?.description),
           packingListNo: normKey(it?.packingListNo),
           packageNo: normKey(it?.packageNo),
@@ -3944,7 +4195,8 @@ async function handleStaticApiRequestInner<T>(
         );
     }
     rec.minutesNo = cleanNo;
-    rec.releaseNoteNo = resolvedArrival.resolvedReleaseNoteNo;
+    rec.releaseNoteNo =
+      raw.releaseNoteNo !== undefined ? normKey(raw.releaseNoteNo) : resolvedArrival.resolvedReleaseNoteNo;
     if (raw.projectName !== undefined) rec.projectName = normKey(raw.projectName);
     if (raw.entryType === 'permanent' || raw.entryType === 'temporary') rec.entryType = raw.entryType;
     if (raw.goodsUsage === 'project' || raw.goodsUsage === 'site_equip' || raw.goodsUsage === 'general') {
@@ -3952,8 +4204,9 @@ async function handleStaticApiRequestInner<T>(
     }
     if (raw.contractNo !== undefined) rec.contractNo = normKey(raw.contractNo);
     rec.date = cleanDate;
-    rec.arrivalDate = resolvedArrival.resolvedArrivalDate || normKey(raw.arrivalDate ?? rec.arrivalDate) || cleanDate;
+    rec.arrivalDate = normKey(raw.arrivalDate ?? rec.arrivalDate) || resolvedArrival.resolvedArrivalDate || cleanDate;
     rec.packingListNos = cleanPackings;
+    rec.generalIds = cleanGeneralIds.length > 0 ? cleanGeneralIds : undefined;
     if (raw.supplier !== undefined) rec.supplier = normKey(raw.supplier);
     if (raw.unit !== undefined) rec.unit = normKey(raw.unit);
     if (raw.system !== undefined) rec.system = normKey(raw.system);
@@ -3982,6 +4235,11 @@ async function handleStaticApiRequestInner<T>(
     if (raw.conditionStatus) rec.conditionStatus = raw.conditionStatus;
     if (raw.notes !== undefined) rec.notes = normKey(raw.notes);
 
+    for (const g of findSiteEntryGeneralTargets(rec)) {
+      g.mapnaEntryMinutesNo = appendUniqueRef(g.mapnaEntryMinutesNo, cleanNo);
+      g.updatedAt = now;
+    }
+
     addAudit(db, sanitizeUser(u), 'UPDATE_SITE_ENTRY_MINUTES', 'siteEntry', cleanNo, `ویرایش صورتجلسه ورود کالا به کارگاه شماره ${cleanNo}`);
     await saveActiveDb();
     return { record: rec } as T;
@@ -3993,6 +4251,14 @@ async function handleStaticApiRequestInner<T>(
     const idx = db.siteEntryMinutes.findIndex((r) => r.id === id);
     if (idx === -1) throw new StaticEngineError(errMsg('صورتجلسه ورود کالا یافت نشد', 'Site entry minutes record not found'), 404);
     const [removed] = db.siteEntryMinutes.splice(idx, 1);
+    const now = new Date().toISOString();
+    const touchedIds = new Set(findSiteEntryGeneralTargets(removed).map((g) => g.id));
+    for (const g of db.general) {
+      if (touchedIds.has(g.id) || (g.mapnaEntryMinutesNo && g.mapnaEntryMinutesNo.includes(removed.minutesNo))) {
+        g.mapnaEntryMinutesNo = removeRefToken(g.mapnaEntryMinutesNo, removed.minutesNo);
+        g.updatedAt = now;
+      }
+    }
     addAudit(db, sanitizeUser(u), 'DELETE_SITE_ENTRY_MINUTES', 'siteEntry', removed.minutesNo, `حذف صورتجلسه ورود کالا به کارگاه شماره ${removed.minutesNo}`);
     await saveActiveDb();
     return { ok: true } as T;
@@ -4973,6 +5239,8 @@ async function handleStaticApiRequestInner<T>(
       d.updatedAt = now;
     }
 
+    const autoHeader = buildGcvHeaderAutoFill(matchedDetailedRows, db.general);
+
     const doc: GcvDocumentRecord = {
       id: makeId(),
       receiptNo: cleanNo,
@@ -4980,13 +5248,13 @@ async function handleStaticApiRequestInner<T>(
       receiver: cleanReceiver,
       projectName: normKey(raw.projectName),
       purchaseRequestNo: normKey(raw.purchaseRequestNo),
-      supplier: normKey(raw.supplier),
+      supplier: normKey(raw.supplier) || autoHeader.supplier,
       buyerName: normKey(raw.buyerName),
       purchasePackageNo: normKey(raw.purchasePackageNo),
-      releaseNoteNo: normKey(raw.releaseNoteNo),
+      releaseNoteNo: normKey(raw.releaseNoteNo) || autoHeader.releaseNoteNo,
       purchaseBy: purchaseByValid,
-      islandSystem: normKey(raw.islandSystem),
-      waybillNo: normKey(raw.waybillNo),
+      islandSystem: normKey(raw.islandSystem) || autoHeader.islandSystem,
+      waybillNo: normKey(raw.waybillNo) || autoHeader.waybillNo,
       storekeeper: normKey(raw.storekeeper),
       receiverManager: normKey(raw.receiverManager),
       equipmentSupply: normKey(raw.equipmentSupply),
@@ -5192,12 +5460,13 @@ async function handleStaticApiRequestInner<T>(
     if (!cleanNo || !items.length) {
       throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'miv' });
+    const isMivType = docType === 'miv_contractor' || docType === 'miv_mapna';
+    const uniqScope = isMivType ? 'miv' : 'smr';
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: uniqScope });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
 
-    const isMivType = docType === 'miv_contractor' || docType === 'miv_mapna';
     const lineItems: DocumentLineItem[] = [];
     for (const reqItem of items) {
       const qty = Number(reqItem.qty);
@@ -5229,14 +5498,17 @@ async function handleStaticApiRequestInner<T>(
         }
         deductedFromMapna = deduction.deductedFromMapna;
         deductedFromContractor = deduction.deductedFromContractor;
-      } else if (docType === 'smr_mapna' && qty > comp.contractorInventory) {
-        throw new StaticEngineError(
-          errMsg(
-            `تعداد (${qty}) از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`,
-            `Qty (${qty}) exceeds Contractor stock (${comp.contractorInventory}).`,
-          ),
-          400,
-        );
+      } else {
+        const smrCheck = validateSmrReturnQty(qty, d);
+        if (!smrCheck.ok) {
+          throw new StaticEngineError(
+            errMsg(
+              smrCheck.errorFa || `تعداد برگشتی (${qty}) نمی‌تواند بیشتر از مقدار واقعی باشد.`,
+              smrCheck.errorEn || `Returned quantity (${qty}) cannot exceed actual quantity.`,
+            ),
+            400,
+          );
+        }
       }
 
       const reqQtyNum = Number(reqItem.requestedQty);
@@ -5257,7 +5529,7 @@ async function handleStaticApiRequestInner<T>(
         qty,
         requestedQty: Number.isFinite(reqQtyNum) && reqQtyNum > 0 ? reqQtyNum : qty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
+        tagNo: normKey(reqItem.tagNo) || (isMivType ? d.itemNo : d.itemCode) || '',
         codeNo: normKey(reqItem.codeNo) || d.itemCode || '',
         location: normKey(reqItem.location) || d.storageLocation || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
@@ -5389,7 +5661,9 @@ async function handleStaticApiRequestInner<T>(
     if (!cleanNo || !items.length) {
       throw new StaticEngineError(errMsg('شماره سند و حداقل یک قلم کالا الزامی است', 'Document No. and at least one item are required'), 400);
     }
-    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: 'miv', excludeScope: 'miv', excludeId: existing.id });
+    const isMivTypePatch = requestedDocType === 'miv_contractor' || requestedDocType === 'miv_mapna';
+    const patchScope = isMivTypePatch ? 'miv' : 'smr';
+    const uniqCheck = assertUniqueDocNo(db, cleanNo, { scope: patchScope, excludeScope: patchScope, excludeId: existing.id });
     if (!uniqCheck.ok) {
       throw new StaticEngineError(errMsg(uniqCheck.errorFa!, uniqCheck.errorEn!), 409);
     }
@@ -5418,7 +5692,7 @@ async function handleStaticApiRequestInner<T>(
       oldReversalByDetailedId.set(oldLine.detailedId, prev);
     }
 
-    const isMivType = requestedDocType === 'miv_contractor' || requestedDocType === 'miv_mapna';
+    const isMivType = isMivTypePatch;
     const nextLines: DocumentLineItem[] = [];
     for (const reqItem of items) {
       const qty = Number(reqItem.qty);
@@ -5461,14 +5735,17 @@ async function handleStaticApiRequestInner<T>(
         }
         deductedFromMapna = deduction.deductedFromMapna;
         deductedFromContractor = deduction.deductedFromContractor;
-      } else if (requestedDocType === 'smr_mapna' && qty > comp.contractorInventory) {
-        throw new StaticEngineError(
-          errMsg(
-            `تعداد (${qty}) از موجودی پیمانکار (${comp.contractorInventory}) بیشتر است.`,
-            `Qty (${qty}) exceeds Contractor stock (${comp.contractorInventory}).`,
-          ),
-          400,
-        );
+      } else {
+        const smrCheck = validateSmrReturnQty(qty, d);
+        if (!smrCheck.ok) {
+          throw new StaticEngineError(
+            errMsg(
+              smrCheck.errorFa || `تعداد برگشتی (${qty}) نمی‌تواند بیشتر از مقدار واقعی باشد.`,
+              smrCheck.errorEn || `Returned quantity (${qty}) cannot exceed actual quantity.`,
+            ),
+            400,
+          );
+        }
       }
 
       const reqQtyNum = Number(reqItem.requestedQty);
@@ -5489,7 +5766,7 @@ async function handleStaticApiRequestInner<T>(
         qty,
         requestedQty: Number.isFinite(reqQtyNum) && reqQtyNum > 0 ? reqQtyNum : qty,
         technicalInfo: normKey(reqItem.technicalInfo) || d.size || '',
-        tagNo: normKey(reqItem.tagNo) || d.itemNo || '',
+        tagNo: normKey(reqItem.tagNo) || (isMivType ? d.itemNo : d.itemCode) || '',
         codeNo: normKey(reqItem.codeNo) || d.itemCode || '',
         location: normKey(reqItem.location) || d.storageLocation || '',
         uom: normKey(reqItem.uom) || d.countingUnit || '',
@@ -6189,6 +6466,9 @@ async function handleStaticApiRequestInner<T>(
           return { items: db.gcvDocuments, auditScope: 'gcv' };
         case 'miv':
           return { items: db.mivDocuments, auditScope: 'miv' };
+        case 'balance':
+          if (!db.bmrDocuments) db.bmrDocuments = [];
+          return { items: db.bmrDocuments, auditScope: 'balance' };
         case 'periodic':
           return { items: db.periodicInspections, auditScope: 'periodicInspection' };
         case 'customForms':
@@ -6382,7 +6662,238 @@ async function handleStaticApiRequestInner<T>(
     return { ok: true } as T;
   }
 
-  // ---------------- MATERIAL BALANCE ----------------
+  // ---------------- MATERIAL BALANCE (BMR - MD1EX-FQP02/09-03) ----------------
+  const normalizeBmrLineItemsBrowser = (rawItems: unknown): BmrLineItem[] => {
+    if (!Array.isArray(rawItems)) return [];
+    const out: BmrLineItem[] = [];
+    for (const raw of rawItems as Array<Partial<BmrLineItem>>) {
+      const detailedId = normKey(raw?.detailedId);
+      if (!detailedId) continue;
+      const d = db.detailed.find((x) => x.id === detailedId);
+      const comp = d ? computeDetailedEntry(d) : null;
+      const receivedQty = d ? roundQty(toNum(d.packingQty)) : roundQty(toNum(raw.receivedQty));
+      const deliveredQty = d
+        ? d.actualQty !== null && d.actualQty !== undefined && Number.isFinite(Number(d.actualQty))
+          ? roundQty(Number(d.actualQty))
+          : roundQty(toNum(comp?.effectiveActualQty ?? d.packingQty))
+        : roundQty(toNum(raw.deliveredQty));
+      const returnedQty = d ? roundQty(toNum(d.smrMapnaQty)) : roundQty(toNum(raw.returnedQty));
+      const mtoQty = parseOptionalQtyInput(raw.mtoQty);
+      const erectedQty = parseOptionalQtyInput(raw.erectedQty);
+      const calc = computeBmrBalance({
+        deliveredQty,
+        returnedQty,
+        mtoQty,
+        erectedQty,
+      });
+      out.push({
+        detailedId,
+        plNo: d ? normKey(d.shipmentNo) : normKey(raw.plNo),
+        packageNo: d ? normKey(d.packageNo) : normKey(raw.packageNo),
+        packageItemNo: d ? normKey(d.itemNo) : normKey(raw.packageItemNo),
+        tagNo: d ? normKey(d.itemCode) : normKey(raw.tagNo),
+        description: d ? normKey(d.description || d.generalDescription) : normKey(raw.description),
+        uom: d ? normKey(d.countingUnit) : normKey(raw.uom),
+        receivedQty,
+        deliveredQty,
+        returnedQty,
+        smrMapnaNo: d ? normKey(d.smrMapnaNo) || undefined : normKey(raw.smrMapnaNo) || undefined,
+        mtoQty,
+        erectedQty,
+        balance: calc.balance,
+        balanceStatus: calc.statusFa,
+      });
+    }
+    return out;
+  };
+
+  const syncDetailedBmrColumnsBrowser = (detailedIds: Iterable<string>) => {
+    const now = new Date().toISOString();
+    const idSet = new Set(detailedIds);
+    for (const detId of idSet) {
+      const d = db.detailed.find((x) => x.id === detId);
+      if (!d) continue;
+      let matchedDoc: BmrDocumentRecord | undefined;
+      let matchedLine: BmrLineItem | undefined;
+      for (const doc of db.bmrDocuments) {
+        const line = doc.items.find((it) => it.detailedId === detId);
+        if (line) {
+          matchedDoc = doc;
+          matchedLine = line;
+          break;
+        }
+      }
+      if (matchedDoc && matchedLine) {
+        d.materialBalanceNo = matchedDoc.bmrNo;
+        d.balanceStatus = matchedLine.balanceStatus;
+        registerCategoryValue(db, 'balanceStatus', matchedLine.balanceStatus);
+      } else {
+        d.materialBalanceNo = '';
+        d.balanceStatus = '';
+      }
+      d.updatedAt = now;
+    }
+  };
+
+  if (pathname === '/api/balance' && method === 'GET') {
+    requireAuth();
+    return {
+      records: db.bmrDocuments,
+      usedDocNos: getAllUsedDocNumbers(db, 'balance'),
+    } as T;
+  }
+
+  if (pathname === '/api/balance' && method === 'POST') {
+    const u = requireAuth(['admin', 'operator']);
+    const raw = body as Partial<BmrDocumentRecord>;
+    const cleanBmrNo = normKey(raw.bmrNo);
+    if (!cleanBmrNo) {
+      throw new StaticEngineError(
+        errMsg('شماره گزارش موازنه (BMR No.) الزامی است', 'Balance of Material Report No. is required'),
+        400,
+      );
+    }
+    const uniq = assertUniqueDocNo(db, cleanBmrNo, { scope: 'balance' });
+    if (!uniq.ok) {
+      throw new StaticEngineError(
+        errMsg(uniq.errorFa || 'شماره گزارش موازنه تکراری است', uniq.errorEn || 'Duplicate BMR document number'),
+        409,
+      );
+    }
+    const items = normalizeBmrLineItemsBrowser(raw.items);
+    if (items.length === 0) {
+      throw new StaticEngineError(
+        errMsg('حداقل یک ردیف تجهیز برای صدور گزارش موازنه انتخاب کنید', 'Select at least one equipment item to issue BMR'),
+        400,
+      );
+    }
+    const now = new Date().toISOString();
+    const record: BmrDocumentRecord = {
+      id: makeId(),
+      bmrNo: cleanBmrNo,
+      date: normKey(raw.date) || now.slice(0, 10),
+      projectName: normKey(raw.projectName),
+      system: normKey(raw.system),
+      island: normKey(raw.island),
+      unit: normKey(raw.unit),
+      installerContractor: normKey(raw.installerContractor),
+      supplier: normKey(raw.supplier),
+      items,
+      storekeeper: normKey(raw.storekeeper),
+      equipmentSupply: normKey(raw.equipmentSupply),
+      techOffice: normKey(raw.techOffice),
+      installationUnit: normKey(raw.installationUnit),
+      contractorPm: normKey(raw.contractorPm),
+      notes: normKey(raw.notes),
+      createdAt: now,
+      updatedAt: now,
+      createdBy: u.fullName || u.username,
+    };
+    db.bmrDocuments.unshift(record);
+    syncDetailedBmrColumnsBrowser(items.map((it) => it.detailedId));
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'CREATE_BMR',
+      'balance',
+      record.bmrNo,
+      `صدور گزارش موازنه و کنترل مصرف مواد (${record.bmrNo}) شامل ${items.length} ردیف`,
+    );
+    await saveActiveDb();
+    return { record } as T;
+  }
+
+  if (pathname.startsWith('/api/balance/') && pathname !== '/api/balance/assign' && method === 'PATCH') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = decodeURIComponent(pathname.slice('/api/balance/'.length));
+    const existing = db.bmrDocuments.find((r) => r.id === id);
+    if (!existing) {
+      throw new StaticEngineError(
+        errMsg('گزارش موازنه مورد نظر یافت نشد', 'Balance of Material Report not found'),
+        404,
+      );
+    }
+    const raw = body as Partial<BmrDocumentRecord>;
+    const nextBmrNo = raw.bmrNo !== undefined ? normKey(raw.bmrNo) : existing.bmrNo;
+    if (!nextBmrNo) {
+      throw new StaticEngineError(
+        errMsg('شماره گزارش موازنه (BMR No.) الزامی است', 'Balance of Material Report No. is required'),
+        400,
+      );
+    }
+    const uniq = assertUniqueDocNo(db, nextBmrNo, {
+      scope: 'balance',
+      excludeScope: 'balance',
+      excludeId: existing.id,
+    });
+    if (!uniq.ok) {
+      throw new StaticEngineError(
+        errMsg(uniq.errorFa || 'شماره گزارش موازنه تکراری است', uniq.errorEn || 'Duplicate BMR document number'),
+        409,
+      );
+    }
+    const prevDetailedIds = existing.items.map((it) => it.detailedId);
+    const nextItems = raw.items !== undefined ? normalizeBmrLineItemsBrowser(raw.items) : existing.items;
+    if (nextItems.length === 0) {
+      throw new StaticEngineError(
+        errMsg('حداقل یک ردیف تجهیز در گزارش موازنه الزامی است', 'At least one equipment item is required in BMR'),
+        400,
+      );
+    }
+    existing.bmrNo = nextBmrNo;
+    if (raw.date !== undefined) existing.date = normKey(raw.date);
+    if (raw.projectName !== undefined) existing.projectName = normKey(raw.projectName);
+    if (raw.system !== undefined) existing.system = normKey(raw.system);
+    if (raw.island !== undefined) existing.island = normKey(raw.island);
+    if (raw.unit !== undefined) existing.unit = normKey(raw.unit);
+    if (raw.installerContractor !== undefined) existing.installerContractor = normKey(raw.installerContractor);
+    if (raw.supplier !== undefined) existing.supplier = normKey(raw.supplier);
+    existing.items = nextItems;
+    if (raw.storekeeper !== undefined) existing.storekeeper = normKey(raw.storekeeper);
+    if (raw.equipmentSupply !== undefined) existing.equipmentSupply = normKey(raw.equipmentSupply);
+    if (raw.techOffice !== undefined) existing.techOffice = normKey(raw.techOffice);
+    if (raw.installationUnit !== undefined) existing.installationUnit = normKey(raw.installationUnit);
+    if (raw.contractorPm !== undefined) existing.contractorPm = normKey(raw.contractorPm);
+    if (raw.notes !== undefined) existing.notes = normKey(raw.notes);
+    existing.updatedAt = new Date().toISOString();
+
+    syncDetailedBmrColumnsBrowser([...prevDetailedIds, ...nextItems.map((it) => it.detailedId)]);
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'UPDATE_BMR',
+      'balance',
+      existing.bmrNo,
+      `ویرایش گزارش موازنه و کنترل مصرف مواد (${existing.bmrNo}) شامل ${nextItems.length} ردیف`,
+    );
+    await saveActiveDb();
+    return { record: existing } as T;
+  }
+
+  if (pathname.startsWith('/api/balance/') && pathname !== '/api/balance/assign' && method === 'DELETE') {
+    const u = requireAuth(['admin', 'operator']);
+    const id = decodeURIComponent(pathname.slice('/api/balance/'.length));
+    const idx = db.bmrDocuments.findIndex((r) => r.id === id);
+    if (idx === -1) {
+      throw new StaticEngineError(
+        errMsg('گزارش موازنه مورد نظر یافت نشد', 'Balance of Material Report not found'),
+        404,
+      );
+    }
+    const [removed] = db.bmrDocuments.splice(idx, 1);
+    syncDetailedBmrColumnsBrowser(removed.items.map((it) => it.detailedId));
+    addAudit(
+      db,
+      sanitizeUser(u),
+      'DELETE_BMR',
+      'balance',
+      removed.bmrNo,
+      `حذف گزارش موازنه و کنترل مصرف مواد (${removed.bmrNo})`,
+    );
+    await saveActiveDb();
+    return { ok: true } as T;
+  }
+
   if (pathname === '/api/balance/assign' && method === 'POST') {
     const u = requireAuth(['admin', 'operator']);
     const detailedIds = (body.detailedIds as string[]) || [];
@@ -7663,6 +8174,7 @@ async function handleStaticApiRequestInner<T>(
       substitutions: db.substitutions,
       gcvDocuments: db.gcvDocuments,
       mivDocuments: db.mivDocuments,
+      bmrDocuments: db.bmrDocuments,
       materialEstimates: db.materialEstimates,
       periodicInspections: db.periodicInspections,
       customFormSubmissions: db.customFormSubmissions,
@@ -7697,6 +8209,7 @@ async function handleStaticApiRequestInner<T>(
     db.substitutions = Array.isArray(snap.substitutions) ? snap.substitutions : [];
     db.gcvDocuments = Array.isArray(snap.gcvDocuments) ? snap.gcvDocuments : [];
     db.mivDocuments = Array.isArray(snap.mivDocuments) ? snap.mivDocuments : [];
+    db.bmrDocuments = Array.isArray(snap.bmrDocuments) ? snap.bmrDocuments : [];
     db.materialEstimates = (Array.isArray(snap.materialEstimates) ? snap.materialEstimates : []).map((m) => ({
       ...m,
       countingUnit: normalizeCountingUnitToFa(m.countingUnit),
@@ -7732,6 +8245,7 @@ async function handleStaticApiRequestInner<T>(
       { key: 'gcvDocuments', count: db.gcvDocuments.length },
       { key: 'mivDocuments', count: db.mivDocuments.length },
       { key: 'substitutions', count: db.substitutions.length },
+      { key: 'bmrDocuments', count: db.bmrDocuments.length },
       { key: 'materialEstimates', count: db.materialEstimates.length },
       { key: 'periodicInspections', count: db.periodicInspections.length },
       { key: 'customFormSubmissions', count: db.customFormSubmissions.length },
@@ -7759,6 +8273,7 @@ async function handleStaticApiRequestInner<T>(
       'gcvDocuments',
       'mivDocuments',
       'substitutions',
+      'bmrDocuments',
       'materialEstimates',
       'periodicInspections',
       'customFormSubmissions',
@@ -7860,6 +8375,11 @@ async function handleStaticApiRequestInner<T>(
           deletedCounts.substitutions = db.substitutions.length;
           totalDeleted += db.substitutions.length;
           db.substitutions = [];
+          break;
+        case 'bmrDocuments':
+          deletedCounts.bmrDocuments = db.bmrDocuments.length;
+          totalDeleted += db.bmrDocuments.length;
+          db.bmrDocuments = [];
           break;
         case 'materialEstimates':
           deletedCounts.materialEstimates = db.materialEstimates.length;

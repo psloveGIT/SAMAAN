@@ -90,12 +90,14 @@ const GcvRadioCircle: React.FC<{ checked?: boolean }> = ({ checked }) => (
 interface OfficialGcvSheetProps {
   doc: GcvDocumentRecord;
   detailedItems: DetailedComputed[];
+  generalEntries?: GeneralEntry[];
   formatDate: (iso: string) => string;
 }
 
 export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
   doc,
   detailedItems,
+  generalEntries = [],
   formatDate,
 }) => {
   const { activeEmployer, activeProject } = useApp();
@@ -125,6 +127,18 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
     for (const d of detailedItems) map.set(d.id, d);
     return map;
   }, [detailedItems]);
+
+  const fallbackHeader = useMemo(() => {
+    const matched = doc.items
+      .map((line) => detailedById.get(line.detailedId))
+      .filter((x): x is DetailedComputed => Boolean(x));
+    return buildGcvHeaderAutoFill(matched, generalEntries, activeProject);
+  }, [doc.items, detailedById, generalEntries, activeProject]);
+
+  const resolvedReleaseNoteNo = (doc.releaseNoteNo || '').trim() || fallbackHeader.releaseNoteNo;
+  const resolvedSupplier = (doc.supplier || '').trim() || fallbackHeader.supplier;
+  const resolvedWaybillNo = (doc.waybillNo || '').trim() || fallbackHeader.waybillNo;
+  const resolvedIslandSystem = (doc.islandSystem || '').trim() || fallbackHeader.islandSystem;
 
   const minRows = 6;
   const totalDisplayRows = Math.max(minRows, doc.items.length);
@@ -228,7 +242,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           </div>
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
             <strong style={{ fontWeight: 700 }}>تامین کننده: </strong>
-            <span className="bidi-plaintext">{doc.supplier || ''}</span>
+            <span className="bidi-plaintext">{resolvedSupplier || ''}</span>
           </div>
           <div style={{ borderLeft: '1px solid #000000', padding: '5px 8px' }}>
             <strong style={{ fontWeight: 700 }}>کارشناس خرید: </strong>
@@ -242,7 +256,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           </div>
           <div dir="ltr" style={{ padding: '5px 8px', textAlign: 'left' }}>
             <strong style={{ fontWeight: 700 }}>Realised Note No.: </strong>
-            <span className="tabular-nums">{doc.releaseNoteNo || ''}</span>
+            <span className="tabular-nums">{resolvedReleaseNoteNo || ''}</span>
           </div>
         </div>
 
@@ -292,7 +306,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
             }}
           >
             <strong style={{ fontWeight: 700 }}>جزیره/سیستم: </strong>
-            <span className="bidi-plaintext">{doc.islandSystem || ''}</span>
+            <span className="bidi-plaintext">{resolvedIslandSystem || ''}</span>
           </div>
 
           <div
@@ -306,7 +320,7 @@ export const OfficialGcvSheet: React.FC<OfficialGcvSheetProps> = ({
           >
             <strong style={{ fontWeight: 700 }}>شماره بارنامه: </strong>
             <span dir="ltr" className="tabular-nums">
-              {doc.waybillNo || ''}
+              {resolvedWaybillNo || ''}
             </span>
           </div>
         </div>
@@ -1227,6 +1241,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
               <OfficialGcvSheet
                 doc={printDoc}
                 detailedItems={data?.detailedItems || []}
+                generalEntries={data?.generalEntries || []}
                 formatDate={formatDate}
               />
             </div>,
@@ -2067,6 +2082,7 @@ export const GcvView: React.FC<GcvViewProps> = ({ refreshSignal, onDataChanged }
                 <OfficialGcvSheet
                   doc={printDoc}
                   detailedItems={data?.detailedItems || []}
+                  generalEntries={data?.generalEntries || []}
                   formatDate={formatDate}
                 />
               </div>

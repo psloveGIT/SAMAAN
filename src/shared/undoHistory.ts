@@ -1,4 +1,5 @@
 import type {
+  BmrDocumentRecord,
   CategoryStore,
   CustomFormSubmission,
   DetailedEntry,
@@ -29,6 +30,7 @@ export type HistoryRecordScope =
   | 'substitutions'
   | 'gcvDocuments'
   | 'mivDocuments'
+  | 'bmrDocuments'
   | 'materialEstimates'
   | 'periodicInspections'
   | 'customFormSubmissions';
@@ -45,6 +47,7 @@ export type HistoryRecordEntity =
   | SubstitutionRecord
   | GcvDocumentRecord
   | MivDocumentRecord
+  | BmrDocumentRecord
   | MaterialEstimateRecord
   | PeriodicInspectionRecord
   | CustomFormSubmission;
@@ -127,6 +130,7 @@ export interface UndoableDatabaseSlice {
   substitutions?: SubstitutionRecord[];
   gcvDocuments?: GcvDocumentRecord[];
   mivDocuments?: MivDocumentRecord[];
+  bmrDocuments?: BmrDocumentRecord[];
   materialEstimates?: MaterialEstimateRecord[];
   periodicInspections?: PeriodicInspectionRecord[];
   customFormSubmissions?: CustomFormSubmission[];
@@ -163,6 +167,7 @@ const ALL_OPERATIONAL_SCOPES: HistoryRecordScope[] = [
   'substitutions',
   'gcvDocuments',
   'mivDocuments',
+  'bmrDocuments',
   'materialEstimates',
   'periodicInspections',
   'customFormSubmissions',
@@ -461,12 +466,12 @@ export function resolveAutoUndoSpec(
     };
   }
 
-  // Balance assign
-  if (pathname === '/api/balance/assign' && m === 'POST') {
+  // Balance of Material Reports (BMR) & legacy assign
+  if (pathname === '/api/balance' || pathname.startsWith('/api/balance/')) {
     return {
-      labelFa: 'ثبت و بروزرسانی بالانس تجهیزات',
-      labelEn: 'Update Equipment Balance',
-      deepScopes: [],
+      labelFa: `${actionVerbFa} گزارش موازنه و کنترل مصرف مواد (BMR)`,
+      labelEn: `${actionVerbEn} Balance of Material Report (BMR)`,
+      deepScopes: ['bmrDocuments'],
       shallowScopes: ['detailed'],
       trackCategories: true,
     };

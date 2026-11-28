@@ -36,7 +36,7 @@ import type {
   DetailedEntry,
   SelectionFormulaSummary,
 } from '../shared/types.ts';
-import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
+import { ConfirmDeleteModal, type LinkedGeneralSummary } from './ConfirmDeleteModal.tsx';
 import { ExcelColumnFilter } from './ExcelColumnFilter.tsx';
 import { ItemImageDropzone } from './ItemImageDropzone.tsx';
 import { ItemImageLightbox } from './ItemImageLightbox.tsx';
@@ -278,6 +278,7 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
 
   // Safe Delete Confirmation
   const [deleteTarget, setDeleteTarget] = useState<DetailedComputed | null>(null);
+  const [deleteImpactGeneralRows, setDeleteImpactGeneralRows] = useState<LinkedGeneralSummary[]>([]);
 
   // Bulk Edit / Bulk Delete
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
@@ -301,6 +302,8 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
   });
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteCascadeGeneral, setBulkDeleteCascadeGeneral] = useState(false);
+  const [bulkDeleteImpactGeneralRows, setBulkDeleteImpactGeneralRows] = useState<LinkedGeneralSummary[]>([]);
 
   // Shortage Backfill Modal
   const [backfillTarget, setBackfillTarget] = useState<DetailedComputed | null>(null);
@@ -1206,18 +1209,71 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     }
   };
 
-  const handleConfirmDelete = async () => {
+  useEffect(() => {
+    if (!deleteTarget) {
+      setDeleteImpactGeneralRows([]);
+      return;
+    }
+    let cancelled = false;
+    apiRequest<{ affectedGeneralRows: LinkedGeneralSummary[] }>('/api/detailed/delete-impact', {
+      method: 'POST',
+      body: JSON.stringify({ ids: [deleteTarget.id] }),
+    })
+      .then((res) => {
+        if (!cancelled) setDeleteImpactGeneralRows(res.affectedGeneralRows || []);
+      })
+      .catch(() => {
+        if (!cancelled) setDeleteImpactGeneralRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteTarget]);
+
+  useEffect(() => {
+    if (!bulkDeleteOpen || selectedIds.length === 0) {
+      setBulkDeleteImpactGeneralRows([]);
+      setBulkDeleteCascadeGeneral(false);
+      return;
+    }
+    let cancelled = false;
+    apiRequest<{ affectedGeneralRows: LinkedGeneralSummary[] }>('/api/detailed/delete-impact', {
+      method: 'POST',
+      body: JSON.stringify({ ids: selectedIds }),
+    })
+      .then((res) => {
+        if (!cancelled) setBulkDeleteImpactGeneralRows(res.affectedGeneralRows || []);
+      })
+      .catch(() => {
+        if (!cancelled) setBulkDeleteImpactGeneralRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bulkDeleteOpen, selectedIds]);
+
+  const handleConfirmDelete = async (cascadeGeneral: boolean) => {
     if (!deleteTarget) return;
     try {
-      await apiRequest(`/api/detailed/${deleteTarget.id}`, { method: 'DELETE' });
+      const res = await apiRequest<{ ok: boolean; trashedGeneralCount?: number }>(
+        `/api/detailed/${deleteTarget.id}?cascadeGeneral=${cascadeGeneral ? 'true' : 'false'}`,
+        { method: 'DELETE' },
+      );
       notify(
         'success',
         isFa
-          ? `ردیف ${deleteTarget.rowNo} به سطل بازیافت منتقل شد.`
-          : `Row ${deleteTarget.rowNo} moved to Recycle Bin.`,
+          ? `ردیف ${deleteTarget.rowNo} به سطل بازیافت منتقل شد${
+              res.trashedGeneralCount
+                ? ` (${res.trashedGeneralCount.toLocaleString('fa-IR')} ردیف متناظر کلی نیز حذف شد)`
+                : ''
+            }.`
+          : `Row ${deleteTarget.rowNo} moved to Recycle Bin${
+              res.trashedGeneralCount ? ` (${res.trashedGeneralCount} matching General row(s) deleted)` : ''
+            }.`,
       );
       const deletedId = deleteTarget.id;
       setDeleteTarget(null);
+      setDeleteImpactGeneralRows([]);
       setSelectedMap((prev) => {
         if (!prev[deletedId]) return prev;
         const next = { ...prev };
@@ -1292,17 +1348,31 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
     if (selectedIds.length === 0) return;
     setBulkBusy(true);
     try {
-      const res = await apiRequest<{ ok: boolean; deletedCount: number }>('/api/detailed/bulk-delete', {
-        method: 'POST',
-        body: JSON.stringify({ ids: selectedIds }),
-      });
+      const res = await apiRequest<{ ok: boolean; deletedCount: number; trashedGeneralCount?: number }>(
+        '/api/detailed/bulk-delete',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            ids: selectedIds,
+            cascadeGeneral: bulkDeleteCascadeGeneral,
+          }),
+        },
+      );
       notify(
         'success',
         isFa
-          ? `${formatDisplayNumber(res.deletedCount, 'fa')} ردیف به سطل بازیافت منتقل شد.`
-          : `Moved ${res.deletedCount} row(s) to Recycle Bin.`,
+          ? `${formatDisplayNumber(res.deletedCount, 'fa')} ردیف به سطل بازیافت منتقل شد${
+              res.trashedGeneralCount
+                ? ` (${formatDisplayNumber(res.trashedGeneralCount, 'fa')} ردیف متناظر کلی نیز حذف شد)`
+                : ''
+            }.`
+          : `Moved ${res.deletedCount} row(s) to Recycle Bin${
+              res.trashedGeneralCount ? ` (${res.trashedGeneralCount} matching General row(s) deleted)` : ''
+            }.`,
       );
       setBulkDeleteOpen(false);
+      setBulkDeleteCascadeGeneral(false);
+      setBulkDeleteImpactGeneralRows([]);
       clearSelection();
       triggerAutoSnapshot('Bulk Delete Detailed');
       onDataChanged();
@@ -3562,8 +3632,12 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
               }`
             : ''
         }
+        linkedGeneralRows={deleteImpactGeneralRows}
         onConfirm={handleConfirmDelete}
-        onCancel={() => setDeleteTarget(null)}
+        onCancel={() => {
+          setDeleteTarget(null);
+          setDeleteImpactGeneralRows([]);
+        }}
       />
 
       {/* Bulk Edit Modal */}
@@ -3716,6 +3790,42 @@ export const DetailedView: React.FC<DetailedViewProps> = ({
                 ? `آیا از انتقال ${formatDisplayNumber(selectedCount, 'fa')} ردیف انتخاب‌شده به سطل بازیافت مطمئن هستید؟`
                 : `Are you sure you want to move ${selectedCount} selected row(s) to the Recycle Bin?`}
             </p>
+            {bulkDeleteImpactGeneralRows.length > 0 && (
+              <div className="p-3.5 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-2">
+                <div className="text-xs font-semibold text-[var(--status-warning)]">
+                  {isFa
+                    ? `با حذف این ردیف‌ها، برای ${bulkDeleteImpactGeneralRows.length.toLocaleString('fa-IR')} بسته در بخش کلی هیچ آیتم جزئیاتی باقی نمی‌ماند:`
+                    : `Deleting these items leaves ${bulkDeleteImpactGeneralRows.length} General package(s) with zero Detailed items:`}
+                </div>
+                <div className="text-[11px] text-[var(--text-secondary)] space-y-0.5 tabular-nums bidi-plaintext">
+                  {bulkDeleteImpactGeneralRows.slice(0, 4).map((g) => (
+                    <div key={g.id}>
+                      • {g.packingListNo || '-'} / {g.packageNo || '-'}
+                    </div>
+                  ))}
+                  {bulkDeleteImpactGeneralRows.length > 4 && (
+                    <div>
+                      {isFa
+                        ? `و ${(bulkDeleteImpactGeneralRows.length - 4).toLocaleString('fa-IR')} مورد دیگر...`
+                        : `and ${bulkDeleteImpactGeneralRows.length - 4} more...`}
+                    </div>
+                  )}
+                </div>
+                <label className="flex items-start gap-2 text-xs font-medium text-[var(--text-primary)] cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={bulkDeleteCascadeGeneral}
+                    onChange={(e) => setBulkDeleteCascadeGeneral(e.target.checked)}
+                    className="mt-0.5 rounded border-[var(--border-strong)]"
+                  />
+                  <span>
+                    {isFa
+                      ? 'آیا ردیف(های) متناظر در بخش کلی تجهیزات نیز حذف شوند؟'
+                      : 'Also delete corresponding General Equipment row(s)?'}
+                  </span>
+                </label>
+              </div>
+            )}
             <div className="pt-2 flex justify-end gap-2">
               <button
                 type="button"

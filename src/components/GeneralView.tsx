@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Camera,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Edit3,
   Eye,
   EyeOff,
+  FileCheck2,
+  Image as ImageIcon,
   Link2,
   Lock,
   LockOpen,
@@ -35,10 +36,13 @@ import {
   parseNumericInput,
   sanitizeDecimalOnly,
   sanitizeDigitsOnly,
+  VEHICLE_MODEL_OPTIONS_EN,
+  VEHICLE_MODEL_OPTIONS_FA,
 } from '../shared/validation.ts';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal.tsx';
 import { ExcelColumnFilter } from './ExcelColumnFilter.tsx';
 import { IranianPlateInput } from './IranianPlateInput.tsx';
+import { MultiImageDropzone } from './ItemImageDropzone.tsx';
 import { JalaliDateInput } from './JalaliDateInput.tsx';
 import { PrintReportModal } from './PrintReportModal.tsx';
 import { SelectionSummaryBar } from './SelectionSummaryBar.tsx';
@@ -90,6 +94,7 @@ interface GeneralTableRowProps {
   onInspect: (row: GeneralRowView) => void;
   onOpenLinkedDetailed: (packingNo: string, packageNo: string) => void;
   onTogglePackingClosed: (packingNo: string, currentlyClosed: boolean) => void;
+  onOpenPhotos: (row: GeneralRowView) => void;
   onEdit: (row: GeneralRowView) => void;
   onDelete: (row: GeneralRowView) => void;
 }
@@ -111,9 +116,13 @@ const GeneralTableRow = React.memo<GeneralTableRowProps>(({
   onInspect,
   onOpenLinkedDetailed,
   onTogglePackingClosed,
+  onOpenPhotos,
   onEdit,
   onDelete,
-}) => (
+}) => {
+  const thumbs = row.itemImageThumbs || [];
+  const hasEntryMinutes = Boolean((row.mapnaEntryMinutesNo || '').trim());
+  return (
   <tr
     onClick={() => onInspect(row)}
     className="cursor-pointer hover:bg-[var(--bg-subtle)]/60 transition-colors"
@@ -150,7 +159,65 @@ const GeneralTableRow = React.memo<GeneralTableRowProps>(({
     })}
 
     <td className="py-1.5 px-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center gap-1.5">
+      {thumbs.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => onOpenPhotos(row)}
+          data-testid={`general-photo-thumb-${row.id}`}
+          title={isFa ? 'مشاهده یا ویرایش تصاویر نگله' : 'View or edit package photos'}
+          className="inline-flex items-center gap-1"
+        >
+          {thumbs.slice(0, 2).map((src, idx) => (
+            <img
+              key={idx}
+              src={src}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="w-8 h-8 rounded-md object-cover border border-[var(--border-subtle)] hover:border-[var(--accent-primary)] transition-colors"
+            />
+          ))}
+        </button>
+      ) : canEdit ? (
+        <button
+          type="button"
+          onClick={() => onOpenPhotos(row)}
+          data-testid={`general-photo-add-${row.id}`}
+          title={isFa ? 'افزودن تصویر نگله (حداکثر ۲ تصویر)' : 'Add package photos (up to 2)'}
+          className="h-7 px-2 rounded-md border border-dashed border-[var(--border-subtle)] hover:border-[var(--accent-primary)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] inline-flex items-center gap-1 text-[10px]"
+        >
+          <Camera className="w-3 h-3" />
+          <span>{isFa ? 'تصویر' : 'Photo'}</span>
+        </button>
+      ) : (
+        <span className="text-[var(--text-muted)]">—</span>
+      )}
+    </td>
+
+    <td className="py-1.5 px-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {hasEntryMinutes ? (
+          <span
+            data-testid={`general-site-entry-badge-${row.id}`}
+            title={
+              isFa
+                ? `صورتجلسه ورود انبار صادر شده: ${row.mapnaEntryMinutesNo}`
+                : `Site Entry Minutes issued: ${row.mapnaEntryMinutesNo}`
+            }
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[10px] font-semibold tabular-nums"
+          >
+            <FileCheck2 className="w-3 h-3 shrink-0" />
+            <span>
+              {isFa ? `صورتجلسه: ${row.mapnaEntryMinutesNo}` : `Entry: ${row.mapnaEntryMinutesNo}`}
+            </span>
+          </span>
+        ) : (
+          <span
+            data-testid={`general-site-entry-missing-${row.id}`}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/12 text-amber-700 dark:text-amber-300 border border-amber-500/25 text-[10px] font-medium"
+          >
+            <span>{isFa ? 'فاقد صورتجلسه ورود' : 'No Entry Minutes'}</span>
+          </span>
+        )}
         {row.packingClosed ? (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--status-success-bg)] text-[var(--status-success)] text-[11px] font-semibold">
             <Lock className="w-3 h-3" />
@@ -223,7 +290,8 @@ const GeneralTableRow = React.memo<GeneralTableRowProps>(({
       </div>
     </td>
   </tr>
-));
+  );
+});
 
 interface GeneralViewProps {
   categories: CategoryStore;
@@ -270,6 +338,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
   const [editError, setEditError] = useState('');
   const [editNums, setEditNums] = useState({
     itemCount: '',
+    packageCount: '',
     grossWeight: '',
     netWeight: '',
     weighbridgeWeight: '',
@@ -278,15 +347,27 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     heightCm: '',
     freightCost: '',
   });
+  const [editImages, setEditImages] = useState<string[]>([]);
+  const [editImageThumbs, setEditImageThumbs] = useState<string[]>([]);
+  const [editImagesLoading, setEditImagesLoading] = useState(false);
+  const [editImagesDirty, setEditImagesDirty] = useState(false);
   const [ackClosedEdit, setAckClosedEdit] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<GeneralRowView | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
+
+  // Photos Lightbox / Quick Manager Modal
+  const [photoModalRow, setPhotoModalRow] = useState<GeneralRowView | null>(null);
+  const [photoModalImages, setPhotoModalImages] = useState<string[]>([]);
+  const [photoModalThumbs, setPhotoModalThumbs] = useState<string[]>([]);
+  const [photoModalLoading, setPhotoModalLoading] = useState(false);
+  const [photoModalSaving, setPhotoModalSaving] = useState(false);
 
   // Bulk Edit / Bulk Delete
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkPatch, setBulkPatch] = useState({
     arrivalDate: '',
     supplier: '',
+    requester: '',
     dispatchLocation: '',
     island: '',
     system: '',
@@ -295,6 +376,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     releaseNo: '',
     releaseDate: '',
     billOfLadingNo: '',
+    vehicleModel: '',
     vehicleNo: '',
     driverName: '',
     purchasePackageNo: '',
@@ -427,8 +509,10 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       { key: 'packageNo', header: t.headers.packageNo, get: (r: GeneralRowView) => r.packageNo },
       { key: 'itemDescription', header: t.headers.itemDescription, get: (r: GeneralRowView) => r.itemDescription },
       { key: 'supplier', header: t.headers.supplier, get: (r: GeneralRowView) => r.supplier },
+      { key: 'requester', header: t.headers.requester, hideInTable: true, get: (r: GeneralRowView) => r.requester },
       { key: 'arrivalDate', header: t.headers.arrivalDate, isDate: true, hideInTable: true, get: (r: GeneralRowView) => r.arrivalDate },
       { key: 'packageType', header: t.headers.packageType, hideInTable: true, get: (r: GeneralRowView) => r.packageType },
+      { key: 'packageCount', header: t.headers.packageCount, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.packageCount },
       { key: 'itemCount', header: t.headers.itemCount, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.itemCount },
       { key: 'dispatchLocation', header: t.headers.dispatchLocation, hideInTable: true, get: (r: GeneralRowView) => r.dispatchLocation },
       { key: 'employerEntryMinutesNo', header: t.headers.employerEntryMinutesNo, hideInTable: true, get: (r: GeneralRowView) => r.employerEntryMinutesNo },
@@ -445,6 +529,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       { key: 'widthCm', header: t.headers.widthCm, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.widthCm },
       { key: 'heightCm', header: t.headers.heightCm, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.heightCm },
       { key: 'billOfLadingNo', header: t.headers.billOfLadingNo, hideInTable: true, get: (r: GeneralRowView) => r.billOfLadingNo },
+      { key: 'vehicleModel', header: t.headers.vehicleModel, hideInTable: true, get: (r: GeneralRowView) => r.vehicleModel },
       { key: 'vehicleNo', header: t.headers.vehicleNo, hideInTable: true, get: (r: GeneralRowView) => r.vehicleNo },
       { key: 'weighbridgeWeight', header: t.headers.weighbridgeWeight, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.weighbridgeWeight },
       { key: 'freightCost', header: t.headers.freightCost, isNum: true, hideInTable: true, get: (r: GeneralRowView) => r.freightCost },
@@ -633,6 +718,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
     setEditError('');
     setEditNums({
       itemCount: row.itemCount !== null && row.itemCount !== undefined ? String(row.itemCount) : '',
+      packageCount: row.packageCount !== null && row.packageCount !== undefined ? String(row.packageCount) : '',
       grossWeight: row.grossWeight !== null && row.grossWeight !== undefined ? String(row.grossWeight) : '',
       netWeight: row.netWeight !== null && row.netWeight !== undefined ? String(row.netWeight) : '',
       weighbridgeWeight: row.weighbridgeWeight !== null && row.weighbridgeWeight !== undefined ? String(row.weighbridgeWeight) : '',
@@ -641,7 +727,58 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       heightCm: row.heightCm !== null && row.heightCm !== undefined ? String(row.heightCm) : '',
       freightCost: row.freightCost !== null && row.freightCost !== undefined ? formatThousands(row.freightCost, isFa) : '',
     });
+    setEditImages([]);
+    setEditImageThumbs(row.itemImageThumbs || []);
+    setEditImagesDirty(false);
+    if (row.hasImages || (row.itemImageThumbs && row.itemImageThumbs.length > 0)) {
+      setEditImagesLoading(true);
+      apiRequest<{ itemImages: string[]; itemImageThumbs: string[] }>(`/api/general/${row.id}/image`)
+        .then((res) => {
+          setEditImages(res.itemImages || []);
+          setEditImageThumbs(res.itemImageThumbs || []);
+        })
+        .catch(() => {})
+        .finally(() => setEditImagesLoading(false));
+    } else {
+      setEditImagesLoading(false);
+    }
   }, [isFa]);
+
+  const handleOpenPhotos = useCallback((row: GeneralRowView) => {
+    setPhotoModalRow(row);
+    setPhotoModalImages([]);
+    setPhotoModalThumbs(row.itemImageThumbs || []);
+    setPhotoModalLoading(true);
+    apiRequest<{ itemImages: string[]; itemImageThumbs: string[] }>(`/api/general/${row.id}/image`)
+      .then((res) => {
+        setPhotoModalImages(res.itemImages || []);
+        setPhotoModalThumbs(res.itemImageThumbs || []);
+      })
+      .catch(() => {})
+      .finally(() => setPhotoModalLoading(false));
+  }, []);
+
+  const handleSavePhotoModal = async () => {
+    if (!photoModalRow) return;
+    setPhotoModalSaving(true);
+    try {
+      await apiRequest(`/api/general/${photoModalRow.id}/image`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          itemImages: photoModalImages.slice(0, 2),
+          itemImageThumbs: photoModalThumbs.slice(0, 2),
+        }),
+      });
+      notify('success', isFa ? 'تصاویر نگله ذخیره شد.' : 'Package photos saved.');
+      setPhotoModalRow(null);
+      onDataChanged();
+      loadData();
+    } catch (err) {
+      if (err instanceof ApiError) notify('error', err.message);
+    } finally {
+      setPhotoModalSaving(false);
+    }
+  };
 
   const handleInspectRow = useCallback((row: GeneralRowView) => {
     setInspected(row);
@@ -708,6 +845,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           ...rest,
           employerEntryMinutesNo: sanitizeDigitsOnly(editing.employerEntryMinutesNo || ''),
           itemCount: cnt,
+          packageCount: parseNumericInput(editNums.packageCount),
           grossWeight: parseNumericInput(editNums.grossWeight),
           netWeight: parseNumericInput(editNums.netWeight),
           weighbridgeWeight: parseNumericInput(editNums.weighbridgeWeight),
@@ -717,6 +855,12 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
           freightCost: parseNumericInput(editNums.freightCost),
           releaseDate: effectiveReleaseDate,
           acknowledgeClosed: ackClosedEdit,
+          ...(editImagesDirty
+            ? {
+                itemImages: editImages.slice(0, 2),
+                itemImageThumbs: editImageThumbs.slice(0, 2),
+              }
+            : {}),
         }),
       });
       notify('success', isFa ? 'ردیف با موفقیت ویرایش شد.' : 'Entry updated.');
@@ -795,8 +939,8 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
       );
       setBulkEditOpen(false);
       setBulkPatch({
-        arrivalDate: '', supplier: '', dispatchLocation: '', island: '', system: '', subSystem: '',
-        unit: '', releaseNo: '', releaseDate: '', billOfLadingNo: '', vehicleNo: '', driverName: '', purchasePackageNo: '',
+        arrivalDate: '', supplier: '', requester: '', dispatchLocation: '', island: '', system: '', subSystem: '',
+        unit: '', releaseNo: '', releaseDate: '', billOfLadingNo: '', vehicleModel: '', vehicleNo: '', driverName: '', purchasePackageNo: '',
       });
       clearSelection();
       triggerAutoSnapshot('Bulk Edit General');
@@ -1195,7 +1339,10 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   </th>
                 ))}
                 <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
-                  {isFa ? 'وضعیت اتمام پکینگ / جزئیات' : 'Packing Completion / Details'}
+                  {t.headers.images}
+                </th>
+                <th className="py-2.5 px-3 text-start font-semibold whitespace-nowrap">
+                  {isFa ? 'وضعیت صورتجلسه ورود / پکینگ / جزئیات' : 'Entry Minutes / Packing / Details'}
                 </th>
                 <th className="py-2.5 px-3 text-end font-semibold whitespace-nowrap">
                   {isFa ? 'عملیات' : 'Actions'}
@@ -1205,13 +1352,13 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
             <tbody className="divide-y divide-[var(--border-subtle)]">
               {loading ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 3} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={visibleColumns.length + 4} className="py-12 text-center text-[var(--text-muted)]">
                     {t.controls.loading}
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleColumns.length + 3} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={visibleColumns.length + 4} className="py-12 text-center text-[var(--text-muted)]">
                     {t.controls.noData}
                   </td>
                 </tr>
@@ -1235,6 +1382,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     onInspect={handleInspectRow}
                     onOpenLinkedDetailed={onOpenLinkedDetailed}
                     onTogglePackingClosed={handleTogglePackingClosed}
+                    onOpenPhotos={handleOpenPhotos}
                     onEdit={openEditRow}
                     onDelete={handleDeleteTarget}
                   />
@@ -1332,7 +1480,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 [
                   {
                     title: isFa ? 'مشخصات محموله و پکینگ' : 'Shipment & Packing Info',
-                    keys: ['rowNo', 'packingListNo', 'packageNo', 'packageType', 'itemCount', 'itemDescription', 'supplier', 'dispatchLocation'],
+                    keys: ['rowNo', 'packingListNo', 'packageNo', 'packageType', 'packageCount', 'itemCount', 'itemDescription', 'supplier', 'requester', 'dispatchLocation'],
                   },
                   {
                     title: isFa ? 'موقعیت فنی و دسته‌بندی' : 'Technical Classification',
@@ -1344,7 +1492,7 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                   },
                   {
                     title: isFa ? 'حمل‌ونقل، صورتجلسات ورود و بازرسی' : 'Logistics, Minutes & Inspection',
-                    keys: ['purchasePackageNo', 'employerEntryMinutesNo', 'mapnaEntryMinutesNo', 'releaseNo', 'releaseDate', 'billOfLadingNo', 'vehicleNo', 'driverName', 'opiInvitationNo', 'opiInvitationDate'],
+                    keys: ['purchasePackageNo', 'employerEntryMinutesNo', 'mapnaEntryMinutesNo', 'releaseNo', 'releaseDate', 'billOfLadingNo', 'vehicleModel', 'vehicleNo', 'driverName', 'opiInvitationNo', 'opiInvitationDate'],
                   },
                 ] as const
               ).map((group) => (
@@ -1483,6 +1631,22 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       <option key={opt} value={opt} />
                     ))}
                   </datalist>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.packageCount}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    dir={isFa && !editNums.packageCount ? 'rtl' : 'ltr'}
+                    value={editNums.packageCount}
+                    onChange={(e) => setEditNums({ ...editNums, packageCount: sanitizeDigitsOnly(e.target.value) })}
+                    placeholder={isFa ? 'تعداد بسته (پیش‌فرض ۱)' : 'Package count'}
+                    className={`w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs tabular-nums ${
+                      isFa && !editNums.packageCount ? 'text-right' : 'text-left'
+                    }`}
+                  />
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
@@ -1654,6 +1818,18 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.requester}
+                  </label>
+                  <input
+                    type="text"
+                    dir={!editing.requester ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={editing.requester || ''}
+                    onChange={(e) => setEditing({ ...editing, requester: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
                     {t.headers.dispatchLocation} *
                   </label>
                   <input
@@ -1678,6 +1854,25 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                       isFa && !editing.billOfLadingNo ? 'text-right' : 'text-left'
                     }`}
                   />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
+                    {t.headers.vehicleModel}
+                  </label>
+                  <input
+                    type="text"
+                    list="samaan-general-vehicle-models"
+                    dir={!editing.vehicleModel ? (isFa ? 'rtl' : 'ltr') : 'auto'}
+                    value={editing.vehicleModel || ''}
+                    onChange={(e) => setEditing({ ...editing, vehicleModel: e.target.value })}
+                    placeholder={isFa ? 'خاور / کامیون / کفی تریلی...' : 'Flatbed / Truck...'}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs bidi-plaintext"
+                  />
+                  <datalist id="samaan-general-vehicle-models">
+                    {(isFa ? VEHICLE_MODEL_OPTIONS_FA : VEHICLE_MODEL_OPTIONS_EN).map((opt) => (
+                      <option key={opt} value={opt} />
+                    ))}
+                  </datalist>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">
@@ -1824,6 +2019,22 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </div>
               </div>
 
+              <div className="pt-2 border-t border-[var(--border-subtle)]">
+                <MultiImageDropzone
+                  images={editImages}
+                  thumbs={editImageThumbs}
+                  maxImages={2}
+                  loadingExisting={editImagesLoading}
+                  isFa={isFa}
+                  onChange={({ itemImages, itemImageThumbs }) => {
+                    setEditImages(itemImages);
+                    setEditImageThumbs(itemImageThumbs);
+                    setEditImagesDirty(true);
+                  }}
+                  onError={(msg) => setEditError(msg)}
+                />
+              </div>
+
               <div className="pt-3 border-t border-[var(--border-subtle)] flex justify-end gap-2">
                 <button
                   type="button"
@@ -1840,6 +2051,100 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Package Photos Lightbox / Manager Modal */}
+      {photoModalRow && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setPhotoModalRow(null)}
+          data-testid="general-photos-modal"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+          >
+            <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <ImageIcon className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-bold truncate">
+                    {isFa ? 'تصاویر نگله' : 'Package Photos'} — {photoModalRow.packingListNo} / {photoModalRow.packageNo}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-muted)] truncate">
+                    {photoModalRow.itemDescription}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhotoModalRow(null)}
+                className="p-1.5 rounded-lg hover:bg-[var(--bg-subtle)] text-[var(--text-muted)]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto space-y-4">
+              {photoModalImages.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {photoModalImages.map((src, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] overflow-hidden"
+                    >
+                      <img
+                        src={src}
+                        alt={isFa ? `تصویر ${idx + 1}` : `Photo ${idx + 1}`}
+                        referrerPolicy="no-referrer"
+                        className="w-full max-h-72 object-contain bg-black/5"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              {canEdit ? (
+                <MultiImageDropzone
+                  images={photoModalImages}
+                  thumbs={photoModalThumbs}
+                  maxImages={2}
+                  loadingExisting={photoModalLoading}
+                  isFa={isFa}
+                  onChange={({ itemImages, itemImageThumbs }) => {
+                    setPhotoModalImages(itemImages);
+                    setPhotoModalThumbs(itemImageThumbs);
+                  }}
+                />
+              ) : (
+                !photoModalLoading &&
+                photoModalImages.length === 0 && (
+                  <div className="py-6 text-center text-xs text-[var(--text-muted)]">
+                    {isFa ? 'تصویری برای این نگله ثبت نشده است.' : 'No photos attached to this package.'}
+                  </div>
+                )
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-[var(--border-subtle)] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPhotoModalRow(null)}
+                className="h-9 px-4 rounded-lg border border-[var(--border-subtle)] text-xs font-medium hover:bg-[var(--bg-subtle)]"
+              >
+                {t.controls.close}
+              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  disabled={photoModalSaving || photoModalLoading}
+                  onClick={handleSavePhotoModal}
+                  data-testid="general-photos-save-btn"
+                  className="h-9 px-4 rounded-lg bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold disabled:opacity-50"
+                >
+                  {t.controls.save}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1923,6 +2228,30 @@ export const GeneralView: React.FC<GeneralViewProps> = ({
                     onChange={(e) => setBulkPatch((p) => ({ ...p, unit: e.target.value }))}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
                   />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.requester}</label>
+                  <input
+                    type="text"
+                    value={bulkPatch.requester}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, requester: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.vehicleModel}</label>
+                  <input
+                    type="text"
+                    list="samaan-bulk-vehicle-models"
+                    value={bulkPatch.vehicleModel}
+                    onChange={(e) => setBulkPatch((p) => ({ ...p, vehicleModel: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]"
+                  />
+                  <datalist id="samaan-bulk-vehicle-models">
+                    {(isFa ? VEHICLE_MODEL_OPTIONS_FA : VEHICLE_MODEL_OPTIONS_EN).map((opt) => (
+                      <option key={opt} value={opt} />
+                    ))}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-[11px] text-[var(--text-secondary)] mb-1">{t.headers.driverName}</label>

@@ -117,7 +117,7 @@ export const OPERATIONAL_FORM_SECTIONS: readonly OperationalFormSectionMeta[] = 
  *   have no built-in default forms and unlock each section once the user uploads its form.
  */
 export const BUILT_IN_EMPLOYER_DEFAULT_FORMS: Record<string, readonly OperationalFormSectionKey[]> = {
-  'mapna-md1': ['storageLabel', 'substitution', 'miv', 'opi', 'gcv', 'opiMinutes'],
+  'mapna-md1': ['storageLabel', 'substitution', 'miv', 'opi', 'gcv', 'opiMinutes', 'siteEntry', 'smr', 'balance'],
   'mapna-md2': [],
   'mapna-md3': [],
 };

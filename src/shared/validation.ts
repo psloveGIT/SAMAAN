@@ -52,6 +52,32 @@ export const PACKAGE_TYPE_OPTIONS_EN = [
 ] as const;
 
 /**
+ * Default Iranian transport vehicle models sorted strictly in Persian alphabetical order
+ * (خاور، کامیون، کفی تریلی، کفی کمرشکن، نیسان، وانت، وانت آریسان، وانت پراید).
+ */
+export const VEHICLE_MODEL_OPTIONS_FA = [
+  'خاور',
+  'کامیون',
+  'کفی تریلی',
+  'کفی کمرشکن',
+  'نیسان',
+  'وانت',
+  'وانت آریسان',
+  'وانت پراید',
+] as const;
+
+export const VEHICLE_MODEL_OPTIONS_EN = [
+  'Arisan Pickup',
+  'Flatbed Trailer',
+  'Khavar Truck',
+  'Lowboy Trailer',
+  'Nissan Pickup',
+  'Pickup Truck',
+  'Pride Pickup',
+  'Truck',
+] as const;
+
+/**
  * Normalizes Persian/Arabic digits to ASCII and strips all non-digit characters.
  */
 export function sanitizeDigitsOnly(raw: string): string {

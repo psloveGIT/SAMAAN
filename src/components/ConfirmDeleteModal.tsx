@@ -2,12 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Trash2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 
+export interface LinkedGeneralSummary {
+  id: string;
+  packingListNo: string;
+  packageNo: string;
+  itemDescription?: string;
+}
+
 interface ConfirmDeleteModalProps {
   open: boolean;
   title: string;
   itemLabel: string;
   linkedDetailedCount?: number;
-  onConfirm: (cascadeDetailed: boolean) => Promise<void> | void;
+  linkedGeneralRows?: LinkedGeneralSummary[];
+  onConfirm: (cascadeLinked: boolean) => Promise<void> | void;
   onCancel: () => void;
 }
 
@@ -16,17 +24,18 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   title,
   itemLabel,
   linkedDetailedCount = 0,
+  linkedGeneralRows = [],
   onConfirm,
   onCancel,
 }) => {
   const { prefs, t } = useApp();
   const isFa = prefs.language === 'fa';
-  const [cascadeDetailed, setCascadeDetailed] = useState(false);
+  const [cascadeLinked, setCascadeLinked] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setCascadeDetailed(false);
+      setCascadeLinked(false);
       setBusy(false);
     }
   }, [open]);
@@ -36,7 +45,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   const handleConfirm = async () => {
     setBusy(true);
     try {
-      await onConfirm(cascadeDetailed);
+      await onConfirm(cascadeLinked);
     } finally {
       setBusy(false);
     }
@@ -46,6 +55,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
     <div
       className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
       onClick={onCancel}
+      data-testid="confirm-delete-modal"
     >
       <div
         className="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] p-6 space-y-4 shadow-xl"
@@ -79,7 +89,10 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
         </p>
 
         {linkedDetailedCount > 0 && (
-          <div className="p-3.5 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-2">
+          <div
+            data-testid="cascade-detailed-box"
+            className="p-3.5 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-2"
+          >
             <div className="text-xs font-semibold text-[var(--status-warning)] tabular-nums">
               {isFa
                 ? `${linkedDetailedCount.toLocaleString('fa-IR')} ردیف جزئیات (دیتیل) مرتبط با این پکینگ/نگله وجود دارد.`
@@ -88,14 +101,57 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
             <label className="flex items-start gap-2 text-xs font-medium text-[var(--text-primary)] cursor-pointer">
               <input
                 type="checkbox"
-                checked={cascadeDetailed}
-                onChange={(e) => setCascadeDetailed(e.target.checked)}
+                data-testid="cascade-detailed-checkbox"
+                checked={cascadeLinked}
+                onChange={(e) => setCascadeLinked(e.target.checked)}
                 className="mt-0.5 rounded border-[var(--border-strong)]"
               />
               <span>
                 {isFa
                   ? 'اقلام جزئیات (دیتیل) مرتبط با این ردیف نیز هم‌زمان حذف شوند (انتقال به سطل بازیافت)'
                   : 'Also delete linked Detailed items (move them to Recycle Bin as well)'}
+              </span>
+            </label>
+          </div>
+        )}
+
+        {linkedGeneralRows.length > 0 && (
+          <div
+            data-testid="cascade-general-box"
+            className="p-3.5 rounded-xl border border-[var(--status-warning)] bg-[var(--status-warning-bg)] space-y-2"
+          >
+            <div className="text-xs font-semibold text-[var(--status-warning)]">
+              {isFa
+                ? 'با حذف این آیتم، هیچ ردیف جزئیاتی برای بسته زیر باقی نمی‌ماند:'
+                : 'Deleting this item leaves no remaining Detailed items for the matching General package:'}
+            </div>
+            <div className="text-[11px] text-[var(--text-secondary)] space-y-0.5 tabular-nums bidi-plaintext">
+              {linkedGeneralRows.slice(0, 4).map((g) => (
+                <div key={g.id}>
+                  • {g.packingListNo || '-'} / {g.packageNo || '-'}
+                  {g.itemDescription ? ` — ${g.itemDescription}` : ''}
+                </div>
+              ))}
+              {linkedGeneralRows.length > 4 && (
+                <div>
+                  {isFa
+                    ? `و ${(linkedGeneralRows.length - 4).toLocaleString('fa-IR')} مورد دیگر...`
+                    : `and ${linkedGeneralRows.length - 4} more...`}
+                </div>
+              )}
+            </div>
+            <label className="flex items-start gap-2 text-xs font-medium text-[var(--text-primary)] cursor-pointer pt-1">
+              <input
+                type="checkbox"
+                data-testid="cascade-general-checkbox"
+                checked={cascadeLinked}
+                onChange={(e) => setCascadeLinked(e.target.checked)}
+                className="mt-0.5 rounded border-[var(--border-strong)]"
+              />
+              <span>
+                {isFa
+                  ? 'آیا ردیف متناظر در بخش کلی تجهیزات نیز حذف شود؟ (انتقال به سطل بازیافت)'
+                  : 'Also delete the corresponding row(s) in General Equipment? (move to Recycle Bin)'}
               </span>
             </label>
           </div>
@@ -113,6 +169,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
           <button
             type="button"
             disabled={busy}
+            data-testid="confirm-delete-submit"
             onClick={handleConfirm}
             className="h-9 px-4 rounded-lg bg-[var(--status-danger)] text-white text-xs font-semibold flex items-center gap-1.5 hover:opacity-95 disabled:opacity-50"
           >
